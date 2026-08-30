@@ -10,7 +10,7 @@ namespace dispatcharr
 
 struct EpgEntry
 {
-  std::string channelTvgId;
+  std::string channelXmltvId;
   std::string title;
   std::string subtitle;
   std::string description;
@@ -23,7 +23,10 @@ struct EpgEntry
 
 // Parses a Dispatcharr XMLTV guide document (as returned by
 // GET {base}/output/epg) into programme entries keyed by the XMLTV
-// <channel id="..."> value, which corresponds to Channel::tvgId.
+// <channel id="..."> value. Confirmed against a live instance: Dispatcharr
+// uses the channel's channel_number here, NOT its tvg_id (e.g. Channel G
+// with channel_number 1 and tvg_id "ChannelG.us" appears in the XMLTV
+// as <channel id="1">) -- match on Channel::channelNumber, not tvgId.
 class XmlTvParser
 {
 public:
