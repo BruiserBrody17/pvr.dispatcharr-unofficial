@@ -508,7 +508,8 @@ exposes a segment once it's fully closed (`segment_seconds`, 6s by
 default), so sitting right at the tail means there is *nothing* to read
 until the next segment closes -- confirmed by the stall period tracking
 `segment_seconds` almost exactly (a repeating "stream stalled" -> buffering
--> resume cycle roughly every 4-5 seconds in the actual test log). Channel A's buffer, still running from earlier testing, had simply
+-> resume cycle roughly every 4-5 seconds in the actual test log).
+Channel A's buffer, still running from earlier testing, had simply
 accumulated more backlog by the time it was opened -- explaining the
 apparent channel-to-channel difference without any real bitrate
 dependency. The same zero-margin `position` is also exactly why reopening
