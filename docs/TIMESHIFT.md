@@ -508,7 +508,8 @@ exposes a segment once it's fully closed (`segment_seconds`, 6s by
 default), so sitting right at the tail means there is *nothing* to read
 until the next segment closes -- confirmed by the stall period tracking
 `segment_seconds` almost exactly (a repeating "stream stalled" -> buffering
--> resume cycle roughly every 4-5 seconds in the actual test log). Channel A's buffer, still running from earlier testing, had simply
+-> resume cycle roughly every 4-5 seconds in the actual test log).
+Channel A's buffer, still running from earlier testing, had simply
 accumulated more backlog by the time it was opened -- explaining the
 apparent channel-to-channel difference without any real bitrate
 dependency. The same zero-margin `position` is also exactly why reopening
@@ -1261,7 +1262,8 @@ Root cause: this addon's own `CloseLiveTimeshiftStream()` handed the actual
 and returned immediately, so Kodi's own next call --
 `OpenLiveTimeshiftStream()` for Channel A, made essentially back to back
 with the Close() that just returned -- reached the plugin's `start_buffer`
-and tried to open a *4th* upstream connection to the provider while Channel C's connection (2 recordings + Channel C = the provider's real
+and tried to open a *4th* upstream connection to the provider while
+Channel C's connection (2 recordings + Channel C = the provider's real
 limit of 3) hadn't actually been torn down yet. The provider naturally
 refused it, `start_buffer` failed, and `OpenLiveTimeshiftStream()` had no
 retry budget for *that* kind of failure (its existing cold-start retry
