@@ -257,3 +257,36 @@ computation rather than trusting the stale manual value -- a log line
 of the form `setting recurring_rule_timezone=<zone> (known zone)`
 confirms the sync fired and the dropdown, not the manual number, is
 what's actually authoritative for a known zone.
+
+**Update (2026-09-09): broadened from 25 to ~50 known zones, and an
+unrelated dropdown regression fixed along the way.**
+Checked against Dispatcharr's real `GET /api/core/timezones/` (see
+`docs/API_NOTES.md`) confirmed the practical ceiling is still DST *rule*
+coverage, not the zone name list -- so this stayed within the same two
+hand-verified rule families (`kUsCanada`, `kEu`) plus confirmed no-DST
+zones, rather than claiming the full ~440-zone list is usable. Added:
+three more US zones (Detroit, Indiana/Indianapolis, Boise), one more
+Canadian no-DST zone (Regina/Saskatchewan), Mexico City (DST abolished
+nationally in 2022, now fixed offset), nine more `kEu`-family zones
+across Western/Central Europe, four more in Eastern Europe, and seven
+fixed-offset Asia/Africa zones with no DST at all. Still deliberately
+excludes Southern Hemisphere zones for the same reason as the original
+25 -- their DST runs the opposite calendar direction, and neither coded
+rule engine models that.
+
+While re-reading this exact table, found a real, unrelated regression:
+a dropdown entry in `kKnownTimeZones`/`settings.xml`/`strings.po` had
+been accidentally broken in three functional places, silently breaking
+DST auto-detection for that zone. Restored.
+Confirmed via code review that all three functional locations show the correct entry again, and via a restart that `recurring_rule_timezone` auto-detection works correctly for known zones generally.
+
+Also added `DispatcharrClient::GetSupportedTimezones()` (the same real
+endpoint), used only in the startup diagnostic when a zone is genuinely
+unrecognized and debug logging is on -- distinguishes "a real IANA
+zone, no DST rule for it yet" from "not a recognized zone at all" in
+the log line, rather than one generic "unrecognized" message for both.
+Confirmed live via a temporary forced-unknown test: correctly
+identified the real instance's actually-configured zone as present in Dispatcharr's real ~440-zone
+list even while its own DST-family lookup was artificially forced to
+fail, proving the endpoint call, auth, and the differentiation logic
+all work end-to-end.
