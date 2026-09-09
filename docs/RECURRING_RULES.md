@@ -181,8 +181,9 @@ wrong wall-clock time with no error surfaced anywhere.
 
 **Step one, surfacing the zone name.** Dispatcharr's configured system
 timezone is readable as a plain IANA zone name via
-`GET /api/core/settings/`'s `system_settings.time_zone` field (confirmed to be a plain IANA zone name) -- this was already true, just not read by this
-addon. Added `DispatcharrClient::GetSystemTimeZone()` (generalizing the
+`GET /api/core/settings/`'s `system_settings.time_zone` field (confirmed
+live against a real instance) -- this was already true, just not read
+by this addon. Added `DispatcharrClient::GetSystemTimeZone()` (generalizing the
 existing single-purpose `FindDvrSettingsRow()` into
 `FindCoreSettingsRow(key, ...)` so both the DVR-padding row and this new
 `system_settings` row share the same lookup) and a new read-only
@@ -223,8 +224,10 @@ exact same nth-weekday/last-weekday/UTC-conversion algorithm was
 reimplemented in Python (using its trusted stdlib `datetime`, not this
 addon's own logic, as the independent check) and run against published,
 verifiable US and EU DST transition dates for 2025-2027 -- every single
-computed date matched exactly. Also cross-checked live: computing
-that zone's offset for "right now" matched the real, already-known-correct value already configured on a live instance.
+computed date matched exactly. Also cross-checked live against a real
+instance's own configured zone: computing that zone's offset for
+"right now" matched the real, already-known-correct value already
+configured there.
 
 **A real correctness bug found and fixed before it ever shipped as
 final**: the first version of this computed the offset once at addon
@@ -247,9 +250,10 @@ polling loop, so there's no thread-safety reason to cache it the way
 `m_recordingRefreshMinutes` needs to for its own thread.
 
 Confirmed live end-to-end after the fix: deliberately set the manual
-offset to a wrong value (`0`) with `recurring_rule_timezone` still on its known zone, restarted, and confirmed via `kodi.log` it corrected
-back to reading through the zone-based computation rather than trusting
-the stale manual value -- the log line
-(`setting recurring_rule_timezone=<zone> (known zone)`) confirms
-the sync fired and the dropdown, not the manual number, is what's actually
-authoritative for a known zone.
+offset to a wrong value (`0`) with `recurring_rule_timezone` still on
+a real instance's own known zone, restarted, and confirmed via
+`kodi.log` it corrected back to reading through the zone-based
+computation rather than trusting the stale manual value -- a log line
+of the form `setting recurring_rule_timezone=<zone> (known zone)`
+confirms the sync fired and the dropdown, not the manual number, is
+what's actually authoritative for a known zone.
