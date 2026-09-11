@@ -286,7 +286,7 @@ unrecognized and debug logging is on -- distinguishes "a real IANA
 zone, no DST rule for it yet" from "not a recognized zone at all" in
 the log line, rather than one generic "unrecognized" message for both.
 Confirmed live via a temporary forced-unknown test: correctly
-identified the real instance's actually-configured zone as present in Dispatcharr's real ~440-zone
-list even while its own DST-family lookup was artificially forced to
-fail, proving the endpoint call, auth, and the differentiation logic
-all work end-to-end.
+identified the real instance's actually-configured zone as present in
+Dispatcharr's real ~440-zone list even while its own DST-family lookup
+was artificially forced to fail, proving the endpoint call, auth, and
+the differentiation logic all work end-to-end.

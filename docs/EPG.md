@@ -66,7 +66,8 @@ what TVHeadend's own `pvr.hts` shows for the same kind of source:
   both (an earlier pass only guarded `FirstAired`, leaving `Year` to leak
   the same placeholder through as a bare year instead).
 - `<sub-title>` → both `PlotOutline` (unchanged, existing behavior) and
-  the new `EpisodeName` (confirmed live: e.g. a round or match name for a sports broadcast).
+  the new `EpisodeName` (confirmed live: e.g. a round or match name for a
+  sports broadcast).
 
 **Not mapped, deliberately:** `<star-rating>` (confirmed absent -- 0
 occurrences -- across a live multi-megabyte, tens-of-thousands-of-programme fetch from
