@@ -55,6 +55,18 @@ platform.
   cite exactly how something was confirmed (a real endpoint response, a
   real device test) rather than just asserting behavior -- keep doing
   that instead of trusting Dispatcharr's own docs/schema at face value.
+- **Never let a real personal/network detail land in the repo, as of
+  2026-09-11.** Anything that becomes permanent here -- docs, code
+  comments, commit messages, PR bodies -- must stay free of real
+  channel/programme names (use this project's existing "Channel A"/
+  "Channel B" generic-label convention, already throughout
+  `docs/TIMESHIFT.md` and elsewhere), real hostnames/IP addresses, real
+  account usernames, or anything else identifying a specific person's or
+  specific deployment's real-world setup. The "Confirmed live" citations
+  bullet above still applies -- be specific about *mechanism* (a real
+  endpoint response, a real device test) without being specific about
+  *whose* deployment it was tested against. Genericizing before commit
+  is far cheaper than a history rewrite after the fact.
 - **When removing or changing code, a setting, or CI behavior, grep
   `docs/` (and `CHANGELOG.md`) for references to it before calling the
   change done.** `docs/*.md` cites specific function/setting names and
@@ -188,3 +200,8 @@ platform.
 ## License
 
 GPL-2.0-or-later.
+
+## Security
+
+Report vulnerabilities privately per [SECURITY.md](SECURITY.md), not in
+a public issue.
