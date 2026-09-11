@@ -1751,13 +1751,15 @@ its matched child recording instead of the epoch.
 per-episode original air date -- reported live (2026-09-10) as a
 recording showing an implausibly old date despite being a genuinely new,
 same-day episode, not a rerun.** Initially assumed to be legitimate data
-(the affected show is long-running, so an old air date isn't implausible on its
-face) until the user pointed out these specific recordings weren't
-reruns. Checked the raw Dispatcharr data for five upcoming instances of
-the same daily show, airing on five different calendar dates: all five
-carried the *identical* `custom_properties.program.original_air_date`, and none had any `season`/`episode`/`onscreen_episode`
-identifier at all -- unlike an actual episodic programme (an episodic programme),
-which has real, distinct per-episode identifiers. A single fixed date
+(the affected show is long-running, so an old air date isn't
+implausible on its face) until the user pointed out these specific
+recordings weren't reruns. Checked the raw Dispatcharr data for five
+upcoming instances of the same daily show, airing on five different
+calendar dates: all five carried the *identical*
+`custom_properties.program.original_air_date`, and none
+had any `season`/`episode`/`onscreen_episode` identifier at all --
+unlike an actual episodic programme with real, distinct per-episode
+identifiers. A single fixed date
 across every distinct airing of a still-running daily show is not a real
 fact about any of those specific episodes; it's almost certainly a
 series-level value (possibly from Dispatcharr's TVMaze poster/metadata
@@ -1784,7 +1786,7 @@ unreliable value for the exact same episode-less programmes -- Kodi's
 widget fell back to it once `FirstAired` was empty rather than showing
 nothing. Fixed by applying the identical `entry.seasonNumber > 0 ||
 entry.episodeNumber > 0` guard to `Year` too. Confirmed live: of the five
-"the affected show" broadcasts checked via `PVR.GetBroadcasts`,
+affected daily-show broadcasts checked via `PVR.GetBroadcasts`,
 four now return both `firstaired: ""` and `year: 0`; the fifth (already
 actively recording at deploy time) still returns the old cached
 placeholder date/year for both fields, from Kodi's own separate EPG cache
