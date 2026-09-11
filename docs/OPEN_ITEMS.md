@@ -4,7 +4,7 @@
 
 ## Ongoing (more will likely come up)
 
-- **Three real recordings/timers hot-path inefficiencies, found via a
+- [x] **Three real recordings/timers hot-path inefficiencies, found via a
   full-codebase Efficiency review (2026-09-10, not yet applied -- would
   need live-hardware verification this pass didn't have).**
   `RefreshInProgressRecordingManifest()` re-fetches the *entire*
@@ -77,7 +77,7 @@
   the `isInProgress`/`isUpcoming` time-window check, unrelated to this
   cache -- resolved within ~3s and confirmed as the correct, pre-existing
   behavior, not a regression from this change).
-- **Rename the project from `pvr.dispatcharrai` to `pvr.dispatcharr`
+- [x] **Rename the project from `pvr.dispatcharrai` to `pvr.dispatcharr`
   (requested 2026-09-09).** Mechanically straightforward in-repo: `git
   grep -il dispatcharrai` found 25 files at request time (27 by the time
   this was actually done, since more docs/tooling had landed by then),
@@ -323,6 +323,18 @@
   cutting the real tagged release (real `PKG_SHA256`, CoreELEC zip
   attached by hand per `docs/BUILDING.md`), and the deferred
   git-history purge.
+  **Update: fully closed out (2026-09-11).** That change (the rename)
+  squash-merged to `master`; `0.9.4` tagged and released with all three
+  addon platform zips, the CoreELEC zip (built and uploaded by hand per
+  `docs/BUILDING.md`), and both plugin zips, release notes pulled
+  verbatim from `CHANGELOG.md`. The deferred git-history purge also
+  ran, fully complete. Not
+  addon-rename-specific, but found and fixed in the same window: two
+  real security bugs from a full-codebase security review (a
+  `channel_uuid` path-traversal and a `client_ip` header-injection, both
+  in `timeshift_buffer`, see `docs/TIMESHIFT.md`) -- unrelated to the
+  rename itself, just concurrent work before this project's first wider
+  release to other testers.
 - [x] **Follow-up API survey: three more genuinely implementable findings,
   beyond the recording-management ones below (found 2026-09-08, all
   four resolved by 2026-09-09).** Diffed all ~196 of Dispatcharr's real API paths
