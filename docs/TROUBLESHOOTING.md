@@ -1,6 +1,6 @@
 # Troubleshooting & known limitations
 
-*(part of the pvr.dispatcharr notes -- see [API_NOTES.md](API_NOTES.md) for the index)*
+*(part of the pvr.dispatcharr-unofficial notes -- see [API_NOTES.md](API_NOTES.md) for the index)*
 
 ## Known Kodi-core quirks (confirmed not this addon's bug)
 
