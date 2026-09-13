@@ -161,3 +161,47 @@ TEST_CASE("ParseRecordingFields sets recurringRuleId only for a rule of type rec
   CHECK(ParseRecordingFields(otherType, 0).recurringRuleId == 0);
   CHECK(ParseRecordingFields(absent, 0).recurringRuleId == 0);
 }
+
+// ---------------------------------------------------------------------
+// ParseRecordingEdlEntryJson
+// ---------------------------------------------------------------------
+
+TEST_CASE("ParseRecordingEdlEntryJson maps start/end/type", "[RecordingParser]")
+{
+  json item = {{"start", 1000}, {"end", 5000}, {"type", 1}};
+
+  RecordingEdlEntry entry;
+  bool ok = ParseRecordingEdlEntryJson(item, entry);
+
+  REQUIRE(ok);
+  CHECK(entry.startMs == 1000);
+  CHECK(entry.endMs == 5000);
+  CHECK(entry.type == 1);
+}
+
+TEST_CASE("ParseRecordingEdlEntryJson defaults type to 3 (Kodi's PVR_EDL_TYPE_COMBREAK) when absent",
+          "[RecordingParser]")
+{
+  json item = {{"start", 1000}, {"end", 5000}};
+
+  RecordingEdlEntry entry;
+  ParseRecordingEdlEntryJson(item, entry);
+
+  CHECK(entry.type == 3);
+}
+
+TEST_CASE("ParseRecordingEdlEntryJson rejects an entry whose end isn't after its start", "[RecordingParser]")
+{
+  json equal = {{"start", 1000}, {"end", 1000}};
+  json reversed = {{"start", 5000}, {"end", 1000}};
+
+  RecordingEdlEntry entry;
+  CHECK_FALSE(ParseRecordingEdlEntryJson(equal, entry));
+  CHECK_FALSE(ParseRecordingEdlEntryJson(reversed, entry));
+}
+
+TEST_CASE("ParseRecordingEdlEntryJson defaults missing start/end to 0, which is then rejected", "[RecordingParser]")
+{
+  RecordingEdlEntry entry;
+  CHECK_FALSE(ParseRecordingEdlEntryJson(json::object(), entry));
+}

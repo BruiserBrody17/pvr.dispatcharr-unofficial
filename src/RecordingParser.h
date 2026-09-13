@@ -30,4 +30,11 @@ namespace dispatcharr
 // ../tests/test_recording_parser.cpp.
 Recording ParseRecordingFields(const nlohmann::json& item, time_t now);
 
+// Pure field-mapping core of DispatcharrClient::GetRecordingEdl()'s
+// per-entry loop -- maps a single recording_edl plugin entry onto a
+// RecordingEdlEntry. Returns false (leaving `out` unmodified) for a
+// malformed entry whose end isn't after its start, matching the
+// original loop's own silent-skip behavior for that case.
+bool ParseRecordingEdlEntryJson(const nlohmann::json& item, RecordingEdlEntry& out);
+
 } // namespace dispatcharr

@@ -1420,12 +1420,34 @@
     position" linear scan was identical, duplicated code in both
     `ReadInProgressRecordingStream()` and `ReadLiveTimeshiftStream()`;
     now one shared template. 6 new test cases, 123 total across the C++
-    suite now. The remaining 7 candidates (per-item JSON-to-struct
-    mapping loops for `Channel`/`ChannelGroup`/`TimerRule`/
-    `RecurringRule`/`RecordingEdlEntry`, a series-rule client-index hash,
-    live-manifest segment parsing, live-edge trim/rebase, live-edge seek
-    backoff, a recurring-rule renewal decision, and WebSocket frame
-    encoding) are tracked for follow-up passes.
+    suite now.
+    **Update (2026-09-13): second batch done -- the per-item
+    JSON-to-struct mapping loops and the series-rule client-index
+    hash.** New `src/ChannelParser.{h,cpp}` (`ParseChannelJson()`/
+    `ParseChannelGroupJson()`, used by `GetChannels()`/
+    `GetChannelGroups()`) and `src/TimerRuleParser.{h,cpp}`
+    (`ParseTimerRuleJson()`/`ParseRecurringRuleJson()`, used by
+    `GetTimerRules()`/`GetRecurringRules()`) follow the exact
+    `RecordingParser` pattern -- each preserves real documented fallback
+    chains (`channel_group` nested-object-or-bare-id, `tvgId`'s nested-
+    `epg_data`-then-effective-then-plain chain, `title`/`title_pattern`
+    for a series rule, `days_of_week`'s integer-only array filter).
+    `RecordingParser` itself also gained `ParseRecordingEdlEntryJson()`
+    (used by `GetRecordingEdl()`), since it's the same recording domain
+    as the rest of that file. Separately, `PVRDispatcharr::GetTimers()`'s
+    `std::hash`-based series-rule identity scheme moved into new
+    `src/TimerIdentity.h` (`ComputeSeriesRuleClientIndex()`, header-only)
+    -- deliberately not asserting an exact hash value in its tests (only
+    guaranteed stable within one running process, not across compilers/
+    platforms), instead testing the masking behavior itself (the
+    `0x40000000` flag bit always set, `0x80000000` never set) and that
+    different inputs produce different indices. 29 new test cases, 152
+    total across the C++ suite now. All confirmed as pure code motion
+    via `git diff` and a rebuild through the real Kodi binary-addons
+    harness. Remaining 5 candidates from the original 8 (live-manifest
+    segment parsing, live-edge trim/rebase, live-edge seek backoff, a
+    recurring-rule renewal decision, and WebSocket frame encoding) still
+    tracked for follow-up passes.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,

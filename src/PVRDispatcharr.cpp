@@ -3,6 +3,7 @@
 #include "EpgTagUtil.h"
 #include "RealtimeUpdateParser.h"
 #include "RecurringRuleUtil.h"
+#include "TimerIdentity.h"
 #include "WebSocketClient.h"
 
 #include <kodi/AddonBase.h>
@@ -1864,10 +1865,7 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
   std::vector<unsigned int> ruleClientIndex(rules.size());
   std::vector<const Recording*> earliestMatch(rules.size(), nullptr);
   for (std::size_t i = 0; i < rules.size(); ++i)
-  {
-    std::size_t h = std::hash<std::string>()(rules[i].title + '\x1f' + rules[i].tvgId);
-    ruleClientIndex[i] = (static_cast<unsigned int>(h) & 0x3FFFFFFFu) | 0x40000000;
-  }
+    ruleClientIndex[i] = ComputeSeriesRuleClientIndex(rules[i].title, rules[i].tvgId);
   // A series rule's own channel_id + title is enough to identify which of
   // its upcoming Recordings this is -- Dispatcharr's own rule identity
   // (title+tvg_id+epg_source_id) already guarantees at most one rule per

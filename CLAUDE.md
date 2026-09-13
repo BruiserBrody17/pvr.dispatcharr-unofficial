@@ -48,7 +48,8 @@ one can only be configured through Kodi's own build harness -- see
 `tests/CMakeLists.txt`'s own comment): `XmlTvParser`, `TimeUtil`,
 `TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
 `JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil`,
-`RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser`, `SegmentLookup` -- the six before `RecurringRuleUtil` pulled out
+`RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser`, `SegmentLookup`,
+`ChannelParser`, `TimerRuleParser`, `TimerIdentity` -- the six before `RecurringRuleUtil` pulled out
 of `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
 string formats, curl-based URL escaping, the null-safe JSON field
@@ -113,6 +114,22 @@ template (duck-typed on a `byteOffset`/`byteSize` member pair, matching
 finds which known segment, if any, contains a given byte position in
 that stream's own cumulative address space. Was identical, duplicated
 logic in both functions before this extraction.
+`ChannelParser` (`ParseChannelJson()`/`ParseChannelGroupJson()`) and
+`TimerRuleParser` (`ParseTimerRuleJson()`/`ParseRecurringRuleJson()`)
+are the same per-item field-mapping-core pattern as `RecordingParser`,
+applied to `DispatcharrClient::GetChannels()`/`GetChannelGroups()`/
+`GetTimerRules()`/`GetRecurringRules()`'s own per-item loops --
+`ParseChannelJson()` in particular preserves real documented fallback
+chains (`channel_group` as a nested object or a bare id, `tvgId` from a
+nested `epg_data` object or the channel's own effective/plain field).
+`RecordingParser` also gained `ParseRecordingEdlEntryJson()` the same
+way, covering `GetRecordingEdl()`'s per-entry mapping and its
+end-after-start validity filter.
+`TimerIdentity` is `ComputeSeriesRuleClientIndex()`, the hash-based
+`(title, tvgId)` identity scheme `PVRDispatcharr::GetTimers()` uses to
+give a series rule -- which has no real numeric id in Dispatcharr's own
+API -- a stable Kodi `ClientIndex`, masked into the lower 30 bits so the
+high "series rule" flag bit is never disturbed.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance
