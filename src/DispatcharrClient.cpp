@@ -1,6 +1,7 @@
 #include "DispatcharrClient.h"
 
 #include "CatchUpUtil.h"
+#include "ChannelParser.h"
 #include "CurlCallbacks.h"
 #include "DateTimeFormat.h"
 #include "JsonFieldUtil.h"
@@ -9,6 +10,7 @@
 #include "RecordingParser.h"
 #include "SegmentLookup.h"
 #include "TimeUtil.h"
+#include "TimerRuleParser.h"
 #include "TimeZoneUtil.h"
 #include "UrlEncode.h"
 
@@ -416,49 +418,12 @@ bool DispatcharrClient::GetChannels(std::vector<Channel>& out, std::string& erro
     return false;
   }
 
+  // The field-mapping logic itself lives in dispatcharr::ParseChannelJson()
+  // (ChannelParser.{h,cpp}) so it's unit-testable standalone -- see that
+  // function's own comment.
   out.clear();
   for (const auto& item : list)
-  {
-    Channel ch;
-    ch.id = FieldOr(item, "id", 0);
-    ch.uuid = FieldOr<std::string>(item, "uuid", "");
-    ch.name = FieldOr<std::string>(item, "name", "");
-    ch.channelNumber = FieldOr(item, "channel_number", FieldOr(item, "channel_num", 0));
-    // Channels only carry a logo_id (an FK to a separate Logo object);
-    // there's no logo_url field directly on the channel (that belongs to
-    // the underlying Stream model). Resolve the actual image via
-    // GetChannelLogoUrl(logoId), not a direct URL field. logo_id is
-    // explicitly null (not absent) for channels with no logo.
-    ch.logoId = FieldOr(item, "logo_id", -1);
-    // Channel group may be a nested object or a bare id depending on the
-    // serializer; handle both.
-    if (item.contains("channel_group") && item["channel_group"].is_object())
-    {
-      ch.groupId = FieldOr(item["channel_group"], "id", -1);
-      ch.groupName = FieldOr<std::string>(item["channel_group"], "name", "");
-    }
-    else
-    {
-      ch.groupId = FieldOr(item, "channel_group", FieldOr(item, "channel_group_id", -1));
-    }
-    // EPG linkage: try a nested epg_data object first, then the channel's
-    // own effective (override-aware) field, then its plain one -- the live
-    // channels list carries no nested epg_data object at all, only the
-    // flat/effective fields, but keep the nested-object branch in case a
-    // future Dispatcharr revision adds one back.
-    if (item.contains("epg_data") && item["epg_data"].is_object())
-      ch.tvgId = FieldOr<std::string>(item["epg_data"], "tvg_id", "");
-    else
-      ch.tvgId = FieldOr<std::string>(item, "effective_tvg_id", FieldOr<std::string>(item, "tvg_id", ""));
-    // effective_epg_data_id can point at a *different* EPG source's row
-    // than tvgId above resolves to -- see ResolveSeriesRuleTvgId().
-    ch.epgDataId = FieldOr(item, "effective_epg_data_id", FieldOr(item, "epg_data_id", 0));
-
-    ch.catchupEnabled = FieldOr(item, "is_catchup", false);
-    ch.catchupDays = FieldOr(item, "catchup_days", 0);
-
-    out.push_back(std::move(ch));
-  }
+    out.push_back(ParseChannelJson(item));
   return true;
 }
 
@@ -490,12 +455,7 @@ bool DispatcharrClient::GetChannelGroups(std::vector<ChannelGroup>& out, std::st
 
   out.clear();
   for (const auto& item : list)
-  {
-    ChannelGroup g;
-    g.id = FieldOr(item, "id", 0);
-    g.name = FieldOr<std::string>(item, "name", "");
-    out.push_back(std::move(g));
-  }
+    out.push_back(ParseChannelGroupJson(item));
   return true;
 }
 
@@ -954,16 +914,16 @@ bool DispatcharrClient::GetRecordingEdl(int recordingId, std::vector<RecordingEd
   if (!UnwrapPluginRunResult(response, "recording_edl", result, error))
     return false;
 
+  // The field-mapping/validity-filter logic itself lives in
+  // dispatcharr::ParseRecordingEdlEntryJson() (RecordingParser.{h,cpp}) so
+  // it's unit-testable standalone -- see that function's own comment.
   const json& entries = result.contains("entries") ? result["entries"] : json();
   if (entries.is_array())
   {
     for (const auto& item : entries)
     {
       RecordingEdlEntry entry;
-      entry.startMs = FieldOr<int64_t>(item, "start", 0);
-      entry.endMs = FieldOr<int64_t>(item, "end", 0);
-      entry.type = FieldOr(item, "type", 3);
-      if (entry.endMs > entry.startMs)
+      if (ParseRecordingEdlEntryJson(item, entry))
         out.push_back(entry);
     }
   }
@@ -1051,24 +1011,12 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
     return false;
   }
 
+  // The field-mapping logic itself lives in dispatcharr::ParseTimerRuleJson()
+  // (TimerRuleParser.{h,cpp}) so it's unit-testable standalone -- see that
+  // function's own comment.
   out.clear();
   for (const auto& item : list)
-  {
-    TimerRule t;
-    // Exact per-rule field names aren't confirmed (the account available
-    // while developing this lacked permission to create a series rule to
-    // inspect one) -- "title"/"channel_id" match the confirmed
-    // SeriesRuleRequest create payload, kept alongside the older assumed
-    // names as fallbacks in case the list response shape differs.
-    t.id = FieldOr(item, "id", 0);
-    t.channelId = FieldOr(item, "channel_id", FieldOr(item, "channel", 0));
-    t.tvgId = FieldOr<std::string>(item, "tvg_id", "");
-    t.title = FieldOr(item, "title", FieldOr<std::string>(item, "title_pattern", ""));
-    t.titlePattern = FieldOr<std::string>(item, "title_pattern", t.title);
-    t.isSeries = true;
-    t.recordNewOnly = FieldOr<std::string>(item, "mode", "all") == "new";
-    out.push_back(std::move(t));
-  }
+    out.push_back(ParseTimerRuleJson(item));
   return true;
 }
 
@@ -1212,29 +1160,12 @@ bool DispatcharrClient::GetRecurringRules(std::vector<RecurringRule>& out, std::
     return false;
   }
 
+  // The field-mapping logic itself lives in dispatcharr::ParseRecurringRuleJson()
+  // (TimerRuleParser.{h,cpp}) so it's unit-testable standalone -- see that
+  // function's own comment.
   out.clear();
   for (const auto& item : list)
-  {
-    RecurringRule rule;
-    rule.id = FieldOr(item, "id", 0);
-    rule.channelId = FieldOr(item, "channel", 0);
-    rule.name = FieldOr<std::string>(item, "name", "");
-    rule.enabled = FieldOr(item, "enabled", true);
-    rule.startTimeOfDaySeconds = SecondsSinceMidnightFromString(FieldOr<std::string>(item, "start_time", ""));
-    rule.endTimeOfDaySeconds = SecondsSinceMidnightFromString(FieldOr<std::string>(item, "end_time", ""));
-    rule.startDate = TimeFromDateString(FieldOr<std::string>(item, "start_date", ""));
-    rule.endDate = TimeFromDateString(FieldOr<std::string>(item, "end_date", ""));
-    const json& days = item.contains("days_of_week") ? item["days_of_week"] : json();
-    if (days.is_array())
-    {
-      for (const auto& d : days)
-      {
-        if (d.is_number_integer())
-          rule.daysOfWeek.push_back(d.get<int>());
-      }
-    }
-    out.push_back(std::move(rule));
-  }
+    out.push_back(ParseRecurringRuleJson(item));
   return true;
 }
 

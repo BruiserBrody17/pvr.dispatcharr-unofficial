@@ -78,4 +78,16 @@ Recording ParseRecordingFields(const nlohmann::json& item, time_t now)
   return r;
 }
 
+bool ParseRecordingEdlEntryJson(const nlohmann::json& item, RecordingEdlEntry& out)
+{
+  RecordingEdlEntry entry;
+  entry.startMs = FieldOr<int64_t>(item, "start", 0);
+  entry.endMs = FieldOr<int64_t>(item, "end", 0);
+  entry.type = FieldOr(item, "type", 3);
+  if (entry.endMs <= entry.startMs)
+    return false;
+  out = entry;
+  return true;
+}
+
 } // namespace dispatcharr
