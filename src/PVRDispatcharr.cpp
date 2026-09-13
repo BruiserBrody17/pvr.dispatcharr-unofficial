@@ -1,9 +1,12 @@
 #include "PVRDispatcharr.h"
 
+#include "ChannelGroupFilter.h"
 #include "EpgTagUtil.h"
 #include "RealtimeUpdateParser.h"
 #include "RecurringRuleRenewal.h"
 #include "RecurringRuleUtil.h"
+#include "RecurringRuleWeekdays.h"
+#include "SeriesRuleMatching.h"
 #include "TimerIdentity.h"
 #include "WebSocketClient.h"
 
@@ -17,7 +20,6 @@
 #include <ctime>
 #include <functional>
 #include <thread>
-#include <unordered_set>
 
 using namespace dispatcharr;
 
@@ -734,20 +736,10 @@ bool PVRDispatcharr::EnsureChannelsLoaded()
   if (!m_client.GetChannelGroups(groups, groupsError))
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to load channel groups: %s", groupsError.c_str());
 
-  // Dispatcharr's /api/channels/groups/ returns every group that has ever
-  // existed, regardless of whether it's currently enabled for any M3U
-  // account -- "enabled" isn't even a property of the group itself, it's
-  // per (group, account) pair, so there's no simple flag to check here.
-  // Disabled groups' channels are already correctly excluded from the
-  // channel list Dispatcharr just gave us, so drop any group with no
-  // member channels left in it rather than trying to reconstruct
-  // Dispatcharr's own enable/disable logic.
-  std::unordered_set<int> groupIdsWithChannels;
-  for (const auto& ch : channels)
-    groupIdsWithChannels.insert(ch.groupId);
-  groups.erase(std::remove_if(groups.begin(), groups.end(), [&](const ChannelGroup& g)
-                              { return groupIdsWithChannels.find(g.id) == groupIdsWithChannels.end(); }),
-               groups.end());
+  // The filtering itself lives in dispatcharr::FilterChannelGroupsWithChannels()
+  // (ChannelGroupFilter.h) so it's unit-testable standalone -- see that
+  // function's own comment.
+  groups = FilterChannelGroupsWithChannels(std::move(groups), channels);
 
   std::lock_guard<std::mutex> lock(m_dataMutex);
   m_channels = std::move(channels);
@@ -1829,40 +1821,22 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
   // 0 and can't be used for a ClientIndex -- every series rule would
   // collide on the same one. Hash the (title, tvgId) pair instead, the
   // same identity DeleteSeriesRule() uses, masked into the lower 30 bits
-  // so the series-rule flag bit above it is never disturbed. Computed once
-  // per rule up front (rather than inline in the rules loop below) so the
-  // recordings loop can also use it, to link a matching recording back to
-  // its parent rule.
+  // so the series-rule flag bit above it is never disturbed.
   //
-  // earliestMatch tracks, per rule, the earliest upcoming/in-progress
-  // Recording found to belong to it (matched by channel + title below) --
-  // a series rule has no fixed time of its own (it's an EPG-title match,
-  // not a schedule), so without this its own row had nothing real to show
-  // and defaulted to PVR_TIMER's zero-initialized StartTime/EndTime
-  // (Kodi renders that as the Unix epoch, reported live as a "12/31/1969"
-  // display bug). Mirrors how a recurring rule's own row already gets a
-  // real time window from its own fields, and how its children already
-  // link back to it via recurringRuleId/SetParentClientIndex() below.
+  // The matching itself -- which recording belongs to which series rule,
+  // and each rule's own earliest upcoming/in-progress match -- lives in
+  // dispatcharr::MatchRecordingsToSeriesRules() (SeriesRuleMatching.{h,cpp})
+  // so it's unit-testable standalone; see that function's own comment
+  // for why a series rule needs this at all (a real "12/31/1969" display
+  // bug, not a cosmetic nitpick).
   std::vector<unsigned int> ruleClientIndex(rules.size());
-  std::vector<const Recording*> earliestMatch(rules.size(), nullptr);
   for (std::size_t i = 0; i < rules.size(); ++i)
     ruleClientIndex[i] = ComputeSeriesRuleClientIndex(rules[i].title, rules[i].tvgId);
-  // A series rule's own channel_id + title is enough to identify which of
-  // its upcoming Recordings this is -- Dispatcharr's own rule identity
-  // (title+tvg_id+epg_source_id) already guarantees at most one rule per
-  // channel can share a title, so there's no realistic ambiguity here.
-  auto findRuleIndex = [&rules](const Recording& rec) -> int
-  {
-    for (std::size_t i = 0; i < rules.size(); ++i)
-    {
-      if (rules[i].channelId == rec.channelId && rules[i].title == rec.title)
-        return static_cast<int>(i);
-    }
-    return -1;
-  };
+  SeriesRuleMatchResult matches = MatchRecordingsToSeriesRules(recordings, rules);
 
-  for (const auto& rec : recordings)
+  for (std::size_t recIdx = 0; recIdx < recordings.size(); ++recIdx)
   {
+    const Recording& rec = recordings[recIdx];
     // Completed recordings are surfaced via GetRecordings(), not as timers.
     if (!rec.isInProgress && !rec.isUpcoming)
       continue;
@@ -1886,14 +1860,9 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
     }
     else
     {
-      int ruleIdx = findRuleIndex(rec);
+      int ruleIdx = matches.recordingRuleIndex[recIdx];
       if (ruleIdx >= 0)
-      {
-        timer.SetParentClientIndex(ruleClientIndex[ruleIdx]);
-        const Recording*& earliest = earliestMatch[ruleIdx];
-        if (!earliest || rec.startTime < earliest->startTime)
-          earliest = &rec;
-      }
+        timer.SetParentClientIndex(ruleClientIndex[static_cast<std::size_t>(ruleIdx)]);
     }
     results.Add(timer);
   }
@@ -1908,10 +1877,12 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
     timer.SetClientChannelUid(rule.channelId);
     timer.SetState(PVR_TIMER_STATE_SCHEDULED);
     timer.SetPreventDuplicateEpisodes(rule.recordNewOnly ? 1 : 0);
-    if (earliestMatch[i])
+    int earliestIdx = matches.ruleEarliestRecordingIndex[i];
+    if (earliestIdx >= 0)
     {
-      timer.SetStartTime(earliestMatch[i]->startTime);
-      timer.SetEndTime(earliestMatch[i]->endTime);
+      const Recording& earliest = recordings[static_cast<std::size_t>(earliestIdx)];
+      timer.SetStartTime(earliest.startTime);
+      timer.SetEndTime(earliest.endTime);
     }
     results.Add(timer);
   }
@@ -1930,16 +1901,13 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
       timer.SetTimerType(kTimerTypeRecurring);
       timer.SetTitle(rule.name.empty() ? ("Recurring recording " + std::to_string(rule.id)) : rule.name);
       timer.SetClientChannelUid(rule.channelId);
-      // Dispatcharr's days_of_week (0=Monday..6=Sunday) already matches
-      // Kodi's own PVR_WEEKDAY_MONDAY=(1<<0)..SUNDAY=(1<<6) bit order --
-      // see RecurringRule's own comment.
-      unsigned int weekdays = PVR_WEEKDAY_NONE;
-      for (int day : rule.daysOfWeek)
-      {
-        if (day >= 0 && day <= 6)
-          weekdays |= (1u << day);
-      }
-      timer.SetWeekdays(weekdays);
+      // The bitmask conversion itself lives in
+      // dispatcharr::ComputeRecurringRuleWeekdaysBitmask()
+      // (RecurringRuleWeekdays.h) so it's unit-testable standalone -- see
+      // that function's own comment and RecurringRule's own comment for
+      // why Dispatcharr's days_of_week needs no reordering to become a
+      // Kodi PVR_WEEKDAY bitmask.
+      timer.SetWeekdays(ComputeRecurringRuleWeekdaysBitmask(rule.daysOfWeek));
       timer.SetFirstDay(rule.startDate);
       // rule.start/endTimeOfDaySeconds are Dispatcharr-local (its own
       // configured system timezone, not UTC) -- shift back to UTC before

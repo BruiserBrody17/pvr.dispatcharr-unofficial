@@ -75,6 +75,9 @@ add_executable(pvr_dispatcharr_tests
   test_live_edge_margin.cpp
   test_recurring_rule_renewal.cpp
   test_web_socket_frame.cpp
+  test_series_rule_matching.cpp
+  test_recurring_rule_weekdays.cpp
+  test_channel_group_filter.cpp
   ${DISPATCHARR_SRC_DIR}/XmlTvParser.cpp
   ${DISPATCHARR_SRC_DIR}/TimeZoneUtil.cpp
   ${DISPATCHARR_SRC_DIR}/EpgTagUtil.cpp
@@ -92,6 +95,7 @@ add_executable(pvr_dispatcharr_tests
   ${DISPATCHARR_SRC_DIR}/LiveManifestParser.cpp
   ${DISPATCHARR_SRC_DIR}/RecurringRuleRenewal.cpp
   ${DISPATCHARR_SRC_DIR}/WebSocketFrame.cpp
+  ${DISPATCHARR_SRC_DIR}/SeriesRuleMatching.cpp
 )
 target_include_directories(pvr_dispatcharr_tests PRIVATE ${DISPATCHARR_SRC_DIR} ${CURL_INCLUDE_DIRS})
 if(TARGET CURL::libcurl)

@@ -52,7 +52,8 @@ one can only be configured through Kodi's own build harness -- see
 `PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser`,
 `SegmentLookup`, `ChannelParser`, `TimerRuleParser`, `TimerIdentity`,
 `LiveManifestParser`, `LiveEdgeMargin`, `RecurringRuleRenewal`,
-`WebSocketFrame`. `StringUtil` through `CatchUpUtil` in that list were
+`WebSocketFrame`, `SeriesRuleMatching`, `RecurringRuleWeekdays`,
+`ChannelGroupFilter`. `StringUtil` through `CatchUpUtil` in that list were
 pulled out of `WebSocketClient.cpp`/`DispatcharrClient.cpp`
 specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
@@ -182,6 +183,23 @@ mask key as an explicit parameter rather than generating it internally
 (a real caller always does, via `RandomBytes()`, per the spec's own
 masking requirement), so the exact byte output is testable against a
 known key.
+`SeriesRuleMatching` is `MatchRecordingsToSeriesRules()`, the matching
+core of `PVRDispatcharr::GetTimers()` -- which recording belongs to
+which series rule (by `channelId`+`title`, the same identity
+`DeleteSeriesRule()` uses), and each rule's own earliest upcoming/
+in-progress match. Exists because a series rule has no fixed time of
+its own; without this it displayed as the Unix epoch ("12/31/1969") in
+Kodi -- a real confirmed-live display bug, not a cosmetic nitpick.
+`RecurringRuleWeekdays` is `ComputeRecurringRuleWeekdaysBitmask()`,
+converting Dispatcharr's `days_of_week` list into a Kodi `PVR_WEEKDAY`
+bitmask -- confirmed against Kodi's real header that the two share the
+same 0=Monday..6=Sunday bit order, so no reordering is needed, just a
+plain `1 << day`.
+`ChannelGroupFilter` is `FilterChannelGroupsWithChannels()`, dropping a
+channel group with no member channels left in the just-fetched channel
+list -- Dispatcharr's `/api/channels/groups/` returns every group that
+has ever existed, including ones no longer enabled for any M3U account,
+and "enabled" isn't itself a property of the group to check directly.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance

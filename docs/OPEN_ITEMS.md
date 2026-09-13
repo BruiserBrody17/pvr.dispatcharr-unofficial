@@ -1675,3 +1675,36 @@
   ruff-formatted or linted in CI at all. 156 total across the Python
   suite now (41 `recording_edl` + 86 `timeshift_buffer` + 29
   `check_doc_refs`).
+  **Update (2026-09-13): one more pass over `PVRDispatcharr.cpp` after
+  the Python side was declared done, prompted directly by "is there
+  anywhere else the tests make sense?" -- found 3 more real candidates
+  the original exhaustive read had scanned past.** New
+  `src/SeriesRuleMatching.{h,cpp}` (`MatchRecordingsToSeriesRules()`)
+  pulls the matching core out of `GetTimers()`: which recording belongs
+  to which series rule (by `channelId`+`title`, the same identity
+  `DeleteSeriesRule()` uses), and each rule's own earliest upcoming/
+  in-progress match -- a series rule has no fixed time of its own, so
+  without this its own row displayed as the Unix epoch ("12/31/1969")
+  in Kodi, a real confirmed-live display bug this item's earlier
+  updates never got around to testing directly. New header-only
+  `src/RecurringRuleWeekdays.h` (`ComputeRecurringRuleWeekdaysBitmask()`)
+  covers the small days-of-week-to-`PVR_WEEKDAY`-bitmask conversion from
+  the same function, re-confirmed against Kodi's real header
+  (`PVR_WEEKDAY_NONE = 0`, `PVR_WEEKDAY_MONDAY = (1 << 0)`) that no bit
+  reordering is needed. New header-only `src/ChannelGroupFilter.h`
+  (`FilterChannelGroupsWithChannels()`) covers `EnsureChannelsLoaded()`'s
+  own "drop a channel group with no member channels left" filter --
+  Dispatcharr's `/api/channels/groups/` returns every group that's ever
+  existed, including ones no longer enabled for any M3U account, and
+  "enabled" isn't a property of the group itself to check directly. All
+  three types involved (`Recording`/`TimerRule`/`Channel`/`ChannelGroup`)
+  were already confirmed Kodi-independent plain structs from earlier
+  extractions, so none of this needed new type design. 21 new test
+  cases, 204 total across the C++ suite now. Confirmed pure code motion
+  via `git diff` and a rebuild through the real Kodi binary-addons
+  harness, log body read directly. A further re-read of `addon.cpp` (the
+  one C++ file never previously read in full) and every header for
+  stray `inline`/`constexpr` logic found nothing else -- `addon.cpp` is
+  pure Kodi-instance-lifecycle glue with no real business logic to
+  extract, and no header defines an inline function outside the small,
+  already-tested utility headers this item already tracks.
