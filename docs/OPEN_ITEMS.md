@@ -1741,3 +1741,26 @@
   calls -- deliberately not extracted on their own, per this project's
   own against-premature-abstraction convention (see `CLAUDE.md`'s
   "Conventions" section).
+  **Update (2026-09-13): one more independent audit pass (a fresh,
+  from-scratch read rather than continuing the one above) found two
+  more real gaps, both closed the same day.** New
+  `src/WebSocketHandshake.h` (`IsWebSocketHandshakeAccepted()`) pulls
+  `WebSocketClient::Connect()`'s own handshake-acceptance check out of
+  that curl-driven function -- the "101" status-line plus
+  "Upgrade: websocket" response-header predicate that decides whether
+  Dispatcharr actually accepted the WebSocket upgrade request. This is
+  the real path a user hits on a WS auth failure, previously untested
+  despite living right next to `WebSocketFrame`'s already-tested
+  encode/decode siblings in the same file. 8 new test cases, 223 total
+  across the C++ suite now. On the Python side,
+  `timeshift_buffer`'s `_remove_channel_files()` -- real
+  `shutil.rmtree` cleanup plus its invalid-`channel_uuid` guard, zero
+  Redis/Django dependency -- had every existing caller `monkeypatch` it
+  away rather than exercise it directly; 4 new tests now cover it
+  directly against a real `tmp_path` (normal removal, an already-gone
+  directory being a no-op, the invalid-uuid refusal never touching
+  disk, and a genuine `OSError` from `shutil.rmtree` being logged
+  rather than raised). 160 total across the Python suite now. Both
+  confirmed via a rebuild through the real Kodi binary-addons harness
+  (log body read directly, not just the wrapper's own exit code) and a
+  full `pytest`/`ruff` pass. No further gaps found in this pass.

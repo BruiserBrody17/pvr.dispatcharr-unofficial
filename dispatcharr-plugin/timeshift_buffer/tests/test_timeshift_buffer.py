@@ -104,6 +104,59 @@ def test_channel_dir_rejects_non_uuid_string():
 
 
 # ---------------------------------------------------------------------
+# _remove_channel_files
+# ---------------------------------------------------------------------
+
+
+def test_remove_channel_files_removes_an_existing_directory(tmp_path):
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    (channel_dir / "seg_00000.ts").write_bytes(b"data")
+    logger = _FakeLogger()
+
+    timeshift_buffer_plugin._remove_channel_files({"storage_path": str(tmp_path), "channel_uuid": _UUID}, logger)
+
+    assert not channel_dir.exists()
+
+
+def test_remove_channel_files_is_a_noop_when_the_directory_is_already_gone(tmp_path):
+    """_teardown_buffer calls this unconditionally -- a buffer that was
+    never started, or whose files were already cleaned up, must not raise."""
+    logger = _FakeLogger()
+
+    timeshift_buffer_plugin._remove_channel_files({"storage_path": str(tmp_path), "channel_uuid": _UUID}, logger)
+
+    assert not any(level == "exception" for level, _msg in logger.calls)
+
+
+def test_remove_channel_files_refuses_an_invalid_channel_uuid_without_touching_disk(tmp_path):
+    """A corrupted/pre-fix Redis entry: nothing safe to remove, so this
+    must log and return rather than ever calling shutil.rmtree with a
+    path built from the bad value."""
+    logger = _FakeLogger()
+
+    timeshift_buffer_plugin._remove_channel_files({"storage_path": str(tmp_path), "channel_uuid": "../../etc"}, logger)
+
+    assert any(level == "error" for level, _msg in logger.calls)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_remove_channel_files_logs_but_does_not_raise_on_other_os_errors(tmp_path, monkeypatch):
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    logger = _FakeLogger()
+
+    def _raise(_path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(timeshift_buffer_plugin.shutil, "rmtree", _raise)
+
+    timeshift_buffer_plugin._remove_channel_files({"storage_path": str(tmp_path), "channel_uuid": _UUID}, logger)
+
+    assert any(level == "exception" for level, _msg in logger.calls)
+
+
+# ---------------------------------------------------------------------
 # _resolve_request_path
 # ---------------------------------------------------------------------
 

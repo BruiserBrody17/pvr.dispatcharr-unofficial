@@ -78,6 +78,7 @@ add_executable(pvr_dispatcharr_tests
   test_series_rule_matching.cpp
   test_recurring_rule_weekdays.cpp
   test_channel_group_filter.cpp
+  test_web_socket_handshake.cpp
   ${DISPATCHARR_SRC_DIR}/XmlTvParser.cpp
   ${DISPATCHARR_SRC_DIR}/TimeZoneUtil.cpp
   ${DISPATCHARR_SRC_DIR}/EpgTagUtil.cpp
