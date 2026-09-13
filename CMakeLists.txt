@@ -59,6 +59,11 @@ set(DISPATCHARR_SOURCES
     src/DispatcharrClient.cpp
     src/XmlTvParser.cpp
     src/WebSocketClient.cpp
+    src/TimeZoneUtil.cpp
+    src/EpgTagUtil.cpp
+    src/StringUtil.cpp
+    src/DateTimeFormat.cpp
+    src/UrlEncode.cpp
 )
 
 set(DISPATCHARR_HEADERS
@@ -67,6 +72,12 @@ set(DISPATCHARR_HEADERS
     src/XmlTvParser.h
     src/WebSocketClient.h
     src/TimeUtil.h
+    src/TimeZoneUtil.h
+    src/EpgTagUtil.h
+    src/StringUtil.h
+    src/DateTimeFormat.h
+    src/UrlEncode.h
+    src/JsonFieldUtil.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}
