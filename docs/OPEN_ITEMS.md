@@ -1346,6 +1346,44 @@
     the new free function first. Pure code motion otherwise, confirmed
     via `git diff` and a rebuild through the real Kodi binary-addons
     harness. 12 new test cases, 96 total across the C++ suite now.
+    **Update (2026-09-13): two more, both found by re-surveying
+    `DispatcharrClient.cpp`/`PVRDispatcharr.cpp` a further time rather
+    than trusting the prior "nothing else identified" pass.**
+    `DispatcharrClient::UnwrapPluginRunResult()` (shared by every
+    companion-plugin `run/` caller: `CallTimeshiftPluginAction()`,
+    `StopTimeshiftBuffer()`, `GetRecordingEdl()`, `RefreshLiveManifest()`
+    -- 4 call sites) already had zero member-state dependency at all, so
+    unlike every extraction above it moved out into new
+    `src/PluginRunResult.{h,cpp}` *entirely*, with the private class
+    declaration removed rather than kept as a delegating wrapper --
+    confirmed every call site still resolves correctly unqualified,
+    since `DispatcharrClient.cpp`'s own `namespace dispatcharr { ... }`
+    wrapper makes normal namespace-scope lookup find the free function
+    once the member overload is gone. Checks the outer
+    `{"success", "error"}` envelope every plugin `run/` response is
+    wrapped in, then the plugin's own inner `{"status", "message"}`
+    result -- a real two-layer response shape, not a hypothetical one.
+    6 new test cases, including one that caught this session's own test
+    mistake, not a code bug: an assumption that an absent `"result"` key
+    left `resultOut` as an empty JSON *object* rather than JSON `null`
+    (`json()`'s actual default-construction value, unchanged pre-existing
+    behavior) -- caught by the test itself failing, fixed in the test,
+    not the extracted code.
+    `PVRDispatcharr::HandleRealtimeUpdateMessage()`'s wire-shape/
+    relevant-event-type classification also moved out, into new
+    `src/RealtimeUpdateParser.{h,cpp}` (`ParseRelevantRealtimeUpdateEventType()`)
+    -- confirmed against Dispatcharr's own `consumers.py`/`utils.py`
+    (the `{"type": "update", "data": {"type": "<event>", ...}}` wire
+    shape) and `apps/channels/tasks.py`/`api_views.py` (which event
+    names on that shared "updates" channel are actually recording/timer-
+    relevant, versus EPG matching progress/M3U refresh/stream stats,
+    which must be silently ignored rather than erroring). Kept as a
+    delegating wrapper this time (`HandleRealtimeUpdateMessage()` still
+    does the `m_debugLogging`-gated `kodi::Log()` call and the two
+    `InvalidateAndTrigger*Update()` member calls afterward). 5 new test
+    cases, 107 total across the C++ suite now. Both extractions
+    confirmed as pure code motion via `git diff` and a rebuild through
+    the real Kodi binary-addons harness.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,

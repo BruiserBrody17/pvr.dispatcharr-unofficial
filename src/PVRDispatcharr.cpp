@@ -1,6 +1,7 @@
 #include "PVRDispatcharr.h"
 
 #include "EpgTagUtil.h"
+#include "RealtimeUpdateParser.h"
 #include "RecurringRuleUtil.h"
 #include "WebSocketClient.h"
 
@@ -545,39 +546,17 @@ void PVRDispatcharr::StartChannelEpgRefreshThread()
 
 void PVRDispatcharr::HandleRealtimeUpdateMessage(const std::string& message)
 {
-  // Wire shape, confirmed by reading Dispatcharr's own consumers.py/utils.py:
-  // send_websocket_update('updates', 'update', {..., "type": "<event>", ...})
-  // is delivered to this socket as {"type": "update", "data": {..., "type":
-  // "<event>", ...}}. Only react to the recording/timer-relevant event
-  // names Dispatcharr actually sends (confirmed in apps/channels/tasks.py
-  // and api_views.py) -- everything else on this shared "updates" channel
-  // (EPG matching progress, M3U refresh, stream stats, ...) is irrelevant
-  // here and should be silently ignored, not treated as an error.
-  static const std::unordered_set<std::string> kRelevantEventTypes = {
-      "recording_started", "recording_ended",     "recording_stopped",   "recording_extended",
-      "recording_updated", "recording_cancelled", "recordings_refreshed"};
-  try
-  {
-    nlohmann::json parsed = nlohmann::json::parse(message);
-    if (!parsed.contains("data") || !parsed["data"].is_object())
-      return;
-    const nlohmann::json& data = parsed["data"];
-    if (!data.contains("type") || !data["type"].is_string())
-      return;
-    std::string eventType = data["type"].get<std::string>();
-    if (kRelevantEventTypes.count(eventType) == 0)
-      return;
+  // The wire-shape/relevant-event-type parsing itself lives in
+  // dispatcharr::ParseRelevantRealtimeUpdateEventType() (RealtimeUpdateParser.{h,cpp})
+  // so it's unit-testable standalone -- see that function's own comment.
+  std::string eventType = ParseRelevantRealtimeUpdateEventType(message);
+  if (eventType.empty())
+    return;
 
-    if (m_debugLogging)
-      kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: realtime update received: %s", eventType.c_str());
-    InvalidateAndTriggerRecordingUpdate();
-    InvalidateAndTriggerTimerUpdate();
-  }
-  catch (const nlohmann::json::exception&)
-  {
-    // Malformed/unexpected payload -- not this connection's problem to solve;
-    // just ignore it and keep listening.
-  }
+  if (m_debugLogging)
+    kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: realtime update received: %s", eventType.c_str());
+  InvalidateAndTriggerRecordingUpdate();
+  InvalidateAndTriggerTimerUpdate();
 }
 
 void PVRDispatcharr::StartRealtimeUpdateThread()
