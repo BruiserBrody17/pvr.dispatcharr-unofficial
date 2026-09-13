@@ -1057,6 +1057,15 @@
     `do_HEAD`/`_check_access_token`, `_BufferHTTPServer`), ffmpeg
     subprocess management (`_start_ffmpeg`/`_stop_ffmpeg`), the reaper
     thread, and `Plugin`'s own action dispatch.
+    **Update (2026-09-13): `Plugin._resolve_channel_uuid` also covered**
+    -- a static method, zero Redis dependency (params/settings fallback
+    plus UUID validation), the same validation pattern `_channel_dir`
+    already had tested but one layer up, at the `run()`-params boundary
+    every action handler goes through before ever reaching a filesystem
+    path. `Plugin`'s own action dispatch (`_start_buffer`/`_stop_buffer`/
+    etc.) is still untested -- unlike `recording_edl`'s `Plugin.run()`,
+    none of `timeshift_buffer`'s action handlers are Django/Redis-free,
+    so extending coverage there the same way isn't a given.
     Both plugins' Kodi-independent pure/filesystem logic is now covered;
     what remains untested on the Python side is exactly the
     Redis/Django/real-process boundary, by design.
@@ -1224,6 +1233,22 @@
     callbacks' case-insensitive `Content-Range`/`Content-Length` parsing
     including their malformed-input fallback paths (no slash, non-numeric
     size). 14 new test cases, 68 total across the C++ suite now.
+    **Update (2026-09-13): two more, both with real documented incidents
+    behind them -- `EstimateSegmentDurationMs<SegmentT>`/`ComputeCatchUpAttempts`,
+    shared by `ReadInProgressRecordingStream()` and
+    `ReadLiveTimeshiftStream()`'s catch-up-to-tail wait.** Moved into new
+    header-only `src/CatchUpUtil.h` (the former is a template, so it has
+    to stay header-only anyway) -- `EstimateSegmentDurationMs` only needs
+    a `timeOffsetMs` member on its `SegmentT`, so the test uses a minimal
+    local struct rather than depending on either real (heavier) segment
+    type. Test cases include a direct regression for the exact incident
+    the function's own comment documents: a real instance once produced
+    a burst of segments only ~151ms apart, which without the averaging +
+    floor would have collapsed the retry budget until ffmpeg read the
+    resulting stall as genuine end-of-stream and closed playback outright
+    -- and for `ComputeCatchUpAttempts`, the 3x-vs-1.5x margin fix
+    (confirmed live that 1.5x ran too thin under ordinary jitter). 9 new
+    test cases, 77 total across the C++ suite now.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,

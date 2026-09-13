@@ -534,3 +534,44 @@ def test_get_live_manifest_instance_token_mismatch_forces_full_reparse(tmp_path)
     sizes = {s["filename"]: s["byte_size"] for s in manifest["segments"]}
     assert sizes["seg0.ts"] == 50  # real size, not the stale other-instance value
     assert sizes["seg1.ts"] == 77
+
+
+# ---------------------------------------------------------------------
+# Plugin._resolve_channel_uuid -- a static method, zero Redis dependency.
+# ---------------------------------------------------------------------
+
+
+def test_resolve_channel_uuid_from_params():
+    result = timeshift_buffer_plugin.Plugin._resolve_channel_uuid({"channel_uuid": _UUID}, {})
+    assert result == _UUID
+
+
+def test_resolve_channel_uuid_falls_back_to_test_setting():
+    result = timeshift_buffer_plugin.Plugin._resolve_channel_uuid({}, {"test_channel_uuid": _UUID})
+    assert result == _UUID
+
+
+def test_resolve_channel_uuid_params_take_priority_over_setting():
+    other_uuid = "22222222-2222-2222-2222-222222222222"
+    result = timeshift_buffer_plugin.Plugin._resolve_channel_uuid(
+        {"channel_uuid": _UUID}, {"test_channel_uuid": other_uuid}
+    )
+    assert result == _UUID
+
+
+def test_resolve_channel_uuid_neither_present():
+    assert timeshift_buffer_plugin.Plugin._resolve_channel_uuid({}, {}) is None
+
+
+def test_resolve_channel_uuid_rejects_non_uuid_value():
+    """The exact security-relevant case this validation exists for: a
+    caller-supplied value like "../recordings" must be refused before it
+    ever reaches a filesystem path -- every action treats this the same
+    as a missing channel_uuid."""
+    result = timeshift_buffer_plugin.Plugin._resolve_channel_uuid({"channel_uuid": "../recordings"}, {})
+    assert result is None
+
+
+def test_resolve_channel_uuid_empty_string_falls_back_to_setting():
+    result = timeshift_buffer_plugin.Plugin._resolve_channel_uuid({"channel_uuid": ""}, {"test_channel_uuid": _UUID})
+    assert result == _UUID

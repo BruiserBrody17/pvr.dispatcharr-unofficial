@@ -77,6 +77,7 @@ set(DISPATCHARR_HEADERS
     src/EpgTagUtil.h
     src/StringUtil.h
     src/CurlCallbacks.h
+    src/CatchUpUtil.h
     src/DateTimeFormat.h
     src/UrlEncode.h
     src/JsonFieldUtil.h
