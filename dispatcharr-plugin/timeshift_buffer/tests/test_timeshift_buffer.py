@@ -6,14 +6,25 @@ filename -- importing both by name in one pytest session would otherwise
 collide via sys.modules.
 
 Covers only logic with no Redis/Django/real-HTTP-socket dependency --
-Redis-backed state (_redis/_get_buffer_state/etc.), the actual HTTP
-server, and ffmpeg subprocess management stay untested here, same
-boundary this project draws elsewhere (see recording_edl's own tests and
+the real Redis client (_redis()), the actual HTTP server, and real
+ffmpeg subprocess management stay untested here, same boundary this
+project draws elsewhere (see recording_edl's own tests and
 docs/OPEN_ITEMS.md's "No automated test suite exists" entry). Functions
 that only had a Redis/Django dependency in *part* of their logic
 (_find_orphaned_channel_dirs/_scrub_orphaned_dirs, _stream_attribution_headers)
 are still tested by monkeypatching just that one call, or by only
 exercising the code path that never touches it.
+
+Plugin.run()'s own dispatch and every action handler's message
+formatting *is* covered too, the same way as recording_edl's own
+Plugin.run() tests: by monkeypatching the module-level Redis-touching
+functions (_get_buffer_state/_set_buffer_state/_delete_buffer_state/
+_list_buffer_keys/_iter_buffer_states) and process-management functions
+(_start_ffmpeg/_remove_channel_files/_teardown_buffer/_is_process_alive)
+each handler calls, plus the two lifecycle calls run() itself makes
+unconditionally before ever dispatching (_ensure_http_server_running/
+_ensure_reaper_running, stubbed to no-ops via the _run() helper below --
+a real HTTP server/reaper thread has no place in a unit test).
 """
 
 import importlib.util
@@ -650,3 +661,479 @@ def test_resolve_channel_uuid_rejects_non_uuid_value():
 def test_resolve_channel_uuid_empty_string_falls_back_to_setting():
     result = timeshift_buffer_plugin.Plugin._resolve_channel_uuid({"channel_uuid": ""}, {"test_channel_uuid": _UUID})
     assert result == _UUID
+
+
+# ---------------------------------------------------------------------
+# Plugin.run() dispatch -- every action handler, via monkeypatching the
+# module-level Redis-touching and process-management functions each one
+# calls, the same technique recording_edl's own Plugin.run() tests use.
+# run() itself unconditionally calls _ensure_http_server_running()/
+# _ensure_reaper_running() before ever dispatching, so _run() below
+# always stubs those to no-ops first.
+# ---------------------------------------------------------------------
+
+_OTHER_UUID = "22222222-2222-2222-2222-222222222222"
+
+
+def _run(monkeypatch, action, params, settings_overrides, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ensure_http_server_running", lambda *a, **k: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ensure_reaper_running", lambda *a, **k: None)
+    settings_dict = {"storage_path": str(tmp_path), **settings_overrides}
+    logger = _FakeLogger()
+    result = timeshift_buffer_plugin.Plugin().run(action, params, {"logger": logger, "settings": settings_dict})
+    return result, logger
+
+
+def test_run_unknown_action_returns_error(monkeypatch, tmp_path):
+    result, _logger = _run(monkeypatch, "not_a_real_action", {}, {}, tmp_path)
+    assert result == {"status": "error", "message": "Unknown action: not_a_real_action"}
+
+
+# -- start_buffer --------------------------------------------------------
+
+
+def test_run_start_buffer_requires_channel_uuid(monkeypatch, tmp_path):
+    result, _logger = _run(monkeypatch, "start_buffer", {}, {}, tmp_path)
+    assert result["status"] == "error"
+    assert "channel_uuid is required" in result["message"]
+
+
+def test_run_start_buffer_reattaches_to_running_buffer(monkeypatch, tmp_path):
+    existing_state = {
+        "channel_uuid": _UUID,
+        "pid": 12345,
+        "http_port": 9192,
+        "playlist_route": f"/{_UUID}/live.m3u8",
+        "access_token": "tok123",
+        "viewers": [],
+    }
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(existing_state))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid: True)
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, state: saved.update(state))
+
+    result, _logger = _run(monkeypatch, "start_buffer", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert result["already_running"] is True
+    assert result["access_token"] == "tok123"
+    assert result["http_port"] == 9192
+    assert "Reattached" in result["message"]
+    assert saved  # state was persisted (heartbeat refresh)
+
+
+def test_run_start_buffer_registers_new_viewer_on_reattach(monkeypatch, tmp_path):
+    existing_state = {
+        "channel_uuid": _UUID,
+        "pid": 1,
+        "http_port": 9192,
+        "playlist_route": f"/{_UUID}/live.m3u8",
+        "access_token": "tok",
+        "viewers": ["viewer-a"],
+    }
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(existing_state))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid: True)
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, state: saved.update(state))
+
+    result, _logger = _run(monkeypatch, "start_buffer", {"channel_uuid": _UUID, "viewer_id": "viewer-b"}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert set(saved["viewers"]) == {"viewer-a", "viewer-b"}
+    assert "viewer-b" in saved["viewer_heartbeats"]
+    assert "(2 viewer(s))" in result["message"]
+
+
+def test_run_start_buffer_retrofits_missing_access_token(monkeypatch, tmp_path):
+    """State written by a plugin version older than the access-token
+    requirement (no access_token key at all) self-heals on the next
+    start_buffer rather than staying permanently unreachable."""
+    existing_state = {
+        "channel_uuid": _UUID,
+        "pid": 1,
+        "http_port": 9192,
+        "playlist_route": f"/{_UUID}/live.m3u8",
+        "viewers": [],
+    }
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(existing_state))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid: True)
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, state: saved.update(state))
+
+    result, _logger = _run(monkeypatch, "start_buffer", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert result["access_token"]
+    assert saved["access_token"] == result["access_token"]
+
+
+def test_run_start_buffer_cleans_up_dead_buffer_and_starts_fresh(monkeypatch, tmp_path):
+    """Confirmed live this matters: a buffer whose ffmpeg already died
+    must not be treated as "existing" forever -- start_buffer cleans up
+    its stale state and starts genuinely fresh instead of reattaching."""
+    dead_state = {"channel_uuid": _UUID, "pid": 999, "http_port": 9192}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(dead_state))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid: False)
+    removed = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_remove_channel_files", lambda state, logger: removed.append(state))
+    deleted = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_delete_buffer_state", lambda uuid: deleted.append(uuid))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [])
+    fake_new_state = {
+        "channel_uuid": _UUID,
+        "pid": 5555,
+        "http_port": 9192,
+        "playlist_route": f"/{_UUID}/live.m3u8",
+    }
+    monkeypatch.setattr(timeshift_buffer_plugin, "_start_ffmpeg", lambda *a, **k: dict(fake_new_state))
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, state: saved.update(state))
+
+    result, _logger = _run(monkeypatch, "start_buffer", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert result["already_running"] is False
+    assert len(removed) == 1
+    assert deleted == [_UUID]
+
+
+def test_run_start_buffer_rejects_when_at_max_concurrent(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: ["k1", "k2"])
+
+    result, _logger = _run(
+        monkeypatch, "start_buffer", {"channel_uuid": _UUID}, {"max_concurrent_buffers": 2}, tmp_path
+    )
+
+    assert result["status"] == "error"
+    assert "max_concurrent_buffers" in result["message"]
+
+
+def test_run_start_buffer_reports_missing_ffmpeg(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [])
+
+    def _raise_not_found(*a, **k):
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_start_ffmpeg", _raise_not_found)
+
+    result, _logger = _run(monkeypatch, "start_buffer", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result == {"status": "error", "message": "ffmpeg not found in this container"}
+
+
+def test_run_start_buffer_reports_generic_start_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [])
+
+    def _raise_runtime(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_start_ffmpeg", _raise_runtime)
+
+    result, logger = _run(monkeypatch, "start_buffer", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result == {"status": "error", "message": "disk full"}
+    assert any(level == "exception" for level, _msg in logger.calls)
+
+
+def test_run_start_buffer_starts_fresh_buffer(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [])
+    fake_state = {
+        "channel_uuid": _UUID,
+        "pid": 123,
+        "http_port": 9192,
+        "playlist_route": f"/{_UUID}/live.m3u8",
+    }
+    monkeypatch.setattr(timeshift_buffer_plugin, "_start_ffmpeg", lambda *a, **k: dict(fake_state))
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, state: saved.update(state))
+
+    result, _logger = _run(monkeypatch, "start_buffer", {"channel_uuid": _UUID, "viewer_id": "v1"}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert result["already_running"] is False
+    assert result["access_token"]
+    assert saved["viewers"] == ["v1"]
+    assert "v1" in saved["viewer_heartbeats"]
+
+
+# -- stop_buffer -----------------------------------------------------------
+
+
+def test_run_stop_buffer_requires_channel_uuid(monkeypatch, tmp_path):
+    result, _logger = _run(monkeypatch, "stop_buffer", {}, {}, tmp_path)
+    assert result["status"] == "error"
+    assert "channel_uuid is required" in result["message"]
+
+
+def test_run_stop_buffer_no_buffer_running(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+
+    result, _logger = _run(monkeypatch, "stop_buffer", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result == {"status": "ok", "message": "no buffer was running"}
+
+
+def test_run_stop_buffer_removes_one_of_several_viewers(monkeypatch, tmp_path):
+    """Reference-counted stop: confirmed live this matters -- an
+    unconditional stop on every Close() used to kill a second viewer's
+    still-active buffer the moment a first viewer also stopped watching."""
+    now = time.time()
+    state = {"channel_uuid": _UUID, "viewers": ["v1", "v2"], "viewer_heartbeats": {"v1": now, "v2": now}}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: saved.update(s))
+
+    result, _logger = _run(monkeypatch, "stop_buffer", {"channel_uuid": _UUID, "viewer_id": "v1"}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert "still active for other viewers" in result["message"]
+    assert result["remaining_viewers"] == 1
+    assert saved["viewers"] == ["v2"]
+
+
+def test_run_stop_buffer_tears_down_when_last_viewer_leaves(monkeypatch, tmp_path):
+    state = {"channel_uuid": _UUID, "viewers": ["v1"], "viewer_heartbeats": {"v1": 100}}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+    teardown_calls = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger: teardown_calls.append(s["channel_uuid"])
+    )
+
+    result, _logger = _run(monkeypatch, "stop_buffer", {"channel_uuid": _UUID, "viewer_id": "v1"}, {}, tmp_path)
+
+    assert result == {"status": "ok", "message": "Buffer stopped"}
+    assert teardown_calls == [_UUID]
+
+
+def test_run_stop_buffer_unconditional_stop_without_viewer_id(monkeypatch, tmp_path):
+    """A caller with no viewer_id (an older client, or a manual test
+    button) can't be reference-counted at all, so it always falls
+    through to an unconditional stop."""
+    state = {"channel_uuid": _UUID, "viewers": ["v1", "v2"]}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+    teardown_calls = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger: teardown_calls.append(s["channel_uuid"])
+    )
+
+    result, _logger = _run(monkeypatch, "stop_buffer", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result == {"status": "ok", "message": "Buffer stopped"}
+    assert teardown_calls == [_UUID]
+
+
+# -- heartbeat ---------------------------------------------------------
+
+
+def test_run_heartbeat_requires_channel_uuid(monkeypatch, tmp_path):
+    result, _logger = _run(monkeypatch, "heartbeat", {}, {}, tmp_path)
+    assert result["status"] == "error"
+    assert "channel_uuid is required" in result["message"]
+
+
+def test_run_heartbeat_no_buffer_running(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+
+    result, _logger = _run(monkeypatch, "heartbeat", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result == {"status": "error", "message": "no buffer running for this channel"}
+
+
+def test_run_heartbeat_refreshes_buffer_and_known_viewer(monkeypatch, tmp_path):
+    state = {"channel_uuid": _UUID, "viewers": ["v1"], "last_heartbeat": 0}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: saved.update(s))
+
+    result, _logger = _run(monkeypatch, "heartbeat", {"channel_uuid": _UUID, "viewer_id": "v1"}, {}, tmp_path)
+
+    assert result == {"status": "ok", "message": f"Heartbeat refreshed for channel {_UUID}"}
+    assert saved["last_heartbeat"] > 0
+    assert "v1" in saved.get("viewer_heartbeats", {})
+
+
+def test_run_heartbeat_ignores_unregistered_viewer_id(monkeypatch, tmp_path):
+    """A viewer_id the buffer never registered (via start_buffer) isn't
+    added to viewer_heartbeats -- only the buffer-wide last_heartbeat is
+    refreshed."""
+    state = {"channel_uuid": _UUID, "viewers": ["v1"], "last_heartbeat": 0}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: saved.update(s))
+
+    result, _logger = _run(monkeypatch, "heartbeat", {"channel_uuid": _UUID, "viewer_id": "unknown"}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert "unknown" not in saved.get("viewer_heartbeats", {})
+
+
+# -- get_live_manifest -------------------------------------------------
+
+
+def test_run_get_live_manifest_requires_channel_uuid(monkeypatch, tmp_path):
+    result, _logger = _run(monkeypatch, "get_live_manifest", {}, {}, tmp_path)
+    assert result["status"] == "error"
+    assert "channel_uuid is required" in result["message"]
+
+
+def test_run_get_live_manifest_no_buffer_running(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+
+    result, _logger = _run(monkeypatch, "get_live_manifest", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result["status"] == "error"
+    assert "call start_buffer first" in result["message"]
+
+
+def test_run_get_live_manifest_fatal_buffer_failure_tears_down(monkeypatch, tmp_path):
+    """fatal: true is what lets a caller (pvr.dispatcharr-unofficial's own
+    cold-start retry loop) stop retrying immediately instead of waiting
+    out its full budget against a buffer that will never recover --
+    also self-heals here rather than waiting for a future start_buffer."""
+    state = {"channel_uuid": _UUID}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+
+    def _raise_fatal(*a, **k):
+        raise timeshift_buffer_plugin.BufferFailedError("ffmpeg exited")
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_live_manifest", _raise_fatal)
+    teardown_calls = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger: teardown_calls.append(s["channel_uuid"])
+    )
+
+    result, _logger = _run(monkeypatch, "get_live_manifest", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result == {"status": "error", "fatal": True, "message": "ffmpeg exited"}
+    assert teardown_calls == [_UUID]
+
+
+def test_run_get_live_manifest_plain_runtime_error_does_not_tear_down(monkeypatch, tmp_path):
+    """Distinguished from BufferFailedError above: a buffer that's just
+    still cold-starting shouldn't be torn down on a retryable error."""
+    state = {"channel_uuid": _UUID}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+
+    def _raise_runtime(*a, **k):
+        raise RuntimeError("live playlist not found")
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_live_manifest", _raise_runtime)
+    teardown_calls = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger: teardown_calls.append(s["channel_uuid"])
+    )
+
+    result, _logger = _run(monkeypatch, "get_live_manifest", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result == {"status": "error", "message": "live playlist not found"}
+    assert teardown_calls == []
+
+
+def test_run_get_live_manifest_success_message_and_heartbeat(monkeypatch, tmp_path):
+    state = {"channel_uuid": _UUID, "http_port": 9192, "last_heartbeat": 0}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+    fake_manifest = {
+        "media_sequence": 0,
+        "segments": [{"filename": "seg0.ts"}, {"filename": "seg1.ts"}],
+        "total_bytes": 12345,
+        "total_duration_ms": 4000,
+    }
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_live_manifest", lambda s, logger: fake_manifest)
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: saved.update(s))
+
+    result, _logger = _run(monkeypatch, "get_live_manifest", {"channel_uuid": _UUID}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert result["http_port"] == 9192
+    assert result["segment_route_prefix"] == f"/{_UUID}/"
+    assert result["total_bytes"] == 12345
+    assert "2 segment(s)" in result["message"]
+    assert "12345 bytes" in result["message"]
+    assert "4.0s buffered" in result["message"]
+    assert saved["last_heartbeat"] > 0
+
+
+# -- list_buffers --------------------------------------------------------
+
+
+def test_run_list_buffers_none_active(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: iter([]))
+
+    result, _logger = _run(monkeypatch, "list_buffers", {}, {}, tmp_path)
+
+    assert result == {"status": "ok", "message": "No active buffers", "buffers": []}
+
+
+def test_run_list_buffers_summarizes_active_buffers(monkeypatch, tmp_path):
+    fake_states = [
+        {
+            "channel_uuid": _UUID,
+            "started_at": 0,
+            "last_heartbeat": 0,
+            "http_port": 9192,
+            "playlist_route": f"/{_UUID}/live.m3u8",
+            "viewers": ["v1", "v2"],
+        }
+    ]
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: iter(fake_states))
+
+    result, _logger = _run(monkeypatch, "list_buffers", {}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert "1 active buffer(s)" in result["message"]
+    assert _UUID[:8] in result["message"]
+    assert "2 viewer(s)" in result["message"]
+    assert result["buffers"][0]["viewers"] == 2
+
+
+# -- stop_all --------------------------------------------------------------
+
+
+def test_run_stop_all_no_buffers(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: iter([]))
+
+    result, _logger = _run(monkeypatch, "stop_all", {}, {}, tmp_path)
+
+    assert result == {"status": "ok", "message": "No buffers were running", "stopped": []}
+
+
+def test_run_stop_all_tears_down_every_buffer(monkeypatch, tmp_path):
+    fake_states = [{"channel_uuid": _UUID}, {"channel_uuid": _OTHER_UUID}]
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: iter(fake_states))
+    teardown_calls = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger: teardown_calls.append(s["channel_uuid"])
+    )
+
+    result, _logger = _run(monkeypatch, "stop_all", {}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert "Stopped 2 buffer(s)" in result["message"]
+    assert set(result["stopped"]) == {_UUID, _OTHER_UUID}
+    assert len(teardown_calls) == 2
+
+
+# -- scrub_orphaned_buffers --------------------------------------------
+
+
+def test_run_scrub_orphaned_buffers_none_found(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: [])
+
+    result, _logger = _run(monkeypatch, "scrub_orphaned_buffers", {}, {}, tmp_path)
+
+    assert result == {"status": "ok", "message": "No orphaned directories found", "removed": []}
+
+
+def test_run_scrub_orphaned_buffers_reports_removed_count(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: ["a", "b"])
+
+    result, _logger = _run(monkeypatch, "scrub_orphaned_buffers", {}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert result["message"] == "Removed 2 orphaned directories"
+    assert result["removed"] == ["a", "b"]

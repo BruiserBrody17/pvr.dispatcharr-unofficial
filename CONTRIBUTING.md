@@ -19,8 +19,11 @@ handled here.
   `WebSocketClient`) aren't covered by anything automated.
   `dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/` (pytest,
   run via CI's `unit-tests-python` job) cover each plugin's
-  Dispatcharr-independent pure/filesystem logic as of 2026-09-13 --
-  neither plugin's Redis- or Django-model-touching code is tested.
+  Dispatcharr-independent pure/filesystem logic, and each plugin's own
+  `Plugin.run()` dispatch/message formatting (by `monkeypatch`ing the
+  one or few Redis-/Django-touching calls each action handler makes),
+  as of 2026-09-13 -- the real Redis client and Django ORM calls
+  themselves stay untested.
   Verification of everything else is manual: smoke-testing against a
   real Dispatcharr instance and a real (or emulated) Kodi install. If
   your change touches the C++ addon or either Python plugin's actual

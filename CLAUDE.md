@@ -218,12 +218,31 @@ username/JWT branch stays untested), `_prune_stale_viewers`,
 their one Redis-dependent call), and `_get_live_manifest` end-to-end
 against a real temp filesystem -- including regression tests for its
 documented cache-invalidation incidents (the newest-segment-always-
-restatted race and the instance-token "Packet corrupt" bug). Anything
-touching Dispatcharr's own Django models or Redis directly (the deferred
-imports inside `_dvr_sidecar_scan_roots`/`_classify_dvr_hls_dir`/
-`Plugin.run`, and all of `_redis`/`_get_buffer_state`/etc., the real HTTP
-server, and ffmpeg subprocess management) stays untested, on the same
-principle as the C++ side stopping at the Kodi SDK boundary.
+restatted race and the instance-token "Packet corrupt" bug).
+`timeshift_buffer`'s own `Plugin.run()` dispatch and every action
+handler (`start_buffer`, `stop_buffer`, `heartbeat`, `get_live_manifest`,
+`list_buffers`, `stop_all`, `scrub_orphaned_buffers`) is covered too, the
+same way as `recording_edl`'s: by `monkeypatch`ing the module-level
+Redis-touching functions (`_get_buffer_state`/`_set_buffer_state`/
+`_delete_buffer_state`/`_list_buffer_keys`/`_iter_buffer_states`) and
+process-management functions (`_start_ffmpeg`/`_remove_channel_files`/
+`_teardown_buffer`/`_is_process_alive`) each handler calls, plus the two
+lifecycle calls `run()` itself makes unconditionally before ever
+dispatching (`_ensure_http_server_running`/`_ensure_reaper_running`,
+stubbed to no-ops -- a real HTTP server/reaper thread has no place in a
+unit test). Covers real behavior previously untested at any level: the
+reference-counted stop/reattach messages (dead-buffer cleanup and
+fresh-start on `start_buffer`, the viewer-count-based decision between
+"still active for other viewers" and a full teardown on `stop_buffer`),
+the `access_token` retrofit for pre-upgrade state, and the
+`BufferFailedError`-vs-plain-`RuntimeError` distinction in
+`get_live_manifest` (only the former tears the buffer down and reports
+`fatal: true`). Anything touching Dispatcharr's own Django models or
+Redis directly (the deferred imports inside `_dvr_sidecar_scan_roots`/
+`_classify_dvr_hls_dir`, and the real `_redis()` client, the real HTTP
+server, and real ffmpeg subprocess management on both plugins) stays
+untested, on the same principle as the C++ side stopping at the Kodi SDK
+boundary.
 
 See `docs/OPEN_ITEMS.md`'s "No automated test suite exists" entry for
 the full reasoning and what's still open on both sides. Verification of
