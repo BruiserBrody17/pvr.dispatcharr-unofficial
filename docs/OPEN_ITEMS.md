@@ -1708,3 +1708,36 @@
   pure Kodi-instance-lifecycle glue with no real business logic to
   extract, and no header defines an inline function outside the small,
   already-tested utility headers this item already tracks.
+  **Update (2026-09-13): one more check, this time a full line-by-line
+  re-read of `DispatcharrClient.cpp` and `WebSocketClient.cpp` end to
+  end (the two large files that hadn't had their own dedicated
+  follow-up pass yet, only `PVRDispatcharr.cpp` had) -- `DispatcharrClient.cpp`
+  had nothing left (every remaining function is curl/network I/O or
+  member-state mutation, already routed through the pure helpers pulled
+  out earlier this item), but `WebSocketClient.cpp` had one real gap:
+  `ReceiveTextMessage()`'s own frame-header decode, the RFC 6455 decode
+  counterpart to `BuildMaskedControlFrame()` this item already covered
+  encode-side, had never itself been pulled out or tested.** Added to
+  the existing `src/WebSocketFrame.{h,cpp}` module (same file, not a new
+  one): `ParseFrameHeaderBytes()` (the FIN/opcode/MASK-bit/7-bit-length
+  bit-twiddling from a frame's first 2 header bytes), `DecodeExtendedPayloadLength16()`/
+  `DecodeExtendedPayloadLength64()` (the big-endian 126/127
+  extended-length sentinel decode), and `UnmaskPayload()` (the same
+  XOR-cycling `BuildMaskedControlFrame()` already applies when masking,
+  exposed separately since the receive path unmasks an already-received
+  payload rather than building one). 11 new test cases -- including a
+  regression case confirming the 3 reserved (RSV1-3) header bits don't
+  leak into the decoded opcode, and one confirming `UnmaskPayload()` is
+  its own inverse -- 215 total across the C++ suite now. Confirmed pure
+  code motion via `git diff` and a rebuild through the real Kodi
+  binary-addons harness (log body read directly, not just the wrapper's
+  own exit code -- see this project's own build-harness notes). With
+  this, both files the original exhaustive read named are now fully
+  mined; the only further candidates found while re-reading
+  `PVRDispatcharr.cpp`'s remaining large functions (`GetStreamTimes()`,
+  `GetEPGTagStreamProperties()`, `UpdateTimer()`) were single-line
+  arithmetic expressions (a seconds-to-minutes ceiling divide, a
+  duration-in-minutes computation) tightly wrapped by Kodi-API/network
+  calls -- deliberately not extracted on their own, per this project's
+  own against-premature-abstraction convention (see `CLAUDE.md`'s
+  "Conventions" section).

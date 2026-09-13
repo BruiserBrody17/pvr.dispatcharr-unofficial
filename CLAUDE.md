@@ -182,7 +182,14 @@ spec-capped-at-125-byte ping), and the mask-key XOR cycling. Takes the
 mask key as an explicit parameter rather than generating it internally
 (a real caller always does, via `RandomBytes()`, per the spec's own
 masking requirement), so the exact byte output is testable against a
-known key.
+known key. The same file also holds the decode counterpart used by
+`WebSocketClient::ReceiveTextMessage()`: `ParseFrameHeaderBytes()` (the
+FIN/opcode/MASK-bit/7-bit-length-field bit-twiddling from a frame's
+first 2 header bytes), `DecodeExtendedPayloadLength16()`/
+`DecodeExtendedPayloadLength64()` (the big-endian 126/127 extended-length
+sentinels), and `UnmaskPayload()` (the same XOR-cycling `BuildMaskedControlFrame()`
+applies when masking, exposed separately since the receive path unmasks
+an already-received payload rather than building one).
 `SeriesRuleMatching` is `MatchRecordingsToSeriesRules()`, the matching
 core of `PVRDispatcharr::GetTimers()` -- which recording belongs to
 which series rule (by `channelId`+`title`, the same identity
