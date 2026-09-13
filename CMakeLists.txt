@@ -74,6 +74,7 @@ set(DISPATCHARR_SOURCES
     src/TimerRuleParser.cpp
     src/LiveManifestParser.cpp
     src/RecurringRuleRenewal.cpp
+    src/WebSocketFrame.cpp
 )
 
 set(DISPATCHARR_HEADERS
@@ -102,6 +103,7 @@ set(DISPATCHARR_HEADERS
     src/LiveManifestParser.h
     src/LiveEdgeMargin.h
     src/RecurringRuleRenewal.h
+    src/WebSocketFrame.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}
