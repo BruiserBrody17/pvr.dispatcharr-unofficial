@@ -1,17 +1,21 @@
 # Contributing to pvr.dispatcharr-unofficial
 
 Thanks for looking at this. A few things worth knowing before you open
-a PR -- this project is pre-1.0, single-maintainer, and has no
-automated test suite, all of which shape how contributions get handled
-here.
+a PR -- this project is pre-1.0, single-maintainer, and has only a
+narrow automated test suite, all of which shape how contributions get
+handled here.
 
 ## Before you start
 
-- **There's no automated test suite.** Verification is manual:
-  smoke-testing against a real Dispatcharr instance and a real (or
-  emulated) Kodi install. If your change touches the C++ addon or
-  either Python plugin's actual behavior, you'll need a way to test it
-  live -- a Dispatcharr instance you control, plus Kodi on at least one
+- **The automated test suite is narrow.** `dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/`
+  (pytest, run via CI's `unit-tests-python` job) cover each plugin's
+  Dispatcharr-independent pure/filesystem logic as of 2026-09-13 --
+  neither plugin's Redis- or Django-model-touching code is tested.
+  Verification of everything else is manual: smoke-testing against a
+  real Dispatcharr instance and a real (or emulated) Kodi install. If
+  your change touches the C++ addon or either Python plugin's actual
+  behavior beyond what's covered, you'll need a way to test it live --
+  a Dispatcharr instance you control, plus Kodi on at least one
   platform. If you can't test a change end-to-end, say so plainly in
   the PR rather than asserting it works.
 - **The addon can't be built standalone.** It builds through Kodi's own
@@ -19,10 +23,11 @@ here.
   Windows/macOS/Linux/CoreELEC are in [docs/BUILDING.md](docs/BUILDING.md)
   -- start there rather than guessing at commands.
 - **CI only covers part of this.** `.github/workflows/build.yml`
-  compiles the addon on Windows/macOS/Linux and packages the two
-  plugins as zips -- it doesn't build or test the CoreELEC package, and
-  doesn't exercise runtime behavior on any platform. Green CI means
-  "it compiles and lints," not "it works."
+  compiles the addon on Windows/macOS/Linux, packages the two plugins
+  as zips, and runs the narrow pytest suite above -- it doesn't build or
+  test the CoreELEC package, and doesn't exercise runtime behavior on
+  any platform. Green CI means "it compiles, lints, and doesn't regress
+  the unit-tested pieces," not "it works."
 
 ## Where things live
 
@@ -47,6 +52,11 @@ here.
   C++, `ruff format dispatcharr-plugin/` for Python. `ruff check
   dispatcharr-plugin/` catches some real bugs too (unused variables,
   etc.), not just style -- run it.
+- **If you touch either plugin's pure/filesystem logic (or add new
+  Dispatcharr-independent code), run the pytest suite** before pushing:
+  `pip install -r dispatcharr-plugin/requirements-dev.txt && pytest`.
+  Add test cases for
+  new behavior rather than just confirming existing ones still pass.
 - **Comments explain WHY, not WHAT.** Document non-obvious constraints,
   something you confirmed live, or a workaround for a specific bug --
   not a restatement of what the next line obviously does.
@@ -86,10 +96,12 @@ easy-to-miss spots per piece).
 ## What happens after you open a PR
 
 Every external PR gets an actual manual review before merging -- never
-auto-merged just because CI is green. With no automated test suite,
-passing CI proves the change compiles and formats cleanly, not that
-it's correct, so a real read-through matters more here than on a
-project with real test coverage. This is a single-maintainer project,
+auto-merged just because CI is green. With only a narrow test suite,
+passing CI proves the change compiles, formats cleanly, and doesn't
+regress the unit-tested pieces -- not that a change to the untested
+majority of this codebase is correct, so a real read-through matters
+more here than on a project with full test coverage. This is a
+single-maintainer project,
 so review may take a while; that's not a signal your PR was rejected.
 
 ## Reporting a security issue

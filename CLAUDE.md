@@ -38,10 +38,34 @@ Full instructions (Windows/macOS/Linux/CoreELEC, all previously verified
 live) are in [docs/BUILDING.md](docs/BUILDING.md); don't guess at build
 commands, read that file.
 
-There is no automated test suite. Verification is manual: smoke-testing
-against a real Dispatcharr instance and real/emulated Kodi installs
-(Windows, macOS, Linux via Kodi Flatpak, CoreELEC on an ODROID N2+), driven
-via Kodi's JSON-RPC webserver. `.github/workflows/build.yml` only compiles
+A small automated test suite exists on the Python side as of 2026-09-13
+(`dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/`, pytest,
+wired into CI's `unit-tests-python` job) -- but it's deliberately narrow:
+only Dispatcharr-independent pure/filesystem logic is covered.
+`recording_edl`: `_parse_edl`, `_sidecar_base_name`, `_is_under_dotted_dir`,
+`_prune_empty_directories`, `_resolve_scan_root`/`_dedupe_scan_roots`, and
+`_scrub_orphaned_recording_sidecars` end-to-end via `monkeypatch`ing its
+one Django-model-dependent call. `timeshift_buffer`: `_channel_dir`,
+`_resolve_request_path`, `_BufferRequestHandler._parse_range`, `_proxy_url`,
+`_stream_attribution_headers` (client_ip validation path only -- the
+username/JWT branch stays untested), `_prune_stale_viewers`,
+`_find_orphaned_channel_dirs`/`_scrub_orphaned_dirs` (via `monkeypatch`ing
+their one Redis-dependent call), and `_get_live_manifest` end-to-end
+against a real temp filesystem -- including regression tests for its
+documented cache-invalidation incidents (the newest-segment-always-
+restatted race and the instance-token "Packet corrupt" bug).
+Anything touching Dispatcharr's own Django models or Redis directly (the
+deferred imports inside `_dvr_sidecar_scan_roots`/`_classify_dvr_hls_dir`/
+`Plugin.run`, and all of `_redis`/`_get_buffer_state`/etc., the real HTTP
+server, and ffmpeg subprocess management) stays untested, on the same
+principle as the addon's own C++ side stopping at the Kodi SDK boundary
+-- see `docs/OPEN_ITEMS.md`'s "No automated test suite exists" entry for
+the reasoning and what's still open (the DB/Redis-touching majority of
+both plugins, and the C++ addon side).
+Verification of everything else stays manual: smoke-testing against a
+real Dispatcharr instance and real/emulated Kodi installs (Windows,
+macOS, Linux via Kodi Flatpak, CoreELEC on an ODROID N2+), driven via
+Kodi's JSON-RPC webserver. `.github/workflows/build.yml` also compiles
 Windows/macOS/Linux and packages the two plugins -- it does not build or
 test the CoreELEC package, and doesn't exercise runtime behavior on any
 platform.

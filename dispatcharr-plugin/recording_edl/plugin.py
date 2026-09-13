@@ -168,6 +168,49 @@ def _is_under_dotted_dir(path: Path, root: Path) -> bool:
     return any(part.startswith(".") for part in path.relative_to(root).parts)
 
 
+def _resolve_scan_root(template: str):
+    """Pure logic pulled out of _dvr_sidecar_scan_roots specifically so
+    it's unit-testable without Dispatcharr's Django models (see
+    ../tests/test_plugin.py) -- resolves a single DVR path template
+    string to its scan-root directory, or None if the template yields no
+    usable subdirectory root. See _dvr_sidecar_scan_roots's own docstring
+    for the full reasoning (absolute-vs-relative resolution, the "{"
+    placeholder trim, and why a bare _RECORDINGS_ROOT candidate is
+    explicitly excluded -- the exact 2026-09-05 incident this guards
+    against)."""
+    if not template:
+        return None
+    resolved = template if template.startswith("/") else f"{_RECORDINGS_ROOT}/{template}"
+    prefix = resolved.split("{", 1)[0]
+    slash_idx = prefix.rfind("/")
+    candidate = Path(prefix[:slash_idx]) if slash_idx > 0 else None
+    # A template with no subdirectory component at all (e.g. a bare
+    # "{show}.mkv") resolves its candidate root to _RECORDINGS_ROOT
+    # itself -- explicitly excluded, not just skipped when slash_idx
+    # looks empty: that check alone does NOT catch this case (the
+    # leading "/data/recordings/" already supplies a slash), and
+    # missing this exact check is what let the 2026-09-05 incident
+    # happen even after this function was supposedly no longer
+    # supposed to add the bare root. A template configured this
+    # unusually just isn't covered by this action.
+    if candidate is not None and candidate != _RECORDINGS_ROOT:
+        return candidate
+    return None
+
+
+def _dedupe_scan_roots(roots):
+    """Pure logic pulled out of _dvr_sidecar_scan_roots -- drops any root
+    already covered by another (itself or an ancestor) already kept, so
+    an overlapping template doesn't cause the same directory to be
+    walked, and its now-empty parents reasoned about for pruning, more
+    than once."""
+    deduped = []
+    for root in sorted(roots, key=lambda p: len(p.parts)):
+        if not any(root == kept or kept in root.parents for kept in deduped):
+            deduped.append(root)
+    return deduped
+
+
 def _dvr_sidecar_scan_roots():
     """Directories that a recording (and therefore its .edl/.logo.txt
     sidecars) could actually land in, derived from DVR Settings' four
@@ -198,43 +241,28 @@ def _dvr_sidecar_scan_roots():
     .dvr_*_hls staging directories and a .timeshift directory -- neither
     of which any DVR path template controls. This action must only ever
     touch the directories your templates actually point recordings into.
+
+    Just orchestration now -- the actual per-template resolution and
+    deduplication (_resolve_scan_root/_dedupe_scan_roots) are pure
+    functions with no Django dependency, pulled out so they're
+    unit-testable standalone.
     """
     from core.models import CoreSettings
 
-    roots = set()
-    for template in (
-        CoreSettings.get_dvr_tv_template(),
-        CoreSettings.get_dvr_tv_fallback_template(),
-        CoreSettings.get_dvr_movie_template(),
-        CoreSettings.get_dvr_movie_fallback_template(),
-    ):
-        if not template:
-            continue
-        resolved = template if template.startswith("/") else f"{_RECORDINGS_ROOT}/{template}"
-        prefix = resolved.split("{", 1)[0]
-        slash_idx = prefix.rfind("/")
-        candidate = Path(prefix[:slash_idx]) if slash_idx > 0 else None
-        # A template with no subdirectory component at all (e.g. a bare
-        # "{show}.mkv") resolves its candidate root to _RECORDINGS_ROOT
-        # itself -- explicitly excluded, not just skipped when slash_idx
-        # looks empty: that check alone does NOT catch this case (the
-        # leading "/data/recordings/" already supplies a slash), and
-        # missing this exact check is what let the 2026-09-05 incident
-        # happen even after this function was supposedly no longer
-        # supposed to add the bare root. A template configured this
-        # unusually just isn't covered by this action.
-        if candidate is not None and candidate != _RECORDINGS_ROOT:
-            roots.add(candidate)
-
-    # Drop any root already covered by another (itself or an ancestor)
-    # already kept, so an overlapping template doesn't cause the same
-    # directory to be walked, and its now-empty parents reasoned about
-    # for pruning, more than once.
-    deduped = []
-    for root in sorted(roots, key=lambda p: len(p.parts)):
-        if not any(root == kept or kept in root.parents for kept in deduped):
-            deduped.append(root)
-    return deduped
+    roots = {
+        r
+        for r in (
+            _resolve_scan_root(t)
+            for t in (
+                CoreSettings.get_dvr_tv_template(),
+                CoreSettings.get_dvr_tv_fallback_template(),
+                CoreSettings.get_dvr_movie_template(),
+                CoreSettings.get_dvr_movie_fallback_template(),
+            )
+        )
+        if r is not None
+    }
+    return _dedupe_scan_roots(roots)
 
 
 def _prune_empty_directories(root, logger):

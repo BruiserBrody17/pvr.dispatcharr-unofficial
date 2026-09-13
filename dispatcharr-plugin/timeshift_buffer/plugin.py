@@ -237,6 +237,30 @@ _http_server_thread = None
 _http_server_storage_path = None
 
 
+def _resolve_request_path(request_path: str, storage_path: str):
+    """Pure logic pulled out of _BufferRequestHandler._resolve_path
+    specifically so it's unit-testable without a real HTTP request/server
+    (see ../tests/test_timeshift_buffer.py) -- resolves a raw HTTP request
+    path (a handler's own self.path) against storage_path, returning
+    (channel_uuid, resolved_filesystem_path), or (None, None) if the
+    request doesn't map to a real location under storage_path.
+
+    Manual traversal guard even though .resolve() below would also catch
+    it -- fail fast and obviously rather than relying solely on path
+    resolution semantics for something serving network requests."""
+    raw = unquote(urlparse(request_path).path)
+    parts = raw.strip("/").split("/")
+    if ".." in parts or len(parts) < 2:
+        return None, None
+    channel_uuid = parts[0]
+
+    storage_root = Path(storage_path).resolve()
+    candidate = (storage_root / raw.lstrip("/")).resolve()
+    if storage_root not in candidate.parents and candidate != storage_root:
+        return None, None
+    return channel_uuid, candidate
+
+
 class _BufferRequestHandler(BaseHTTPRequestHandler):
     """Serves GET /<channel_uuid>/<filename> straight from storage_path.
 
@@ -262,20 +286,7 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
     def _resolve_path(self):
         """Returns (channel_uuid, filesystem_path), or (None, None) if the
         request doesn't map to a real file under storage_path."""
-        # Manual traversal guard even though .resolve() below would also
-        # catch it -- fail fast and obviously rather than relying solely on
-        # path resolution semantics for something serving network requests.
-        raw = unquote(urlparse(self.path).path)
-        parts = raw.strip("/").split("/")
-        if ".." in parts or len(parts) < 2:
-            return None, None
-        channel_uuid = parts[0]
-
-        storage_root = Path(self.server.storage_path).resolve()
-        candidate = (storage_root / raw.lstrip("/")).resolve()
-        if storage_root not in candidate.parents and candidate != storage_root:
-            return None, None
-        return channel_uuid, candidate
+        return _resolve_request_path(self.path, self.server.storage_path)
 
     def _touch_heartbeat(self, channel_uuid):
         # Every successful fetch (playlist or segment) counts as "someone's
