@@ -960,7 +960,7 @@
 
 ## Tooling / infrastructure (not addon-specific)
 
-- **No automated test suite exists (requested 2026-09-10) -- both
+- [x] **No automated test suite exists (requested 2026-09-10) -- both
   plugins' and the C++ addon's known Kodi/Dispatcharr-independent pure
   logic now fully covered (2026-09-13); only the Redis/Django/Kodi-ABI
   boundary work remains, by design.** Two genuinely separable problems,
