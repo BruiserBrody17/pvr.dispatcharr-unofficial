@@ -1,6 +1,7 @@
 [tool.pytest.ini_options]
-# Scoped to the two Dispatcharr server-side plugins (see ruff.toml's own
-# comment) -- there's nothing else in this repo pytest could meaningfully
-# collect; the addon itself is C++, tested separately via tests/ (Catch2,
-# see tests/CMakeLists.txt).
-testpaths = ["dispatcharr-plugin"]
+# The two Dispatcharr server-side plugins, plus tools/ (check_doc_refs.py's
+# own test suite -- see ruff.toml's own comment on why tools/ is included
+# there too). Nothing else in this repo pytest could meaningfully collect;
+# the addon itself is C++, tested separately via tests/ (Catch2, see
+# tests/CMakeLists.txt).
+testpaths = ["dispatcharr-plugin", "tools"]

@@ -244,6 +244,23 @@ server, and real ffmpeg subprocess management on both plugins) stays
 untested, on the same principle as the C++ side stopping at the Kodi SDK
 boundary.
 
+**`tools/`** (`tools/tests/`, pytest, same `unit-tests-python`/`lint` CI
+jobs as the two plugins): `tools/check_doc_refs.py` itself -- the
+doc-citation checker described below -- has its own full test suite,
+since it's real parsing/matching logic wired into CI, not just a
+one-off script. Covers the module's own text-normalization and
+markdown-heading-extraction helpers (both plain `#` headings and this
+project's bold-pseudo-heading convention), all three `check_*()`
+functions against synthetic per-test docs/src/config (never this
+repo's own real ones), its on-disk baseline load/save round-trip, and
+its overall exit codes/`--update-baseline` handling/resolved-entry
+reporting. Includes regression tests for bugs this checker's own module
+docstring already documented as found-and-fixed during its development
+(the multi-line file-lookback within a citing paragraph, the
+`[X.md](X.md)`-style markdown-link citation form, and the earlier
+gap that left both plugins' `plugin.py` files out of the function-name
+corpus) -- previously fixed with no test locking any of them in.
+
 See `docs/OPEN_ITEMS.md`'s "No automated test suite exists" entry for
 the full reasoning and what's still open on both sides. Verification of
 everything else stays manual: smoke-testing against a real Dispatcharr
