@@ -62,6 +62,7 @@ add_executable(pvr_dispatcharr_tests
   test_json_field_util.cpp
   test_curl_callbacks.cpp
   test_catch_up_util.cpp
+  test_recurring_rule_util.cpp
   ${DISPATCHARR_SRC_DIR}/XmlTvParser.cpp
   ${DISPATCHARR_SRC_DIR}/TimeZoneUtil.cpp
   ${DISPATCHARR_SRC_DIR}/EpgTagUtil.cpp
@@ -69,6 +70,7 @@ add_executable(pvr_dispatcharr_tests
   ${DISPATCHARR_SRC_DIR}/DateTimeFormat.cpp
   ${DISPATCHARR_SRC_DIR}/UrlEncode.cpp
   ${DISPATCHARR_SRC_DIR}/CurlCallbacks.cpp
+  ${DISPATCHARR_SRC_DIR}/RecurringRuleUtil.cpp
 )
 target_include_directories(pvr_dispatcharr_tests PRIVATE ${DISPATCHARR_SRC_DIR} ${CURL_INCLUDE_DIRS})
 if(TARGET CURL::libcurl)

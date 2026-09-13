@@ -65,6 +65,7 @@ set(DISPATCHARR_SOURCES
     src/DateTimeFormat.cpp
     src/UrlEncode.cpp
     src/CurlCallbacks.cpp
+    src/RecurringRuleUtil.cpp
 )
 
 set(DISPATCHARR_HEADERS
@@ -81,6 +82,7 @@ set(DISPATCHARR_HEADERS
     src/DateTimeFormat.h
     src/UrlEncode.h
     src/JsonFieldUtil.h
+    src/RecurringRuleUtil.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}
