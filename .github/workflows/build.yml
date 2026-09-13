@@ -46,6 +46,23 @@ jobs:
       - name: doc reference check (baselined -- fails only on new dangling refs)
         run: python3 tools/check_doc_refs.py
 
+  # Covers only the Dispatcharr-independent pure/filesystem logic in the two
+  # plugins -- each plugin.py's Django-model-dependent parts (deferred
+  # imports inside functions, e.g. recording_edl's _classify_dvr_hls_dir/
+  # Plugin.run) stay untested here, same boundary the addon's own C++ test
+  # suite draws at the Kodi SDK -- see docs/OPEN_ITEMS.md.
+  unit-tests-python:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v7
+
+      - name: Install pytest (pinned version)
+        run: pip install -r dispatcharr-plugin/requirements-dev.txt
+
+      - name: Run pytest
+        run: pytest
+
   build-unix:
     strategy:
       fail-fast: false

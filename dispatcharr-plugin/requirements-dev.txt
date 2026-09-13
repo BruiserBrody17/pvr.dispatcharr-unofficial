@@ -1,0 +1,5 @@
+# Dev-only dependency for running dispatcharr-plugin/*/tests/ -- not needed
+# to actually run either plugin (which only needs whatever Dispatcharr's
+# own server process already provides). Pinned to match CI's own version
+# (see .github/workflows/build.yml's unit-tests-python job).
+pytest==9.1.1

@@ -960,20 +960,105 @@
 
 ## Tooling / infrastructure (not addon-specific)
 
-- **No automated test suite exists (requested 2026-09-10) -- recommended
-  approach, not yet started.** Two genuinely separable problems, since
-  this addon can't be compiled standalone (needs Kodi's own binary-addon
-  build harness) while the two companion plugins are plain Python with
-  no such constraint:
+- **No automated test suite exists (requested 2026-09-10) -- both
+  plugins' pure/filesystem logic now covered (2026-09-13), the C++ addon
+  side's DB/Redis-boundary work not yet started.** Two genuinely
+  separable problems, since this addon can't be compiled
+  standalone (needs Kodi's own binary-addon build harness) while the two
+  companion plugins are plain Python with no such constraint:
   - **Python plugins** (`dispatcharr-plugin/recording_edl`,
     `dispatcharr-plugin/timeshift_buffer`): the lower-effort starting
-    point -- add `pytest` alongside the existing `ruff.toml`. Both
+    point -- `pytest` (pinned in `dispatcharr-plugin/requirements-dev.txt`,
+    configured via root `pyproject.toml`, wired into CI's
+    `unit-tests-python` job) alongside the existing `ruff.toml`. Both
     plugins already have real, isolated bugs that were verified with
     one-off manual test scripts during development (e.g.
     `docs/RECORDING_EDL.md`'s `_parse_edl()` nan/inf fix, "Verified
     with a test reproducing the exact pre-fix crash") -- a real pytest
     suite would just formalize and keep that same style of test instead
     of writing it, running it once, then discarding it.
+    **Update: `recording_edl/tests/test_recording_edl.py` built
+    (2026-09-13), 26 test cases.** Covers `_parse_edl` (including the
+    exact documented nan/inf regression), `_sidecar_base_name`,
+    `_is_under_dotted_dir`, and `_prune_empty_directories` directly (zero
+    Dispatcharr dependency, confirmed via each function's own code --
+    `_prune_empty_directories` in particular needed no mocking at all,
+    since Python's `tmp_path` fixture gives a real temporary filesystem
+    per test, unlike the C++ addon side's Kodi-ABI coupling problem).
+    `_dvr_sidecar_scan_roots()`'s pure per-template resolution and
+    deduplication logic was extracted into new `_resolve_scan_root()`/
+    `_dedupe_scan_roots()` (pure code motion, same pattern as the C++
+    side's `TimeZoneUtil`/`EpgTagUtil` extractions) specifically so the
+    exact 2026-09-05 bare-root-exclusion incident this project's own
+    docs describe has a real regression test now, without needing
+    Dispatcharr's `core.models.CoreSettings` (a deferred import inside
+    the now-thin wrapper, untouched). `_scrub_orphaned_recording_sidecars()`
+    itself -- the actual destructive action, including the
+    dotted-directory protection from that same incident -- is tested
+    end-to-end against a real temp filesystem by `monkeypatch`ing just
+    `_dvr_sidecar_scan_roots` (the one call with a Django dependency),
+    not by re-testing its already-covered pure helpers separately.
+    Deliberately stops at the same boundary as the C++ side: anything
+    touching Dispatcharr's Django models directly
+    (`_classify_dvr_hls_dir`/`_list_dvr_hls_staging_dirs`/
+    `_delete_orphaned_dvr_hls_dirs`, and `Plugin.run`'s `get_edl`/HLS
+    action dispatch) stays untested -- would mean faking Django's ORM
+    surface, the same fragile-mock problem flagged for Kodi's own addon
+    ABI on the C++ side.
+    **Update: `timeshift_buffer/tests/test_timeshift_buffer.py` built
+    (2026-09-13), 42 test cases -- the bigger, different-shaped piece
+    this item originally flagged (redis, an embedded HTTP server, ffmpeg
+    subprocess management) turned out to have a real Kodi-independent
+    pure-logic surface just like `recording_edl` did.** Covers
+    `_channel_dir` (a real security boundary -- rejects a non-UUID
+    `channel_uuid`, e.g. a path-traversal attempt, before it ever reaches
+    a `mkdir`/`rmtree` call), `_BufferRequestHandler._parse_range` (HTTP
+    Range-header parsing: explicit/open-ended/suffix ranges, clamping,
+    unsatisfiable-range rejection, multi-range's documented
+    first-range-only behavior), `_proxy_url`, `_prune_stale_viewers`
+    (already had a `now` param "purely for testability", same pattern
+    this project's own C++ `ComputeKnownZoneOffsetMinutes()` uses), and
+    `_find_orphaned_channel_dirs`/`_scrub_orphaned_dirs` (via
+    `monkeypatch`ing their one Redis-dependent call, real filesystem
+    scan/removal logic against `tmp_path`).
+    `_BufferRequestHandler._resolve_path()`'s traversal-guard logic was
+    extracted into new `_resolve_request_path()` (pure code motion, same
+    pattern as `recording_edl`'s extractions) since it needed a real
+    HTTP request/server instance to call as an instance method --
+    includes a real symlink-escape regression test (a request path with
+    no literal `..` that still resolves outside `storage_path` via a
+    symlink), confirming the `.resolve()`-based containment check
+    catches what the string-level `..` guard alone wouldn't.
+    `_stream_attribution_headers()` is tested for its `client_ip`
+    validation path only -- including the exact documented header-
+    injection security fix (`docs/TIMESHIFT.md`'s "client_ip header
+    injection" section) -- since its username/JWT branch's Django import
+    is deferred inside `if username:` and simply never executes when no
+    test passes a `username` param, no mocking needed to stay clear of
+    it.
+    `_get_live_manifest()` -- state is passed in directly rather than
+    fetched from Redis internally, so it turned out to have zero
+    Redis/Django dependency at all -- is tested end-to-end against a real
+    temp filesystem (real `.m3u8` + segment files), including regression
+    tests for both cache-invalidation incidents this function's own
+    docstring documents at length: the newest-segment-always-restatted
+    guard (pre-seeding `_manifest_cache` with a wrong size for what will
+    be the newest segment, confirming the real stat wins) and the
+    instance-token mismatch guard (pre-seeding a cache entry whose
+    `playlist_mtime_ns`/`playlist_size` exactly match the real file but
+    whose `instance_token` doesn't match `state["access_token"]`,
+    confirming a full reparse happens instead of trusting it -- the exact
+    "Packet corrupt" incident shape). `_manifest_cache` is real
+    module-global mutable state, so an autouse fixture clears it around
+    every test.
+    Still untested, same boundary as `recording_edl`: `_redis`/
+    `_get_buffer_state`/etc., the real HTTP server (`_BufferRequestHandler.do_GET`/
+    `do_HEAD`/`_check_access_token`, `_BufferHTTPServer`), ffmpeg
+    subprocess management (`_start_ffmpeg`/`_stop_ffmpeg`), the reaper
+    thread, and `Plugin`'s own action dispatch.
+    Both plugins' Kodi-independent pure/filesystem logic is now covered;
+    what remains untested on the Python side is exactly the
+    Redis/Django/real-process boundary, by design.
   - **C++ addon**: don't attempt to test `PVRDispatcharr`/
     `DispatcharrClient` wholesale -- that would mean mocking Kodi's
     entire addon-instance API and/or standing up a fake Dispatcharr
