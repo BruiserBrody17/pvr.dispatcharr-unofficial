@@ -67,6 +67,8 @@ set(DISPATCHARR_SOURCES
     src/CurlCallbacks.cpp
     src/RecurringRuleUtil.cpp
     src/RecordingParser.cpp
+    src/PluginRunResult.cpp
+    src/RealtimeUpdateParser.cpp
 )
 
 set(DISPATCHARR_HEADERS
@@ -85,6 +87,8 @@ set(DISPATCHARR_HEADERS
     src/JsonFieldUtil.h
     src/RecurringRuleUtil.h
     src/RecordingParser.h
+    src/PluginRunResult.h
+    src/RealtimeUpdateParser.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}

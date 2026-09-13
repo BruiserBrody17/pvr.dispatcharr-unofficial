@@ -48,7 +48,7 @@ one can only be configured through Kodi's own build harness -- see
 `tests/CMakeLists.txt`'s own comment): `XmlTvParser`, `TimeUtil`,
 `TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
 `JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil`,
-`RecordingParser` -- the six before `RecurringRuleUtil` pulled out
+`RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser` -- the six before `RecurringRuleUtil` pulled out
 of `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
 string formats, curl-based URL escaping, the null-safe JSON field
@@ -79,6 +79,20 @@ fallback chain. Deliberately excludes `ParseRecordingJson()`'s
 `PendingTitle`-cache lookup (member state behind a mutex, not available
 to a free function) and its final `"Recording <id>"` default title,
 both of which stay in the thin wrapper that calls it first.
+`PluginRunResult` is `DispatcharrClient::UnwrapPluginRunResult()`
+(shared by every companion-plugin `run/` caller: `CallTimeshiftPluginAction()`,
+`StopTimeshiftBuffer()`, `GetRecordingEdl()`, `RefreshLiveManifest()`) --
+already had zero member-state dependency, so it moved out entirely
+rather than staying behind a delegating wrapper; checks the outer
+`{"success", "error"}` envelope every plugin `run/` response is wrapped
+in, then the plugin's own inner `{"status", "message"}` result.
+`RealtimeUpdateParser` is the pure wire-shape/relevant-event-type
+classification core of `PVRDispatcharr::HandleRealtimeUpdateMessage()`
+-- confirmed against Dispatcharr's own `consumers.py`/`utils.py`/
+`tasks.py`/`api_views.py` for both the `{"data": {"type": ...}}` wire
+shape and which event names on that shared "updates" channel are
+actually recording/timer-relevant (everything else, e.g. EPG matching
+progress, is silently ignored, not an error).
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance

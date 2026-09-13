@@ -843,20 +843,6 @@ private:
   // callers proceed with the URL regardless either way.
   bool WaitForTimeshiftPlaylistReady(const std::string& playlistUrl);
 
-  // Shared by every plugin run/ caller below (CallTimeshiftPluginAction(),
-  // StopTimeshiftBuffer(), GetRecordingEdl(), RefreshLiveManifest()):
-  // checks the outer {"success", "error"} envelope PluginRunAPIView always
-  // wraps a response in, then the plugin's own inner {"status", "message"}
-  // result -- see CallTimeshiftPluginAction()'s own comment for why both
-  // layers need checking. `pluginLabel` (e.g. "timeshift_buffer",
-  // "recording_edl") only feeds the two generic fallback error messages
-  // used when the response doesn't carry its own. `resultOut` is always
-  // set to the (possibly empty) inner result object on return, even on
-  // failure, so a caller needing a field from it either way (e.g.
-  // RefreshLiveManifest()'s "fatal") still can.
-  bool UnwrapPluginRunResult(const nlohmann::json& response, const char* pluginLabel, nlohmann::json& resultOut,
-                             std::string& error);
-
   // Calls the timeshift_buffer plugin's run/ endpoint for `action` and
   // unwraps a {status, http_port, playlist_route} response shape. Only
   // StartTimeshiftBuffer() uses this now (SnapshotTimeshiftBuffer(), the

@@ -4,6 +4,7 @@
 #include "CurlCallbacks.h"
 #include "DateTimeFormat.h"
 #include "JsonFieldUtil.h"
+#include "PluginRunResult.h"
 #include "RecordingParser.h"
 #include "TimeUtil.h"
 #include "TimeZoneUtil.h"
@@ -636,23 +637,6 @@ bool DispatcharrClient::WaitForTimeshiftPlaylistReady(const std::string& playlis
     std::this_thread::sleep_for(std::chrono::milliseconds(kSleepBetweenMs));
   }
   return false;
-}
-
-bool DispatcharrClient::UnwrapPluginRunResult(const json& response, const char* pluginLabel, json& resultOut,
-                                              std::string& error)
-{
-  if (!FieldOr(response, "success", false))
-  {
-    error = FieldOr<std::string>(response, "error", std::string(pluginLabel) + " plugin call did not succeed");
-    return false;
-  }
-  resultOut = response.contains("result") ? response["result"] : json();
-  if (FieldOr<std::string>(resultOut, "status", "") != "ok")
-  {
-    error = FieldOr<std::string>(resultOut, "message", std::string(pluginLabel) + " plugin returned an error");
-    return false;
-  }
-  return true;
 }
 
 bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action, const std::string& channelUuid,
