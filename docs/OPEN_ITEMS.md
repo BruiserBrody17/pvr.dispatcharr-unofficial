@@ -1526,6 +1526,28 @@
     binary-addons harness, log body read directly. One candidate
     remains from the original 8: WebSocket frame encoding, still
     tracked for a follow-up pass.
+    **Update (2026-09-13): sixth and final batch done -- WebSocket frame
+    encoding, closing out all 8 candidates the exhaustive read found.**
+    New `src/WebSocketFrame.{h,cpp}` (`BuildMaskedControlFrame()`)
+    covers the RFC 6455 masked-frame byte layout behind
+    `WebSocketClient::SendPong()`/`SendClose()`: the FIN/opcode/MASK-bit
+    header byte, the extended 2-byte length prefix for a payload over
+    125 bytes (defensive -- never actually hit in practice, a pong
+    payload always echoes a spec-capped-at-125-byte ping), and the
+    mask-key XOR cycling. Takes the mask key as an explicit parameter
+    rather than generating it internally (the real caller still does,
+    via `RandomBytes()`, per the spec's own masking requirement), the
+    same pattern `RecurringRuleUtil`'s `nowUtc` parameter and
+    `WebSocketFrame`'s own sibling extractions already established, so
+    the exact byte output is testable against a known key -- including a
+    direct byte-for-byte comparison against `SendClose()`'s own
+    original hardcoded 6-byte array, confirming the generalized builder
+    reproduces it exactly. 6 new test cases, 183 total across the C++
+    suite now. Confirmed pure code motion via `git diff` and a rebuild
+    through the real Kodi binary-addons harness, log body read directly.
+    All 8 candidates from the original exhaustive-read survey are now
+    done, across six PRs (#30-#35) -- see this item's own "an exhaustive
+    line-by-line read" update above for the full original list.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,

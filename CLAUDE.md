@@ -45,13 +45,16 @@ independent pure/filesystem logic is covered anywhere.
 **C++** (`tests/`, Catch2, wired into CI's `unit-tests` job, a standalone
 CMake project separate from the addon's own `CMakeLists.txt` since that
 one can only be configured through Kodi's own build harness -- see
-`tests/CMakeLists.txt`'s own comment): `XmlTvParser`, `TimeUtil`,
-`TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
-`JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil`,
-`RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser`, `SegmentLookup`,
-`ChannelParser`, `TimerRuleParser`, `TimerIdentity`, `LiveManifestParser`, `LiveEdgeMargin`,
-`RecurringRuleRenewal` -- the six before `RecurringRuleUtil` pulled out
-of `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
+`tests/CMakeLists.txt`'s own comment). Every module covered as of
+2026-09-13: `XmlTvParser`, `TimeUtil`, `TimeZoneUtil`, `EpgTagUtil`,
+`StringUtil`, `DateTimeFormat`, `UrlEncode`, `JsonFieldUtil`,
+`CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil`, `RecordingParser`,
+`PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser`,
+`SegmentLookup`, `ChannelParser`, `TimerRuleParser`, `TimerIdentity`,
+`LiveManifestParser`, `LiveEdgeMargin`, `RecurringRuleRenewal`,
+`WebSocketFrame`. `StringUtil` through `CatchUpUtil` in that list were
+pulled out of `WebSocketClient.cpp`/`DispatcharrClient.cpp`
+specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
 string formats, curl-based URL escaping, the null-safe JSON field
 reader nearly every response parse in `DispatcharrClient.cpp` goes
@@ -169,6 +172,16 @@ a safety margin (defense in depth around Dispatcharr's own
 regeneration behavior), or -- erring toward skipping rather than
 renewing blind -- one where `GetRecordings()` itself failed and that
 occurrence-safety check can't be evaluated at all.
+`WebSocketFrame` is `BuildMaskedControlFrame()`, the RFC 6455
+masked-frame byte-layout builder behind `WebSocketClient::SendPong()`/
+`SendClose()` -- covers the FIN/opcode/MASK-bit header byte, the
+extended 2-byte length prefix for a payload over 125 bytes (defensive;
+never actually hit in practice, a pong payload always echoes a
+spec-capped-at-125-byte ping), and the mask-key XOR cycling. Takes the
+mask key as an explicit parameter rather than generating it internally
+(a real caller always does, via `RandomBytes()`, per the spec's own
+masking requirement), so the exact byte output is testable against a
+known key.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance

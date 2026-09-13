@@ -1,6 +1,7 @@
 #include "WebSocketClient.h"
 
 #include "StringUtil.h"
+#include "WebSocketFrame.h"
 
 #include <curl/curl.h>
 
@@ -279,26 +280,10 @@ bool WebSocketClient::SendPong(const std::vector<uint8_t>& payload, int timeoutS
 {
   uint8_t maskKey[4];
   RandomBytes(maskKey, sizeof(maskKey));
-
-  std::vector<uint8_t> frame;
-  frame.push_back(0x80 | 0x0A); // FIN + opcode PONG
-  size_t len = payload.size();
-  if (len <= 125)
-  {
-    frame.push_back(0x80 | static_cast<uint8_t>(len)); // MASK bit set
-  }
-  else
-  {
-    // Pong payloads are always tiny (an echoed ping payload, itself capped
-    // at 125 bytes by the spec) -- this branch is defensive, not expected.
-    frame.push_back(0x80 | 126);
-    frame.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-    frame.push_back(static_cast<uint8_t>(len & 0xFF));
-  }
-  frame.insert(frame.end(), maskKey, maskKey + 4);
-  for (size_t i = 0; i < len; ++i)
-    frame.push_back(payload[i] ^ maskKey[i % 4]);
-
+  // The frame layout itself lives in dispatcharr::BuildMaskedControlFrame()
+  // (WebSocketFrame.{h,cpp}) so it's unit-testable standalone -- see that
+  // function's own comment.
+  std::vector<uint8_t> frame = BuildMaskedControlFrame(0x0A, payload, maskKey); // opcode PONG
   return SendAll(frame.data(), frame.size(), timeoutSeconds, error);
 }
 
@@ -306,8 +291,8 @@ bool WebSocketClient::SendClose(int timeoutSeconds, std::string& error)
 {
   uint8_t maskKey[4];
   RandomBytes(maskKey, sizeof(maskKey));
-  uint8_t frame[6] = {0x80 | 0x08, 0x80, maskKey[0], maskKey[1], maskKey[2], maskKey[3]};
-  return SendAll(frame, sizeof(frame), timeoutSeconds, error);
+  std::vector<uint8_t> frame = BuildMaskedControlFrame(0x08, {}, maskKey); // opcode CLOSE, empty payload
+  return SendAll(frame.data(), frame.size(), timeoutSeconds, error);
 }
 
 int WebSocketClient::ReceiveTextMessage(std::string& message, int timeoutSeconds, std::string& error)
