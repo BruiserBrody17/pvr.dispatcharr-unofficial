@@ -47,7 +47,8 @@ CMake project separate from the addon's own `CMakeLists.txt` since that
 one can only be configured through Kodi's own build harness -- see
 `tests/CMakeLists.txt`'s own comment): `XmlTvParser`, `TimeUtil`,
 `TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
-`JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil` -- the last six pulled out
+`JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil` --
+the six before `RecurringRuleUtil` pulled out
 of `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
 string formats, curl-based URL escaping, the null-safe JSON field
@@ -57,6 +58,14 @@ touch a `CURL*` themselves, despite conceptually being curl callbacks --
 and the segment-duration-estimate/catch-up-attempt-count math shared by
 live-timeshift and in-progress-recording playback, each with real
 documented incidents behind them) is unit-testable standalone.
+`RecurringRuleUtil` is the pure integer-arithmetic core of
+`PVRDispatcharr::ComputeRecurringRuleFields`, pulled out of
+`PVRDispatcharr.cpp` instead -- it converts Kodi's UTC-based weekday
+bitmask/start-end-time-of-day/first-day into Dispatcharr's own
+representation via plain modulo-86400 day/time-of-day math, with the one
+real timezone shift (bridging to Dispatcharr's own non-UTC-by-default
+system timezone) taken as an explicit offset parameter rather than
+computed internally.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance

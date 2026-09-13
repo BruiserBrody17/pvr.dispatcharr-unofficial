@@ -1249,6 +1249,36 @@
     -- and for `ComputeCatchUpAttempts`, the 3x-vs-1.5x margin fix
     (confirmed live that 1.5x ran too thin under ordinary jitter). 9 new
     test cases, 77 total across the C++ suite now.
+    **Update (2026-09-13): one more, `PVRDispatcharr::ComputeRecurringRuleFields`'s
+    pure integer-arithmetic core.** Unlike the other `PVRDispatcharr.cpp`
+    extractions above, this one took a `kodi::addon::PVRTimer&` and called
+    `time(nullptr)` directly, so the extraction also had to change its
+    signature -- the new `dispatcharr::ComputeRecurringRuleFields()` in
+    `src/RecurringRuleUtil.{h,cpp}` takes plain `time_t`/`unsigned int`
+    values plus an explicit `nowUtc` parameter (used only when `firstDay`
+    is `<= 0`, meaning Kodi didn't supply one) instead. Confirmed this is
+    still pure code motion, not a behavior change: the member function
+    that callers (`AddTimer()`/`UpdateTimer()`) actually call is now a
+    thin wrapper passing `timer.GetStartTime()`/`GetEndTime()`/`GetFirstDay()`/
+    `GetWeekdays()` and a live `time(nullptr)` through unchanged. The
+    logic itself -- converting Kodi's UTC-based weekday bitmask/start-end-
+    time-of-day/first-day into Dispatcharr's own representation via a
+    UTC time_t's own modulo-86400 split (exact and DST-free, no
+    gmtime/timegm round-trip needed) plus the one real timezone shift
+    (`EffectiveRecurringRuleUtcOffsetMinutes()`, bridging to Dispatcharr's
+    own non-UTC-by-default system timezone) -- is untouched. New
+    `tests/test_recurring_rule_util.cpp` covers normal weekday/time/date
+    conversion, collecting multiple selected weekdays in bitmask order,
+    the "no weekday selected" validation error, the UTC offset shift
+    applied to both start and end seconds, an out-of-range (negative)
+    result left unwrapped for the caller to handle (matching
+    `TimeOfDayString()`'s own documented contract), and the `firstDay <=
+    0` fallback to `nowUtc` (covering both zero and a negative value,
+    since Kodi's own "no first day set" sentinel wasn't confirmed to
+    always be exactly zero). 7 new test cases, 84 total across the C++
+    suite now. Confirmed the real addon still compiles via the actual
+    Kodi binary-addons harness post-refactor, same verification
+    discipline as every prior C++ extraction this item tracks.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,

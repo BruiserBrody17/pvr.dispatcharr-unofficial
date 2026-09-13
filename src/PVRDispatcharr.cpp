@@ -1,6 +1,7 @@
 #include "PVRDispatcharr.h"
 
 #include "EpgTagUtil.h"
+#include "RecurringRuleUtil.h"
 #include "WebSocketClient.h"
 
 #include <kodi/AddonBase.h>
@@ -2003,13 +2004,13 @@ bool PVRDispatcharr::ComputeRecurringRuleFields(const kodi::addon::PVRTimer& tim
                                                 int& startSecondsOut, int& endSecondsOut, time_t& startDateOut,
                                                 std::string& error)
 {
-  // Pure integer-arithmetic UTC day/time-of-day math -- every value here
-  // (Kodi's GetStartTime()/GetEndTime()/GetFirstDay()) is already UTC
-  // (this addon's convention throughout, confirmed consistent with how
-  // one-time/series timers are already handled with no conversion), and
-  // a UTC time_t's own modulo-86400 gives an exact, DST-free
-  // calendar-day/time-of-day split with no gmtime/timegm round-trip
-  // needed. The *only* place a real timezone enters is the explicit
+  // Delegates to the free function in RecurringRuleUtil.{h,cpp} -- pulled
+  // out specifically so this pure UTC day/time-of-day math is
+  // unit-testable standalone; see tests/test_recurring_rule_util.cpp.
+  // This method stays as the public entry point since AddTimer()/
+  // UpdateTimer() already call it via this exact name.
+  //
+  // The *only* place a real timezone enters is the explicit
   // EffectiveRecurringRuleUtcOffsetMinutes() shift below, bridging to
   // Dispatcharr's own (non-UTC-by-default) system timezone -- computed
   // live for a known zone (see recurring_rule_timezone), or falling back
@@ -2017,33 +2018,10 @@ bool PVRDispatcharr::ComputeRecurringRuleFields(const kodi::addon::PVRTimer& tim
   // otherwise; see that method's own comment and RecurringRule's comment
   // in DispatcharrClient.h for why an arbitrary zone can't be handled
   // automatically.
-  constexpr time_t kSecondsPerDay = 86400;
-  auto floorMod = [](time_t a, time_t m) { return ((a % m) + m) % m; };
-  auto utcMidnight = [&](time_t t) { return t - floorMod(t, kSecondsPerDay); };
-  auto secondsSinceUtcMidnight = [&](time_t t) { return static_cast<int>(floorMod(t, kSecondsPerDay)); };
-
-  int offsetSeconds = EffectiveRecurringRuleUtcOffsetMinutes() * 60;
-  startSecondsOut = secondsSinceUtcMidnight(timer.GetStartTime()) + offsetSeconds;
-  endSecondsOut = secondsSinceUtcMidnight(timer.GetEndTime()) + offsetSeconds;
-
-  time_t firstDay = timer.GetFirstDay();
-  if (firstDay <= 0)
-    firstDay = time(nullptr); // Kodi didn't supply one -- default to "today"
-  startDateOut = utcMidnight(firstDay + offsetSeconds);
-
-  daysOfWeekOut.clear();
-  unsigned int weekdays = timer.GetWeekdays();
-  for (int day = 0; day <= 6; ++day)
-  {
-    if (weekdays & (1u << day))
-      daysOfWeekOut.push_back(day);
-  }
-  if (daysOfWeekOut.empty())
-  {
-    error = "At least one day of the week must be selected";
-    return false;
-  }
-  return true;
+  return dispatcharr::ComputeRecurringRuleFields(timer.GetStartTime(), timer.GetEndTime(), timer.GetFirstDay(),
+                                                 timer.GetWeekdays(), EffectiveRecurringRuleUtcOffsetMinutes(),
+                                                 time(nullptr), daysOfWeekOut, startSecondsOut, endSecondsOut,
+                                                 startDateOut, error);
 }
 
 PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
