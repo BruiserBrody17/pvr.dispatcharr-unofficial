@@ -47,8 +47,8 @@ CMake project separate from the addon's own `CMakeLists.txt` since that
 one can only be configured through Kodi's own build harness -- see
 `tests/CMakeLists.txt`'s own comment): `XmlTvParser`, `TimeUtil`,
 `TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
-`JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil` --
-the six before `RecurringRuleUtil` pulled out
+`JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil`,
+`RecordingParser` -- the six before `RecurringRuleUtil` pulled out
 of `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
 string formats, curl-based URL escaping, the null-safe JSON field
@@ -66,6 +66,19 @@ representation via plain modulo-86400 day/time-of-day math, with the one
 real timezone shift (bridging to Dispatcharr's own non-UTC-by-default
 system timezone) taken as an explicit offset parameter rather than
 computed internally.
+`RecordingParser` is the pure field-mapping core of
+`DispatcharrClient::ParseRecordingJson()` -- maps a single
+`/api/channels/recordings/` item onto a `Recording`, including its
+documented time-window/`custom_properties.status`-override
+`isInProgress` logic (a real incident: a recording stopped early keeps
+its originally-scheduled `end_time`, so the time window alone kept
+reporting it in-progress after it actually finished -- see
+`docs/RECORDINGS.md`), `hlsDirStillPresent`, `bytesWritten`, and the
+`custom_properties.program`-then-flat title/subtitle/description
+fallback chain. Deliberately excludes `ParseRecordingJson()`'s
+`PendingTitle`-cache lookup (member state behind a mutex, not available
+to a free function) and its final `"Recording <id>"` default title,
+both of which stay in the thin wrapper that calls it first.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance
@@ -78,12 +91,24 @@ pytest, wired into CI's `unit-tests-python` job): `recording_edl` covers
 `_parse_edl`, `_sidecar_base_name`, `_is_under_dotted_dir`,
 `_prune_empty_directories`, `_resolve_scan_root`/`_dedupe_scan_roots`,
 `_scrub_orphaned_recording_sidecars` end-to-end via `monkeypatch`ing its
-one Django-model-dependent call, and `Plugin.run()`'s own dispatch and
+one Django-model-dependent call, `_classify_hls_dir_info` (the pure
+classification core of `_classify_dvr_hls_dir`, taking an
+already-resolved `recording_exists`/`custom_properties` instead of
+querying Django directly -- covers all four classifications, including
+the "never delete the only surviving copy of a failed recording"
+`preserved_failure` case), and `Plugin.run()`'s own dispatch and
 response text for every action branch that's Django-free or where the
 one Django-dependent call can itself be `monkeypatch`ed (the actual
 response a client sees, not just the underlying helpers in isolation).
 `timeshift_buffer` covers `_channel_dir`, `Plugin._resolve_channel_uuid`,
 `_resolve_request_path`, `_BufferRequestHandler._parse_range`, `_proxy_url`,
+`_compute_segment_counts` (the pure segment-count-sizing core of
+`_start_ffmpeg`, including the `visible_segments * segment_seconds ==
+buffer_minutes * 60` invariant `docs/TIMESHIFT.md` cites to rule out a
+suspected audio-sync-error correlation, and the floor-at-1 edge case),
+`_is_process_alive` (via `monkeypatch`ing its one external dependency,
+`os.killpg`, including the documented conservative
+"assume alive" fallback on a non-`ProcessLookupError` failure),
 `_stream_attribution_headers` (client_ip validation path only -- the
 username/JWT branch stays untested), `_prune_stale_viewers`,
 `_find_orphaned_channel_dirs`/`_scrub_orphaned_dirs` (via `monkeypatch`ing

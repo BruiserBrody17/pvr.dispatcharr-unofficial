@@ -210,6 +210,43 @@ def test_proxy_url_no_trailing_slash():
 
 
 # ---------------------------------------------------------------------
+# _compute_segment_counts
+# ---------------------------------------------------------------------
+
+
+def test_compute_segment_counts_typical_values():
+    visible, wrap = timeshift_buffer_plugin._compute_segment_counts(buffer_minutes=60, segment_seconds=2)
+
+    assert visible == 1800
+    assert wrap == 3600
+
+
+def test_compute_segment_counts_invariant_matches_buffer_window():
+    """The exact invariant docs/TIMESHIFT.md cites to rule out a
+    suspected ~89s audio-sync-error correlation: visible_segments *
+    segment_seconds always reduces to the full buffer window in
+    seconds, for any segment_seconds that evenly divides it."""
+    for buffer_minutes, segment_seconds in [(60, 2), (5, 1), (300, 6), (1, 1)]:
+        visible, _ = timeshift_buffer_plugin._compute_segment_counts(buffer_minutes, segment_seconds)
+        assert visible * segment_seconds == buffer_minutes * 60
+
+
+def test_compute_segment_counts_wrap_is_double_visible():
+    visible, wrap = timeshift_buffer_plugin._compute_segment_counts(buffer_minutes=10, segment_seconds=5)
+
+    assert wrap == visible * 2
+
+
+def test_compute_segment_counts_floors_at_one_when_segment_longer_than_buffer():
+    """A segment_seconds larger than the whole configured buffer window
+    must still produce a playable single-segment playlist, not 0."""
+    visible, wrap = timeshift_buffer_plugin._compute_segment_counts(buffer_minutes=1, segment_seconds=120)
+
+    assert visible == 1
+    assert wrap == 2
+
+
+# ---------------------------------------------------------------------
 # _stream_attribution_headers -- client_ip path only. The username/JWT
 # branch imports Django (deferred inside `if username:`) -- deliberately
 # never exercised here, so no test in this file passes a non-empty
@@ -280,6 +317,44 @@ def test_prune_stale_viewers_no_heartbeat_yet_treated_as_fresh():
     changed = timeshift_buffer_plugin._prune_stale_viewers(state, idle_timeout=60, now=1000)
     assert changed is False
     assert state["viewers"] == ["a"]
+
+
+# ---------------------------------------------------------------------
+# _is_process_alive -- monkeypatch just os.killpg (its one external
+# dependency), same technique used elsewhere for a single Redis/Django
+# call.
+# ---------------------------------------------------------------------
+
+
+def test_is_process_alive_false_for_falsy_pid():
+    assert timeshift_buffer_plugin._is_process_alive(None) is False
+    assert timeshift_buffer_plugin._is_process_alive(0) is False
+
+
+def test_is_process_alive_true_when_killpg_succeeds(monkeypatch):
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "killpg", lambda pid, sig: None)
+    assert timeshift_buffer_plugin._is_process_alive(1234) is True
+
+
+def test_is_process_alive_false_when_process_lookup_error(monkeypatch):
+    def raise_lookup_error(pid, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "killpg", raise_lookup_error)
+    assert timeshift_buffer_plugin._is_process_alive(1234) is False
+
+
+def test_is_process_alive_true_on_other_errors_conservatively(monkeypatch):
+    """Documented deliberate choice (see the function's own docstring):
+    e.g. a PermissionError against a recycled, unrelated pid should
+    assume the process is still alive rather than risk reaping something
+    still running."""
+
+    def raise_permission_error(pid, sig):
+        raise PermissionError
+
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "killpg", raise_permission_error)
+    assert timeshift_buffer_plugin._is_process_alive(1234) is True
 
 
 # ---------------------------------------------------------------------

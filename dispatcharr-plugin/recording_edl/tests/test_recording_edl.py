@@ -6,12 +6,17 @@ same filename -- importing both by name in one pytest session would
 otherwise collide via sys.modules.
 
 Covers only the Dispatcharr-independent pure/filesystem logic --
-everything that touches Dispatcharr's own Django models (Recording,
-CoreSettings) via the deferred imports inside _classify_dvr_hls_dir/
-_dvr_sidecar_scan_roots stays untested here, same boundary this
-project's C++ addon test suite draws at the Kodi SDK: verification of
-that layer is still manual/live-instance territory (see
+everything that touches Dispatcharr's own Django models directly (the
+Recording.objects.filter()/CoreSettings query inside
+_classify_dvr_hls_dir/_dvr_sidecar_scan_roots) stays untested here, same
+boundary this project's C++ addon test suite draws at the Kodi SDK:
+verification of that layer is still manual/live-instance territory (see
 docs/OPEN_ITEMS.md's "No automated test suite exists" entry).
+_classify_dvr_hls_dir's own classification decision logic is pulled out
+into _classify_hls_dir_info(), which takes the already-resolved
+recording_exists/custom_properties instead of querying Django itself,
+so it IS covered directly (not just indirectly via run()'s message
+formatting below).
 
 Plugin.run()'s own dispatch and message-formatting *is* covered, for
 every action branch that either has no Django dependency at all
@@ -312,6 +317,95 @@ def test_scrub_orphaned_recording_sidecars_never_touches_dotted_dirs(tmp_path, m
     assert removed_dirs == []
     assert errors == []
     assert (dotted_dir / "leftover.edl").exists()
+
+
+# ---------------------------------------------------------------------
+# _classify_hls_dir_info
+# ---------------------------------------------------------------------
+
+
+def test_classify_hls_dir_info_orphaned_when_no_recording_row():
+    info = recording_edl_plugin._classify_hls_dir_info(
+        Path("/data/recordings/.dvr_42_hls"), 42, recording_exists=False, custom_properties=None, segment_count=3
+    )
+
+    assert info["classification"] == "orphaned"
+    assert info["recording_exists"] is False
+    assert "42" in info["detail"]
+    assert info["segment_count"] == 3
+
+
+def test_classify_hls_dir_info_active_when_still_recording():
+    hls_dir = Path("/data/recordings/.dvr_1_hls")
+    info = recording_edl_plugin._classify_hls_dir_info(
+        hls_dir,
+        1,
+        recording_exists=True,
+        custom_properties={"_hls_dir": str(hls_dir), "status": "recording"},
+        segment_count=10,
+    )
+
+    assert info["classification"] == "active"
+
+
+def test_classify_hls_dir_info_preserved_failure_when_remux_failed():
+    """The real "never delete the only surviving copy" incident this
+    function's own docstring documents: a failed concat/remux leaves
+    Dispatcharr deliberately keeping the directory -- must classify as
+    preserved_failure, never orphaned or plain referenced, regardless of
+    what status says."""
+    hls_dir = Path("/data/recordings/.dvr_2_hls")
+    info = recording_edl_plugin._classify_hls_dir_info(
+        hls_dir,
+        2,
+        recording_exists=True,
+        custom_properties={"_hls_dir": str(hls_dir), "status": "stopped", "remux_success": False},
+        segment_count=5,
+    )
+
+    assert info["classification"] == "preserved_failure"
+
+
+def test_classify_hls_dir_info_referenced_when_recording_matches_but_not_active_or_failed():
+    hls_dir = Path("/data/recordings/.dvr_3_hls")
+    info = recording_edl_plugin._classify_hls_dir_info(
+        hls_dir,
+        3,
+        recording_exists=True,
+        custom_properties={"_hls_dir": str(hls_dir), "status": "completed"},
+        segment_count=0,
+    )
+
+    assert info["classification"] == "referenced"
+    assert "completed" in info["detail"]
+
+
+def test_classify_hls_dir_info_referenced_when_recording_points_elsewhere():
+    """A Recording row exists but its own _hls_dir doesn't match this
+    path -- needs manual review rather than being assumed safe to delete
+    just because it superficially looks unreferenced."""
+    hls_dir = Path("/data/recordings/.dvr_4_hls")
+    info = recording_edl_plugin._classify_hls_dir_info(
+        hls_dir,
+        4,
+        recording_exists=True,
+        custom_properties={"_hls_dir": "/data/recordings/.dvr_4_hls_old", "status": "completed"},
+        segment_count=0,
+    )
+
+    assert info["classification"] == "referenced"
+    assert "manual review" in info["detail"]
+
+
+def test_classify_hls_dir_info_referenced_when_custom_properties_missing_hls_dir():
+    """A Recording row exists but never had an _hls_dir at all (e.g.
+    custom_properties is None/empty) -- same "needs manual review" bucket
+    as pointing elsewhere, not treated as orphaned."""
+    info = recording_edl_plugin._classify_hls_dir_info(
+        Path("/data/recordings/.dvr_5_hls"), 5, recording_exists=True, custom_properties=None, segment_count=0
+    )
+
+    assert info["classification"] == "referenced"
 
 
 # ---------------------------------------------------------------------
