@@ -13,7 +13,7 @@ handled here.
   `TimeZoneUtil`/`EpgTagUtil`/`StringUtil`/`DateTimeFormat`/`UrlEncode`/
   `JsonFieldUtil`/`CurlCallbacks`/`CatchUpUtil`/`RecurringRuleUtil`/`RecordingParser`/
   `PluginRunResult`/`RealtimeUpdateParser`/`M3u8SegmentParser`/`SegmentLookup`/
-  `ChannelParser`/`TimerRuleParser`/`TimerIdentity` as of 2026-09-13. The addon's actual PVR API surface
+  `ChannelParser`/`TimerRuleParser`/`TimerIdentity`/`LiveManifestParser` as of 2026-09-13. The addon's actual PVR API surface
   and HTTP/WebSocket handling (`PVRDispatcharr`/`DispatcharrClient`/
   `WebSocketClient`) aren't covered by anything automated.
   `dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/` (pytest,
@@ -68,7 +68,7 @@ handled here.
   `StringUtil`/`DateTimeFormat`/`UrlEncode`/`JsonFieldUtil`/`CurlCallbacks`/
   `CatchUpUtil`/`RecurringRuleUtil`/`RecordingParser`/`PluginRunResult`/
   `RealtimeUpdateParser`/`M3u8SegmentParser`/`SegmentLookup`/`ChannelParser`/
-  `TimerRuleParser`/`TimerIdentity` (or add new Kodi-independent C++ pure-logic code), run the C++ unit test suite**
+  `TimerRuleParser`/`TimerIdentity`/`LiveManifestParser` (or add new Kodi-independent C++ pure-logic code), run the C++ unit test suite**
   before pushing (needs libcurl's dev headers, e.g. `libcurl4-openssl-dev`
   on Debian/Ubuntu, for `UrlEncode`'s own test -- CI hit this as a real
   "Could NOT find CURL" failure the first time this suite gained that

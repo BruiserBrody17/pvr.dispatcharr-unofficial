@@ -1448,6 +1448,29 @@
     segment parsing, live-edge trim/rebase, live-edge seek backoff, a
     recurring-rule renewal decision, and WebSocket frame encoding) still
     tracked for follow-up passes.
+    **Update (2026-09-13): third batch done -- `RefreshLiveManifest()`'s
+    segment-merge filtering, the live-timeshift counterpart to
+    `M3u8SegmentParser` above.** New `src/LiveManifestParser.{h,cpp}`
+    (`ParseNewLiveManifestSegments()`) covers the same two real concerns
+    as its in-progress-recording sibling but for the `get_live_manifest`
+    plugin response's JSON `"segments"` array instead of a raw m3u8
+    playlist: keeping only sequences newer than the highest one already
+    merged, and dropping a malformed entry (empty filename or
+    non-positive `byte_size`) before it can corrupt the caller's own
+    cumulative byte/time offsets for every segment merged after it.
+    Deliberately does NOT compute `byteOffset`/`timeOffsetMs` itself
+    (cumulative over the caller's own running totals, not available to a
+    free function) -- `RefreshLiveManifest()` still assigns those while
+    applying each returned entry in order, same split already used for
+    the in-progress-recording sibling. 8 new test cases, 160 total
+    across the C++ suite now. Confirmed pure code motion via `git diff`
+    and a rebuild through the real Kodi binary-addons harness -- this
+    time actually reading the harness log body rather than trusting the
+    wrapper `make` command's own exit code, after the previous batch's
+    extraction shipped a real miss (a call site missing its new header's
+    `#include`) that the wrapper's always-0 exit code silently let
+    through locally; only caught by CI's `build-windows` job, fixed in a
+    follow-up commit on that same PR before merging.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,

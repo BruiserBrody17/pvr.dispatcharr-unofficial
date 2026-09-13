@@ -72,6 +72,7 @@ set(DISPATCHARR_SOURCES
     src/M3u8SegmentParser.cpp
     src/ChannelParser.cpp
     src/TimerRuleParser.cpp
+    src/LiveManifestParser.cpp
 )
 
 set(DISPATCHARR_HEADERS
@@ -97,6 +98,7 @@ set(DISPATCHARR_HEADERS
     src/ChannelParser.h
     src/TimerRuleParser.h
     src/TimerIdentity.h
+    src/LiveManifestParser.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}
