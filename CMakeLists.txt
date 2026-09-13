@@ -64,6 +64,7 @@ set(DISPATCHARR_SOURCES
     src/StringUtil.cpp
     src/DateTimeFormat.cpp
     src/UrlEncode.cpp
+    src/CurlCallbacks.cpp
 )
 
 set(DISPATCHARR_HEADERS
@@ -75,6 +76,7 @@ set(DISPATCHARR_HEADERS
     src/TimeZoneUtil.h
     src/EpgTagUtil.h
     src/StringUtil.h
+    src/CurlCallbacks.h
     src/DateTimeFormat.h
     src/UrlEncode.h
     src/JsonFieldUtil.h

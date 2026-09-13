@@ -1060,6 +1060,24 @@
     Both plugins' Kodi-independent pure/filesystem logic is now covered;
     what remains untested on the Python side is exactly the
     Redis/Django/real-process boundary, by design.
+    **Update (2026-09-13): `recording_edl`'s own `Plugin.run()` dispatch
+    now covered too, for every action branch that's Django-free or where
+    the one Django-dependent call can itself be `monkeypatch`ed** (the
+    same technique already used for `_scrub_orphaned_recording_sidecars`,
+    just one layer up the call chain) -- `scrub_orphaned_sidecars` end to
+    end, `list_dvr_hls_staging_dirs`/`delete_orphaned_dvr_hls_dirs`'s
+    message formatting (classification-count summaries, the
+    directory/directories singular-plural text, error-count appending)
+    via monkeypatching `_list_dvr_hls_staging_dirs`/
+    `_delete_orphaned_dvr_hls_dirs` themselves rather than their Django
+    internals, an unknown action's error response, and `get_edl`'s
+    `recording_id`-missing validation (the deferred `Recording` import
+    happens *after* that check, so it's Django-free too). This tests the
+    actual response dict/message text a client sees, not just the
+    underlying helper functions in isolation. `timeshift_buffer`'s own
+    `Plugin` dispatch is a separate, not-yet-done piece -- none of its
+    action handlers are this Django-light, so extending it the same way
+    isn't a given.
   - **C++ addon**: don't attempt to test `PVRDispatcharr`/
     `DispatcharrClient` wholesale -- that would mean mocking Kodi's
     entire addon-instance API and/or standing up a fake Dispatcharr
@@ -1189,6 +1207,23 @@
     the same caution `CLAUDE.md`'s own privacy-scrub convention already
     learned the hard way for a different kind of "we checked, it's
     done" claim.
+    **Update (2026-09-13): one more found, again after "nothing else
+    remains" -- `FixedBufferWriteCallback`/`RecordingHeaderCallback`/
+    `ContentLengthHeaderCallback`/`WriteCallback`, all plain libcurl
+    `CURLOPT_WRITEFUNCTION`/`CURLOPT_HEADERFUNCTION` callbacks in
+    `DispatcharrClient.cpp`.** None of the four touch a `CURL*`
+    themselves -- curl calls them during a live transfer, but nothing
+    stops calling them directly with synthetic data, so they moved into
+    new `src/CurlCallbacks.{h,cpp}` with zero new dependency (not even
+    curl headers, despite conceptually being curl callbacks). Real
+    parsing logic that was previously only exercised through live HTTP:
+    `FixedBufferWriteCallback`'s capacity-clamping (verified it returns
+    the *full* byte count to curl even when only part of it actually fit
+    in the buffer -- documenting curl's own contract as currently
+    implemented, not asserting it's ideal), and the two header
+    callbacks' case-insensitive `Content-Range`/`Content-Length` parsing
+    including their malformed-input fallback paths (no slash, non-numeric
+    size). 14 new test cases, 68 total across the C++ suite now.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,
