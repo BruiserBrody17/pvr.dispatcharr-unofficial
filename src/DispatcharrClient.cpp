@@ -7,6 +7,7 @@
 #include "M3u8SegmentParser.h"
 #include "PluginRunResult.h"
 #include "RecordingParser.h"
+#include "SegmentLookup.h"
 #include "TimeUtil.h"
 #include "TimeZoneUtil.h"
 #include "UrlEncode.h"
@@ -1886,16 +1887,8 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
       return 0;
   }
 
-  const InProgressRecordingSegmentInfo* seg = nullptr;
-  for (const auto& s : m_inProgressRecordingStream.segments)
-  {
-    if (m_inProgressRecordingStream.position >= s.byteOffset &&
-        m_inProgressRecordingStream.position < s.byteOffset + s.byteSize)
-    {
-      seg = &s;
-      break;
-    }
-  }
+  const InProgressRecordingSegmentInfo* seg =
+      FindSegmentContainingPosition(m_inProgressRecordingStream.position, m_inProgressRecordingStream.segments);
   if (!seg)
     return 0; // shouldn't happen (no rolling eviction here), but nothing safely readable if it did
 
@@ -2726,15 +2719,8 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   if (m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes)
     return 0; // genuinely nothing new yet
 
-  const LiveTimeshiftSegmentInfo* seg = nullptr;
-  for (const auto& s : m_liveTimeshiftStream.segments)
-  {
-    if (m_liveTimeshiftStream.position >= s.byteOffset && m_liveTimeshiftStream.position < s.byteOffset + s.byteSize)
-    {
-      seg = &s;
-      break;
-    }
-  }
+  const LiveTimeshiftSegmentInfo* seg =
+      FindSegmentContainingPosition(m_liveTimeshiftStream.position, m_liveTimeshiftStream.segments);
   if (!seg)
   {
     kodi::Log(ADDON_LOG_DEBUG,

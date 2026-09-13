@@ -48,7 +48,7 @@ one can only be configured through Kodi's own build harness -- see
 `tests/CMakeLists.txt`'s own comment): `XmlTvParser`, `TimeUtil`,
 `TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
 `JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil`,
-`RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser` -- the six before `RecurringRuleUtil` pulled out
+`RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser`, `SegmentLookup` -- the six before `RecurringRuleUtil` pulled out
 of `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
 string formats, curl-based URL escaping, the null-safe JSON field
@@ -106,6 +106,13 @@ feeding a `static_cast<int64_t>()` in the caller would be undefined
 behavior (the C++-side counterpart to the nan/inf parsing bugs this
 project's own companion plugins already had fixed, see
 `docs/TIMESHIFT.md`/`docs/RECORDING_EDL.md`).
+`SegmentLookup` is `FindSegmentContainingPosition<SegmentT>()`, a
+template (duck-typed on a `byteOffset`/`byteSize` member pair, matching
+`CatchUpUtil`'s own templating approach) shared by
+`ReadInProgressRecordingStream()` and `ReadLiveTimeshiftStream()` --
+finds which known segment, if any, contains a given byte position in
+that stream's own cumulative address space. Was identical, duplicated
+logic in both functions before this extraction.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance

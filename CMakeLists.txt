@@ -91,6 +91,7 @@ set(DISPATCHARR_HEADERS
     src/PluginRunResult.h
     src/RealtimeUpdateParser.h
     src/M3u8SegmentParser.h
+    src/SegmentLookup.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}

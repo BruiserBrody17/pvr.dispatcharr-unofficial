@@ -1407,6 +1407,25 @@
     the empty-playlist case. 117 total across the C++ suite now.
     Confirmed pure code motion via `git diff` and a rebuild through the
     real Kodi binary-addons harness.
+    **Update (2026-09-13): an exhaustive line-by-line read of the three
+    remaining large C++ files (`DispatcharrClient.cpp`,
+    `PVRDispatcharr.cpp`, `WebSocketClient.cpp` -- prompted by "why does
+    every survey pass keep finding more?"; answer: prior passes only
+    grepped for standalone-looking function signatures, which misses
+    pure logic buried inside larger, mixed-purity member functions)
+    found 8 further real candidates, roughly three PR-sized batches.
+    First: `FindSegmentContainingPosition<SegmentT>()`
+    (`src/SegmentLookup.h`, header-only, same templating approach as
+    `CatchUpUtil`) -- the "find the segment containing this byte
+    position" linear scan was identical, duplicated code in both
+    `ReadInProgressRecordingStream()` and `ReadLiveTimeshiftStream()`;
+    now one shared template. 6 new test cases, 123 total across the C++
+    suite now. The remaining 7 candidates (per-item JSON-to-struct
+    mapping loops for `Channel`/`ChannelGroup`/`TimerRule`/
+    `RecurringRule`/`RecordingEdlEntry`, a series-rule client-index hash,
+    live-manifest segment parsing, live-edge trim/rebase, live-edge seek
+    backoff, a recurring-rule renewal decision, and WebSocket frame
+    encoding) are tracked for follow-up passes.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,

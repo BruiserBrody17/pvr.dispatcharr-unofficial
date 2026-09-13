@@ -67,6 +67,7 @@ add_executable(pvr_dispatcharr_tests
   test_plugin_run_result.cpp
   test_realtime_update_parser.cpp
   test_m3u8_segment_parser.cpp
+  test_segment_lookup.cpp
   ${DISPATCHARR_SRC_DIR}/XmlTvParser.cpp
   ${DISPATCHARR_SRC_DIR}/TimeZoneUtil.cpp
   ${DISPATCHARR_SRC_DIR}/EpgTagUtil.cpp
