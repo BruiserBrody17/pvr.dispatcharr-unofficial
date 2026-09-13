@@ -49,7 +49,8 @@ one can only be configured through Kodi's own build harness -- see
 `TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
 `JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil`,
 `RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser`, `SegmentLookup`,
-`ChannelParser`, `TimerRuleParser`, `TimerIdentity`, `LiveManifestParser`, `LiveEdgeMargin` -- the six before `RecurringRuleUtil` pulled out
+`ChannelParser`, `TimerRuleParser`, `TimerIdentity`, `LiveManifestParser`, `LiveEdgeMargin`,
+`RecurringRuleRenewal` -- the six before `RecurringRuleUtil` pulled out
 of `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
 string formats, curl-based URL escaping, the null-safe JSON field
@@ -159,6 +160,15 @@ shifting the survivors so the oldest becomes local byte/time 0) --
 confirmed live as necessary to avoid a `CDVDDemuxFFmpeg::SeekTime`
 landing near the MPEG-TS 33-bit PTS wraparound point on a
 long-running, reattached buffer.
+`RecurringRuleRenewal` is `ShouldRenewRecurringRule()`, the per-rule
+decision core of `PVRDispatcharr::RenewRecurringRules()`'s loop --
+whether a rolling recurring rule's `end_date` should be pushed forward
+this cycle, skipping a disabled rule, one still comfortably inside its
+window, one with an occurrence currently recording or starting within
+a safety margin (defense in depth around Dispatcharr's own
+regeneration behavior), or -- erring toward skipping rather than
+renewing blind -- one where `GetRecordings()` itself failed and that
+occurrence-safety check can't be evaluated at all.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance

@@ -2,6 +2,7 @@
 
 #include "EpgTagUtil.h"
 #include "RealtimeUpdateParser.h"
+#include "RecurringRuleRenewal.h"
 #include "RecurringRuleUtil.h"
 #include "TimerIdentity.h"
 #include "WebSocketClient.h"
@@ -453,35 +454,15 @@ void PVRDispatcharr::RenewRecurringRules()
   std::vector<Recording> recordings;
   bool haveRecordings = m_client.GetRecordings(recordings, error);
 
+  // The per-rule renewal decision itself lives in
+  // dispatcharr::ShouldRenewRecurringRule() (RecurringRuleRenewal.{h,cpp})
+  // so it's unit-testable standalone -- see that function's own comment.
   time_t now = time(nullptr);
   for (const auto& rule : rules)
   {
-    if (!rule.enabled)
-      continue; // nothing materializes for a disabled rule anyway
-    time_t daysLeft = (rule.endDate - now) / 86400;
-    if (daysLeft >= kRecurringRuleWindowDays / 2)
-      continue; // still comfortably inside the window
-
-    // Skip a rule with an occurrence currently recording or about to
-    // start soon -- see kRecurringRuleRenewalSafetyMarginSeconds's own
-    // comment. If GetRecordings() itself failed, err toward skipping
-    // rather than renewing blind.
-    bool hasActiveOrImminentOccurrence = !haveRecordings;
-    if (haveRecordings)
-    {
-      for (const auto& rec : recordings)
-      {
-        if (rec.recurringRuleId != rule.id)
-          continue;
-        if (rec.isInProgress || (rec.isUpcoming && rec.startTime - now < kRecurringRuleRenewalSafetyMarginSeconds))
-        {
-          hasActiveOrImminentOccurrence = true;
-          break;
-        }
-      }
-    }
-    if (hasActiveOrImminentOccurrence)
-      continue; // try again next cycle
+    if (!ShouldRenewRecurringRule(rule, recordings, haveRecordings, now, kRecurringRuleWindowDays,
+                                  kRecurringRuleRenewalSafetyMarginSeconds))
+      continue; // disabled, still inside its window, or an active/imminent occurrence -- try again next cycle
 
     time_t newEndDate = now + static_cast<time_t>(kRecurringRuleWindowDays) * 86400;
     std::string extendError;

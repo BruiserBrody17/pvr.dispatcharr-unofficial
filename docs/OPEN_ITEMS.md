@@ -1506,6 +1506,26 @@
     candidates remain from the original 8 -- a recurring-rule renewal
     decision and WebSocket frame encoding -- still tracked for follow-up
     passes.
+    **Update (2026-09-13): fifth batch done -- the recurring-rule
+    renewal decision.** New `src/RecurringRuleRenewal.{h,cpp}`
+    (`ShouldRenewRecurringRule()`) covers whether a rolling recurring
+    rule's `end_date` should be pushed forward this cycle: skipping a
+    disabled rule, one still comfortably inside its window (more than
+    half of `kRecurringRuleWindowDays` remaining), one with an
+    occurrence currently recording or starting within
+    `kRecurringRuleRenewalSafetyMarginSeconds` (defense in depth around
+    Dispatcharr's own regeneration behavior), or -- erring toward
+    skipping rather than renewing blind -- one where `GetRecordings()`
+    itself failed and that occurrence-safety check can't be evaluated at
+    all. Takes `windowDays`/`safetyMarginSeconds` as explicit parameters
+    rather than `PVRDispatcharr`'s own private static constants (same
+    pattern as `RecurringRuleUtil`'s own `offsetMinutes` parameter), so
+    it's unit-testable standalone with no Kodi SDK dependency. 9 new
+    test cases, 177 total across the C++ suite now. Confirmed pure code
+    motion via `git diff` and a rebuild through the real Kodi
+    binary-addons harness, log body read directly. One candidate
+    remains from the original 8: WebSocket frame encoding, still
+    tracked for a follow-up pass.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,
