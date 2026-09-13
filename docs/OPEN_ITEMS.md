@@ -1548,6 +1548,50 @@
     All 8 candidates from the original exhaustive-read survey are now
     done, across six PRs (#30-#35) -- see this item's own "an exhaustive
     line-by-line read" update above for the full original list.
+    **Update (2026-09-13): the same exhaustive-read treatment applied to
+    both Python plugins -- `recording_edl` had no real gaps, but
+    `timeshift_buffer`'s own `Plugin.run()` dispatch (flagged above as
+    "not-yet-done... isn't a given") turned out to be genuinely
+    testable the same way `recording_edl`'s already was.** Every action
+    handler (`start_buffer`, `stop_buffer`, `heartbeat`,
+    `get_live_manifest`, `list_buffers`, `stop_all`,
+    `scrub_orphaned_buffers`) is now covered by `monkeypatch`ing the
+    module-level Redis-touching functions
+    (`_get_buffer_state`/`_set_buffer_state`/`_delete_buffer_state`/
+    `_list_buffer_keys`/`_iter_buffer_states`) and process-management
+    functions (`_start_ffmpeg`/`_remove_channel_files`/
+    `_teardown_buffer`/`_is_process_alive`) each one calls, plus the two
+    lifecycle calls `run()` itself makes unconditionally before ever
+    dispatching (`_ensure_http_server_running`/`_ensure_reaper_running`,
+    stubbed to no-ops via a new test-only dispatch helper -- a real HTTP
+    server/reaper thread has no place in a unit test). This is real
+    behavior that had zero test coverage at any level before now: the
+    reference-counted stop/reattach decisions (dead-buffer cleanup and
+    fresh-start on `start_buffer`, the viewer-count-based choice between
+    "still active for other viewers" and a full teardown on
+    `stop_buffer`), the `access_token` retrofit for state written by a
+    pre-upgrade plugin version, and the `BufferFailedError`-vs-plain-
+    `RuntimeError` distinction in `get_live_manifest` (only the former
+    tears the buffer down and reports `fatal: true`, so a caller's
+    cold-start retry loop can stop immediately instead of waiting out
+    its full budget against something that will never recover).
+    One thing caught and fixed during this pass, not shipped: an early
+    version of the "remove one of several viewers" test used an
+    obviously-stale-looking heartbeat timestamp (`100`, i.e. 1970) for
+    the viewer that was supposed to stay active, which
+    `_prune_stale_viewers` correctly treated as genuinely stale too --
+    a mistake in the test's own fixture data, not a bug in the plugin;
+    fixed by using a real `time.time()` value instead.
+    30 new test cases, 127 total across the Python suite now (41
+    `recording_edl` + 86 `timeshift_buffer`). Anything touching
+    Dispatcharr's own Django models or Redis directly (the deferred
+    imports inside `_dvr_sidecar_scan_roots`/`_classify_dvr_hls_dir`, and
+    the real `_redis()` client, the real HTTP server, and real ffmpeg
+    subprocess management on both plugins) stays untested, on the same
+    principle as the C++ side stopping at the Kodi SDK boundary -- this
+    is now believed to be the actual, final boundary on the Python side
+    too, not just another "nothing else remains" claim taken at face
+    value.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,
