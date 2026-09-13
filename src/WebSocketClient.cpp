@@ -2,6 +2,7 @@
 
 #include "StringUtil.h"
 #include "WebSocketFrame.h"
+#include "WebSocketHandshake.h"
 
 #include <curl/curl.h>
 
@@ -260,11 +261,7 @@ bool WebSocketClient::Connect(const std::string& host, int port, bool useTls, co
     }
   }
 
-  std::string headerLower = ToLower(headerText);
-  bool got101 = headerLower.find(" 101 ") != std::string::npos || headerLower.rfind("http/1.1 101", 0) == 0 ||
-                headerLower.rfind("http/1.0 101", 0) == 0;
-  bool gotUpgrade = headerLower.find("upgrade: websocket") != std::string::npos;
-  if (!got101 || !gotUpgrade)
+  if (!IsWebSocketHandshakeAccepted(headerText))
   {
     error = "Dispatcharr did not accept the WebSocket upgrade (check the account can "
             "authenticate; response: " +
