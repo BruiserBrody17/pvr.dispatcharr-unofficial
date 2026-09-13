@@ -392,6 +392,33 @@ called out inline so a future rebuild doesn't have to rediscover them.
      reported no snapshot for the same URL) that matched `rtmpdump`'s own
      pinned `PKG_SHA256` exactly; staged the same way as the GNU packages
      above.
+   One more confirmed-live finding on this path, not a failure -- the
+   build succeeds, but the resulting `addon.xml`'s `<platform>` tag comes
+   out empty (`<platform></platform>`), unlike the Linux/macOS/Windows
+   steps above which correctly produce `<platform>linux</platform>` etc.
+   Traced to Kodi's own upstream CMake build, not anything in this
+   addon's own `addon.xml.in`/`CMakeLists.txt`/`package.mk`:
+   `cmake/KodiConfig.cmake.in`'s `PLATFORM_TAG` substitution is only ever
+   computed by `cmake/scripts/common/PrepareEnv.cmake`, which only
+   `cmake/addons/CMakeLists.txt` (Kodi's own `tools/depends/target/
+   binary-addons` addon-build harness used by the Linux/macOS/Windows
+   steps above) `include()`s -- Kodi's own top-level `CMakeLists.txt`
+   (which builds `kodi.bin` itself and installs `KodiConfig.cmake` for
+   external SDK use, the file CoreELEC's `kodi-binary-addons` packaging
+   class builds addons against directly) never does, so `PLATFORM_TAG` is
+   simply undefined at that point and substitutes empty. Confirmed this
+   isn't cross-compile-specific: even CoreELEC's own host-native x86_64
+   build of Kodi (bootstrapping its own build tools) produces the same
+   blank `PLATFORM_TAG` in its installed `KodiConfig.cmake`, and
+   `PrepareEnv.cmake`/`AddonHelpers.cmake` themselves are byte-identical
+   to a fresh upstream checkout -- this is a structural property of how
+   Kodi's own build generates its external addon-SDK config on this path,
+   affecting any addon CoreELEC packages this way, not something specific
+   to this repo's own config. Likely harmless in practice -- Kodi's addon
+   loader keys off the `library_linux` attribute (correctly populated) to
+   find the actual binary, not the `<platform>` metadata tag -- but that's
+   inference from reading Kodi's own install/load logic, not yet
+   confirmed against a real device.
    Per CoreELEC's own wiki, the result lands under `target/addons/`; this
    is now confirmed against a real run -- exact path is
    `target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr-unofficial/`,

@@ -4,6 +4,21 @@
 
 ## Ongoing (more will likely come up)
 
+- **CoreELEC-built `addon.xml`'s `<platform>` tag comes out empty, root
+  cause confirmed live but real-device impact still unverified (found
+  2026-09-13, rebuilding the CoreELEC package from a fresh environment).**
+  Full root-cause trace is in `docs/BUILDING.md`'s CoreELEC section --
+  it's a structural property of how Kodi's own upstream build generates
+  the `KodiConfig.cmake` that CoreELEC's `kodi-binary-addons` packaging
+  class builds addons against (`PLATFORM_TAG` never gets computed on
+  that path), not anything specific to this addon's own
+  `addon.xml.in`/`CMakeLists.txt`/`package.mk` -- affects any addon
+  CoreELEC packages this way. Believed harmless (Kodi's addon loader
+  keys off `library_linux`, which is correctly populated, not the
+  `<platform>` metadata tag) but that's inference from reading Kodi's
+  own source, not a real N2+ install test. Next real CoreELEC zip build
+  (release or otherwise) should include actually installing it on the
+  N2+ and confirming Kodi loads it normally despite the blank tag.
 - **Rename the project a second time, from `pvr.dispatcharr` to
   `pvr.dispatcharr-unofficial`, plus add an explicit non-affiliation
   disclaimer (requested 2026-09-11, shortly after first sharing the
