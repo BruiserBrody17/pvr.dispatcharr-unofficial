@@ -72,6 +72,7 @@ add_executable(pvr_dispatcharr_tests
   test_timer_rule_parser.cpp
   test_timer_identity.cpp
   test_live_manifest_parser.cpp
+  test_live_edge_margin.cpp
   ${DISPATCHARR_SRC_DIR}/XmlTvParser.cpp
   ${DISPATCHARR_SRC_DIR}/TimeZoneUtil.cpp
   ${DISPATCHARR_SRC_DIR}/EpgTagUtil.cpp

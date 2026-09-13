@@ -1471,6 +1471,41 @@
     `#include`) that the wrapper's always-0 exit code silently let
     through locally; only caught by CI's `build-windows` job, fixed in a
     follow-up commit on that same PR before merging.
+    **Update (2026-09-13): fourth batch done -- the live-edge margin
+    math, unifying two of the three remaining candidates into one file
+    since they turned out to be the same computation.** New
+    `src/LiveEdgeMargin.h` (header-only, two templates duck-typed the
+    same way as `SegmentLookup`/`CatchUpUtil`): `ComputeLiveEdgeTailTarget()`
+    is a forward-seek clamp target backed off from the true tail by the
+    combined size of the trailing N segments -- turned out to be the
+    *exact same formula* `SeekInProgressRecordingStream()` (margin 1)
+    and `SeekLiveTimeshiftStream()` (margin 3) had each independently
+    reimplemented, each with its own real confirmed-live incident behind
+    the backoff (see each function's own comment: a "skip ahead to live
+    took ~10s" investigation, and separately a live-edge-only H.264
+    decode-error/audio-desync storm documented in
+    `docs/TIMESHIFT.md`'s "Packet corrupt" section) -- now one shared
+    function instead of two. `TrimToTrailingLiveEdgeMargin()` is
+    `OpenLiveTimeshiftStream()`'s own cold-start trim/rebase, confirmed
+    live as necessary to avoid a `CDVDDemuxFFmpeg::SeekTime` landing
+    near the MPEG-TS 33-bit PTS wraparound point on a long-running,
+    reattached buffer.
+    One thing caught and corrected during this extraction, not shipped:
+    an initial test exercised `TrimToTrailingLiveEdgeMargin()` with
+    `marginSegments=0`, which triggered a real out-of-bounds vector
+    access in the generalized template -- the original, non-generalized
+    code never hit this since its one real call site always passes the
+    literal `3`. Rather than add defensive handling for an input no real
+    caller ever produces (this project's own "don't design for
+    hypothetical requirements" convention), the test itself was removed
+    and the header comment now states the `marginSegments > 0`
+    precondition explicitly instead.
+    8 new test cases, 168 total across the C++ suite now. Confirmed pure
+    code motion via `git diff` and a rebuild through the real Kodi
+    binary-addons harness, log body actually read this time. Two
+    candidates remain from the original 8 -- a recurring-rule renewal
+    decision and WebSocket frame encoding -- still tracked for follow-up
+    passes.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,

@@ -49,7 +49,7 @@ one can only be configured through Kodi's own build harness -- see
 `TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
 `JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil`,
 `RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser`, `SegmentLookup`,
-`ChannelParser`, `TimerRuleParser`, `TimerIdentity`, `LiveManifestParser` -- the six before `RecurringRuleUtil` pulled out
+`ChannelParser`, `TimerRuleParser`, `TimerIdentity`, `LiveManifestParser`, `LiveEdgeMargin` -- the six before `RecurringRuleUtil` pulled out
 of `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
 string formats, curl-based URL escaping, the null-safe JSON field
@@ -142,6 +142,23 @@ Deliberately does not compute `byteOffset`/`timeOffsetMs` itself, since
 those are cumulative over the caller's own running totals (member
 state) -- the caller still assigns those while applying each returned
 entry in order.
+`LiveEdgeMargin` holds two templates (same `byteOffset`/`byteSize`/
+`timeOffsetMs`-duck-typed approach as `SegmentLookup`/`CatchUpUtil`):
+`ComputeLiveEdgeTailTarget()` computes a forward-seek clamp target
+backed off from the true tail by the combined size of the trailing N
+segments -- shared by `SeekInProgressRecordingStream()` (margin 1) and
+`SeekLiveTimeshiftStream()` (margin 3), unifying what had been two
+separately-written but mathematically-identical computations, each with
+its own real confirmed-live incident behind the backoff (a "skip ahead
+to live took ~10s" investigation, and separately a live-edge-only H.264
+decode-error/audio-desync storm documented in
+`docs/TIMESHIFT.md`'s "Packet corrupt" section).
+`TrimToTrailingLiveEdgeMargin()` is `OpenLiveTimeshiftStream()`'s own
+cold-start trim/rebase (discards everything but the trailing margin,
+shifting the survivors so the oldest becomes local byte/time 0) --
+confirmed live as necessary to avoid a `CDVDDemuxFFmpeg::SeekTime`
+landing near the MPEG-TS 33-bit PTS wraparound point on a
+long-running, reattached buffer.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance

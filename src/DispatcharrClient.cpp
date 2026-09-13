@@ -5,6 +5,7 @@
 #include "CurlCallbacks.h"
 #include "DateTimeFormat.h"
 #include "JsonFieldUtil.h"
+#include "LiveEdgeMargin.h"
 #include "LiveManifestParser.h"
 #include "M3u8SegmentParser.h"
 #include "PluginRunResult.h"
@@ -1948,20 +1949,21 @@ int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int w
     return -1;
   }
 
-  // Same live-backoff SeekLiveTimeshiftStream() already applies, and for
-  // the identical reason: clamping a forward seek to exactly totalBytes
-  // (the tip) leaves zero read-ahead margin, so playback resumes,
-  // immediately re-catches-up to the (still-)tail within moments of real
-  // playback, and has to wait through another chunk of Dispatcharr's own
-  // DVR ffmpeg's ~4s HLS segment cadence a second time right after what
+  // Same live-backoff SeekLiveTimeshiftStream() already applies (via the
+  // same shared dispatcharr::ComputeLiveEdgeTailTarget(), just with a
+  // margin of 1 segment here instead of that path's 3), and for the
+  // identical reason: clamping a forward seek to exactly totalBytes (the
+  // tip) leaves zero read-ahead margin, so playback resumes, immediately
+  // re-catches-up to the (still-)tail within moments of real playback,
+  // and has to wait through another chunk of Dispatcharr's own DVR
+  // ffmpeg's ~4s HLS segment cadence a second time right after what
   // looked like a completed seek -- exactly the "skip ahead to live took
   // ~10s" symptom this was added to investigate. Backing off by one
   // segment's worth of bytes means at least that much is already
   // available to play immediately, the same margin SeekLiveTimeshiftStream()
   // already keeps.
-  int64_t liveBackoffBytes =
-      m_inProgressRecordingStream.segments.empty() ? 0 : m_inProgressRecordingStream.segments.back().byteSize;
-  int64_t tailTarget = std::max<int64_t>(0, m_inProgressRecordingStream.totalBytes - liveBackoffBytes);
+  int64_t tailTarget =
+      ComputeLiveEdgeTailTarget(m_inProgressRecordingStream.segments, m_inProgressRecordingStream.totalBytes, 1);
   bool clampedToTail = newPos > tailTarget;
   if (clampedToTail)
     newPos = tailTarget;
@@ -2440,22 +2442,12 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   // section for the full account, including why this also answers (in the
   // negative) whether a viewer can join an already-running buffer and
   // rewind into history from before they joined.
+  // The trim itself lives in dispatcharr::TrimToTrailingLiveEdgeMargin()
+  // (LiveEdgeMargin.h) so it's unit-testable standalone -- see that
+  // function's own comment.
   constexpr size_t kLiveEdgeMarginSegments = 3;
-  if (m_liveTimeshiftStream.segments.size() > kLiveEdgeMarginSegments)
-  {
-    size_t dropCount = m_liveTimeshiftStream.segments.size() - kLiveEdgeMarginSegments;
-    int64_t byteBase = m_liveTimeshiftStream.segments[dropCount].byteOffset;
-    int64_t timeBase = m_liveTimeshiftStream.segments[dropCount].timeOffsetMs;
-    m_liveTimeshiftStream.segments.erase(m_liveTimeshiftStream.segments.begin(),
-                                         m_liveTimeshiftStream.segments.begin() + dropCount);
-    for (auto& seg : m_liveTimeshiftStream.segments)
-    {
-      seg.byteOffset -= byteBase;
-      seg.timeOffsetMs -= timeBase;
-    }
-    m_liveTimeshiftStream.totalBytes -= byteBase;
-    m_liveTimeshiftStream.totalDurationMs -= timeBase;
-  }
+  TrimToTrailingLiveEdgeMargin(m_liveTimeshiftStream.segments, m_liveTimeshiftStream.totalBytes,
+                               m_liveTimeshiftStream.totalDurationMs, kLiveEdgeMarginSegments);
 
   // See LiveTimeshiftStreamState::wallClockAnchor's own comment -- this is
   // the real-world moment local byte 0/PTS 0 above now corresponds to,
@@ -2828,15 +2820,13 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
   // general property of the stream. Backing off further reduces exposure
   // to that fragile window. 3 matches the margin OpenLiveTimeshiftStream()
   // already keeps for its own cold-start trim.
+  // The backoff computation itself lives in
+  // dispatcharr::ComputeLiveEdgeTailTarget() (LiveEdgeMargin.h, shared
+  // with SeekInProgressRecordingStream()'s own margin-of-1 case) so it's
+  // unit-testable standalone -- see that function's own comment.
   constexpr size_t kLiveEdgeSeekBackoffSegments = 3;
-  int64_t liveBackoffBytes = 0;
-  {
-    size_t backoffCount = std::min(kLiveEdgeSeekBackoffSegments, m_liveTimeshiftStream.segments.size());
-    for (size_t i = m_liveTimeshiftStream.segments.size() - backoffCount; i < m_liveTimeshiftStream.segments.size();
-         ++i)
-      liveBackoffBytes += m_liveTimeshiftStream.segments[i].byteSize;
-  }
-  int64_t tailTarget = std::max<int64_t>(0, m_liveTimeshiftStream.totalBytes - liveBackoffBytes);
+  int64_t tailTarget = ComputeLiveEdgeTailTarget(m_liveTimeshiftStream.segments, m_liveTimeshiftStream.totalBytes,
+                                                 kLiveEdgeSeekBackoffSegments);
   bool clampedToTail = newPos > tailTarget;
   if (clampedToTail)
     newPos = tailTarget;
