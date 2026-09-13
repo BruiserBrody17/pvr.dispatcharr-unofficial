@@ -306,6 +306,24 @@ platform.
   what-changed, not why. When you learn something new about Dispatcharr's
   API or fix a non-obvious bug, the explanation belongs in `docs/`, not
   buried in a commit message.
+- **New or changed pure-logic code gets a test alongside it, not after, as
+  of 2026-09-13.** The "Building and testing" section above draws a
+  specific boundary: Kodi/Dispatcharr-independent pure/filesystem logic is
+  unit-testable and covered; `PVRDispatcharr`/`DispatcharrClient`/
+  `WebSocketClient`'s actual Kodi-API/HTTP/socket surface and either
+  plugin's Redis/Django-touching code aren't, and stay manual/live-tested
+  instead. Going forward, a feature or fix that adds or changes code on
+  the testable side of that boundary should add Catch2/pytest coverage in
+  the *same* change -- following the same extract-into-its-own-free-function
+  pattern already used throughout `src/` and `dispatcharr-plugin/` when the
+  new logic is buried inside a larger, mixed-purity function. This is what
+  keeps the multi-pass catch-up work documented in
+  `docs/OPEN_ITEMS.md`'s "No automated test suite exists" entry from
+  needing to repeat: new code should arrive already covered rather than
+  accumulating into another backlog to sweep later. Nothing changes for
+  the untested side of the boundary -- forcing a "unit test" that mocks
+  around Kodi's SDK or a real HTTP/Redis/Django call would test the mock,
+  not the addon, so that verification stays manual as it always has.
 - **"Confirmed live" citations matter**: Dispatcharr is young and its API
   schema has changed across releases. Comments and docs here frequently
   cite exactly how something was confirmed (a real endpoint response, a
