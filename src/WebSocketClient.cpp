@@ -308,10 +308,14 @@ int WebSocketClient::ReceiveTextMessage(std::string& message, int timeoutSeconds
     if (r <= 0)
       return r;
 
-    bool fin = (header[0] & 0x80) != 0;
-    uint8_t opcode = header[0] & 0x0F;
-    bool masked = (header[1] & 0x80) != 0;
-    uint64_t len = header[1] & 0x7F;
+    // The FIN/opcode/MASK-bit/7-bit-length parse itself lives in
+    // dispatcharr::ParseFrameHeaderBytes() (WebSocketFrame.{h,cpp}) so it's
+    // unit-testable standalone -- see that function's own comment.
+    WebSocketFrameHeader parsedHeader = ParseFrameHeaderBytes(header);
+    bool fin = parsedHeader.fin;
+    uint8_t opcode = parsedHeader.opcode;
+    bool masked = parsedHeader.masked;
+    uint64_t len = parsedHeader.payloadLength7Bit;
 
     if (len == 126)
     {
@@ -319,7 +323,7 @@ int WebSocketClient::ReceiveTextMessage(std::string& message, int timeoutSeconds
       r = ReadExact(ext, 2, timeoutSeconds, error);
       if (r <= 0)
         return r;
-      len = (static_cast<uint64_t>(ext[0]) << 8) | ext[1];
+      len = DecodeExtendedPayloadLength16(ext);
     }
     else if (len == 127)
     {
@@ -327,9 +331,7 @@ int WebSocketClient::ReceiveTextMessage(std::string& message, int timeoutSeconds
       r = ReadExact(ext, 8, timeoutSeconds, error);
       if (r <= 0)
         return r;
-      len = 0;
-      for (int i = 0; i < 8; ++i)
-        len = (len << 8) | ext[i];
+      len = DecodeExtendedPayloadLength64(ext);
     }
     // kMaxFramePayload caps a single frame, but a message fragmented
     // across many continuation frames (opcode 0x0) could otherwise
@@ -356,10 +358,7 @@ int WebSocketClient::ReceiveTextMessage(std::string& message, int timeoutSeconds
       if (r <= 0)
         return r;
       if (masked)
-      {
-        for (size_t i = 0; i < payload.size(); ++i)
-          payload[i] ^= maskKey[i % 4];
-      }
+        UnmaskPayload(payload, maskKey);
     }
 
     switch (opcode)
