@@ -190,6 +190,33 @@ first, previously-working channel failed identically).
   (e.g. paging a day forward and back) or reopening the Guide window
   re-centers the grid correctly.
 
+- **A stale resume bookmark from an earlier test silently blocks all
+  further JSON-RPC calls during recorded-playback testing.** Driving
+  playback via `Player.Open` with a `recordingid` (rather than through
+  Kodi's own GUI) triggers Kodi's "Resume from X / Play from beginning"
+  dialog whenever a prior resume bookmark exists for that recording --
+  `{"resume": false}` in the `Player.Open` params does **not** suppress
+  this for a PVR recording item. Confirmed independently on Windows,
+  macOS, CoreELEC/ODROID N2+, and Rocky Linux (Kodi Flatpak) hardware.
+  The dialog itself isn't the real trap: it runs in a modal GUI loop that
+  blocks Kodi's main thread, silently stalling *all* further JSON-RPC
+  calls (`Player.GetActivePlayers` just returns `[]` with no error, no
+  timeout, no indication anything is wrong) until the dialog is
+  dismissed -- this looks exactly like a hung JSON-RPC connection or a
+  stalled addon if you don't already know the real cause. Entirely
+  Kodi-core GUI behavior, nothing this addon's own PVR API surface can
+  suppress or opt out of.
+  Workaround: prefer a fresh recording/clip with no prior resume
+  bookmark when testing via JSON-RPC (avoids the dialog entirely). If a
+  bookmark already exists, check `GUI.GetProperties` (`currentwindow`)
+  for a stuck dialog window whenever `Player.GetActivePlayers`
+  unexpectedly returns empty right after `Player.Open`, then send
+  `Input.Down` + `Input.Select` (or take a screenshot to confirm which
+  option is highlighted) to choose "Play from beginning" before
+  expecting playback state to update again. Don't try to clear the
+  bookmark by touching Kodi's own database directly -- recording a fresh
+  short test clip is simpler and lower-risk.
+
 ## Known limitations with more than one Kodi client
 
 Not bugs in this addon -- inherent to running multiple, fully independent
