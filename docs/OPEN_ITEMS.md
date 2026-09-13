@@ -1066,6 +1066,26 @@
     etc.) is still untested -- unlike `recording_edl`'s `Plugin.run()`,
     none of `timeshift_buffer`'s action handlers are Django/Redis-free,
     so extending coverage there the same way isn't a given.
+    **Update (2026-09-13): two more pure pieces found inside
+    `_start_ffmpeg`/`_is_process_alive`, both previously only reached
+    indirectly (or not at all).** New `_compute_segment_counts(buffer_minutes,
+    segment_seconds)` pulls `_start_ffmpeg`'s `visible_segments`/
+    `wrap_segments` sizing math out on its own -- worth doing specifically
+    because `docs/TIMESHIFT.md` already cited this exact formula
+    (`visible_segments * segment_seconds == buffer_minutes * 60`) as
+    live reasoning to rule out a suspected ~89s audio-sync-error
+    correlation during a real investigation; a test now locks in that
+    invariant directly rather than leaving it as an unverified claim in
+    a doc. Also covers the `max(1, ...)` floor for a `segment_seconds`
+    longer than the whole configured buffer window. `_is_process_alive`
+    (previously only ever `monkeypatch`ed away by other tests, never
+    exercised itself) is now tested directly via `monkeypatch`ing its
+    one external dependency, `os.killpg` -- including the documented
+    deliberate choice to treat any failure other than
+    `ProcessLookupError` (e.g. a `PermissionError` against a recycled,
+    unrelated pid) as "still alive," to avoid reaping something still
+    running. 10 new test cases, 56 total in `timeshift_buffer`'s own
+    suite now.
     Both plugins' Kodi-independent pure/filesystem logic is now covered;
     what remains untested on the Python side is exactly the
     Redis/Django/real-process boundary, by design.
@@ -1087,6 +1107,27 @@
     `Plugin` dispatch is a separate, not-yet-done piece -- none of its
     action handlers are this Django-light, so extending it the same way
     isn't a given.
+    **Update (2026-09-13): `_classify_dvr_hls_dir`'s own classification
+    decision logic now covered too, not just its downstream message
+    formatting.** Previously only reached indirectly, via `run()`'s
+    `list_dvr_hls_staging_dirs`/`delete_orphaned_dvr_hls_dirs` tests
+    monkeypatching the whole function away. New
+    `_classify_hls_dir_info(hls_dir, recording_id, recording_exists,
+    custom_properties, segment_count)` pulls the actual
+    `active`/`preserved_failure`/`referenced`/`orphaned` decision tree
+    out of `_classify_dvr_hls_dir`, taking the already-resolved
+    `recording_exists`/`custom_properties` instead of querying Django's
+    `Recording` model directly -- `_classify_dvr_hls_dir` itself becomes
+    a thin wrapper doing just the regex match, the Django query, and the
+    segment-count filesystem scan. 6 new test cases cover all four
+    classifications, including the `preserved_failure` case this
+    function's own docstring flags as the one that must never be treated
+    as safe to delete (a failed concat/remux leaves Dispatcharr
+    deliberately keeping the directory as the only surviving copy of
+    that recording's video) and a Recording row whose own `_hls_dir`
+    points somewhere else entirely (the "needs manual review" case,
+    distinct from a genuinely missing Recording row). 41 total test
+    cases in `recording_edl`'s own suite now.
   - **C++ addon**: don't attempt to test `PVRDispatcharr`/
     `DispatcharrClient` wholesale -- that would mean mocking Kodi's
     entire addon-instance API and/or standing up a fake Dispatcharr
@@ -1279,6 +1320,32 @@
     suite now. Confirmed the real addon still compiles via the actual
     Kodi binary-addons harness post-refactor, same verification
     discipline as every prior C++ extraction this item tracks.
+    **Update (2026-09-13): one more, `DispatcharrClient::ParseRecordingJson`'s
+    pure field-mapping core -- a real bug-history-backed piece, unlike a
+    few of the smaller mechanical extractions above.** New
+    `dispatcharr::ParseRecordingFields()` in `src/RecordingParser.{h,cpp}`
+    covers the id/channel/time-window field mapping, the
+    `custom_properties.status`-over-time-window `isInProgress` override
+    (the exact documented incident: a recording stopped early keeps its
+    originally-scheduled `end_time`, so the time-window check alone kept
+    reporting it in-progress for the rest of that window --
+    `docs/RECORDINGS.md`), `hlsDirStillPresent`, `bytesWritten`, and the
+    `custom_properties.program`-then-flat title/subtitle/description
+    fallback chain. Confirmed `DispatcharrClient.h` itself (where
+    `Recording` is defined) has zero Kodi/curl dependency despite living
+    right next to a class that has plenty -- it deliberately keeps
+    curl-typed members as `void*` specifically to avoid needing
+    `<curl/curl.h>` in the header (see `GetCurlShare()`'s own comment) --
+    so the new header can `#include` it directly with no new test-build
+    dependency. Deliberately does NOT extract the two pieces that
+    genuinely need `DispatcharrClient`'s own state: the `PendingTitle`
+    cache lookup (member state behind `m_pendingTitlesMutex`, matched by
+    channel with no clean way to pass in short of duplicating that whole
+    mechanism) and the final `"Recording <id>"` default title -- both
+    stay in `ParseRecordingJson()` itself, now a thin wrapper that calls
+    the new free function first. Pure code motion otherwise, confirmed
+    via `git diff` and a rebuild through the real Kodi binary-addons
+    harness. 12 new test cases, 96 total across the C++ suite now.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,

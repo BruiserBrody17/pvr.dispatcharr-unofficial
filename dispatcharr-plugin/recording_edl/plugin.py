@@ -366,6 +366,49 @@ def _scrub_orphaned_recording_sidecars(logger):
 _HLS_STAGING_DIR_RE = re.compile(r"^\.dvr_(\d+)_hls$")
 
 
+def _classify_hls_dir_info(hls_dir: Path, recording_id: int, recording_exists: bool, custom_properties, segment_count):
+    """Pure classification core of _classify_dvr_hls_dir -- takes the
+    already-resolved recording_exists/custom_properties instead of
+    querying Django directly, so it's unit-testable standalone. See
+    _classify_dvr_hls_dir's own docstring for the full classification/
+    incident background; see ../tests/test_recording_edl.py for the
+    regression coverage."""
+    if not recording_exists:
+        classification = "orphaned"
+        detail = f"No Recording row with id {recording_id} -- its owning recording was deleted"
+    else:
+        cp = custom_properties or {}
+        own_hls_dir = cp.get("_hls_dir")
+        status = cp.get("status", "")
+        remux_success = cp.get("remux_success")
+        same_dir = bool(own_hls_dir) and Path(own_hls_dir) == hls_dir
+
+        if same_dir and status == "recording":
+            classification = "active"
+            detail = "Recording is currently in progress"
+        elif same_dir and remux_success is False:
+            classification = "preserved_failure"
+            detail = "Concat/remux failed; Dispatcharr kept this as the only surviving copy"
+        elif same_dir:
+            classification = "referenced"
+            detail = f"Recording {recording_id} (status={status!r}) still references this directory"
+        else:
+            classification = "referenced"
+            detail = (
+                f"Recording {recording_id} exists but its _hls_dir "
+                f"({own_hls_dir!r}) doesn't match this path -- needs manual review"
+            )
+
+    return {
+        "path": str(hls_dir),
+        "recording_id": recording_id,
+        "recording_exists": recording_exists,
+        "classification": classification,
+        "detail": detail,
+        "segment_count": segment_count,
+    }
+
+
 def _classify_dvr_hls_dir(hls_dir: Path):
     """Best-effort, read-only classification of a .dvr_<id>_hls staging
     directory -- for reporting only, never used to decide anything
@@ -381,7 +424,8 @@ def _classify_dvr_hls_dir(hls_dir: Path):
     Dispatcharr restart/crash between the DB delete and that thread
     finishing can leave a directory with no owning Recording row at all.
 
-    classification is one of:
+    classification is one of (see _classify_hls_dir_info for the actual
+    decision logic):
       "active"            -- status == "recording"; a recording in
                               progress. Never touch.
       "preserved_failure"  -- concat/remux failed; the only surviving copy
@@ -408,40 +452,13 @@ def _classify_dvr_hls_dir(hls_dir: Path):
     except OSError:
         segment_count = None
 
-    if recording is None:
-        classification = "orphaned"
-        detail = f"No Recording row with id {recording_id} -- its owning recording was deleted"
-    else:
-        cp = recording.custom_properties or {}
-        own_hls_dir = cp.get("_hls_dir")
-        status = cp.get("status", "")
-        remux_success = cp.get("remux_success")
-        same_dir = bool(own_hls_dir) and Path(own_hls_dir) == hls_dir
-
-        if same_dir and status == "recording":
-            classification = "active"
-            detail = "Recording is currently in progress"
-        elif same_dir and remux_success is False:
-            classification = "preserved_failure"
-            detail = "Concat/remux failed; Dispatcharr kept this as the only surviving copy"
-        elif same_dir:
-            classification = "referenced"
-            detail = f"Recording {recording_id} (status={status!r}) still references this directory"
-        else:
-            classification = "referenced"
-            detail = (
-                f"Recording {recording_id} exists but its _hls_dir "
-                f"({own_hls_dir!r}) doesn't match this path -- needs manual review"
-            )
-
-    return {
-        "path": str(hls_dir),
-        "recording_id": recording_id,
-        "recording_exists": recording is not None,
-        "classification": classification,
-        "detail": detail,
-        "segment_count": segment_count,
-    }
+    return _classify_hls_dir_info(
+        hls_dir,
+        recording_id,
+        recording is not None,
+        recording.custom_properties if recording is not None else None,
+        segment_count,
+    )
 
 
 def _list_dvr_hls_staging_dirs():

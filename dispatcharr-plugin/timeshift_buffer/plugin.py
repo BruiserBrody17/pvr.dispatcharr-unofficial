@@ -614,6 +614,39 @@ def _stream_attribution_headers(params: dict, logger):
     return "".join(lines) or None
 
 
+def _compute_segment_counts(buffer_minutes: int, segment_seconds: int) -> tuple[int, int]:
+    """Pure arithmetic core of _start_ffmpeg's segment-count sizing --
+    pulled out specifically so it's unit-testable standalone; see
+    ../tests/test_timeshift_buffer.py. Returns (visible_segments,
+    wrap_segments).
+
+    visible_segments floors at 1 (max(1, ...)) so a segment_seconds
+    larger than the whole configured buffer window still produces a
+    playable single-segment playlist rather than 0. Note the invariant
+    `visible_segments * segment_seconds == buffer_minutes * 60` for any
+    input where segment_seconds evenly divides the window -- an actual
+    real-world debugging aid: this exact formula was cited in
+    docs/TIMESHIFT.md to rule out a suspected ~89s audio-sync-error
+    correlation, by showing no realistic buffer_minutes/segment_seconds
+    combination could produce that number.
+
+    wrap_segments (filename reuse point) is deliberately a larger count
+    than what the playlist advertises as visible, so a client that just
+    requested an old segment has headroom before ffmpeg overwrites that
+    same filename in place -- the same class of "don't reveal/rely on
+    something about to move under you" caution this project already
+    applied to its own gradual-cap fix for in-progress-recording
+    playback (see pvr.dispatcharr-unofficial's docs/RECORDINGS.md --
+    that mechanism has since been replaced by a native-demuxer approach
+    that doesn't need a cap at all, but the same underlying caution
+    still applies here), just via a size margin here instead of a
+    request-count hold.
+    """
+    visible_segments = max(1, (buffer_minutes * 60) // segment_seconds)
+    wrap_segments = visible_segments * 2
+    return visible_segments, wrap_segments
+
+
 def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) -> dict:
     storage_path = settings_dict.get("storage_path", "/data/timeshift")
     segment_seconds = int(settings_dict.get("segment_seconds", 2))
@@ -621,18 +654,7 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
     base_url = settings_dict.get("internal_base_url", "http://127.0.0.1:9191")
     http_port = int(settings_dict.get("http_port", 9192))
 
-    visible_segments = max(1, (buffer_minutes * 60) // segment_seconds)
-    # Wrap (filename reuse) past a larger count than what the playlist
-    # advertises as visible, so a client that just requested an old segment
-    # has headroom before ffmpeg overwrites that same filename in place --
-    # the same class of "don't reveal/rely on something about to move under
-    # you" caution this project already applied to its own gradual-cap fix
-    # for in-progress-recording playback (see pvr.dispatcharr-unofficial's
-    # docs/RECORDINGS.md -- that mechanism has since been replaced by a
-    # native-demuxer approach that doesn't need a cap at all, but the same
-    # underlying caution still applies here), just via a size margin here
-    # instead of a request-count hold.
-    wrap_segments = visible_segments * 2
+    visible_segments, wrap_segments = _compute_segment_counts(buffer_minutes, segment_seconds)
 
     channel_dir = _channel_dir(storage_path, channel_uuid)
     channel_dir.mkdir(parents=True, exist_ok=True)
