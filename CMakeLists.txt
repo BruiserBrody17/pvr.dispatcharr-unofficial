@@ -99,6 +99,7 @@ set(DISPATCHARR_HEADERS
     src/TimerRuleParser.h
     src/TimerIdentity.h
     src/LiveManifestParser.h
+    src/LiveEdgeMargin.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}
