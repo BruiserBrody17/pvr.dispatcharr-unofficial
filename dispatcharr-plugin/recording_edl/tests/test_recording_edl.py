@@ -8,10 +8,20 @@ otherwise collide via sys.modules.
 Covers only the Dispatcharr-independent pure/filesystem logic --
 everything that touches Dispatcharr's own Django models (Recording,
 CoreSettings) via the deferred imports inside _classify_dvr_hls_dir/
-_dvr_sidecar_scan_roots/Plugin.run stays untested here, same boundary
-this project's C++ addon test suite draws at the Kodi SDK: verification
-of that layer is still manual/live-instance territory (see
+_dvr_sidecar_scan_roots stays untested here, same boundary this
+project's C++ addon test suite draws at the Kodi SDK: verification of
+that layer is still manual/live-instance territory (see
 docs/OPEN_ITEMS.md's "No automated test suite exists" entry).
+
+Plugin.run()'s own dispatch and message-formatting *is* covered, for
+every action branch that either has no Django dependency at all
+(scrub_orphaned_sidecars, the recording_id-missing path of get_edl, an
+unknown action) or where the one Django-dependent call
+(_list_dvr_hls_staging_dirs/_delete_orphaned_dvr_hls_dirs) can be
+monkeypatched the same way _scrub_orphaned_recording_sidecars's own
+tests already monkeypatch _dvr_sidecar_scan_roots -- exercising the
+real message text a client actually sees, not just the underlying
+helper functions in isolation.
 """
 
 import importlib.util
@@ -302,3 +312,117 @@ def test_scrub_orphaned_recording_sidecars_never_touches_dotted_dirs(tmp_path, m
     assert removed_dirs == []
     assert errors == []
     assert (dotted_dir / "leftover.edl").exists()
+
+
+# ---------------------------------------------------------------------
+# Plugin.run() dispatch and message formatting -- only action branches
+# (or code paths within one) that don't need Django, either because they
+# never touch it at all or because the one Django-dependent call can be
+# monkeypatched the same way as above.
+# ---------------------------------------------------------------------
+
+
+def test_run_scrub_orphaned_sidecars_no_orphans_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(recording_edl_plugin, "_dvr_sidecar_scan_roots", lambda: [tmp_path])
+
+    result = recording_edl_plugin.Plugin().run("scrub_orphaned_sidecars", {}, {"logger": None, "settings": {}})
+
+    assert result == {
+        "status": "ok",
+        "message": "No orphaned .edl/.logo.txt files or empty directories found",
+        "removed_files": [],
+        "removed_directories": [],
+        "errors": [],
+    }
+
+
+def test_run_scrub_orphaned_sidecars_reports_counts(tmp_path, monkeypatch):
+    show_dir = tmp_path / "Show"
+    show_dir.mkdir()
+    (show_dir / "ep.edl").write_text("1 2 3")  # orphaned -- no matching video
+
+    monkeypatch.setattr(recording_edl_plugin, "_dvr_sidecar_scan_roots", lambda: [tmp_path])
+
+    result = recording_edl_plugin.Plugin().run("scrub_orphaned_sidecars", {}, {"logger": None, "settings": {}})
+
+    assert result["status"] == "ok"
+    assert result["message"] == "Removed 1 orphaned file(s), 1 empty directory(s)"
+    assert result["removed_files"] == [str(show_dir / "ep.edl")]
+    assert result["removed_directories"] == [str(show_dir)]
+    assert result["errors"] == []
+
+
+def test_run_list_dvr_hls_staging_dirs_no_dirs_message(monkeypatch):
+    monkeypatch.setattr(recording_edl_plugin, "_list_dvr_hls_staging_dirs", lambda: [])
+
+    result = recording_edl_plugin.Plugin().run("list_dvr_hls_staging_dirs", {}, {"logger": None, "settings": {}})
+
+    assert result == {
+        "status": "ok",
+        "message": "No .dvr_*_hls staging directories found",
+        "directories": [],
+    }
+
+
+def test_run_list_dvr_hls_staging_dirs_summarizes_classifications(monkeypatch):
+    fake_dirs = [
+        {"path": "/data/recordings/.dvr_1_hls", "classification": "orphaned", "segment_count": 3},
+        {"path": "/data/recordings/.dvr_2_hls", "classification": "active", "segment_count": 7},
+    ]
+    monkeypatch.setattr(recording_edl_plugin, "_list_dvr_hls_staging_dirs", lambda: fake_dirs)
+
+    result = recording_edl_plugin.Plugin().run("list_dvr_hls_staging_dirs", {}, {"logger": None, "settings": {}})
+
+    assert result["status"] == "ok"
+    assert "2 .dvr_*_hls dir(s) found" in result["message"]
+    assert "1 orphaned" in result["message"]
+    assert "1 active" in result["message"]
+    assert ".dvr_1_hls (orphaned, 3 segs)" in result["message"]
+    assert ".dvr_2_hls (active, 7 segs)" in result["message"]
+    assert result["directories"] == fake_dirs
+
+
+def test_run_delete_orphaned_dvr_hls_dirs_no_orphans_message(monkeypatch):
+    monkeypatch.setattr(recording_edl_plugin, "_delete_orphaned_dvr_hls_dirs", lambda logger: ([], []))
+
+    result = recording_edl_plugin.Plugin().run("delete_orphaned_dvr_hls_dirs", {}, {"logger": None, "settings": {}})
+
+    assert result == {
+        "status": "ok",
+        "message": "No orphaned .dvr_*_hls directories found",
+        "removed": [],
+        "errors": [],
+    }
+
+
+def test_run_delete_orphaned_dvr_hls_dirs_singular_plural_message(monkeypatch):
+    monkeypatch.setattr(recording_edl_plugin, "_delete_orphaned_dvr_hls_dirs", lambda logger: (["/a"], []))
+    result = recording_edl_plugin.Plugin().run("delete_orphaned_dvr_hls_dirs", {}, {"logger": None, "settings": {}})
+    assert result["message"] == "Removed 1 orphaned .dvr_*_hls directory"
+
+    monkeypatch.setattr(recording_edl_plugin, "_delete_orphaned_dvr_hls_dirs", lambda logger: (["/a", "/b"], []))
+    result = recording_edl_plugin.Plugin().run("delete_orphaned_dvr_hls_dirs", {}, {"logger": None, "settings": {}})
+    assert result["message"] == "Removed 2 orphaned .dvr_*_hls directories"
+
+
+def test_run_delete_orphaned_dvr_hls_dirs_appends_error_count(monkeypatch):
+    monkeypatch.setattr(recording_edl_plugin, "_delete_orphaned_dvr_hls_dirs", lambda logger: (["/a"], ["some error"]))
+
+    result = recording_edl_plugin.Plugin().run("delete_orphaned_dvr_hls_dirs", {}, {"logger": None, "settings": {}})
+
+    assert result["message"] == "Removed 1 orphaned .dvr_*_hls directory, 1 error(s) (see plugin log)"
+
+
+def test_run_unknown_action_returns_error():
+    result = recording_edl_plugin.Plugin().run("not_a_real_action", {}, {"logger": None, "settings": {}})
+
+    assert result == {"status": "error", "message": "Unknown action: not_a_real_action"}
+
+
+def test_run_get_edl_requires_recording_id():
+    """The recording_id-missing early return happens before the deferred
+    `from apps.channels.models import Recording` import -- Django-free."""
+    result = recording_edl_plugin.Plugin().run("get_edl", {}, {"logger": None, "settings": {}})
+
+    assert result["status"] == "error"
+    assert "recording_id is required" in result["message"]

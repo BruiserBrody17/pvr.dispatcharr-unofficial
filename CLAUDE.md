@@ -47,12 +47,14 @@ CMake project separate from the addon's own `CMakeLists.txt` since that
 one can only be configured through Kodi's own build harness -- see
 `tests/CMakeLists.txt`'s own comment): `XmlTvParser`, `TimeUtil`,
 `TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
-`JsonFieldUtil` -- the last four pulled out of
+`JsonFieldUtil`, `CurlCallbacks` -- the last five pulled out of
 `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
-string formats, curl-based URL escaping, and the null-safe JSON field
+string formats, curl-based URL escaping, the null-safe JSON field
 reader nearly every response parse in `DispatcharrClient.cpp` goes
-through) is unit-testable standalone.
+through, and the plain libcurl write/header callbacks -- none of which
+touch a `CURL*` themselves, despite conceptually being curl callbacks)
+is unit-testable standalone.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance
@@ -63,9 +65,13 @@ territory.
 **Python** (`dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/`,
 pytest, wired into CI's `unit-tests-python` job): `recording_edl` covers
 `_parse_edl`, `_sidecar_base_name`, `_is_under_dotted_dir`,
-`_prune_empty_directories`, `_resolve_scan_root`/`_dedupe_scan_roots`, and
+`_prune_empty_directories`, `_resolve_scan_root`/`_dedupe_scan_roots`,
 `_scrub_orphaned_recording_sidecars` end-to-end via `monkeypatch`ing its
-one Django-model-dependent call. `timeshift_buffer` covers `_channel_dir`,
+one Django-model-dependent call, and `Plugin.run()`'s own dispatch and
+response text for every action branch that's Django-free or where the
+one Django-dependent call can itself be `monkeypatch`ed (the actual
+response a client sees, not just the underlying helpers in isolation).
+`timeshift_buffer` covers `_channel_dir`,
 `_resolve_request_path`, `_BufferRequestHandler._parse_range`, `_proxy_url`,
 `_stream_attribution_headers` (client_ip validation path only -- the
 username/JWT branch stays untested), `_prune_stale_viewers`,

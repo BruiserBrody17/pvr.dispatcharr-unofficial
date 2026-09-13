@@ -1,5 +1,6 @@
 #include "DispatcharrClient.h"
 
+#include "CurlCallbacks.h"
 #include "DateTimeFormat.h"
 #include "JsonFieldUtil.h"
 #include "TimeUtil.h"
@@ -12,7 +13,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -87,99 +87,6 @@ constexpr const char* kTimeshiftPluginRunPath = "/api/plugins/plugins/timeshift_
 // Same mechanism, this addon's other companion plugin (see
 // dispatcharr-plugin/recording_edl/ in this repo).
 constexpr const char* kRecordingEdlPluginRunPath = "/api/plugins/plugins/recording_edl/run/";
-
-// Writes into a fixed-size caller-owned buffer, capping at its capacity --
-// used for recording stream reads, where the caller (Kodi's demuxer) owns
-// the destination buffer. A Range request should never actually return
-// more than requested, so hitting the cap would indicate a confused
-// server response rather than a normal condition.
-struct FixedBufferSink
-{
-  uint8_t* buffer;
-  unsigned int capacity;
-  unsigned int written = 0;
-};
-
-size_t FixedBufferWriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
-{
-  auto* sink = static_cast<FixedBufferSink*>(userdata);
-  size_t totalBytes = size * nmemb;
-  size_t remaining = sink->capacity - sink->written;
-  size_t toCopy = std::min(totalBytes, remaining);
-  if (toCopy > 0)
-  {
-    std::memcpy(sink->buffer + sink->written, ptr, toCopy);
-    sink->written += static_cast<unsigned int>(toCopy);
-  }
-  return totalBytes;
-}
-
-// Captures the total resource size from a "Content-Range: bytes X-Y/TOTAL"
-// response header -- the only reliable way to learn a ranged request's
-// full size, since Content-Length on a 206 response reflects only the
-// requested slice.
-size_t RecordingHeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata)
-{
-  auto* totalOut = static_cast<int64_t*>(userdata);
-  size_t len = size * nitems;
-  std::string line(buffer, len);
-  std::string prefix = line.size() >= 14 ? line.substr(0, 14) : std::string();
-  std::transform(prefix.begin(), prefix.end(), prefix.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  if (prefix == "content-range:")
-  {
-    size_t slash = line.rfind('/');
-    if (slash != std::string::npos)
-    {
-      try
-      {
-        *totalOut = std::stoll(line.substr(slash + 1));
-      }
-      catch (const std::exception&)
-      {
-      }
-    }
-  }
-  return len;
-}
-
-// Captures the size from a plain "Content-Length: N" response header --
-// used for a HEAD probe rather than RecordingHeaderCallback's ranged-GET
-// Content-Range parsing, since Dispatcharr's in-progress-recording HLS
-// segment endpoint ignores the Range header entirely and always serves the
-// full segment body with a 200 (confirmed live: a "Range: 0-0" GET against
-// a growing recording's seg_NNNNN.ts came back 200 with no Content-Range
-// header at all, silently downloading the whole multi-MB segment on every
-// probe instead of the intended few bytes -- HEAD avoids the body
-// entirely, and this reads the size the same server response always
-// carries either way).
-size_t ContentLengthHeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata)
-{
-  auto* totalOut = static_cast<int64_t*>(userdata);
-  size_t len = size * nitems;
-  std::string line(buffer, len);
-  std::string prefix = line.size() >= 15 ? line.substr(0, 15) : std::string();
-  std::transform(prefix.begin(), prefix.end(), prefix.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  if (prefix == "content-length:")
-  {
-    try
-    {
-      *totalOut = std::stoll(line.substr(15));
-    }
-    catch (const std::exception&)
-    {
-    }
-  }
-  return len;
-}
-
-size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
-{
-  auto* out = static_cast<std::string*>(userdata);
-  out->append(ptr, size * nmemb);
-  return size * nmemb;
-}
 
 // Unique-enough per-Open()-session id for the plugin's viewer reference
 // counting (see LiveTimeshiftStreamState::viewerId's own comment) -- only
