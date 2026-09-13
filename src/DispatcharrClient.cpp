@@ -4,6 +4,7 @@
 #include "CurlCallbacks.h"
 #include "DateTimeFormat.h"
 #include "JsonFieldUtil.h"
+#include "M3u8SegmentParser.h"
 #include "PluginRunResult.h"
 #include "RecordingParser.h"
 #include "TimeUtil.h"
@@ -16,7 +17,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -1621,70 +1621,12 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // serially was confirmed live to take ~29s for a recording ~2h in (1,842
   // probes at ~16ms each -- each probe itself was already fast, it was
   // purely the lack of concurrency).
+  //
+  // The parse itself (including the non-finite #EXTINF-duration UB guard)
+  // lives in dispatcharr::ParseNewM3u8SegmentEntries() (M3u8SegmentParser.{h,cpp})
+  // so it's unit-testable standalone -- see that function's own comment.
   size_t alreadyKnown = m_inProgressRecordingStream.segments.size();
-  size_t segmentIndex = 0;
-  struct PendingSegment
-  {
-    std::string url;
-    double durationSec = 0.0;
-  };
-  std::vector<PendingSegment> pending;
-  double pendingDurationSec = 0.0;
-  size_t pos = 0;
-  while (pos <= playlistText.size())
-  {
-    size_t newlinePos = playlistText.find('\n', pos);
-    std::string line =
-        (newlinePos == std::string::npos) ? playlistText.substr(pos) : playlistText.substr(pos, newlinePos - pos);
-    if (!line.empty() && line.back() == '\r')
-      line.pop_back();
-
-    if (line.compare(0, 8, "#EXTINF:") == 0)
-    {
-      std::string durStr = line.substr(8);
-      size_t comma = durStr.find(',');
-      if (comma != std::string::npos)
-        durStr = durStr.substr(0, comma);
-      try
-      {
-        pendingDurationSec = std::stod(durStr);
-      }
-      catch (const std::exception&)
-      {
-        pendingDurationSec = 0.0;
-      }
-      // std::stod() accepts "inf"/"nan" (with an optional sign) as valid
-      // input per the standard -- unlike std::stoi, it does NOT throw for
-      // either, so the catch above can't be relied on to keep this finite.
-      // Found via a project-wide review, not reproduced live: this value
-      // later feeds a static_cast<int64_t>() below (durationSec * 1000),
-      // and casting an infinite or NaN double to an integer type is
-      // undefined behavior in C++ -- not a clean, catchable exception the
-      // way the equivalent Python-side gap in this project's companion
-      // plugins was (see docs/TIMESHIFT.md/docs/RECORDING_EDL.md for
-      // those). Dispatcharr's own HLS muxer is the only realistic writer
-      // of this playlist and isn't expected to ever emit either value,
-      // but UB is a real category of bug regardless of how unlikely the
-      // trigger is.
-      if (!std::isfinite(pendingDurationSec))
-        pendingDurationSec = 0.0;
-    }
-    else if (!line.empty() && line[0] != '#')
-    {
-      if (segmentIndex >= alreadyKnown)
-      {
-        std::string segUrl =
-            (line.compare(0, 7, "http://") == 0 || line.compare(0, 8, "https://") == 0) ? line : baseDir + line;
-        pending.push_back({std::move(segUrl), pendingDurationSec});
-      }
-      ++segmentIndex;
-      pendingDurationSec = 0.0;
-    }
-
-    if (newlinePos == std::string::npos)
-      break;
-    pos = newlinePos + 1;
-  }
+  std::vector<M3u8SegmentEntry> pending = ParseNewM3u8SegmentEntries(playlistText, baseDir, alreadyKnown);
 
   // Bounded fan-out: kMaxConcurrentProbes threads in flight at a time, each
   // doing the same HEAD-based probe as before. Every thread writes only its

@@ -48,7 +48,7 @@ one can only be configured through Kodi's own build harness -- see
 `tests/CMakeLists.txt`'s own comment): `XmlTvParser`, `TimeUtil`,
 `TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
 `JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil`,
-`RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser` -- the six before `RecurringRuleUtil` pulled out
+`RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser` -- the six before `RecurringRuleUtil` pulled out
 of `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
 string formats, curl-based URL escaping, the null-safe JSON field
@@ -93,6 +93,19 @@ classification core of `PVRDispatcharr::HandleRealtimeUpdateMessage()`
 shape and which event names on that shared "updates" channel are
 actually recording/timer-relevant (everything else, e.g. EPG matching
 progress, is silently ignored, not an error).
+`M3u8SegmentParser` is the pure parsing core of
+`DispatcharrClient::RefreshInProgressRecordingManifest()`'s `#EXTINF`/
+segment-URI scan -- parses an in-progress-recording HLS playlist into
+only its newly-discovered segments (the append-only-merge skip-count
+convention), resolving a relative segment URI against the playlist's
+own base directory. Guards against a non-finite (`NaN`/`inf`) `#EXTINF`
+duration escaping into a returned entry -- found via a project-wide UB
+review, not reproduced live: `std::stod` (unlike `std::stoi`) accepts
+either as valid input without throwing, and a non-finite double later
+feeding a `static_cast<int64_t>()` in the caller would be undefined
+behavior (the C++-side counterpart to the nan/inf parsing bugs this
+project's own companion plugins already had fixed, see
+`docs/TIMESHIFT.md`/`docs/RECORDING_EDL.md`).
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance

@@ -1384,6 +1384,29 @@
     cases, 107 total across the C++ suite now. Both extractions
     confirmed as pure code motion via `git diff` and a rebuild through
     the real Kodi binary-addons harness.
+    **Update (2026-09-13): one more, `RefreshInProgressRecordingManifest()`'s
+    `#EXTINF`/segment-URI playlist scan -- the most complex piece
+    extracted from `DispatcharrClient.cpp` so far, but already fully
+    self-contained (touches zero class members, only local variables) so
+    the extraction itself needed no signature changes at all.** New
+    `dispatcharr::ParseNewM3u8SegmentEntries(playlistText, baseDir,
+    alreadyKnownCount)` in `src/M3u8SegmentParser.{h,cpp}` covers the
+    append-only-merge skip-count convention (no rolling-window eviction
+    for a recording, so segments at or before `alreadyKnownCount` are
+    always the same ones already known), relative-vs-absolute segment
+    URL resolution, and -- the actual reason this was worth pulling out
+    on its own, not just a mechanical move -- the non-finite (`NaN`/
+    `inf`) `#EXTINF`-duration guard the original code's own comment
+    already flagged as a real (if never live-reproduced) undefined-
+    behavior risk: `std::stod` accepts `"inf"`/`"nan"` as valid input
+    without throwing, unlike `std::stoi`, so a plain `try`/`catch`
+    around the parse can't be relied on to keep the result finite before
+    it feeds a `static_cast<int64_t>()` later. 10 new test cases,
+    including explicit `inf`/`nan`/`-inf` regression cases for exactly
+    that guard, plus CRLF line endings, a missing trailing newline, and
+    the empty-playlist case. 117 total across the C++ suite now.
+    Confirmed pure code motion via `git diff` and a rebuild through the
+    real Kodi binary-addons harness.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,
