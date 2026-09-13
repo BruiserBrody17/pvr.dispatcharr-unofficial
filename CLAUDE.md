@@ -38,14 +38,34 @@ Full instructions (Windows/macOS/Linux/CoreELEC, all previously verified
 live) are in [docs/BUILDING.md](docs/BUILDING.md); don't guess at build
 commands, read that file.
 
-A small automated test suite exists on the Python side as of 2026-09-13
-(`dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/`, pytest,
-wired into CI's `unit-tests-python` job) -- but it's deliberately narrow:
-only Dispatcharr-independent pure/filesystem logic is covered.
-`recording_edl`: `_parse_edl`, `_sidecar_base_name`, `_is_under_dotted_dir`,
+Small automated test suites exist on both the C++ and Python sides as of
+2026-09-13, but both are deliberately narrow -- only Kodi/Dispatcharr-
+independent pure/filesystem logic is covered anywhere.
+
+**C++** (`tests/`, Catch2, wired into CI's `unit-tests` job, a standalone
+CMake project separate from the addon's own `CMakeLists.txt` since that
+one can only be configured through Kodi's own build harness -- see
+`tests/CMakeLists.txt`'s own comment): `XmlTvParser`, `TimeUtil`,
+`TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
+`JsonFieldUtil` -- the last four pulled out of
+`WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
+widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
+string formats, curl-based URL escaping, and the null-safe JSON field
+reader nearly every response parse in `DispatcharrClient.cpp` goes
+through) is unit-testable standalone.
+`PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
+surface, HTTP client, and socket handling -- where the real bugs live --
+aren't attempted: that would mean mocking Kodi's entire addon-instance
+API and/or standing up a fake Dispatcharr HTTP server, disproportionate
+effort for what's fundamentally still manual/live-hardware verification
+territory.
+
+**Python** (`dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/`,
+pytest, wired into CI's `unit-tests-python` job): `recording_edl` covers
+`_parse_edl`, `_sidecar_base_name`, `_is_under_dotted_dir`,
 `_prune_empty_directories`, `_resolve_scan_root`/`_dedupe_scan_roots`, and
 `_scrub_orphaned_recording_sidecars` end-to-end via `monkeypatch`ing its
-one Django-model-dependent call. `timeshift_buffer`: `_channel_dir`,
+one Django-model-dependent call. `timeshift_buffer` covers `_channel_dir`,
 `_resolve_request_path`, `_BufferRequestHandler._parse_range`, `_proxy_url`,
 `_stream_attribution_headers` (client_ip validation path only -- the
 username/JWT branch stays untested), `_prune_stale_viewers`,
@@ -53,19 +73,19 @@ username/JWT branch stays untested), `_prune_stale_viewers`,
 their one Redis-dependent call), and `_get_live_manifest` end-to-end
 against a real temp filesystem -- including regression tests for its
 documented cache-invalidation incidents (the newest-segment-always-
-restatted race and the instance-token "Packet corrupt" bug).
-Anything touching Dispatcharr's own Django models or Redis directly (the
-deferred imports inside `_dvr_sidecar_scan_roots`/`_classify_dvr_hls_dir`/
+restatted race and the instance-token "Packet corrupt" bug). Anything
+touching Dispatcharr's own Django models or Redis directly (the deferred
+imports inside `_dvr_sidecar_scan_roots`/`_classify_dvr_hls_dir`/
 `Plugin.run`, and all of `_redis`/`_get_buffer_state`/etc., the real HTTP
 server, and ffmpeg subprocess management) stays untested, on the same
-principle as the addon's own C++ side stopping at the Kodi SDK boundary
--- see `docs/OPEN_ITEMS.md`'s "No automated test suite exists" entry for
-the reasoning and what's still open (the DB/Redis-touching majority of
-both plugins, and the C++ addon side).
-Verification of everything else stays manual: smoke-testing against a
-real Dispatcharr instance and real/emulated Kodi installs (Windows,
-macOS, Linux via Kodi Flatpak, CoreELEC on an ODROID N2+), driven via
-Kodi's JSON-RPC webserver. `.github/workflows/build.yml` also compiles
+principle as the C++ side stopping at the Kodi SDK boundary.
+
+See `docs/OPEN_ITEMS.md`'s "No automated test suite exists" entry for
+the full reasoning and what's still open on both sides. Verification of
+everything else stays manual: smoke-testing against a real Dispatcharr
+instance and real/emulated Kodi installs (Windows, macOS, Linux via Kodi
+Flatpak, CoreELEC on an ODROID N2+), driven via Kodi's JSON-RPC webserver.
+`.github/workflows/build.yml` also compiles
 Windows/macOS/Linux and packages the two plugins -- it does not build or
 test the CoreELEC package, and doesn't exercise runtime behavior on any
 platform.
@@ -108,8 +128,11 @@ platform.
   exact CI commands as part of its "confirmed against real source"
   standard -- a removal or behavior change that isn't cross-checked
   leaves a dangling reference or a stale claim behind, silently, since
-  nothing else in this repo catches it (no automated test suite, no
-  doc-linting). Real recurring failure mode, not hypothetical: found
+  nothing else in this repo reliably catches it (`tools/check_doc_refs.py`,
+  wired into CI, flags an outright-removed reference, but not a claim that's
+  merely gone stale in spirit; the unit test suite doesn't cover this either
+  -- it's narrow, see "Building and testing" above). Real recurring failure
+  mode, not hypothetical: found
   and fixed 9 of these in one pass (2026-09-10) tracing back to feature
   removals and CI changes that never got cross-checked this way.
 - **Comments explain WHY, not WHAT**: this codebase's existing comments
@@ -144,8 +167,9 @@ platform.
   `release` branches) -- there's only one person working on this repo
   right now, so there's no multi-contributor coordination problem to
   solve; the only goal is keeping `master` in a known-good state and
-  having a diff to review before a change becomes permanent, given there
-  is no automated test suite to catch a half-finished change otherwise.
+  having a diff to review before a change becomes permanent, given the
+  unit test suite is narrow (see "Building and testing" above) and won't
+  catch a half-finished change to the addon's actual PVR/HTTP logic.
   A branch that lives for a while (a real feature, not a quick fix)
   drifts out of sync with `master` as unrelated work merges in around
   it -- periodically run `git merge master` into it along the way rather
@@ -155,15 +179,18 @@ platform.
   fails loudly (won't compile) the moment master's changes are merged
   in, but a dependency whose *behavior* changed without its signature
   changing won't -- nothing will flag it except actually re-testing the
-  branch after syncing, since there's no test suite to catch it instead.
+  branch after syncing, since the unit test suite doesn't cover this kind
+  of behavioral drift either.
 - **Every external contributor's PR gets a real manual review before
   merging, as of 2026-09-11 -- never auto-merged on green CI alone.**
   The bullet above's "no multi-contributor coordination problem" framing
   stops holding the moment someone outside the project opens a PR.
-  Green CI (`build`/`lint`) only proves it compiles and formats cleanly
-  -- with no automated test suite, it proves nothing about whether the
-  change is actually correct, so it's necessary but never sufficient on
-  its own. This doesn't require GitHub's "require pull request reviews"
+  Green CI (`build`/`lint`/`unit-tests`/`unit-tests-python`) only proves
+  it compiles, formats cleanly, and doesn't regress the narrow
+  unit-tested pieces -- it proves nothing about whether a change to the
+  actual PVR/HTTP/Redis/Django-touching logic (untested, see "Building
+  and testing" above) is correct, so it's necessary but never sufficient
+  on its own. This doesn't require GitHub's "require pull request reviews"
   branch-protection rule to be technically enforced: only the
   maintainer has write access to this repo right now, so an outside
   contributor's PR literally cannot merge itself regardless -- this

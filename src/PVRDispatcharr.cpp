@@ -1,5 +1,6 @@
 #include "PVRDispatcharr.h"
 
+#include "EpgTagUtil.h"
 #include "WebSocketClient.h"
 
 #include <kodi/AddonBase.h>
@@ -1214,74 +1215,6 @@ PVR_ERROR PVRDispatcharr::GetStreamReadChunkSize(int& chunksize)
 // EPG
 // ---------------------------------------------------------------------
 
-namespace
-{
-
-// Best-effort mapping from freeform XMLTV <category> text (Dispatcharr's own
-// categories, or whatever its Schedules Direct/XMLTV EPG sources use --
-// there's no fixed vocabulary) to Kodi's ETSI EN 300 468 content-mask genre
-// types. Kodi's default skin colour-codes the EPG grid by genre type when
-// it's one of these known masks rather than EPG_GENRE_USE_STRING, so this is
-// what gets this addon's EPG grid looking like TVHeadend's rather than a
-// flat single colour. Scans categories in order and returns the first
-// keyword hit found across any of them (not just the first category), since
-// Dispatcharr/Schedules Direct commonly lists a non-genre category like
-// "Series" before the actually-descriptive ones.
-bool MapCategoriesToGenreType(const std::vector<std::string>& categories, int& genreType)
-{
-  static const std::pair<const char*, int> kKeywordToMask[] = {
-      {"movie", EPG_EVENT_CONTENTMASK_MOVIEDRAMA},
-      {"film", EPG_EVENT_CONTENTMASK_MOVIEDRAMA},
-      {"drama", EPG_EVENT_CONTENTMASK_MOVIEDRAMA},
-      {"news", EPG_EVENT_CONTENTMASK_NEWSCURRENTAFFAIRS},
-      {"current affairs", EPG_EVENT_CONTENTMASK_NEWSCURRENTAFFAIRS},
-      {"sport", EPG_EVENT_CONTENTMASK_SPORTS},
-      {"children", EPG_EVENT_CONTENTMASK_CHILDRENYOUTH},
-      {"kids", EPG_EVENT_CONTENTMASK_CHILDRENYOUTH},
-      {"youth", EPG_EVENT_CONTENTMASK_CHILDRENYOUTH},
-      {"cartoon", EPG_EVENT_CONTENTMASK_CHILDRENYOUTH},
-      {"music", EPG_EVENT_CONTENTMASK_MUSICBALLETDANCE},
-      {"ballet", EPG_EVENT_CONTENTMASK_MUSICBALLETDANCE},
-      {"dance", EPG_EVENT_CONTENTMASK_MUSICBALLETDANCE},
-      {"concert", EPG_EVENT_CONTENTMASK_MUSICBALLETDANCE},
-      {"arts", EPG_EVENT_CONTENTMASK_ARTSCULTURE},
-      {"culture", EPG_EVENT_CONTENTMASK_ARTSCULTURE},
-      {"politic", EPG_EVENT_CONTENTMASK_SOCIALPOLITICALECONOMICS},
-      {"social", EPG_EVENT_CONTENTMASK_SOCIALPOLITICALECONOMICS},
-      {"economic", EPG_EVENT_CONTENTMASK_SOCIALPOLITICALECONOMICS},
-      {"documentary", EPG_EVENT_CONTENTMASK_EDUCATIONALSCIENCE},
-      {"science", EPG_EVENT_CONTENTMASK_EDUCATIONALSCIENCE},
-      {"education", EPG_EVENT_CONTENTMASK_EDUCATIONALSCIENCE},
-      {"nature", EPG_EVENT_CONTENTMASK_EDUCATIONALSCIENCE},
-      {"travel", EPG_EVENT_CONTENTMASK_LEISUREHOBBIES},
-      {"cooking", EPG_EVENT_CONTENTMASK_LEISUREHOBBIES},
-      {"hobbies", EPG_EVENT_CONTENTMASK_LEISUREHOBBIES},
-      {"leisure", EPG_EVENT_CONTENTMASK_LEISUREHOBBIES},
-      {"game show", EPG_EVENT_CONTENTMASK_SHOW},
-      {"talk show", EPG_EVENT_CONTENTMASK_SHOW},
-      {"reality", EPG_EVENT_CONTENTMASK_SHOW},
-      {"variety", EPG_EVENT_CONTENTMASK_SHOW},
-      {"comedy", EPG_EVENT_CONTENTMASK_SHOW},
-  };
-
-  for (const std::string& category : categories)
-  {
-    std::string lower = category;
-    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
-    for (const auto& [keyword, mask] : kKeywordToMask)
-    {
-      if (lower.find(keyword) != std::string::npos)
-      {
-        genreType = mask;
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-} // namespace
-
 PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid, time_t start, time_t end,
                                            kodi::addon::PVREPGTagsResultSet& results)
 {
@@ -1305,23 +1238,11 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid, time_t start, time_t 
       continue;
 
     kodi::addon::PVREPGTag tag;
-    // Broadcast ids only need to be unique per channel/addon, not globally;
-    // combining channel id with the *full* start time (not just its low
-    // bits) is what actually keeps this stable across refreshes without
-    // colliding. Found via a project-wide review, not a live-observed
-    // mis-tagged recording: an earlier version XORed in only
-    // `entry.startTime & 0xFFFF`, so any two entries on the *same*
-    // channel whose start times differed by an exact multiple of 65536
-    // seconds (~18.2h) produced the identical id -- a real, plausible
-    // collision across a multi-day guide with a few hundred entries per
-    // channel (birthday-paradox math puts a meaningful chance of at
-    // least one such collision per channel well within a typical guide
-    // window, compounding across an entire lineup). Multiplying
-    // channelUid by a large odd constant (Knuth's multiplicative hash
-    // constant) rather than shifting it also avoids the same class of
-    // truncation once a channel id exceeds 16 bits.
-    tag.SetUniqueBroadcastId(static_cast<unsigned int>(channelUid) * 2654435761u +
-                             static_cast<uint32_t>(entry.startTime));
+    // See ComputeBroadcastId()'s own doc comment in EpgTagUtil.h for why
+    // this specific hash (full start time, multiplicative channel-id
+    // mixing) rather than something simpler -- pulled out there so it's
+    // unit-testable standalone.
+    tag.SetUniqueBroadcastId(dispatcharr::ComputeBroadcastId(channelUid, entry.startTime));
     tag.SetUniqueChannelId(static_cast<unsigned int>(channelUid));
     tag.SetTitle(entry.title);
     tag.SetPlotOutline(entry.subtitle);
@@ -1375,7 +1296,7 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid, time_t start, time_t 
       tag.SetGenreDescription(joinedCategories);
 
       int genreType = EPG_GENRE_USE_STRING;
-      MapCategoriesToGenreType(entry.categories, genreType);
+      dispatcharr::MapCategoriesToGenreType(entry.categories, genreType);
       tag.SetGenreType(genreType);
     }
 

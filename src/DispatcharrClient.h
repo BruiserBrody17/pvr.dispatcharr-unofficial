@@ -584,13 +584,17 @@ public:
 
   // Auto-computes the current UTC offset (minutes) for the small set of
   // well-known IANA zones (US/Canada, UK/EU) hardcoded in
-  // DispatcharrClient.cpp, using their real, stable DST transition rules
-  // -- see docs/RECURRING_RULES.md for why a full timezone database isn't
-  // bundled to do this for every possible zone instead. Returns false
+  // TimeZoneUtil.cpp, using their real, stable DST transition rules -- see
+  // docs/RECURRING_RULES.md for why a full timezone database isn't bundled
+  // to do this for every possible zone instead. Returns false
   // (offsetMinutesOut untouched) for any zone not in that short list, in
   // which case recurring_rule_utc_offset_minutes still needs to be set
   // manually. Pure computation, no network/instance state needed --
-  // static so PVRDispatcharr's constructor can call it directly.
+  // static so PVRDispatcharr's constructor can call it directly. Just a
+  // thin delegate to the free function in TimeZoneUtil.h -- the actual
+  // logic lives there specifically so it's unit-testable standalone (no
+  // Kodi/curl dependency); this static method stays as the public entry
+  // point other callers already use.
   // `nowUtc` is a parameter purely for testability; real callers should
   // always pass the actual current time.
   static bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc, int& offsetMinutesOut);

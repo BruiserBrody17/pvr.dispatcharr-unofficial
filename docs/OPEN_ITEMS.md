@@ -961,11 +961,12 @@
 ## Tooling / infrastructure (not addon-specific)
 
 - **No automated test suite exists (requested 2026-09-10) -- both
-  plugins' pure/filesystem logic now covered (2026-09-13), the C++ addon
-  side's DB/Redis-boundary work not yet started.** Two genuinely
-  separable problems, since this addon can't be compiled
-  standalone (needs Kodi's own binary-addon build harness) while the two
-  companion plugins are plain Python with no such constraint:
+  plugins' and the C++ addon's known Kodi/Dispatcharr-independent pure
+  logic now fully covered (2026-09-13); only the Redis/Django/Kodi-ABI
+  boundary work remains, by design.** Two genuinely separable problems,
+  since this addon can't be compiled standalone (needs Kodi's own
+  binary-addon build harness) while the two companion plugins are plain
+  Python with no such constraint:
   - **Python plugins** (`dispatcharr-plugin/recording_edl`,
     `dispatcharr-plugin/timeshift_buffer`): the lower-effort starting
     point -- `pytest` (pinned in `dispatcharr-plugin/requirements-dev.txt`,
@@ -1075,6 +1076,119 @@
     None of these touch `kodi::`-namespaced types, so none need the
     Kodi ABI at all -- a real, buildable-standalone test target, not a
     redesign of the addon's own architecture.
+    **Update: `XmlTvParser`/`TimeUtil` piece built (2026-09-13).**
+    `tests/` is a standalone Catch2 project (`tests/CMakeLists.txt`,
+    deliberately not a subdirectory of the main `CMakeLists.txt`, which
+    can only configure through Kodi's own build harness), wired into
+    CI's new `unit-tests` job -- 13 test cases / 60 assertions covering
+    `XmlTvParser::Parse()`'s field extraction (credits joining, xmltv_ns
+    episode-num parsing including partial/multipart values, timezone
+    offset handling, malformed/missing-channel/no-`<tv>`-root error
+    paths) and `TimeUtil`'s `PortableTimeGm()`/`GmTimeUtc()` (including a
+    regression guard that `PortableTimeGm()` stays TZ-independent, its
+    whole reason for existing per its own header comment).
+    **The `ComputeKnownZoneOffsetMinutes()`/`MapCategoriesToGenreType()`/
+    broadcast-id-hash piece is corrected, not yet done.** This item's
+    original "none of these touch `kodi::`-namespaced types" claim
+    doesn't hold for two of the three once actually checked against the
+    real `#include`s: `MapCategoriesToGenreType()` and `GetEPGForChannel()`
+    live in `PVRDispatcharr.cpp`, which pulls in the *full*
+    `<kodi/addon-instance/PVR.h>` (via `PVRDispatcharr.h`) -- a much
+    heavier, more version-sensitive dependency than `DispatcharrClient.cpp`'s
+    `<kodi/General.h>` alone, and one that would mean either vendoring
+    Kodi's PVR dev-kit headers into the test build or checking out Kodi
+    source in CI, undermining the whole "fast, no Kodi checkout" point of
+    this suite. The broadcast-id hash also isn't its own function yet --
+    it's inline inside `GetEPGForChannel()`, which is a real
+    `CInstancePVRClient` member doing far more than hashing (cache
+    access, transferring entries back to Kodi); testing it standalone
+    would need extracting it into its own small function first, a real
+    (if small) refactor, not a pure test-only addition.
+    **Update: `ComputeKnownZoneOffsetMinutes()` piece built (2026-09-13),
+    via a third option neither of the two originally considered.** Rather
+    than stubbing Kodi's `AddonGlobalInterface` or adding an injectable
+    logging abstraction to sidestep `DispatcharrClient.cpp`'s unrelated
+    `kodi::Log()` calls, the DST logic itself (`NthWeekdayOfMonth()`/
+    `LastWeekdayOfMonth()`/`IsUsCanadaDstInEffect()`/`IsEuDstInEffect()`/
+    `kKnownTimeZones`/`ComputeKnownZoneOffsetMinutes()`) moved into its
+    own new `src/TimeZoneUtil.{h,cpp}`, matching the existing precedent
+    for exactly this reason (`TimeUtil.h`'s own header comment: "pulled
+    out here... since both are meant to stay self-contained"). Pure code
+    motion, no logic change -- `DispatcharrClient::ComputeKnownZoneOffsetMinutes()`
+    (the public static method every existing caller already uses) is now
+    a one-line delegate to the new free function, so nothing outside this
+    file needed to change. Confirmed the real addon still compiles
+    correctly post-refactor via the actual Kodi binary-addons harness
+    (not just the standalone test build). New `tests/test_timezone_util.cpp`
+    covers both DST families at their exact real 2026 transition instants
+    (computed independently via `date -u`, not derived from the code under
+    test) plus fixed-offset zones and an unrecognized-zone case -- 18 test
+    cases / more assertions total across the whole suite now, still 0 Kodi
+    checkout needed.
+    **Update: `MapCategoriesToGenreType()`/the broadcast-id hash also built
+    (2026-09-13) -- both turned out easier than this item's own prior
+    "not done" writeup assessed, on closer inspection.** Two corrections
+    to that writeup, not just new work:
+    - The `<kodi/addon-instance/PVR.h>` concern conflated "the *file*
+      `PVRDispatcharr.cpp` includes the heavy C++ header" with "the
+      *function* needs it" -- they're not the same thing.
+      `EPG_EVENT_CONTENTMASK_*`'s actual definition
+      (`kodi/c-api/addon-instance/pvr/pvr_epg.h`, confirmed by reading it
+      in a real Kodi checkout) is a leaf, plain-`extern "C"` header (its
+      own only include, `pvr_defines.h`, has zero includes of its own) --
+      nothing like the full `CInstancePVRClient` class hierarchy. Ended up
+      not even depending on that header, though: since these values are
+      the ETSI EN 300 468 DVB-SI content-descriptor top nibble (an
+      external broadcast standard Kodi's header just mirrors 1:1, not a
+      Kodi-specific value that could drift on its own), new
+      `src/EpgTagUtil.{h,cpp}` hardcodes them directly with a citation
+      comment -- zero Kodi SDK dependency at all, matching
+      `XmlTvParser`/`TimeUtil`/`TimeZoneUtil` exactly, not just a lighter
+      one.
+    - The broadcast-id hash turned out to already be a fully
+      self-contained expression (`channelUid`/`entry.startTime` only, no
+      other `GetEPGForChannel()` state) -- extracting it into
+      `ComputeBroadcastId()` in the same new file was direct, not the
+      refactor-first blocker this item previously described.
+    `PVRDispatcharr.cpp`'s `GetEPGForChannel()` now just calls both as
+    `dispatcharr::MapCategoriesToGenreType()`/`dispatcharr::ComputeBroadcastId()`
+    -- pure code motion, confirmed the real addon still compiles via the
+    actual Kodi binary-addons harness post-refactor. New
+    `tests/test_epg_tag_util.cpp` covers every genre-keyword family,
+    case-insensitivity, substring matching, the documented
+    scan-all-categories-not-just-the-first behavior, a concrete
+    hand-computed broadcast-id value (locks the exact hash algorithm in
+    place against an accidental future change), and a direct regression
+    test for the specific 65536-second-collision bug
+    `docs/EPG.md` documents this hash as the fix for.
+    All four original candidates from this item are now done.
+    **Update (2026-09-13): the "nothing else identified" claim above
+    didn't hold up -- a follow-up survey found four more.** `StringUtil.{h,cpp}`
+    (`Base64Encode`/`ToLower`, pulled out of `WebSocketClient.cpp` --
+    zero Kodi/curl dependency despite living in a file that includes
+    `<curl/curl.h>`; `Base64Encode` backs the WebSocket handshake's
+    `Sec-WebSocket-Key`, confirmed against RFC 4648's own test vectors),
+    `DateTimeFormat.{h,cpp}` (`IsoFromTime`/`TimeFromIso`/`TimeOfDayString`/
+    `SecondsSinceMidnightFromString`/`DateStringFromTime`/`TimeFromDateString`,
+    pulled out of `DispatcharrClient.cpp` -- Dispatcharr's own date-time
+    string formats, only needing `TimeUtil.h`), `UrlEncode.{h,cpp}`
+    (needs a real `curl_easy_escape` call at runtime, unlike the others
+    here, but no Kodi dependency -- new `tests/CMakeLists.txt` now also
+    `find_package(CURL REQUIRED)`s, same module-mode setup as the main
+    addon build), and `JsonFieldUtil.h` (the `FieldOr<T>()` template --
+    header-only, 48 call sites across `DispatcharrClient.cpp`, the
+    widest blast-radius of any candidate found so far since it's what
+    nearly every response field read goes through; new
+    `tests/CMakeLists.txt` now also `FetchContent`s `nlohmann/json`,
+    same `v3.11.3` pin as the main addon build). 54 test cases total
+    across the whole C++ suite now. Confirmed the real addon still
+    compiles via the actual Kodi binary-addons harness after each
+    extraction, same verification discipline as every prior C++
+    extraction this item tracks. Lesson for next time: don't trust a
+    "nothing else remains" claim in this file without re-surveying --
+    the same caution `CLAUDE.md`'s own privacy-scrub convention already
+    learned the hard way for a different kind of "we checked, it's
+    done" claim.
 - [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
   Motivated directly by this session's own experience: found and fixed 9
   dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,

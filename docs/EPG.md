@@ -47,8 +47,10 @@ what TVHeadend's own `pvr.hts` shows for the same kind of source:
 - `<category>` (0+, repeatable -- confirmed live with up to 4 on one
   programme, e.g. `["Series", "Sports non-event", "News", "Sports talk"]`)
   → all joined into `GenreDescription`, plus a best-effort keyword scan
-  (`MapCategoriesToGenreType()` in `PVRDispatcharr.cpp`) against Kodi's
-  ETSI EN 300 468 `EPG_EVENT_CONTENTMASK_*` values so the guide gets
+  (`MapCategoriesToGenreType()`, in `EpgTagUtil.cpp` as of 2026-09-13 --
+  pulled out of `PVRDispatcharr.cpp` so it's unit-testable standalone, see
+  `tests/test_epg_tag_util.cpp`) against Kodi's ETSI EN 300 468
+  `EPG_EVENT_CONTENTMASK_*` values so the guide gets
   genre-based colour coding instead of every programme showing as "Other /
   Unknown" -- confirmed live: `["Series", "Sports non-event", ...]` now
   resolves to `Genre: Sports` in Kodi's own EPG info panel, not the

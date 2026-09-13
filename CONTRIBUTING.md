@@ -7,8 +7,15 @@ handled here.
 
 ## Before you start
 
-- **The automated test suite is narrow.** `dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/`
-  (pytest, run via CI's `unit-tests-python` job) cover each plugin's
+- **The automated test suite is narrow, on both sides.** `tests/`
+  (Catch2, run via CI's `unit-tests` job) covers only C++ source files
+  with no Kodi SDK dependency at all -- `XmlTvParser`/`TimeUtil`/
+  `TimeZoneUtil`/`EpgTagUtil`/`StringUtil`/`DateTimeFormat`/`UrlEncode`/
+  `JsonFieldUtil` as of 2026-09-13. The addon's actual PVR API surface
+  and HTTP/WebSocket handling (`PVRDispatcharr`/`DispatcharrClient`/
+  `WebSocketClient`) aren't covered by anything automated.
+  `dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/` (pytest,
+  run via CI's `unit-tests-python` job) cover each plugin's
   Dispatcharr-independent pure/filesystem logic as of 2026-09-13 --
   neither plugin's Redis- or Django-model-touching code is tested.
   Verification of everything else is manual: smoke-testing against a
@@ -21,13 +28,16 @@ handled here.
 - **The addon can't be built standalone.** It builds through Kodi's own
   binary-addon build harness. Full, previously-verified build steps for
   Windows/macOS/Linux/CoreELEC are in [docs/BUILDING.md](docs/BUILDING.md)
-  -- start there rather than guessing at commands.
+  -- start there rather than guessing at commands. The C++ unit test
+  suite is a separate, plain CMake project (`tests/CMakeLists.txt`) that
+  doesn't need any of that -- see its own comment.
 - **CI only covers part of this.** `.github/workflows/build.yml`
   compiles the addon on Windows/macOS/Linux, packages the two plugins
-  as zips, and runs the narrow pytest suite above -- it doesn't build or
-  test the CoreELEC package, and doesn't exercise runtime behavior on
-  any platform. Green CI means "it compiles, lints, and doesn't regress
-  the unit-tested pieces," not "it works."
+  as zips, and runs both narrow unit test suites (`unit-tests` for C++,
+  `unit-tests-python` for the plugins) -- it doesn't build or test the
+  CoreELEC package, and doesn't exercise runtime behavior on any
+  platform. Green CI means "it compiles, lints, and doesn't regress the
+  unit-tested pieces," not "it works."
 
 ## Where things live
 
@@ -52,11 +62,18 @@ handled here.
   C++, `ruff format dispatcharr-plugin/` for Python. `ruff check
   dispatcharr-plugin/` catches some real bugs too (unused variables,
   etc.), not just style -- run it.
+- **If you touch `XmlTvParser`/`TimeUtil`/`TimeZoneUtil`/`EpgTagUtil`/
+  `StringUtil`/`DateTimeFormat`/`UrlEncode`/`JsonFieldUtil` (or add new
+  Kodi-independent C++ pure-logic code), run the C++ unit test suite**
+  before pushing:
+  `cmake -S tests -B build-tests && cmake --build build-tests && ctest
+  --test-dir build-tests --output-on-failure`. Add test cases for new
+  behavior rather than just confirming existing ones still pass.
 - **If you touch either plugin's pure/filesystem logic (or add new
   Dispatcharr-independent code), run the pytest suite** before pushing:
   `pip install -r dispatcharr-plugin/requirements-dev.txt && pytest`.
-  Add test cases for
-  new behavior rather than just confirming existing ones still pass.
+  Add test cases for new behavior rather than just confirming existing
+  ones still pass.
 - **Comments explain WHY, not WHAT.** Document non-obvious constraints,
   something you confirmed live, or a workaround for a specific bug --
   not a restatement of what the next line obviously does.
@@ -96,11 +113,13 @@ easy-to-miss spots per piece).
 ## What happens after you open a PR
 
 Every external PR gets an actual manual review before merging -- never
-auto-merged just because CI is green. With only a narrow test suite,
-passing CI proves the change compiles, formats cleanly, and doesn't
-regress the unit-tested pieces -- not that a change to the untested
-majority of this codebase is correct, so a real read-through matters
-more here than on a project with full test coverage. This is a
+auto-merged just because CI is green. With only narrow unit test
+suites on both sides, passing CI proves the change compiles, formats
+cleanly, and doesn't regress the unit-tested pieces -- not that a
+change to the untested majority of this codebase (the addon's actual
+PVR/HTTP logic, either plugin's Redis/Django-touching code) is correct,
+so a real read-through matters more here than on a project with full
+test coverage. This is a
 single-maintainer project,
 so review may take a while; that's not a signal your PR was rejected.
 

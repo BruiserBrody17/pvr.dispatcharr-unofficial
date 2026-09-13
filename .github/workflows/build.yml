@@ -63,6 +63,27 @@ jobs:
       - name: Run pytest
         run: pytest
 
+  # Fast, Kodi-checkout-free unit tests for source files with no Kodi SDK
+  # dependency -- see tests/CMakeLists.txt's own comment for why this is a
+  # separate CMake project from the main addon build, which can only be
+  # configured through Kodi's own build harness. Catches real logic
+  # regressions on every push/PR without paying for a full Kodi source
+  # checkout the way build-unix/build-windows below do.
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v7
+
+      - name: Configure
+        run: cmake -S tests -B build-tests -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-tests -j"$(nproc)"
+
+      - name: Run tests
+        run: ctest --test-dir build-tests --output-on-failure
+
   build-unix:
     strategy:
       fail-fast: false
