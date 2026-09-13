@@ -49,7 +49,7 @@ one can only be configured through Kodi's own build harness -- see
 `TimeZoneUtil`, `EpgTagUtil`, `StringUtil`, `DateTimeFormat`, `UrlEncode`,
 `JsonFieldUtil`, `CurlCallbacks`, `CatchUpUtil`, `RecurringRuleUtil`,
 `RecordingParser`, `PluginRunResult`, `RealtimeUpdateParser`, `M3u8SegmentParser`, `SegmentLookup`,
-`ChannelParser`, `TimerRuleParser`, `TimerIdentity` -- the six before `RecurringRuleUtil` pulled out
+`ChannelParser`, `TimerRuleParser`, `TimerIdentity`, `LiveManifestParser` -- the six before `RecurringRuleUtil` pulled out
 of `WebSocketClient.cpp`/`DispatcharrClient.cpp` specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
 string formats, curl-based URL escaping, the null-safe JSON field
@@ -130,6 +130,18 @@ end-after-start validity filter.
 give a series rule -- which has no real numeric id in Dispatcharr's own
 API -- a stable Kodi `ClientIndex`, masked into the lower 30 bits so the
 high "series rule" flag bit is never disturbed.
+`LiveManifestParser` is the pure filtering core of
+`DispatcharrClient::RefreshLiveManifest()`'s segment-merge loop --
+the live-timeshift counterpart to `M3u8SegmentParser`, but for the
+`get_live_manifest` plugin response's JSON `"segments"` array rather
+than a raw m3u8 playlist. Keeps only sequences newer than the highest
+one already merged, and drops a malformed entry (empty filename or
+non-positive `byte_size`) rather than letting it corrupt the caller's
+own cumulative byte/time offsets for every segment merged after it.
+Deliberately does not compute `byteOffset`/`timeOffsetMs` itself, since
+those are cumulative over the caller's own running totals (member
+state) -- the caller still assigns those while applying each returned
+entry in order.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance

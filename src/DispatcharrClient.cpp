@@ -5,6 +5,7 @@
 #include "CurlCallbacks.h"
 #include "DateTimeFormat.h"
 #include "JsonFieldUtil.h"
+#include "LiveManifestParser.h"
 #include "M3u8SegmentParser.h"
 #include "PluginRunResult.h"
 #include "RecordingParser.h"
@@ -2272,31 +2273,24 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
   // Segments come back ordered by sequence; only ones newer than what we
   // already know get appended, each extending OUR cumulative address space
   // (not reusing the response's own relative offsets -- see this method's
-  // header comment for why). An already-known segment's size can't
-  // legitimately change (ffmpeg only ever appends new, closed segments to
-  // the playlist), so silently skipping it here rather than re-verifying
-  // it is safe, not just an optimization.
+  // header comment for why). The filtering itself lives in
+  // dispatcharr::ParseNewLiveManifestSegments() (LiveManifestParser.{h,cpp})
+  // so it's unit-testable standalone -- see that function's own comment;
+  // byteOffset/timeOffsetMs stay computed here since they're cumulative
+  // over this stream's own running totals.
   int64_t lastKnownSequence =
       m_liveTimeshiftStream.segments.empty() ? -1 : m_liveTimeshiftStream.segments.back().sequence;
 
-  for (const json& seg : result["segments"])
+  for (const auto& entry : ParseNewLiveManifestSegments(result["segments"], lastKnownSequence))
   {
-    int64_t sequence = FieldOr<int64_t>(seg, "sequence", -1);
-    if (sequence < 0 || sequence <= lastKnownSequence)
-      continue;
-
     LiveTimeshiftSegmentInfo info;
-    info.filename = FieldOr<std::string>(seg, "filename", "");
-    info.byteSize = FieldOr<int64_t>(seg, "byte_size", 0);
-    int64_t durationMs = FieldOr<int64_t>(seg, "duration_ms", 0);
-    if (info.filename.empty() || info.byteSize <= 0)
-      continue; // malformed entry -- don't let it corrupt the cumulative offsets that follow
-
-    info.sequence = sequence;
+    info.filename = entry.filename;
+    info.byteSize = entry.byteSize;
+    info.sequence = entry.sequence;
     info.byteOffset = m_liveTimeshiftStream.totalBytes;
     info.timeOffsetMs = m_liveTimeshiftStream.totalDurationMs;
     m_liveTimeshiftStream.totalBytes += info.byteSize;
-    m_liveTimeshiftStream.totalDurationMs += durationMs;
+    m_liveTimeshiftStream.totalDurationMs += entry.durationMs;
     m_liveTimeshiftStream.segments.push_back(std::move(info));
   }
 
