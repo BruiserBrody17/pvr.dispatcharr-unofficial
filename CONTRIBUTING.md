@@ -65,7 +65,10 @@ handled here.
 - **If you touch `XmlTvParser`/`TimeUtil`/`TimeZoneUtil`/`EpgTagUtil`/
   `StringUtil`/`DateTimeFormat`/`UrlEncode`/`JsonFieldUtil` (or add new
   Kodi-independent C++ pure-logic code), run the C++ unit test suite**
-  before pushing:
+  before pushing (needs libcurl's dev headers, e.g. `libcurl4-openssl-dev`
+  on Debian/Ubuntu, for `UrlEncode`'s own test -- CI hit this as a real
+  "Could NOT find CURL" failure the first time this suite gained that
+  dependency):
   `cmake -S tests -B build-tests && cmake --build build-tests && ctest
   --test-dir build-tests --output-on-failure`. Add test cases for new
   behavior rather than just confirming existing ones still pass.

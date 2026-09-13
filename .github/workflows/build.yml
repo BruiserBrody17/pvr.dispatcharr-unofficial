@@ -75,6 +75,15 @@ jobs:
       - name: Check out repo
         uses: actions/checkout@v7
 
+      # tests/CMakeLists.txt find_package(CURL REQUIRED)s (needed by
+      # UrlEncode's own test) -- ubuntu-latest doesn't ship libcurl's dev
+      # headers by default, only build-unix's own Linux leg installed this
+      # historically, since this job never needed curl until UrlEncode was
+      # added (confirmed live, 2026-09-13: real CI failure, "Could NOT find
+      # CURL", the exact same gap hit locally setting up this dependency).
+      - name: Install libcurl dev headers
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+
       - name: Configure
         run: cmake -S tests -B build-tests -DCMAKE_BUILD_TYPE=Release
 
