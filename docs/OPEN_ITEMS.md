@@ -1644,3 +1644,34 @@
   newly-reverted approach) into the baseline by hand when that judgment
   call is needed -- this still isn't a fully automatic pass/fail gate for
   *legitimacy*, just for *novelty*.
+  **Update (2026-09-13): `tools/check_doc_refs.py` itself gained a real
+  test suite (`tools/tests/test_check_doc_refs.py`, 29 test cases),
+  found via the same exhaustive-read approach applied to the C++ addon
+  and both Python plugins -- it's real parsing/matching logic wired
+  into CI, and until now had zero coverage of its own despite this very
+  item documenting several real bugs already found and fixed in it
+  during development.** Covers the module's own `normalize`/
+  `get_headings` helpers (both plain `#` headings and the
+  bold-pseudo-heading convention), all three `check_*()` functions
+  against synthetic pytest-fixture-provided docs/src/config, and its
+  `load_baseline`/`write_baseline`/`main` exit-code/`--update-baseline`/
+  resolved-entry-reporting behavior. Includes dedicated
+  regression tests for the exact three bugs this item's own "First real
+  run" paragraph above already named: the multi-line file-lookback
+  within a citing paragraph, the `[X.md](X.md)`-style markdown-link
+  citation form, and the missing-`plugin.py`-corpus gap. Every
+  module-level path constant the script computes at import time against
+  this repo's own real layout (`REPO_ROOT`/`DOC_FILES`/`DOCS_DIR`/
+  `SRC_DIR`/`PLUGIN_FILES`/`SETTINGS_XML`/`BASELINE_PATH`) is
+  `monkeypatch`ed per test to point at synthetic files instead, so
+  nothing in this suite depends on (or could ever accidentally flag)
+  this repo's own real docs.
+  Wired into the existing CI jobs rather than new ones:
+  `pyproject.toml`'s `testpaths` widened to `["dispatcharr-plugin",
+  "tools"]` (picked up by `unit-tests-python`'s already-bare `pytest`
+  call), and the `lint` job's `ruff format --check`/`ruff check` calls
+  widened from `dispatcharr-plugin/` alone to `dispatcharr-plugin/
+  tools/` -- `tools/check_doc_refs.py` was previously never itself
+  ruff-formatted or linted in CI at all. 156 total across the Python
+  suite now (41 `recording_edl` + 86 `timeshift_buffer` + 29
+  `check_doc_refs`).

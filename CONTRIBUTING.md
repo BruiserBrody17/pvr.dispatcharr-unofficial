@@ -23,7 +23,9 @@ handled here.
   `Plugin.run()` dispatch/message formatting (by `monkeypatch`ing the
   one or few Redis-/Django-touching calls each action handler makes),
   as of 2026-09-13 -- the real Redis client and Django ORM calls
-  themselves stay untested.
+  themselves stay untested. `tools/tests/` covers
+  `tools/check_doc_refs.py` itself the same way (real parsing/matching
+  logic against synthetic `tmp_path` docs/src, not this repo's own).
   Verification of everything else is manual: smoke-testing against a
   real Dispatcharr instance and a real (or emulated) Kodi install. If
   your change touches the C++ addon or either Python plugin's actual
@@ -81,11 +83,12 @@ handled here.
   `cmake -S tests -B build-tests && cmake --build build-tests && ctest
   --test-dir build-tests --output-on-failure`. Add test cases for new
   behavior rather than just confirming existing ones still pass.
-- **If you touch either plugin's pure/filesystem logic (or add new
-  Dispatcharr-independent code), run the pytest suite** before pushing:
-  `pip install -r dispatcharr-plugin/requirements-dev.txt && pytest`.
-  Add test cases for new behavior rather than just confirming existing
-  ones still pass.
+- **If you touch either plugin's pure/filesystem logic, `tools/check_doc_refs.py`,
+  or add new Dispatcharr-independent code, run the pytest suite**
+  before pushing: `pip install -r dispatcharr-plugin/requirements-dev.txt
+  && pytest` (picks up both `dispatcharr-plugin/` and `tools/`, see
+  `pyproject.toml`'s own `testpaths`). Add test cases for new behavior
+  rather than just confirming existing ones still pass.
 - **Comments explain WHY, not WHAT.** Document non-obvious constraints,
   something you confirmed live, or a workaround for a specific bug --
   not a restatement of what the next line obviously does.

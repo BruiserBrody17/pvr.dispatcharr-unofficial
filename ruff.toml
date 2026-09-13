@@ -1,6 +1,12 @@
 # Formatting/linting for the two Dispatcharr server-side plugins
-# (dispatcharr-plugin/timeshift_buffer, dispatcharr-plugin/recording_edl).
-# Not the addon itself, which is C++ (see .clang-format for that).
+# (dispatcharr-plugin/timeshift_buffer, dispatcharr-plugin/recording_edl)
+# and this repo's own Python tooling (tools/check_doc_refs.py and its
+# test suite) -- the only committed Python in this repo. Not the addon
+# itself, which is C++ (see .clang-format for that). CI applies this
+# against dispatcharr-plugin/ and tools/ explicitly, not the whole repo
+# (see .github/workflows/build.yml's lint job), so a future top-level
+# directory this config was never meant to opine on doesn't silently
+# start failing lint.
 
 line-length = 120
 target-version = "py311"

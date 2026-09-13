@@ -37,20 +37,20 @@ jobs:
       - name: clang-format check (src/)
         run: clang-format --dry-run -Werror src/*.cpp src/*.h
 
-      - name: ruff format check (dispatcharr-plugin/)
-        run: ruff format --check dispatcharr-plugin/
+      - name: ruff format check (dispatcharr-plugin/, tools/)
+        run: ruff format --check dispatcharr-plugin/ tools/
 
-      - name: ruff lint (dispatcharr-plugin/)
-        run: ruff check dispatcharr-plugin/
+      - name: ruff lint (dispatcharr-plugin/, tools/)
+        run: ruff check dispatcharr-plugin/ tools/
 
       - name: doc reference check (baselined -- fails only on new dangling refs)
         run: python3 tools/check_doc_refs.py
 
-  # Covers only the Dispatcharr-independent pure/filesystem logic in the two
-  # plugins -- each plugin.py's Django-model-dependent parts (deferred
-  # imports inside functions, e.g. recording_edl's _classify_dvr_hls_dir/
-  # Plugin.run) stay untested here, same boundary the addon's own C++ test
-  # suite draws at the Kodi SDK -- see docs/OPEN_ITEMS.md.
+  # Covers the Dispatcharr-independent pure/filesystem logic in the two
+  # plugins (each plugin.py's Django-model-dependent parts, e.g.
+  # recording_edl's _classify_dvr_hls_dir, stay untested here, same
+  # boundary the addon's own C++ test suite draws at the Kodi SDK -- see
+  # docs/OPEN_ITEMS.md) and tools/check_doc_refs.py's own test suite.
   unit-tests-python:
     runs-on: ubuntu-latest
     steps:
