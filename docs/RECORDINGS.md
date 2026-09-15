@@ -1875,6 +1875,30 @@ at essentially the same wall-clock instant as the query itself) --
 resolved on its own within ~3 seconds and confirmed unrelated to this
 cache, not a regression it introduced.
 
+**The `EnsureRecordingsLoaded()` debug log line ("recordings cache
+refreshed (N recording(s))") reports the raw fetch count, not
+`GetRecordings()`'s own filtered output -- investigated as a suspected
+data-loss bug (2026-09-15) on a real account with 56 cached items but
+only 12 actually reaching Kodi's own `PVR.GetRecordings`, and turned out
+to be entirely expected behavior, not a bug anywhere.** Dispatcharr's
+`/api/channels/recordings/` returns past/completed and future/scheduled
+items together in one list -- confirmed live by adding temporary
+per-item diagnostic logging to `GetRecordings()`'s transfer loop: all 44
+"missing" items had a genuinely positive `start_time` (ranging from
+minutes to about a week out), `recurringRuleId == 0` (ruling out a
+suspected leftover-occurrence artifact from unrelated same-day
+recurring-rule testing), and were the account's own ordinary
+daily/weekly recurring shows -- exactly what `GetTimers()` already
+separately reports as scheduled. `GetRecordings()`'s `isUpcoming` filter
+(see its own comment) is deliberately excluding them, correctly: an
+item that hasn't started yet belongs in Timers, not Recordings. No
+duplicate `recordingid` and no exception/early-exit in the transfer loop
+were found either (both checked directly, since they were the other two
+leading theories before the `isUpcoming` breakdown above settled it).
+Worth remembering next time this cache log's count doesn't match what
+`PVR.GetRecordings` shows: that's normal whenever the account has any
+upcoming scheduled recordings at all, not a sign of a broken transfer.
+
 ## Recording-management feature gaps vs. TVHeadend, checked against Dispatcharr's real API (2026-09-08)
 
 Prompted by a "what does TVHeadend have that this addon doesn't"
