@@ -10,6 +10,21 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [0.10.1] - 2026-09-15
+
+Addon only -- neither companion plugin changed for this pass.
+
+### Fixed
+
+- **Channels with real, working catch-up/archive support were never
+  actually marked as such to Kodi.** `GetChannels()` never set Kodi's own
+  per-channel `hasarchive` flag, so it always reported `false` even
+  though catch-up playback itself worked correctly once selected from
+  the guide -- the channel-level flag Kodi (and, by extension, a skin's
+  own catch-up-availability indicator) uses to know catch-up exists at
+  all for a channel was simply never wired up. See
+  [docs/CATCHUP.md](docs/CATCHUP.md) for the full root cause.
+
 ## [0.10.0] - 2026-09-11
 
 Addon only -- neither companion plugin changed for this pass.
