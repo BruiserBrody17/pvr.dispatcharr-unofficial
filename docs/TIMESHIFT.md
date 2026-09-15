@@ -318,6 +318,18 @@ signature as the other two platforms -- no CoreELEC-specific
 regressions found either. Reverted back to Server-side (`2`) afterward,
 confirmed via the same settings.xml/PVR-manager-available check.
 
+Re-verified a fourth time (2026-09-15, real personal macOS Kodi
+install, same `tools/kodi_smoke_test.py`-driven approach), completing
+this mode's coverage across all four target platforms. `kodi.log`
+confirmed the same `inputstream.ffmpegdirect.stream_mode = timeshift`
+signature, with real on-disk segment buffering and real 4K HEVC demux
+against this account's own content. Plain playback passed immediately;
+the seek check initially saw `canseek=false` right after opening (the
+same transient just-opened-buffer pattern already documented for
+Server-side mode -- see the "canseek" skip-guard entries elsewhere in
+this file) and passed cleanly on retry a few seconds later. Reverted
+back to Server-side (`2`) afterward, confirmed reverted.
+
 **Server-side** (`live_timeshift_mode = 2`): a genuine, TVHeadend-like
 rolling buffer, held on the Dispatcharr server, with real pause/rewind/
 fast-forward -- via a companion Dispatcharr plugin this addon ships
