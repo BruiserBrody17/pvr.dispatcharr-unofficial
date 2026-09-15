@@ -928,6 +928,13 @@ PVR_ERROR PVRDispatcharr::GetChannels(bool radio, kodi::addon::PVRChannelsResult
     if (ch.logoId >= 0)
       channel.SetIconPath(m_client.GetChannelLogoUrl(ch.logoId));
     channel.SetIsHidden(false);
+    // Confirmed live (2026-09-14): this was never set, so Kodi's own
+    // "hasarchive" (JSON-RPC PVR.GetChannels/PVR.GetChannelDetails, and
+    // whatever GUI affordance the skin drives from it) always reported
+    // false even for real catch-up-enabled channels -- despite
+    // catchupEnabled/catchupDays already being parsed and correctly used
+    // later in GetEPGTagStreamProperties()'s own catch-up logic below.
+    channel.SetHasArchive(ch.catchupEnabled);
     results.Add(channel);
   }
   return PVR_ERROR_NO_ERROR;

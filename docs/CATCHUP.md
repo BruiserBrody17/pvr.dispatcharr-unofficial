@@ -33,6 +33,26 @@ actually is, since it's easy to conflate with TVHeadend-style timeshifting:
   *actual* current archive depth per programme, so this is a best-effort
   window check, not a guarantee the archive still has that exact programme.
 
+## `GetChannels()` never reported which channels actually have catch-up
+
+Found and fixed 2026-09-14, via JSON-RPC-driven live testing: Kodi's own
+per-channel `hasarchive` flag (`kodi::addon::PVRChannel::SetHasArchive()`,
+surfaced back out through `PVR.GetChannels`/`PVR.GetChannelDetails`) was
+never being set in `GetChannels()`, so it always reported `false` --
+even for real, working catch-up-enabled channels confirmed independently
+against Dispatcharr's own API (`is_catchup: true`). This wasn't a gap in
+the actual catch-up-serving logic: `catchupEnabled`/`catchupDays` were
+already being parsed correctly (`ChannelParser.cpp`) and already used
+correctly by `GetEPGTagStreamProperties()`'s own catch-up decision lower
+in this same file -- the channel-level flag Kodi's core (and, by
+extension, whatever GUI affordance a skin drives from it) uses to know
+catch-up exists *at all* for a channel was simply never wired up.
+Confirmed live: `PVR.GetChannelDetails`'s `hasarchive` flipped from
+`false` to `true` for four real catch-up-enabled channels immediately
+after rebuilding and redeploying with `channel.SetHasArchive(ch.
+catchupEnabled)` added to `GetChannels()`'s per-channel loop, with a full
+smoke-test pass confirming nothing else regressed.
+
 ## Seeking reliability during catch-up playback
 
 Reported as unreliable in practice. Isolated the cause by testing the raw
