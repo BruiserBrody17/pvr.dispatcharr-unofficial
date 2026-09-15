@@ -731,16 +731,23 @@ def _seek_within_recording_and_verify(rpc: JsonRpcClient, recording_id: int) -> 
             {"playerid": playerid, "value": {"seconds": target}},
             timeout=RECORDING_SEEK_TIMEOUT_SECONDS,
         )
+        expected = before + target
+        # Poll until "time" actually lands near the target rather than just
+        # "differs from before" -- confirmed live (2026-09-15) against an
+        # in-progress (still-growing) recording that the latter is a real
+        # trap: ordinary forward playback alone advances "time" by ~1s
+        # while this polls, so a still-stale-but-one-second-later read can
+        # look like "changed" and end the loop well before the real seek
+        # (landing tens of seconds away) has actually applied.
         settle_deadline = time.monotonic() + RECORDING_SEEK_SETTLE_TIMEOUT_SECONDS
         after = before
         while time.monotonic() < settle_deadline:
             after = _time_to_seconds(
                 rpc.call("Player.GetProperties", {"playerid": playerid, "properties": ["time"]})["time"]
             )
-            if after != before:
+            if abs(after - expected) <= RECORDING_SEEK_TOLERANCE_SECONDS:
                 break
             time.sleep(RECORDING_SEEK_SETTLE_POLL_INTERVAL_SECONDS)
-        expected = before + target
         assert abs(after - expected) <= RECORDING_SEEK_TOLERANCE_SECONDS, (
             f"seek landed at {after:.0f}s, expected roughly {expected:.0f}s "
             f"(started at {before:.0f}s, sought forward {target:.0f}s, "
