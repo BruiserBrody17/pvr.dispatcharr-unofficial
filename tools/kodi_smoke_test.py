@@ -84,6 +84,8 @@ PLAYBACK_OPEN_SETTLE_SECONDS = 3
 # finished broadcast at test time, but 7 of the first 30 did, and
 # catch-up playback itself worked cleanly once a real one was found.
 CATCHUP_CHANNEL_PROBE_LIMIT = 30
+PVR_MANAGER_READY_TIMEOUT_SECONDS = 15
+PVR_MANAGER_READY_POLL_INTERVAL_SECONDS = 1
 PLAYER_OPEN_TIMEOUT_SECONDS = 30
 LIVE_TIMESHIFT_BUFFER_WARMUP_SECONDS = 5
 LIVE_TIMESHIFT_SEEK_BACK_SECONDS = 20
@@ -381,6 +383,34 @@ def check_addon_enabled(rpc: JsonRpcClient, addon_id: str):
     )["addon"]
     assert details["enabled"], f"{addon_id} is installed but disabled"
     return f"{details['name']} {details['version']}, enabled"
+
+
+def _wait_for_pvr_manager_ready(rpc: JsonRpcClient, timeout: float = PVR_MANAGER_READY_TIMEOUT_SECONDS):
+    """Confirmed live (2026-09-15/16) on every platform tested this
+    session -- Linux, Windows, CoreELEC, and macOS -- that every `PVR.*`
+    JSON-RPC method (`GetChannelGroups`, `GetChannels`, `GetTimers`,
+    `GetRecordings`) can return `-32100 "Failed to execute method."` for
+    several seconds right after Kodi starts or a PVR client addon
+    reloads/re-enables, purely because Kodi's own PVR manager hasn't
+    finished its own internal startup transition yet -- not a real
+    addon bug, confirmed every time by simply waiting and retrying. This
+    was previously handled by manually re-running a failed check a few
+    seconds later; polling `PVR.GetProperties`' own `available` property
+    (confirmed live on macOS/arm64 to flip `true` right when normal
+    operation resumes) avoids that manual step and the false-negative
+    risk of testing immediately after a restart, rather than waiting on
+    a fixed sleep. Silently does nothing (not an error) if it never
+    flips true within the timeout -- the read-only checks that follow
+    will surface their own real failure if the manager genuinely isn't
+    coming up, same as before this existed."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if rpc.call("PVR.GetProperties", {"properties": ["available"]}).get("available"):
+                return
+        except JsonRpcError:
+            pass
+        time.sleep(PVR_MANAGER_READY_POLL_INTERVAL_SECONDS)
 
 
 def check_channel_groups(rpc: JsonRpcClient):
@@ -1037,6 +1067,7 @@ def main() -> int:
 
     run.record("connectivity", lambda: check_connectivity(rpc))
     run.record("addon_enabled", lambda: check_addon_enabled(rpc, args.addon_id))
+    _wait_for_pvr_manager_ready(rpc)
     run.record("channel_groups", lambda: check_channel_groups(rpc))
     run.record("channel_group_membership", lambda: check_channel_group_membership(rpc))
 
