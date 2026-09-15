@@ -317,6 +317,65 @@ Dispatcharr server, worth writing down since it's easy to mistake for one:
   playback still succeeded, with the corrected key written back to
   `settings.xml` automatically.
 
+## Two PVR client addons enabled in the same Kodi against the same backend
+
+Not the "more than one Kodi client" scenario above (separate installs) --
+this is two *different addons* (e.g. this project's own earlier
+`pvr.dispatcharr`/`pvr.dispatcharrai` ids, still installed and enabled
+alongside a freshly-deployed `pvr.dispatcharr-unofficial` after following
+this project's own addon-id-change migration steps -- see
+[CHANGELOG.md](../CHANGELOG.md)'s `0.10.0` entry) both enabled in the
+*same* running Kodi, both pointed at the same real Dispatcharr account.
+
+Confirmed live (2026-09-15, real ODROID N2+/CoreELEC hardware): with
+both enabled, every `PVR.*` JSON-RPC method (`GetChannelGroups`,
+`GetChannels`, `GetTimers`, `GetRecordings`) failed immediately with
+`-32100 "Failed to execute method."`, and `kodi.log` showed **zero**
+`AddOnLog: pvr.dispatcharr-unofficial` activity at all -- the new
+addon's own PVR client instance never even started, despite
+`Addons.GetAddonDetails` reporting it `enabled: true`. Kodi's PVR
+manager appears to get stuck initializing when multiple PVR client
+addons are enabled at once, at least in this exact combination (the
+same addon lineage's three id generations, all valid `kodi.pvrclient`
+type addons). Fixed by disabling the older addon
+(`Addons.SetAddonEnabled` with `enabled: false`) -- no Kodi restart
+needed, the new addon's PVR client instance started and began
+refreshing channels/groups within seconds of the old one being
+disabled. This is exactly what this project's own migration guidance
+already recommends ("disable the old addon once the new one is
+confirmed working") -- this is confirmation of *why* that step isn't
+just cleanup, it's load-bearing.
+
+## A freshly-installed PVR addon can silently not start on a cold Kodi reboot
+
+Confirmed live and reproduced twice in the same session (2026-09-15,
+real ODROID N2+/CoreELEC hardware): after a full `systemctl restart
+kodi` with `pvr.dispatcharr-unofficial` already `enabled: true` in
+Kodi's own addon database (not toggled during this boot -- it was left
+enabled from before), `kodi.log` showed **zero** `AddOnLog:
+pvr.dispatcharr-unofficial` activity at all, and every `PVR.*` JSON-RPC
+method failed with `-32100 "Failed to execute method."` indefinitely
+(confirmed well past this project's usual few-seconds PVR-manager
+startup transient -- waited 2+ minutes with no change). Kodi's own
+process was alive and responding to other JSON-RPC calls the whole
+time, so this isn't a crash or a hang at the process level -- Kodi's
+PVR manager itself simply never instantiated this addon's PVR client
+on this particular boot.
+
+**Fix, confirmed reliable both times it was needed:** a live
+`Addons.SetAddonEnabled` toggle -- `false` then `true` a few seconds
+apart -- immediately triggers `"creating PVR client instance"` in
+`kodi.log` and normal operation resumes within seconds. A plain restart
+of Kodi itself does *not* reliably reproduce this fix; it has to be the
+enable-state *transition* while Kodi is already running. Not yet
+root-caused against Kodi's own PVR-manager source (this addon has no
+control over when Kodi decides to start a PVR client), and not
+reproduced on any of the VM-based Linux/Windows testing this project
+has done -- worth watching for on other real hardware, and a live
+disable/re-enable toggle is the known, confirmed workaround if
+`PVR.GetChannels`/etc. keep failing with `-32100` well past the normal
+startup window with no addon-side log activity at all.
+
 ## Still unconfirmed (verify before relying on in production)
 
 - The account used to verify this (a standard, non-admin test account)

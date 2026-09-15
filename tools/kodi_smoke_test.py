@@ -77,7 +77,13 @@ ADDTIMER_CLEANUP_RETRY_ATTEMPTS = 3
 ADDTIMER_CLEANUP_RETRY_INTERVAL_SECONDS = 1
 PLAYBACK_TRANSITION_SETTLE_SECONDS = 2
 PLAYBACK_OPEN_SETTLE_SECONDS = 3
-CATCHUP_CHANNEL_PROBE_LIMIT = 5
+# Confirmed live (2026-09-15, real CoreELEC/ODROID N2+ hardware, real
+# production Dispatcharr account): 5 was too low against a real account's
+# actual content distribution -- of 140 real hasarchive=true channels,
+# none of the first 5 (in PVR.GetChannels' own return order) had a
+# finished broadcast at test time, but 7 of the first 30 did, and
+# catch-up playback itself worked cleanly once a real one was found.
+CATCHUP_CHANNEL_PROBE_LIMIT = 30
 PLAYER_OPEN_TIMEOUT_SECONDS = 30
 LIVE_TIMESHIFT_BUFFER_WARMUP_SECONDS = 5
 LIVE_TIMESHIFT_SEEK_BACK_SECONDS = 20
