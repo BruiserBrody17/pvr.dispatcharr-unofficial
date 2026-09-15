@@ -915,6 +915,13 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   reflects real account-wide activity, not just this install's own
   actions -- exactly the cross-install gap the periodic refresh above was
   built to narrow, now closed to sub-second latency when this is enabled.
+  Re-confirmed the same way via `tools/kodi_smoke_test.py`'s own
+  `check_realtime_update_push` on a real macOS install and, separately, a
+  real CoreELEC/ODROID N2+ install (both 2026-09-15) -- same
+  create-directly-via-Dispatcharr's-API-then-poll-`PVR.GetTimers`
+  approach, same clean pass on both, completing this feature's live
+  confirmation across all four target platforms alongside the original
+  Linux one.
 - **`ReadRecordingStream()` used to open a brand-new libcurl easy handle
   (fresh TCP connection, fresh TLS handshake if HTTPS) for every single
   demuxer read**, rather than reusing one across the life of an open
