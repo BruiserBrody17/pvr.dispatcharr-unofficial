@@ -217,6 +217,25 @@ addressable from this addon's own code, and real mouse/keyboard-driven
 settings changes (the only way this dialog is actually used in practice)
 already work correctly, confirmed above.
 
+**Re-confirmed a third time (2026-09-15) on native Windows Kodi**,
+same blank-placeholder-rectangles rendering, same no-response to
+`Input.Down`, via the same `GUI.ActivateWindow`/screenshot approach --
+`kodi_screenshot.py` itself doesn't work unmodified on Windows (its
+remote-listing command assumes a bash shell; Windows' SSH default shell
+doesn't understand `ls -t`), so this pass used `Input.ExecuteAction`
+`"screenshot"` plus a manual SSH file pull instead. Three real devices,
+three different Kodi builds (Linux/Flatpak twice, native Windows once)
+now confirm the same specific `CGUIDialogAddonSettings` quirk. One new
+piece of evidence gathered this time: backing out of the dialog with
+`Input.Back` (not `Input.Select` -- confirmed safe and effective, unlike
+blindly guessing which control is focused) revealed a queued
+`"Information: The PVR backend does not allow to record this event."`
+dialog underneath -- confirming Kodi's core PVR manager *does* surface a
+real, single-button, user-facing dialog for a rejected `PVR.AddTimer`
+call (see `docs/TROUBLESHOOTING.md`'s scheduling-conflict entry), just
+deferred/queued rather than blocking the JSON-RPC response synchronously
+in this instance.
+
 **Follow-up bug in the live-apply mechanism itself, found via real
 CoreELEC testing: any settings save at all silently restarted the PVR
 client, defeating live-apply for every setting, not just the connection
@@ -263,6 +282,27 @@ back to the default `PVR_STREAM_PROPERTY_STREAMURL`-only path) on every
 live channel open, and that both plain playback and a relative backward
 `Player.Seek` succeeded cleanly with playback continuing afterward --
 no regressions found in this mode.
+
+Re-verified again (2026-09-15, native Windows Kodi, same
+`tools/kodi_smoke_test.py`-driven approach) since this addon's own
+`inputstream.ffmpegdirect` dependency isn't installed by default on a
+fresh Windows Kodi and isn't part of Kodi's official addon repository
+browsable through the GUI/JSON-RPC -- it has to be fetched directly
+from Kodi's own binary-addons mirror
+(`mirrors.kodi.tv/addons/<codename>/inputstream.ffmpegdirect+windows-x86_64/`)
+and side-loaded the same way this project's own addon zip is deployed.
+One real snag worth remembering if this happens again: the first
+download attempt over HTTP/2 silently corrupted the zip despite
+`curl` reporting a matching `Content-Length` and a clean `200` --
+confirmed via an MD5 mismatch against the mirror's own advertised
+`content-md5` response header, not just "unzip failed" -- forcing
+HTTP/1.1 (`curl --http1.1`) fixed it. A side-loaded addon also isn't
+enabled by default the way an installed-through-Kodi's-own-UI one is;
+needed an explicit `Addons.SetAddonEnabled` call. Once enabled, both
+plain playback and a relative backward seek succeeded cleanly, and
+`kodi.log` confirmed the same `inputstream.ffmpegdirect.stream_mode =
+timeshift` signature as the Linux run -- no platform-specific
+regressions found here either.
 
 **Server-side** (`live_timeshift_mode = 2`): a genuine, TVHeadend-like
 rolling buffer, held on the Dispatcharr server, with real pause/rewind/

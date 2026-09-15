@@ -4,30 +4,35 @@
 
 ## Ongoing (more will likely come up)
 
-- **Manual-testing checklist for a Linux Kodi sanity pass, covering what
+- **Manual-testing checklist for a Kodi sanity pass, covering what
   neither the unit test suite nor the JSON-RPC-driven smoke-test tooling
-  can reach (2026-09-15).** The unit suites cover pure logic;
+  can reach (2026-09-15, updated 2026-09-15 once Windows reached the
+  same coverage as Linux).** The unit suites cover pure logic;
   `tools/kodi_smoke_test.py` (platform-generic -- it only speaks Kodi's
-  own JSON-RPC API, so the same script is meant to be reused unchanged
-  once Windows/macOS/CoreELEC/Android get the same style of test suite)
+  own JSON-RPC API, confirmed live unchanged against both a Linux/
+  Flatpak and a native Windows Kodi install; still meant to be reused
+  as-is once macOS/CoreELEC/Android get the same style of test suite)
   covers the addon's live PVR-API surface against a real Dispatcharr
-  backend, provisioned onto a Linux/Flatpak Kodi install via
-  `tools/kodi_provision_linux_flatpak.sh`. What's left needs a human:
+  backend, provisioned via `tools/kodi_provision_linux_flatpak.sh` or
+  `tools/kodi_provision_windows.sh`. What's left needs a human, on
+  either platform:
   - **Anything visual/GUI**: the AddonSettings dialog's own
-    settings-entry flow (JSON-RPC synthetic input can't drive it -- see
-    `docs/TIMESHIFT.md`'s AddonSettings-dialog finding); actual
-    picture/audio quality during playback (JSON-RPC can only confirm
-    position advanced, not that the picture isn't corrupted or audio
-    isn't desynced); `DialogConfirm.xml` scheduling-conflict/live-vs-
-    recording-collision dialogs (the smoke test avoids triggering these
-    rather than testing them); EPG grid/channel-logo/Recordings-list
-    rendering in the real skin.
+    settings-entry flow (JSON-RPC synthetic input can't drive it --
+    confirmed live on three separate real devices/builds now, two
+    Linux and one Windows, see `docs/TIMESHIFT.md`'s AddonSettings-
+    dialog finding); actual picture/audio quality during playback
+    (JSON-RPC can only confirm position advanced, not that the picture
+    isn't corrupted or audio isn't desynced); `DialogConfirm.xml`
+    scheduling-conflict/live-vs-recording-collision dialogs (the smoke
+    test avoids triggering these rather than testing them); EPG grid/
+    channel-logo/Recordings-list rendering in the real skin.
   - **Real hardware, not a virtualized GPU**: real hardware-decode
-    (VAAPI, on actual Intel/AMD/NVIDIA Linux hardware) and CoreELEC/
-    ODROID N2+ specifically (a separate Linux target with its own
-    history of hardware-decode bugs) aren't substituted for by a VM's
-    virtual GPU. Audio passthrough (AC3/DTS bitstreaming to a real AVR)
-    is in the same boat.
+    (VAAPI on actual Intel/AMD/NVIDIA Linux hardware, DXVA2/D3D11VA on
+    real Windows hardware) and CoreELEC/ODROID N2+ specifically (a
+    separate Linux target with its own history of hardware-decode
+    bugs) aren't substituted for by a VM's virtual GPU. Audio
+    passthrough (AC3/DTS bitstreaming to a real AVR) is in the same
+    boat on either platform.
   - **Long-running/soak conditions**: the smoke test only plays for
     seconds per check -- the server-side timeshift buffer actually
     rolling over its full retention window, `RenewRecurringRules()`'s
