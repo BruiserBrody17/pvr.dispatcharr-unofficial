@@ -1899,6 +1899,31 @@ Worth remembering next time this cache log's count doesn't match what
 `PVR.GetRecordings` shows: that's normal whenever the account has any
 upcoming scheduled recordings at all, not a sign of a broken transfer.
 
+**`PVR.AddTimer` against a broadcast that has already started airing
+(rather than a genuinely future one) created two separate timers/
+recordings server-side from a single JSON-RPC call -- confirmed live
+(2026-09-15, CoreELEC/ODROID N2+) while exercising
+`check_in_progress_recording_playback`/`seek` against a real account for
+the first time.** This addon's own `AddTimer()` (`src/PVRDispatcharr.cpp`)
+makes exactly one `CreateOneTimeRecording()` call regardless -- confirmed
+by reading it -- so the duplication happens on Dispatcharr's own side,
+not in this addon. `tools/kodi_smoke_test.py`'s own timer-creation helper
+(`_add_and_verify_timer`) had never exercised this specific case before:
+it deliberately only ever picks a *future* broadcast (see its own
+docstring on the blocking-dialog hang an already-finished one causes),
+so recording an *already-airing* broadcast by `broadcastid` was a
+genuinely new code path for this project's own testing, only reached
+because `check_in_progress_recording_playback`/`seek` need a real
+recording already in progress right now rather than one scheduled ahead
+of time. Both resulting timers deleted cleanly via `PVR.DeleteTimer`
+with no further side effects observed; one of the two recordings kept
+its originally-scheduled end time after being stopped early, matching
+the already-documented `custom_properties.status`-vs-`end_time` display
+quirk above rather than anything new. Not investigated further on
+Dispatcharr's own side (its own server-side recording-creation logic is
+outside this repo) -- worth knowing about if scheduling a recording
+against an already-airing broadcast ever needs revisiting.
+
 ## Recording-management feature gaps vs. TVHeadend, checked against Dispatcharr's real API (2026-09-08)
 
 Prompted by a "what does TVHeadend have that this addon doesn't"
