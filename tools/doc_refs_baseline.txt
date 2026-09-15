@@ -55,4 +55,6 @@ docs/TROUBLESHOOTING.md|function|GetDuration
 docs/TROUBLESHOOTING.md|function|GoToNow
 docs/TROUBLESHOOTING.md|function|UpdateItems
 docs/TROUBLESHOOTING.md|function|_add_and_verify_timer
+docs/TROUBLESHOOTING.md|function|_seek_within_recording_and_verify
+docs/TROUBLESHOOTING.md|function|check_live_timeshift_seek
 docs/TROUBLESHOOTING.md|setting|enable_inprogress_playback
