@@ -54,4 +54,5 @@ docs/TROUBLESHOOTING.md|function|FindChannelAndBlockIndex
 docs/TROUBLESHOOTING.md|function|GetDuration
 docs/TROUBLESHOOTING.md|function|GoToNow
 docs/TROUBLESHOOTING.md|function|UpdateItems
+docs/TROUBLESHOOTING.md|function|_add_and_verify_timer
 docs/TROUBLESHOOTING.md|setting|enable_inprogress_playback

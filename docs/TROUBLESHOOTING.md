@@ -234,6 +234,27 @@ first, previously-working channel failed identically).
   acceptable risk on any platform, this addon's own manual testing
   included.
 
+- **`PVR.AddTimer` against a broadcast whose time *window* merely
+  overlaps an existing timer on the same channel -- even by a couple
+  minutes at the boundary, not a full duplicate -- fails immediately
+  with a JSON-RPC `-32100 "Failed to execute method."` error, confirmed
+  live (2026-09-15) on Windows against a real, actively-scheduled
+  account.** Direct reproduction: the exact same `broadcastid` failed
+  every time picked, while a neighboring broadcast an hour later (no
+  overlap) succeeded immediately. This is Kodi-core rejecting the
+  request before it ever reaches this addon's own `AddTimer()` --
+  confirmed via `kodi.log` showing zero addon-side log activity for the
+  failed attempt at all. Kodi *does* still surface this to a real user,
+  just asynchronously: navigating back to a normal window afterward
+  reveals a queued, single-button `"Information: The PVR backend does
+  not allow to record this event."` dialog (see `docs/TIMESHIFT.md`'s
+  AddonSettings-dialog entry for where this was actually found, mid
+  unrelated investigation). `tools/kodi_smoke_test.py`'s own
+  `_add_and_verify_timer()` used to only avoid an exact `starttime`
+  match against existing timers on the channel -- too narrow a check
+  against a real account with its own already-scheduled recordings;
+  fixed to check for genuine time-range overlap instead.
+
 ## Known limitations with more than one Kodi client
 
 Not bugs in this addon -- inherent to running multiple, fully independent

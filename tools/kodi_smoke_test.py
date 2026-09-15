@@ -128,6 +128,21 @@ class JsonRpcClient:
             # TimeoutError, not wrapped in URLError like a connect-time
             # timeout is. Both need to fail the same way here.
             raise JsonRpcError(f"{method}: timed out waiting for a response") from exc
+        except ConnectionError as exc:
+            # Confirmed live (2026-09-15): Kodi's webserver dying mid-request
+            # (e.g. the whole process/VM crashing) surfaces as a raw
+            # ConnectionResetError, a plain OSError subclass urllib does NOT
+            # wrap in URLError -- an uncaught crash here previously took down
+            # the whole script with an unhandled traceback instead of a clean
+            # [FAIL] line. ConnectionError covers this and its siblings
+            # (BrokenPipeError, ConnectionAbortedError) the same way.
+            raise JsonRpcError(f"{method}: connection reset ({exc})") from exc
+        except json.JSONDecodeError as exc:
+            # A dying webserver can also return a truncated/empty body
+            # instead of severing the connection outright -- same "don't
+            # crash the whole script" reasoning as the ConnectionError case
+            # above.
+            raise JsonRpcError(f"{method}: invalid JSON response ({exc})") from exc
         if "error" in payload:
             raise JsonRpcError(f"{method}: {payload['error']}")
         return payload.get("result")
@@ -858,6 +873,24 @@ def _add_and_verify_timer(rpc: JsonRpcClient, channel_id: int, timerrule: bool) 
     regardless of which instance seeded it. Requiring a genuinely future
     broadcast (starttime > now) avoids this for both cases.
 
+    A third real trigger, confirmed live (2026-09-15) on Windows against
+    a real, actively-scheduled account: picking a broadcast whose time
+    *window* overlaps an existing timer's on the same channel -- even by
+    just a couple minutes at the boundary, not a full duplicate -- fails
+    too, but differently: an immediate PVR.AddTimer error response
+    (-32100 "Failed to execute method."), not the blocking-dialog hang
+    documented above. Confirmed by direct JSON-RPC reproduction: the
+    exact same broadcastid failed every time picked, and a neighboring
+    broadcast one hour later (no overlap) succeeded immediately. The
+    original version of this function's own conflict-avoidance only
+    checked for an existing timer's starttime matching a broadcast's own
+    starttime *exactly* -- too narrow a check against a real account
+    with its own already-scheduled recordings potentially running right
+    up against whatever broadcast gets picked. Checking for genuine
+    time-range overlap against every existing timer on the channel (not
+    just an exact-starttime match) avoids both known immediate-failure
+    shapes, not just the exact-duplicate one.
+
     If AddTimer times out, a short bounded retry checks whether Kodi
     created the timer/rule anyway shortly after -- but this is a
     best-effort catch for a narrowly-slow response, not a guarantee: the
@@ -865,18 +898,23 @@ def _add_and_verify_timer(rpc: JsonRpcClient, channel_id: int, timerrule: bool) 
     auto-resolving, far longer than this check waits. A timeout here
     always needs a manual PVR.GetTimers/device check afterward, not just
     trust in this retry."""
-    existing = rpc.call("PVR.GetTimers", {"properties": ["channelid", "starttime"]})["timers"]
-    existing_starttimes = {t["starttime"] for t in existing if t.get("channelid") == channel_id}
+    existing = rpc.call("PVR.GetTimers", {"properties": ["channelid", "starttime", "endtime"]})["timers"]
+    existing_windows = [
+        (t["starttime"], t["endtime"]) for t in existing if t.get("channelid") == channel_id and t.get("endtime")
+    ]
     existing_timerids = {t["timerid"] for t in existing}
 
+    def overlaps_existing(candidate_start: str, candidate_end: str) -> bool:
+        return any(candidate_start < end and start < candidate_end for start, end in existing_windows)
+
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-    broadcasts = rpc.call("PVR.GetBroadcasts", {"channelid": channel_id, "properties": ["title", "starttime"]})[
-        "broadcasts"
-    ]
+    broadcasts = rpc.call(
+        "PVR.GetBroadcasts", {"channelid": channel_id, "properties": ["title", "starttime", "endtime"]}
+    )["broadcasts"]
     future = sorted((b for b in broadcasts if b["starttime"] > now), key=lambda b: b["starttime"])
     if not future:
         raise SkipCheck(f"no future EPG entries on channel {channel_id} to create a test timer from")
-    broadcast = next((b for b in future if b["starttime"] not in existing_starttimes), future[0])
+    broadcast = next((b for b in future if not overlaps_existing(b["starttime"], b["endtime"])), future[0])
     broadcast_id = broadcast["broadcastid"]
 
     add_error = None
