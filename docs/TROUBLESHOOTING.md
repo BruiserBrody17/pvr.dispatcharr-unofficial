@@ -216,6 +216,23 @@ first, previously-working channel failed identically).
   expecting playback state to update again. Don't try to clear the
   bookmark by touching Kodi's own database directly -- recording a fresh
   short test clip is simpler and lower-risk.
+  **The "check `GUI.GetProperties` first" step above is not optional,
+  confirmed live (2026-09-15) the hard way:** `tools/kodi_smoke_test.py`
+  used to skip straight to blindly sending `Input.Down` + `Input.Select`
+  whenever a playback attempt stalled, on the assumption a stall always
+  meant this exact resume dialog. It didn't -- on one real run, Kodi's
+  focus was actually on its own power menu (`DialogButtonMenu.xml`) when
+  the same blind keystrokes fired, and they selected "Power Off,"
+  shutting down the real Windows machine the test was running on
+  mid-run (root-caused via `kodi.log`'s own `Window Init
+  (DialogButtonMenu.xml)` immediately followed by Windows Event
+  Viewer's `kodi.exe...has initiated the power off`). Fixed in
+  `tools/kodi_smoke_test.py` by removing the blind input entirely --
+  it now only waits and reports Kodi's current window as a read-only
+  diagnostic on failure, never acts on a guess. A test script that can
+  accidentally power off the machine it's testing against is not an
+  acceptable risk on any platform, this addon's own manual testing
+  included.
 
 ## Known limitations with more than one Kodi client
 

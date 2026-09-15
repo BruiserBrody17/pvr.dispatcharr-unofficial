@@ -246,20 +246,41 @@ def _wait_for_active_player(rpc: JsonRpcClient, timeout: float = PLAYBACK_START_
     return None
 
 
+def _describe_current_window(rpc: JsonRpcClient) -> str:
+    """Read-only diagnostic for a playback attempt that never produced an
+    active player -- reports GUI.GetProperties' own currentwindow so a
+    failure message can say what Kodi's focus actually looks like (e.g.
+    the known resume-bookmark prompt, or something else entirely) without
+    ever guessing at or acting on it."""
+    try:
+        window = rpc.call("GUI.GetProperties", {"properties": ["currentwindow"]})["currentwindow"]
+        return f"{window.get('label', '?')} (id {window.get('id', '?')})"
+    except JsonRpcError as exc:
+        return f"<could not check: {exc}>"
+
+
 def _dismiss_resume_dialog_if_stuck(rpc: JsonRpcClient):
     """Player.Open on a recording with a stale resume bookmark pops a
     modal dialog that silently stalls Player.GetActivePlayers (returns
     [] with no error) until dismissed -- {"resume": false} does not
     suppress it. Confirmed live on Windows/macOS/CoreELEC/Rocky Linux.
-    Send Input.Down + Input.Select to pick "Play from beginning" if
-    playback hasn't started after the first poll window."""
-    for _ in range(RESUME_DIALOG_DISMISS_ATTEMPTS):
-        player = _wait_for_active_player(rpc, timeout=PLAYBACK_POLL_INTERVAL_SECONDS * 2)
-        if player is not None:
-            return player
-        rpc.call("Input.Down")
-        rpc.call("Input.Select")
-    return None
+
+    Confirmed live (2026-09-15) this used to blindly send Input.Down +
+    Input.Select here to auto-pick "Play from beginning" -- and confirmed
+    live, the same day, that this is genuinely unsafe: Kodi's focus can
+    be on a *completely different* dialog when a playback attempt stalls
+    for some other reason, and those same blind keystrokes landed on
+    Kodi's own power menu (DialogButtonMenu.xml) and selected "Power Off"
+    -- shutting down the real Windows machine this was running on mid-test
+    (root-caused via kodi.log's own "Window Init (DialogButtonMenu.xml)"
+    immediately followed by "kodi.exe...has initiated the power off" in
+    Windows' Event Viewer). A test script that can accidentally power off
+    the machine it's testing against is not an acceptable risk on any
+    platform -- this deliberately no longer sends ANY synthetic input.
+    Just waits (same total budget as before) and returns None on
+    timeout for the caller to report as a clean failure; see
+    _describe_current_window() for a safe, read-only diagnostic instead."""
+    return _wait_for_active_player(rpc, timeout=PLAYBACK_POLL_INTERVAL_SECONDS * 2 * RESUME_DIALOG_DISMISS_ATTEMPTS)
 
 
 def _time_to_seconds(t: dict) -> float:
@@ -547,7 +568,10 @@ def _play_recording_and_verify(rpc: JsonRpcClient, recording_id: int) -> str:
         assert player is not None, (
             "playback never started -- if this is a resume-bookmark stall, see this "
             "function's own docstring; a fresh recording with no prior playback "
-            "avoids it entirely"
+            f"avoids it entirely. Kodi's current window: {_describe_current_window(rpc)} "
+            "-- this script no longer sends synthetic input to guess a dismissal (see "
+            "_dismiss_resume_dialog_if_stuck's own docstring for why), so check/dismiss "
+            "manually if this is a real stuck dialog"
         )
         props = rpc.call("Player.GetProperties", {"playerid": player["playerid"], "properties": ["speed", "canseek"]})
         assert props["speed"] != 0, "player reports speed 0 (paused/stalled) right after opening"
