@@ -190,6 +190,33 @@ JSON-RPC-synthetic-input limitation specific to that one dialog, not an
 addon or fix problem, and not chased further given the direct
 confirmation already in hand.)
 
+**Re-attempted later (2026-09-14) on a different real device (Linux/Kodi
+Flatpak, confirmed hardware-accelerated GPU rendering, `virgl`) with real
+screenshot tooling this time (`tools/kodi_screenshot.py`, unavailable to
+either earlier session) -- reproduces identically.** Opened the dialog
+via `GUI.ActivateWindow` (`window: "addonsettings"`,
+`parameters: ["pvr.dispatcharr-unofficial"]`; note `Addons.ExecuteAddon`
+does *not* open it for this addon type -- it returns `"OK"` but
+`GUI.GetProperties`'s `currentwindow` stays on `Home`, unlike a
+script/plugin addon), confirmed via `currentwindow` actually landing on
+`{"id": 10140, "label": "Add-on settings"}`. The resulting screenshot
+still shows every category tab, the settings list, and the values pane
+as blank placeholder rectangles with no text at all -- not a screenshot-
+capture artifact, since the rest of that same screenshot (the top-left
+debug overlay, the FPS/CPU counters) renders fine, and not a GPU-
+acceleration artifact either, ruling out the two most obvious
+explanations left open by the earlier finding. `Input.Down` produced no
+visible change in the screenshot and `currentwindow` still reported
+`10140` unchanged afterward -- consistent with, not just similar to, the
+original finding: this dialog specifically doesn't respond to JSON-RPC
+synthetic input, on two different devices, two different Kodi builds,
+now confirmed with actual visual evidence both times rather than
+inference. Still not chased further -- this is a Kodi-core rendering/
+input-routing quirk specific to `CGUIDialogAddonSettings`, not something
+addressable from this addon's own code, and real mouse/keyboard-driven
+settings changes (the only way this dialog is actually used in practice)
+already work correctly, confirmed above.
+
 **Follow-up bug in the live-apply mechanism itself, found via real
 CoreELEC testing: any settings save at all silently restarted the PVR
 client, defeating live-apply for every setting, not just the connection
@@ -222,6 +249,20 @@ not on the Dispatcharr server, so it doesn't persist across a Kodi
 restart and isn't shared between devices. Requires
 `inputstream.ffmpegdirect` to be installed; if it isn't and this mode is
 selected, live channel playback fails outright (not just timeshift).
+
+Re-verified live end-to-end (2026-09-14, Linux/Kodi Flatpak, via
+`tools/kodi_smoke_test.py`) after a long stretch of this project's own
+testing having defaulted to Server-side mode: switched `live_timeshift_mode`
+to `1` (requires a full Kodi restart to take effect, same as any other
+addon setting change made outside Kodi's own settings dialog -- there's
+no JSON-RPC method to write an addon setting directly, see
+`tools/kodi_provision_linux_flatpak.sh`'s own header), confirmed via `kodi.log` that
+`GetChannelStreamProperties()` genuinely set
+`inputstream.ffmpegdirect.stream_mode = timeshift` (not silently falling
+back to the default `PVR_STREAM_PROPERTY_STREAMURL`-only path) on every
+live channel open, and that both plain playback and a relative backward
+`Player.Seek` succeeded cleanly with playback continuing afterward --
+no regressions found in this mode.
 
 **Server-side** (`live_timeshift_mode = 2`): a genuine, TVHeadend-like
 rolling buffer, held on the Dispatcharr server, with real pause/rewind/
