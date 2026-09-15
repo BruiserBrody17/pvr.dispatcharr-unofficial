@@ -304,6 +304,20 @@ plain playback and a relative backward seek succeeded cleanly, and
 timeshift` signature as the Linux run -- no platform-specific
 regressions found here either.
 
+Re-verified a third time (2026-09-15, CoreELEC on a real ODROID N2+,
+same `tools/kodi_smoke_test.py`-driven approach). Unlike Windows,
+`inputstream.ffmpegdirect` came bundled and already enabled with this
+device's CoreELEC build (21.3.8.1) -- no side-loading needed. Hit the
+same cold-boot PVR-manager-start quirk documented in
+`docs/TROUBLESHOOTING.md` after the `settings.xml` edit + Kodi restart
+needed to flip the mode (fixed the same way, an `Addons.SetAddonEnabled`
+false-then-true toggle). Once the PVR manager came up, plain playback
+and a relative backward seek both succeeded cleanly, and `kodi.log`
+confirmed the same `inputstream.ffmpegdirect.stream_mode = timeshift`
+signature as the other two platforms -- no CoreELEC-specific
+regressions found either. Reverted back to Server-side (`2`) afterward,
+confirmed via the same settings.xml/PVR-manager-available check.
+
 **Server-side** (`live_timeshift_mode = 2`): a genuine, TVHeadend-like
 rolling buffer, held on the Dispatcharr server, with real pause/rewind/
 fast-forward -- via a companion Dispatcharr plugin this addon ships

@@ -255,6 +255,29 @@ first, previously-working channel failed identically).
   against a real account with its own already-scheduled recordings;
   fixed to check for genuine time-range overlap instead.
 
+- **`Player.Seek`'s own JSON-RPC response returns almost instantly but
+  with stale, pre-seek `Player.GetProperties` state -- confirmed live
+  (2026-09-15, macOS) via a dedicated standalone repro against a
+  recorded item.** The `Player.Seek` HTTP round-trip completed in ~1ms;
+  an immediate `Player.GetProperties` poll issued right after it
+  returned still read the exact pre-seek position, and the real seek
+  only landed on Kodi's playback thread ~150-300ms later (confirmed
+  reproducible across two independent real runs plus the dedicated
+  repro). Entirely Kodi-core JSON-RPC/playback-thread behavior, nothing
+  this addon's own PVR API surface is involved in --
+  `tools/kodi_smoke_test.py`'s `_seek_within_recording_and_verify()`
+  used to read the post-seek position with a single immediate call,
+  which reliably reported the seek as having silently failed (landed
+  back at the pre-seek position) even though the underlying seek always
+  actually succeeded. Fixed by polling `Player.GetProperties` in a short
+  retry loop (`RECORDING_SEEK_SETTLE_TIMEOUT_SECONDS`/
+  `RECORDING_SEEK_SETTLE_POLL_INTERVAL_SECONDS`) until the reported
+  `"time"` changes from the pre-seek value before comparing it against
+  the expected target. `check_live_timeshift_seek()`'s own post-seek
+  check is unaffected: it never compares `"time"` before/after a seek at
+  all (see that function's own docstring for why), only that the seek
+  call itself doesn't error and playback keeps progressing afterward.
+
 ## Known limitations with more than one Kodi client
 
 Not bugs in this addon -- inherent to running multiple, fully independent

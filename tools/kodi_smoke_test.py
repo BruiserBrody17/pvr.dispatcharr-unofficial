@@ -99,6 +99,17 @@ RECORDING_SEEK_TOLERANCE_SECONDS = 5
 RECORDING_SEEK_TIMEOUT_SECONDS = 15
 RECORDING_SEEK_END_MARGIN_SECONDS = 15
 RECORDING_SEEK_MIN_DURATION_SECONDS = RECORDING_SEEK_FORWARD_SECONDS + RECORDING_SEEK_END_MARGIN_SECONDS + 15
+# Player.Seek's own JSON-RPC response returns almost instantly but with
+# STALE pre-seek "time" -- confirmed live (macOS, 2026-09-15): the HTTP
+# round-trip completed in ~1ms with the response's own "time" field still
+# showing the exact pre-seek value, and an immediate Player.GetProperties
+# poll right after still read the pre-seek value too; the real seek landed
+# on the playback thread ~150-300ms later. Reading "time" immediately after
+# Player.Seek returns is a genuine race, not a flake -- retry until it
+# changes from "before" (or this timeout elapses) rather than trusting a
+# single immediate read.
+RECORDING_SEEK_SETTLE_TIMEOUT_SECONDS = 2
+RECORDING_SEEK_SETTLE_POLL_INTERVAL_SECONDS = 0.2
 
 
 class JsonRpcError(RuntimeError):
@@ -720,9 +731,15 @@ def _seek_within_recording_and_verify(rpc: JsonRpcClient, recording_id: int) -> 
             {"playerid": playerid, "value": {"seconds": target}},
             timeout=RECORDING_SEEK_TIMEOUT_SECONDS,
         )
-        after = _time_to_seconds(
-            rpc.call("Player.GetProperties", {"playerid": playerid, "properties": ["time"]})["time"]
-        )
+        settle_deadline = time.monotonic() + RECORDING_SEEK_SETTLE_TIMEOUT_SECONDS
+        after = before
+        while time.monotonic() < settle_deadline:
+            after = _time_to_seconds(
+                rpc.call("Player.GetProperties", {"playerid": playerid, "properties": ["time"]})["time"]
+            )
+            if after != before:
+                break
+            time.sleep(RECORDING_SEEK_SETTLE_POLL_INTERVAL_SECONDS)
         expected = before + target
         assert abs(after - expected) <= RECORDING_SEEK_TOLERANCE_SECONDS, (
             f"seek landed at {after:.0f}s, expected roughly {expected:.0f}s "
