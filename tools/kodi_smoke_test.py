@@ -960,20 +960,60 @@ def _add_and_verify_timer(rpc: JsonRpcClient, channel_id: int, timerrule: bool) 
         add_error = exc
 
     def find_new(timers):
+        new_timers = [t for t in timers if t["timerid"] not in existing_timerids]
         if timerrule:
             # A rule's own timer entry doesn't reliably carry the
             # originating broadcastid the way a one-off timer does
             # (PVR.Details.Timer's broadcastid defaults to -1) -- match
             # on "a new istimerrule=true entry not present before" instead.
-            return [t for t in timers if t.get("istimerrule") and t["timerid"] not in existing_timerids]
-        return [t for t in timers if t.get("broadcastid") == broadcast_id]
+            rule_entries = [t for t in new_timers if t.get("istimerrule")]
+            if not rule_entries:
+                return []
+            # Confirmed live (2026-09-16, macOS/arm64, a real production
+            # account): creating a recurring rule against a real backend
+            # with real EPG data to match against also auto-spawns a
+            # concrete one-off occurrence timer for its nearest matching
+            # broadcast -- exactly how every one of this account's own
+            # pre-existing recurring rules is structured (a rule entry
+            # paired with a plain occurrence timer, same channel/title).
+            # A test account with no real EPG match for the rule's own
+            # title never spawns one, which is why this wasn't caught
+            # earlier. Missing this left a real orphaned occurrence
+            # timer behind (the rule itself got cleaned up correctly,
+            # its auto-spawned occurrence didn't) -- catch any new,
+            # non-rule timer sharing a rule entry's own channel and
+            # title too, not just the rule entry itself.
+            rule_titles = {t.get("title") for t in rule_entries}
+            occurrences = [
+                t
+                for t in new_timers
+                if not t.get("istimerrule") and t.get("channelid") == channel_id and t.get("title") in rule_titles
+            ]
+            # Rule entries first here -- this order is what the caller
+            # reports as the created timer/rule's own id (matching[0]),
+            # not a deletion order; see the delete loop below for why
+            # occurrences are actually deleted first.
+            return rule_entries + occurrences
+        return [t for t in new_timers if t.get("broadcastid") == broadcast_id]
 
-    attempts = ADDTIMER_CLEANUP_RETRY_ATTEMPTS if add_error else 1
+    # Confirmed live (2026-09-16, macOS/arm64, a real production account
+    # with 56+ existing timers): a successful AddTimer response is not a
+    # guarantee the very next PVR.GetTimers call already reflects it --
+    # this used to only retry the verification loop when AddTimer itself
+    # errored (on the theory Kodi might create it anyway despite a
+    # client-visible timeout), giving a single, unretried check when
+    # AddTimer reported success. Kodi's own GetTimers cache-refresh
+    # timing is a real race independent of whether AddTimer itself
+    # errored -- confirmed live: AddTimer returned success, but the new
+    # timer didn't show up in the single immediate GetTimers call this
+    # used to allow, leaving a real orphaned timer on the backend since
+    # this function's own cleanup only deletes what it actually finds.
+    attempts = ADDTIMER_CLEANUP_RETRY_ATTEMPTS
     matching = []
     for attempt in range(attempts):
-        timers = rpc.call("PVR.GetTimers", {"properties": ["title", "broadcastid", "istimerrule", "starttime"]})[
-            "timers"
-        ]
+        timers = rpc.call(
+            "PVR.GetTimers", {"properties": ["title", "broadcastid", "channelid", "istimerrule", "starttime"]}
+        )["timers"]
         matching = find_new(timers)
         if matching or attempt == attempts - 1:
             break
@@ -987,8 +1027,19 @@ def _add_and_verify_timer(rpc: JsonRpcClient, channel_id: int, timerrule: bool) 
     # cleanup deletes the rule below.
     epoch_like = [t for t in matching if timerrule and t.get("starttime", "").startswith("1970")]
 
-    for t in matching:
-        rpc.call("PVR.DeleteTimer", {"timerid": t["timerid"]})
+    # Occurrences before rule entries: confirmed live (2026-09-16, real
+    # production account) that deleting a recurring rule can itself
+    # cascade-delete its own auto-spawned occurrence server-side --
+    # deleting the occurrence explicitly first (rather than relying on
+    # that cascade, which isn't guaranteed on every backend) means this
+    # doesn't depend on it either way. A delete that 404s/errors because
+    # its target is already gone (e.g. that same cascade beat this loop
+    # to it despite the ordering) is tolerated, not fatal -- the actual
+    # goal is the account ending up clean, not every individual delete
+    # call succeeding.
+    for t in sorted(matching, key=lambda t: t.get("istimerrule", False)):
+        with contextlib.suppress(JsonRpcError):
+            rpc.call("PVR.DeleteTimer", {"timerid": t["timerid"]})
 
     assert not epoch_like, (
         "the new recurring rule was reported with an epoch-like starttime "
