@@ -27,7 +27,10 @@ Addon only -- neither companion plugin changed for this pass.
 
 ## [0.10.0] - 2026-09-11
 
-Addon only -- neither companion plugin changed for this pass.
+Addon only, but this release also bundles the already-published
+`timeshift_buffer` `0.6.2` security fix (see its own entry below) --
+redeploy that plugin to Dispatcharr separately if you haven't already
+applied it.
 
 **The addon's Kodi id changed from `pvr.dispatcharr` to
 `pvr.dispatcharr-unofficial`.** Same situation as the previous
