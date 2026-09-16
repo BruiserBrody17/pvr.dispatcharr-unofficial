@@ -6,16 +6,26 @@
 
 - **Manual-testing checklist for a Kodi sanity pass, covering what
   neither the unit test suite nor the JSON-RPC-driven smoke-test tooling
-  can reach (2026-09-15, updated 2026-09-15 once Windows reached the
-  same coverage as Linux).** The unit suites cover pure logic;
-  `tools/kodi_smoke_test.py` (platform-generic -- it only speaks Kodi's
-  own JSON-RPC API, confirmed live unchanged against both a Linux/
-  Flatpak and a native Windows Kodi install; still meant to be reused
-  as-is once macOS/CoreELEC/Android get the same style of test suite)
+  can reach (2026-09-15, updated 2026-09-16 once macOS and CoreELEC
+  reached the same coverage as Linux and Windows).** The unit suites
+  cover pure logic; `tools/kodi_smoke_test.py` (platform-generic -- it
+  only speaks Kodi's own JSON-RPC API, confirmed live unchanged against
+  a Linux/Flatpak install, a native Windows install, a real CoreELEC/
+  ODROID N2+ install, and a real personal macOS install -- run entirely
+  by a peer Claude Code session on that last one, to avoid sharing the
+  device's own OS-level login; still meant to be reused as-is once
+  Android gets the same style of test suite, the only platform left)
   covers the addon's live PVR-API surface against a real Dispatcharr
   backend, provisioned via `tools/kodi_provision_linux_flatpak.sh` or
-  `tools/kodi_provision_windows.sh`. What's left needs a human, on
-  either platform:
+  `tools/kodi_provision_windows.sh` (CoreELEC and macOS were provisioned
+  by hand, not via a dedicated script -- see `docs/BUILDING.md`). Three
+  real bugs (a `Player.Seek` stale-readback race and its still-growing-
+  recording follow-up, and a timer/recurring-rule orphan-cleanup gap) and
+  two non-bug scares (a recordings-count mismatch, a duplicate-timer
+  creation against an already-airing broadcast) came out of this same-
+  matrix pass across all four platforms -- see `docs/RECORDINGS.md`/
+  `docs/TIMESHIFT.md`/`docs/TROUBLESHOOTING.md` for the full accounts.
+  What's left needs a human, on either platform:
   - **Anything visual/GUI**: the AddonSettings dialog's own
     settings-entry flow (JSON-RPC synthetic input can't drive it --
     confirmed live on three separate real devices/builds now, two
@@ -65,7 +75,7 @@
   own source, not a real N2+ install test. Next real CoreELEC zip build
   (release or otherwise) should include actually installing it on the
   N2+ and confirming Kodi loads it normally despite the blank tag.
-- **Rename the project a second time, from `pvr.dispatcharr` to
+- [x] **Rename the project a second time, from `pvr.dispatcharr` to
   `pvr.dispatcharr-unofficial`, plus add an explicit non-affiliation
   disclaimer (requested 2026-09-11, shortly after first sharing the
   project with a few people under the `pvr.dispatcharr` name).** Same
@@ -142,8 +152,14 @@
   `core.longpaths` in CI (and on this local machine, whose own build
   had survived by only 7 characters of margin even before this rename)
   -- full account in `docs/BUILDING.md`'s Windows section.
-  Not yet done: fresh-install and verify across the platforms already
-  running the `pvr.dispatcharr` build.
+  **Update: fresh-install and verify across platforms now done too
+  (2026-09-16), closing this out fully.** Not done as one dedicated
+  pass -- covered incidentally, but thoroughly, by the four-platform
+  smoke-test matrix run since (see the "Manual-testing checklist" entry
+  above): Linux, Windows, CoreELEC/ODROID N2+, and macOS have each since
+  been fresh-installed and heavily exercised under the
+  `pvr.dispatcharr-unofficial` id/build, with no id-migration-specific
+  problems surfacing on any of them.
 - [x] **Three real recordings/timers hot-path inefficiencies, found via a
   full-codebase Efficiency review (2026-09-10, not yet applied -- would
   need live-hardware verification this pass didn't have).**
