@@ -6,26 +6,35 @@
 
 - **Manual-testing checklist for a Kodi sanity pass, covering what
   neither the unit test suite nor the JSON-RPC-driven smoke-test tooling
-  can reach (2026-09-15, updated 2026-09-16 once macOS and CoreELEC
-  reached the same coverage as Linux and Windows).** The unit suites
-  cover pure logic; `tools/kodi_smoke_test.py` (platform-generic -- it
-  only speaks Kodi's own JSON-RPC API, confirmed live unchanged against
-  a Linux/Flatpak install, a native Windows install, a real CoreELEC/
-  ODROID N2+ install, and a real personal macOS install -- run entirely
-  by a peer Claude Code session on that last one, to avoid sharing the
-  device's own OS-level login; still meant to be reused as-is once
-  Android gets the same style of test suite, the only platform left)
-  covers the addon's live PVR-API surface against a real Dispatcharr
-  backend, provisioned via `tools/kodi_provision_linux_flatpak.sh` or
-  `tools/kodi_provision_windows.sh` (CoreELEC and macOS were provisioned
-  by hand, not via a dedicated script -- see `docs/BUILDING.md`). Three
-  real bugs (a `Player.Seek` stale-readback race and its still-growing-
-  recording follow-up, and a timer/recurring-rule orphan-cleanup gap) and
-  two non-bug scares (a recordings-count mismatch, a duplicate-timer
-  creation against an already-airing broadcast) came out of this same-
-  matrix pass across all four platforms -- see `docs/RECORDINGS.md`/
-  `docs/TIMESHIFT.md`/`docs/TROUBLESHOOTING.md` for the full accounts.
-  What's left needs a human, on either platform:
+  can reach (2026-09-15, updated 2026-09-16 once macOS, CoreELEC, and
+  Android reached the same coverage as Linux and Windows).** The unit
+  suites cover pure logic; `tools/kodi_smoke_test.py` (platform-generic
+  -- it only speaks Kodi's own JSON-RPC API, confirmed live unchanged
+  against a Linux/Flatpak install, a native Windows install, a real
+  CoreELEC/ODROID N2+ install, a real personal macOS install -- run
+  entirely by a peer Claude Code session on that last one, to avoid
+  sharing the device's own OS-level login -- and two real physical
+  Android devices, one 32-bit ARM/Android 11 and one 64-bit ARM/
+  Android 16, the first two platforms this project has ever run the
+  same live check against on both a 32-bit and a 64-bit build of the
+  addon) covers the addon's live PVR-API surface against a real
+  Dispatcharr backend, provisioned via
+  `tools/kodi_provision_linux_flatpak.sh` or
+  `tools/kodi_provision_windows.sh` (CoreELEC, macOS, and Android were
+  provisioned by hand, not via a dedicated script -- see
+  `docs/BUILDING.md`). Three real bugs (a `Player.Seek` stale-readback
+  race and its still-growing-recording follow-up, and a timer/
+  recurring-rule orphan-cleanup gap) and two non-bug scares (a
+  recordings-count mismatch, a duplicate-timer creation against an
+  already-airing broadcast) came out of the four-platform pass that
+  preceded Android -- see `docs/RECORDINGS.md`/`docs/TIMESHIFT.md`/
+  `docs/TROUBLESHOOTING.md` for the full accounts. Android itself needed
+  a real, permanent `CMakeLists.txt` fix (Kodi's own upstream Android
+  build tooling has no way to expose depends-built curl to an addon's
+  CMake configure step) before it would build at all -- see
+  `docs/BUILDING.md`'s new Android section. Every target platform this
+  project set out to support is now confirmed live; what's left needs a
+  human, on any platform:
   - **Anything visual/GUI**: the AddonSettings dialog's own
     settings-entry flow (JSON-RPC synthetic input can't drive it --
     confirmed live on three separate real devices/builds now, two
