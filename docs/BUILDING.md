@@ -655,6 +655,50 @@ Once JSON-RPC is reachable, `tools/kodi_smoke_test.py` works completely
 unmodified -- same as every other platform, since it only ever speaks
 Kodi's own platform-generic JSON-RPC API.
 
+### A large real channel count can outrun Kodi's own first-boot EPG sync on old/slow hardware
+
+Confirmed live (2026-09-15/16) on a 2014-era 32-bit ARM device (Snapdragon
+801) against a real account with 9,151 channels: on a fresh install,
+`PVR.GetBroadcasts` returned real, correctly-titled programme data for
+every channel, but roughly 11% of channels (about 1,020 of 9,151) were
+consistently missing their own `broadcastid` field -- while a 2021
+64-bit ARM device, given far more elapsed idle time beforehand, showed
+every channel correctly. This is **not an addon bug**: confirmed by
+adding temporary diagnostic logging directly to `GetEPGForChannel()`
+(logging both the computed id via `ComputeBroadcastId()` and an
+immediate `tag.GetUniqueBroadcastId()` readback right before
+`results.Add()`) that this addon's own id computation is correct --
+plain, architecture-independent `uint32_t` arithmetic, verified to
+produce real non-zero values -- for every channel Kodi actually asked
+about. The affected channels were never asked about at all: this
+addon's own `StartChannelEpgRefreshThread()` (see `src/PVRDispatcharr.cpp`)
+calls Kodi's `TriggerEpgUpdate()` once per channel, for all channels
+unconditionally, on a loop meant to repeat every `kChannelEpgRefreshCheckMinutes`
+(10) -- but on this device, its own "background thread refreshed
+channels/groups" log line appeared exactly **once** across a 28+ minute
+observation window (confirmed via `kodi.log`, not inferred), meaning
+Kodi's own handling of that very first round of 9,151 `TriggerEpgUpdate()`
+calls hadn't finished, and was in fact frozen at the same channel count
+(8,131) for over 15 consecutive minutes -- consistent with a Kodi-core-side
+threading/performance limitation surfacing under an unusually large
+channel count on old hardware, not a hang in this addon's own code (which
+never blocks in that loop -- `TriggerEpgUpdate()` is a Kodi SDK call this
+addon does not implement).
+Reproduced on a genuinely fresh install (`adb shell pm clear
+org.xbmc.kodi`, confirmed via `ls .kodi/addons/` showing the addon gone
+and a fresh, ~32KB `Epg16.db`), ruling out stale state from repeated
+side-load/redeploy cycles during testing as the cause. Real-world impact
+looks narrow: live playback, live-timeshift seek, catch-up playback,
+real timer/recurring-rule creation, and in-progress-recording
+playback/seek all passed on this same device before this was
+investigated -- normal use of the addon isn't blocked, only a subset of
+channels' guide data (and, by extension, "Record" from a guide entry for
+those specific channels) may be incomplete for a while after a very
+first cold boot on old/slow hardware with a very large channel count.
+Not pursued further -- root-causing past this point would need Kodi-core
+thread-dump-level debugging, disproportionate given normal functionality
+is unaffected. Revisit if a real user reports this specifically.
+
 ## Distribution (Windows/macOS, once built)
 
 Kodi installs binary addons either as a manual zip, or from a self-hosted
