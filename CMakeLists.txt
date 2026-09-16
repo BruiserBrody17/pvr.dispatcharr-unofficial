@@ -135,6 +135,28 @@ if(WIN32)
   list(APPEND DEPLIBS ws2_32)
 endif()
 
+# Android's depends-built curl is static-only (CURL_STATICLIB, confirmed via
+# its own libcurl.pc) -- unlike a shared libcurl.so/.dll on every other
+# platform, where the dynamic linker resolves curl's own dependencies for
+# free, linking a static libcurl.a means this addon must list curl's own
+# transitive link deps explicitly, or the final .so fails at link time with
+# undefined references into OpenSSL/nghttp2/zlib. Confirmed against the same
+# libcurl.pc's own Libs.private line. A bare library name (e.g. just "ssl")
+# in target_link_libraries becomes a plain "-lssl" passed straight to the
+# linker, which only searches its own default paths, not CMAKE_FIND_ROOT_PATH
+# -- confirmed live this fails ("cannot find -lssl") even with the .a symlinked
+# into the addon depends dir, since Android's NDK doesn't bundle OpenSSL the
+# way it does zlib. find_library() is what actually honors
+# CMAKE_FIND_ROOT_PATH_MODE_LIBRARY, matching how FindCURL itself locates curl.
+if(ANDROID)
+  find_library(DISPATCHARR_NGHTTP2_LIBRARY NAMES nghttp2)
+  find_library(DISPATCHARR_SSL_LIBRARY NAMES ssl)
+  find_library(DISPATCHARR_CRYPTO_LIBRARY NAMES crypto)
+  find_library(DISPATCHARR_Z_LIBRARY NAMES z)
+  list(APPEND DEPLIBS ${DISPATCHARR_NGHTTP2_LIBRARY} ${DISPATCHARR_SSL_LIBRARY} ${DISPATCHARR_CRYPTO_LIBRARY}
+       ${DISPATCHARR_Z_LIBRARY})
+endif()
+
 # Unlike Linux (system libcurl.so, resolved against whatever the user's distro
 # already has) and Kodi's own Windows build (which bundles libcurl.dll itself,
 # so it may already be present), a standalone Windows addon zip can't assume
