@@ -10,6 +10,21 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [0.11.0] - 2026-09-16
+
+Addon only -- neither companion plugin changed for this pass.
+
+### Added
+
+- **Android support (arm/arm64).** Confirmed live end to end on two
+  real physical devices, a 32-bit ARM phone (Android 11) and a 64-bit
+  ARM phone (Android 16): real channel/EPG data, live playback, live
+  timeshift seek (both Server-side and Local/`inputstream.ffmpegdirect`
+  modes), recorded and in-progress recording playback and seek,
+  catch-up playback, timer and recurring-rule creation, and real-time
+  push updates. See [docs/BUILDING.md](docs/BUILDING.md)'s new Android
+  section for build instructions and known limitations.
+
 ## [0.10.1] - 2026-09-15
 
 Addon only -- neither companion plugin changed for this pass.
