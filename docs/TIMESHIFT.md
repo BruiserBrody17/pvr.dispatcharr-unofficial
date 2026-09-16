@@ -330,6 +330,24 @@ Server-side mode -- see the "canseek" skip-guard entries elsewhere in
 this file) and passed cleanly on retry a few seconds later. Reverted
 back to Server-side (`2`) afterward, confirmed reverted.
 
+Re-verified a fifth time (2026-09-16, two real Android devices -- a
+32-bit ARM/Android 11 phone and a 64-bit ARM/Android 16 phone),
+completing this mode's coverage on every target platform this project
+supports. `inputstream.ffmpegdirect` isn't bundled with the official
+Kodi-for-Android APK (unlike CoreELEC's own distribution) -- side-loaded
+the matching real ABI build from
+[Kodi's own mirror](https://mirrors.kodi.tv/addons/omega/) (`21.3.8`,
+same version used on the other platforms this session), MD5-verified
+against the mirror's own `Content-Md5` header (see `docs/BUILDING.md`'s
+HTTP/2-corruption note for why this matters on this same mirror).
+`kodi.log` on both devices confirmed genuine on-disk segment buffering
+(`AddPacket - Writing new segment`, `TimeshiftSegment`) and a real
+`Seek - Seek segment packet` entry for the backward seek, not a silent
+fallback. Reverted `live_timeshift_mode` back to Server-side (`2`)
+afterward on both devices, confirmed reverted -- same as every other
+platform, the side-loaded `inputstream.ffmpegdirect` itself was left
+installed (harmless while unused).
+
 **Server-side** (`live_timeshift_mode = 2`): a genuine, TVHeadend-like
 rolling buffer, held on the Dispatcharr server, with real pause/rewind/
 fast-forward -- via a companion Dispatcharr plugin this addon ships

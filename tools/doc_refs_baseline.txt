@@ -5,6 +5,8 @@ docs/API_NOTES.md|setting|partial_update
 docs/API_NOTES.md|setting|setting_recommendation
 docs/API_NOTES.md|setting|user_level
 docs/API_NOTES.md|setting|version_update
+docs/BUILDING.md|function|find_library
+docs/BUILDING.md|function|target_link_libraries
 docs/OPEN_ITEMS.md|function|Name
 docs/OPEN_ITEMS.md|function|build_addon
 docs/RECORDINGS.md|function|AnnounceReminder

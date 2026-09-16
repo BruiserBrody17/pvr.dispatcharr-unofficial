@@ -461,6 +461,244 @@ Either way, pin the Kodi source tree/version you build against to the same
 major version CoreELEC's current release ships, or the addon will fail to
 load with an API-version mismatch even if the library itself loads fine.
 
+## Android (arm/arm64)
+
+Confirmed live end to end (2026-09-15/16) against two real physical
+devices on real Android builds, not an emulator: a 32-bit ARM device on
+Android 11 (LineageOS 18.1) and a 64-bit ARM device on Android 16
+(LineageOS 23.2), both against a real Dispatcharr backend -- real channel
+list (9,151 channels), real live playback, real live-timeshift seek, on
+both architectures.
+
+Unlike every other platform this addon has been built for, this addon's
+own source (`src/*.cpp`) needed **zero** Android-specific changes --
+only `CMakeLists.txt` needed one small addition (below). Kodi's own
+upstream Android build tooling (`tools/depends`, the same "unified
+depends" cross-compile system used under the hood for every non-native
+target, including CoreELEC's own) has a real gap for binary addons that
+CoreELEC's separate `package.mk`-based dependency wiring papers over,
+and that this project's own Linux/macOS/Windows builds never hit either
+(they all link a *shared* system/bundled libcurl) -- see "Android's
+missing addon-dependency wiring" below before assuming a fresh Android
+build will "just work" the way the other platforms do.
+
+### 1. SDK/NDK toolchain
+
+Kodi's own [`docs/README.Android.md`](https://github.com/xbmc/xbmc/blob/master/docs/README.Android.md)
+in the Kodi source tree is the authoritative reference; summarized here
+for this addon's own needs. Requires Android SDK cmdline-tools plus NDK
+r21e specifically (Kodi's own recommended/most-tested revision for the
+`Omega` branch this project already builds against everywhere else):
+
+```bash
+mkdir -p ~/android-build/sdk
+curl -sL -o cmdline-tools.zip \
+  "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+mkdir -p sdk/cmdline-tools
+unzip -q cmdline-tools.zip -d sdk/cmdline-tools
+mv sdk/cmdline-tools/cmdline-tools sdk/cmdline-tools/latest
+
+cd sdk/cmdline-tools/latest/bin
+yes | ./sdkmanager --sdk_root="$HOME/android-build/sdk" --licenses
+./sdkmanager --sdk_root="$HOME/android-build/sdk" \
+  platform-tools "platforms;android-34" "build-tools;33.0.1" "ndk;21.4.7075529"
+```
+
+Needs a JDK (confirmed live with OpenJDK 21) for `sdkmanager` itself --
+unrelated to the addon's own C++ toolchain, which the NDK provides.
+
+### 2. Configure and build Kodi's own dependency stack, per ABI
+
+Each target ABI (`arm-linux-androideabi` for 32-bit ARM,
+`aarch64-linux-android` for 64-bit ARM) needs its **own** configured
+`tools/depends` tree -- confirmed live that running `./configure` twice
+against the *same* Kodi source checkout for two different `--host`
+triplets clobbers the first one's generated `Makefile.include` (there's
+no per-target isolation the way `cmakebuildsys`'s own `BUILD_DIR` option
+gives the full Kodi build). Use two separate checkouts (a cheap
+`git worktree add --detach <path> <same-commit>` each, not a full second
+clone) rather than reconfiguring one in place:
+
+```bash
+git worktree add --detach ~/android-build/kodi-source-arm64 <kodi-omega-commit>
+git worktree add --detach ~/android-build/kodi-source-arm <kodi-omega-commit>
+
+cd ~/android-build/kodi-source-arm64/tools/depends
+./bootstrap
+./configure --with-tarballs="$HOME/android-build/tarballs" \
+  --host=aarch64-linux-android \
+  --with-sdk-path="$HOME/android-build/sdk" \
+  --with-ndk-path="$HOME/android-build/sdk/ndk/21.4.7075529" \
+  --prefix="$HOME/android-build/xbmc-depends-arm64"
+make -j$(nproc) -C tools/depends
+```
+
+Repeat for `~/android-build/kodi-source-arm` with
+`--host=arm-linux-androideabi` and a separate `xbmc-depends-arm` prefix.
+This builds curl, ffmpeg, and everything else Kodi itself needs, from
+source, for that ABI -- expect a long first build (same shape as
+CoreELEC's own from-scratch toolchain build). **`samba-gplv3` failing
+with "Embedded Heimdal build requires flex but it was not found" is a
+real, but harmless, failure for this addon specifically** -- it's
+Kodi's own SMB/CIFS network-browsing support, entirely unrelated to a
+Dispatcharr HTTP-only PVR client; confirmed the base dependency stack
+(the part `tools/depends/target/binary-addons` actually needs) had
+already logged `Dependencies built successfully.` before `make`
+went on to attempt -- and fail on -- this unrelated optional package.
+Install `flex` first if you'd rather avoid the failure entirely.
+
+### 3. Android's missing addon-dependency wiring
+
+`tools/depends/xbmc-addons.include` has dedicated `linux-system-libs`/
+`linux-system-x11-libs`/etc. targets that symlink the host's own system
+libraries into the addon build's own isolated dependency directory
+(`tools/depends/target/binary-addons/<host-triplet>/build/depends/`,
+confirmed by reading that file) -- but **no Android equivalent exists**.
+Building this addon's own binary directly via
+`tools/depends/target/binary-addons` (below) therefore fails
+`find_package(CURL REQUIRED)` outright ("Could NOT find CURL") even
+though curl was just built successfully in step 2 above, because
+`CMAKE_FIND_ROOT_PATH_MODE_LIBRARY`/`_INCLUDE` are set to `ONLY`
+(confirmed by reading the generated `Toolchain_binaddons.cmake`) and
+`CMAKE_FIND_ROOT_PATH` never points at the real `xbmc-depends-arm64`/
+`xbmc-depends-arm` prefix at all. Fixed by manually symlinking curl
+(and, since Android's depends-built curl is static-only, its own
+transitive link dependencies too) into that same isolated directory,
+per ABI, before building:
+
+```bash
+DEPS_DIR=~/android-build/kodi-source-arm64/tools/depends/target/binary-addons/aarch64-linux-android-21-debug/build/depends
+REAL_DEPENDS=~/android-build/xbmc-depends-arm64/aarch64-linux-android-21-debug
+mkdir -p "$DEPS_DIR/include" "$DEPS_DIR/lib/pkgconfig"
+ln -sf "$REAL_DEPENDS/include/curl" "$DEPS_DIR/include/curl"
+for lib in libcurl.a libnghttp2.a libssl.a libcrypto.a libz.a; do
+  ln -sf "$REAL_DEPENDS/lib/$lib" "$DEPS_DIR/lib/$lib"
+done
+```
+
+(Repeat for the `arm`/`arm-linux-androideabi-21-debug` tree.) This still
+isn't enough on its own -- `CMakeLists.txt` also needs to explicitly
+list curl's own transitive static deps (OpenSSL, nghttp2, zlib) via
+`find_library()`, since a bare library name in `target_link_libraries()`
+becomes a plain `-lssl` passed straight to the linker (which only
+searches its own default paths, not `CMAKE_FIND_ROOT_PATH`) -- confirmed
+live this fails ("cannot find -lssl") even with the `.a` symlinked in
+place above, since unlike zlib, Android's NDK doesn't bundle OpenSSL at
+all. This addon's own `CMakeLists.txt` already has this handled (see its
+`if(ANDROID)` block); a fresh third-party addon hitting the same "Could
+NOT find CURL" error should start here rather than assuming its own
+`CMakeLists.txt` is at fault.
+
+### 4. Build the addon
+
+Once steps 2-3 are done for both ABIs:
+
+```bash
+cd ~/android-build/kodi-source-arm64
+make -j$(nproc) -C tools/depends/target/binary-addons \
+  ADDONS="pvr.dispatcharr-unofficial" \
+  ADDONS_DEFINITION_DIR="$HOME/android-build/addon-defs" \
+  PREFIX="$HOME/android-build/install-arm64" \
+  EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON" \
+  PACKAGE=1
+```
+
+(`ADDONS_DEFINITION_DIR` points at a plain
+`pvr.dispatcharr-unofficial.txt` containing
+`pvr.dispatcharr-unofficial file:///path/to/this/repo`, same convention
+as every other platform.) Repeat against the `kodi-source-arm` tree with
+its own `PREFIX`. Produces
+`addon-pvr.dispatcharr-unofficial-<version>-android-aarch64.zip`/
+`-android-armv7.zip` under that build tree's own
+`pvr.dispatcharr-unofficial-prefix/src/pvr.dispatcharr-unofficial-build/`.
+
+### 5. Install Kodi and side-load the addon on a real device
+
+Kodi for Android isn't preinstalled by any stock/LineageOS image --
+install the official APK matching the addon zip's own ABI from
+[Kodi's mirror](https://mirrors.kodi.tv/releases/android/), e.g.
+`arm64-v8a/kodi-21.3-Omega-arm64-v8a.apk` (confirmed real package id
+`org.xbmc.kodi`, min SDK 21, target SDK 34 via `aapt dump badging` --
+comfortably compatible with both Android 11 and Android 16 devices
+tested). Over `adb`:
+
+```bash
+adb install -r kodi-21.3-Omega-arm64-v8a.apk
+adb shell am start -n org.xbmc.kodi/.Splash
+```
+
+First launch needs the "All files access" permission granted (Settings
+-> Apps -> Kodi -> All files access) before it stops blocking on its own
+"Kodi requires access to your device media and files" prompt -- confirmed
+this is genuinely required, not optional, on both Android 11 and
+Android 16. Kodi's real home directory on Android is
+`/sdcard/Android/data/org.xbmc.kodi/files/.kodi/` (confirmed live,
+standard `addons`/`userdata`/etc. layout, same as every other platform)
+-- side-load by extracting the built zip's own
+`pvr.dispatcharr-unofficial/` directory straight into `.kodi/addons/`
+over `adb push` (Kodi stopped first), then
+`Addons.SetAddonEnabled` over JSON-RPC once restarted, exactly like this
+project's other manual-drop platforms (Linux/Windows/CoreELEC).
+
+**Enabling `services.webserver` via a direct `guisettings.xml` edit
+(this project's usual provisioning trick on every other platform) isn't
+enough on Android by itself -- confirmed live.** Kodi shows a one-time
+"Web server" info dialog and silently re-disables the setting if a
+username/password isn't *also* configured: "You have previously enabled
+the web interface without setting up a password. The web server has
+been disabled until you either explicitly allow this or set up
+authentication." Set `services.webserverusername`/
+`services.webserverpassword` in the same edit as `services.webserver`
+to avoid this -- confirmed fixed once both were set together.
+
+Once JSON-RPC is reachable, `tools/kodi_smoke_test.py` works completely
+unmodified -- same as every other platform, since it only ever speaks
+Kodi's own platform-generic JSON-RPC API.
+
+### A large real channel count can outrun Kodi's own first-boot EPG sync on old/slow hardware
+
+Confirmed live (2026-09-15/16) on a 2014-era 32-bit ARM device (Snapdragon
+801) against a real account with 9,151 channels: on a fresh install,
+`PVR.GetBroadcasts` returned real, correctly-titled programme data for
+every channel, but roughly 11% of channels (about 1,020 of 9,151) were
+consistently missing their own `broadcastid` field -- while a 2021
+64-bit ARM device, given far more elapsed idle time beforehand, showed
+every channel correctly. This is **not an addon bug**: confirmed by
+adding temporary diagnostic logging directly to `GetEPGForChannel()`
+(logging both the computed id via `ComputeBroadcastId()` and an
+immediate `tag.GetUniqueBroadcastId()` readback right before
+`results.Add()`) that this addon's own id computation is correct --
+plain, architecture-independent `uint32_t` arithmetic, verified to
+produce real non-zero values -- for every channel Kodi actually asked
+about. The affected channels were never asked about at all: this
+addon's own `StartChannelEpgRefreshThread()` (see `src/PVRDispatcharr.cpp`)
+calls Kodi's `TriggerEpgUpdate()` once per channel, for all channels
+unconditionally, on a loop meant to repeat every `kChannelEpgRefreshCheckMinutes`
+(10) -- but on this device, its own "background thread refreshed
+channels/groups" log line appeared exactly **once** across a 28+ minute
+observation window (confirmed via `kodi.log`, not inferred), meaning
+Kodi's own handling of that very first round of 9,151 `TriggerEpgUpdate()`
+calls hadn't finished, and was in fact frozen at the same channel count
+(8,131) for over 15 consecutive minutes -- consistent with a Kodi-core-side
+threading/performance limitation surfacing under an unusually large
+channel count on old hardware, not a hang in this addon's own code (which
+never blocks in that loop -- `TriggerEpgUpdate()` is a Kodi SDK call this
+addon does not implement).
+Reproduced on a genuinely fresh install (`adb shell pm clear
+org.xbmc.kodi`, confirmed via `ls .kodi/addons/` showing the addon gone
+and a fresh, ~32KB `Epg16.db`), ruling out stale state from repeated
+side-load/redeploy cycles during testing as the cause. Real-world impact
+looks narrow: live playback, live-timeshift seek, catch-up playback,
+real timer/recurring-rule creation, and in-progress-recording
+playback/seek all passed on this same device before this was
+investigated -- normal use of the addon isn't blocked, only a subset of
+channels' guide data (and, by extension, "Record" from a guide entry for
+those specific channels) may be incomplete for a while after a very
+first cold boot on old/slow hardware with a very large channel count.
+Not pursued further -- root-causing past this point would need Kodi-core
+thread-dump-level debugging, disproportionate given normal functionality
+is unaffected. Revisit if a real user reports this specifically.
+
 ## Distribution (Windows/macOS, once built)
 
 Kodi installs binary addons either as a manual zip, or from a self-hosted
