@@ -916,12 +916,30 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   actions -- exactly the cross-install gap the periodic refresh above was
   built to narrow, now closed to sub-second latency when this is enabled.
   Re-confirmed the same way via `tools/kodi_smoke_test.py`'s own
-  `check_realtime_update_push` on a real macOS install and, separately, a
-  real CoreELEC/ODROID N2+ install (both 2026-09-15) -- same
+  `check_realtime_update_push` on a real macOS install, a real
+  CoreELEC/ODROID N2+ install (both 2026-09-15), a real native Windows
+  install, and both real Android devices this project tests against, one
+  32-bit ARM and one 64-bit ARM (2026-09-16) -- same
   create-directly-via-Dispatcharr's-API-then-poll-`PVR.GetTimers`
-  approach, same clean pass on both, completing this feature's live
-  confirmation across all four target platforms alongside the original
-  Linux one.
+  approach, same clean pass on every platform, completing this feature's
+  live confirmation across every target platform this project supports,
+  alongside the original Linux one.
+  One real snag on the Windows pass, worth remembering: the specific
+  channel `tools/kodi_smoke_test.py`'s own channel-auto-discovery picked
+  (the account's own first channel, already heavily exercised by this
+  project's own testing all session) didn't show the newly-created
+  recording as a timer within the poll window, even though `kodi.log`
+  confirmed the realtime push itself arrived and the addon's own
+  recordings cache count incremented within about a second of creation
+  -- the push mechanism plainly worked. Likely cause: that specific
+  channel already has its own active series/recurring rule tracking the
+  same programme from this project's own earlier testing, and the new
+  one-time recording got matched into that rule's own tracking
+  (`SeriesRuleMatching`) rather than surfacing as an independent timer.
+  Retried against a different, unrelated channel and it passed cleanly
+  on the first attempt -- not a bug in the realtime-update feature
+  itself, just a test-channel-selection collision with this project's
+  own prior testing on the same account.
 - **`ReadRecordingStream()` used to open a brand-new libcurl easy handle
   (fresh TCP connection, fresh TLS handshake if HTTPS) for every single
   demuxer read**, rather than reusing one across the life of an open

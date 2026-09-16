@@ -13,7 +13,14 @@ built against Dispatcharr's native REST API rather than its Xtream Codes
 compatibility layer, so channels, EPG, live TV, and recordings in Kodi map
 directly onto Dispatcharr's own backend and settings.
 
-**Platforms**: Windows, macOS, Linux, and CoreELEC (tested on an ODROID N2+).
+**Platforms**: Windows, macOS, Linux, CoreELEC (tested on an ODROID N2+),
+and Android (arm/arm64, tested on real 32-bit and 64-bit ARM devices).
+
+**Kodi version**: built and tested against Kodi 21 ("Omega"). Kodi
+enforces binary-addon compatibility based on what a build actually
+compiled against, not something this addon's own `addon.xml` declares a
+range for -- a different major Kodi version (older or newer) isn't
+guaranteed to load or behave correctly, and hasn't been tested.
 
 **Status**: pre-1.0 and actively developed by a single maintainer --
 expect occasional rough edges. Verified against Dispatcharr `0.30.0`;
