@@ -862,8 +862,9 @@ def check_realtime_update_push(rpc: JsonRpcClient, dispatcharr: DispatcharrApiCl
     boundary, see the module docstring and DispatcharrApiClient's own).
 
     Kodi's JSON-RPC "channelid" is Kodi's own internal PVR database row
-    id, NOT the addon's own uniqueid (confirmed live: they were 729 vs.
-    69110 for the same real channel) -- PVR.GetChannelDetails' "uniqueid"
+    id, NOT the addon's own uniqueid (confirmed live: the two were
+    different, unrelated small and large integers for the same real
+    channel) -- PVR.GetChannelDetails' "uniqueid"
     property is what actually matches Dispatcharr's own real channel id,
     needed here since we're talking to Dispatcharr directly."""
     details = rpc.call("PVR.GetChannelDetails", {"channelid": channel_id, "properties": ["uniqueid"]})["channeldetails"]
