@@ -4,6 +4,42 @@
 
 ## Ongoing (more will likely come up)
 
+- **`ReadLiveTimeshiftStream()`'s segment-body curl fetch is the one
+  unlogged blocking network call left in that read path, found
+  diagnosing a real tester bug report (2026-09-17).** A tester on
+  Windows, `live_timeshift_mode=Server-side`, had `start_buffer` succeed
+  (control-plane call, main Dispatcharr API port) but every actual
+  segment read then fail silently, surfacing to Kodi only as a generic
+  `CDVDDemuxFFmpeg::Open - error probing input format` with nothing in
+  the addon's own log pointing at why. Root cause: segment bytes are
+  fetched via a *separate* direct HTTP connection to the
+  `timeshift_buffer` plugin's own file server (`http_port`, default
+  `9192`, see `DispatcharrClient.cpp:2288-2295`) -- distinct from the
+  main API port the control-plane calls use -- and this tester's `9192`
+  wasn't port-forwarded/reachable from the Kodi machine (confirmed:
+  opening that port fixed playback). `docs/TIMESHIFT.md`/the plugin's
+  own README already document this as a real prerequisite, but nothing
+  in `ReadLiveTimeshiftStream()` itself logs the failure -- the
+  `res != CURLE_OK` branch at `DispatcharrClient.cpp:2721-2727` just
+  `return -1`s with no `kodi::Log` call, so a user/maintainer staring at
+  `kodi.log` alone has no way to tell "segment fetch failed" from any
+  other demuxer-probe failure.
+  `ReadInProgressRecordingStream()`'s own analogous segment-body fetch
+  (`DispatcharrClient.cpp:1888-1897`) already solved exactly this: an
+  unconditional `kodi::Log(ADDON_LOG_DEBUG, ...)` right after
+  `curl_easy_perform()`, logging `fetchSec`/`curlResult`/`httpCode`/
+  `url` regardless of outcome -- its own comment explains it was added
+  specifically because this was "the ONE unlogged blocking network call
+  in the whole read path." `ReadLiveTimeshiftStream()` needs the same
+  treatment: a log line (debug on success, at least error-level on
+  `res != CURLE_OK`) around its own `curl_easy_perform()` at
+  `DispatcharrClient.cpp:2717`, so the next time this happens
+  (reachability, firewall, wrong port) `kodi.log` says so directly
+  instead of requiring exactly this kind of multi-round diagnosis again.
+  Not yet implemented -- logging-only, low risk, but still a real
+  behavior-adjacent change (new log volume on a hot read path) that
+  should go through its own branch/PR per this file's own conventions
+  rather than landing ad hoc.
 - **Auth-retry loop never gives up or backs off on a hard authentication
   failure, surfaced by a real early-tester bug report (2026-09-17).** A
   new tester reported being unable to connect at all, with Dispatcharr
