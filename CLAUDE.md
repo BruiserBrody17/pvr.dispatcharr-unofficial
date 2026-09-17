@@ -39,8 +39,9 @@ live) are in [docs/BUILDING.md](docs/BUILDING.md); don't guess at build
 commands, read that file.
 
 Small automated test suites exist on both the C++ and Python sides as of
-2026-09-13, but both are deliberately narrow -- only Kodi/Dispatcharr-
-independent pure/filesystem logic is covered anywhere.
+2026-09-13 (C++ side last extended 2026-09-17), but both are
+deliberately narrow -- only Kodi/Dispatcharr-independent pure/filesystem
+logic is covered anywhere.
 
 **C++** (`tests/`, Catch2, wired into CI's `unit-tests` job, a standalone
 CMake project separate from the addon's own `CMakeLists.txt` since that
@@ -53,7 +54,7 @@ one can only be configured through Kodi's own build harness -- see
 `SegmentLookup`, `ChannelParser`, `TimerRuleParser`, `TimerIdentity`,
 `LiveManifestParser`, `LiveEdgeMargin`, `RecurringRuleRenewal`,
 `WebSocketFrame`, `SeriesRuleMatching`, `RecurringRuleWeekdays`,
-`ChannelGroupFilter`. `StringUtil` through `CatchUpUtil` in that list were
+`ChannelGroupFilter`, `AuthBackoff` (the last added 2026-09-17). `StringUtil` through `CatchUpUtil` in that list were
 pulled out of `WebSocketClient.cpp`/`DispatcharrClient.cpp`
 specifically so this small,
 widely-used logic (Base64/lowercasing, Dispatcharr's own date-time
@@ -207,6 +208,21 @@ channel group with no member channels left in the just-fetched channel
 list -- Dispatcharr's `/api/channels/groups/` returns every group that
 has ever existed, including ones no longer enabled for any M3U account,
 and "enabled" isn't itself a property of the group to check directly.
+`AuthBackoff` is `ComputeLoginBackoffSeconds()`, the pure exponential-
+backoff-with-cap arithmetic behind `DispatcharrClient::EnsureAuthenticated()`'s
+Login()-failure handling -- a real user-reported incident (found
+2026-09-17): `EnsureAuthenticated()` previously retried `Login()`
+unconditionally on every call, including from the realtime-update
+WebSocket reconnect loop, so wrong or role-incompatible credentials
+(confirmed: a Dispatcharr "Streamer"-role account, see
+`docs/API_NOTES.md`) meant every periodic refresh and every reconnect
+cycle re-POSTed to `/api/accounts/token/` indefinitely -- a real,
+reported way to trip Dispatcharr's own login rate-limiter. Takes just
+`consecutiveFailures` as a plain `int` rather than reading
+`DispatcharrClient`'s own failure-count member directly, so the
+growth/cap curve itself is unit-testable with no auth-mutex/HTTP
+dependency; `EnsureAuthenticated()` still owns tracking that count and
+resetting it on a successful `Login()`.
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API
 surface, HTTP client, and socket handling -- where the real bugs live --
 aren't attempted: that would mean mocking Kodi's entire addon-instance
