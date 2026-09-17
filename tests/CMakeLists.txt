@@ -79,6 +79,7 @@ add_executable(pvr_dispatcharr_tests
   test_recurring_rule_weekdays.cpp
   test_channel_group_filter.cpp
   test_web_socket_handshake.cpp
+  test_auth_backoff.cpp
   ${DISPATCHARR_SRC_DIR}/XmlTvParser.cpp
   ${DISPATCHARR_SRC_DIR}/TimeZoneUtil.cpp
   ${DISPATCHARR_SRC_DIR}/EpgTagUtil.cpp
@@ -97,6 +98,7 @@ add_executable(pvr_dispatcharr_tests
   ${DISPATCHARR_SRC_DIR}/RecurringRuleRenewal.cpp
   ${DISPATCHARR_SRC_DIR}/WebSocketFrame.cpp
   ${DISPATCHARR_SRC_DIR}/SeriesRuleMatching.cpp
+  ${DISPATCHARR_SRC_DIR}/AuthBackoff.cpp
 )
 target_include_directories(pvr_dispatcharr_tests PRIVATE ${DISPATCHARR_SRC_DIR} ${CURL_INCLUDE_DIRS})
 if(TARGET CURL::libcurl)
