@@ -15,7 +15,8 @@ handled here.
   `PluginRunResult`/`RealtimeUpdateParser`/`M3u8SegmentParser`/`SegmentLookup`/
   `ChannelParser`/`TimerRuleParser`/`TimerIdentity`/`LiveManifestParser`/
   `LiveEdgeMargin`/`RecurringRuleRenewal`/`WebSocketFrame`/`SeriesRuleMatching`/
-  `RecurringRuleWeekdays`/`ChannelGroupFilter` as of 2026-09-13. The addon's actual PVR API surface
+  `RecurringRuleWeekdays`/`ChannelGroupFilter`/`AuthBackoff` as of 2026-09-17
+  (`AuthBackoff` is the newest addition). The addon's actual PVR API surface
   and HTTP/WebSocket handling (`PVRDispatcharr`/`DispatcharrClient`/
   `WebSocketClient`) aren't covered by anything automated.
   `dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/` (pytest,
@@ -77,7 +78,7 @@ handled here.
   `RealtimeUpdateParser`/`M3u8SegmentParser`/`SegmentLookup`/`ChannelParser`/
   `TimerRuleParser`/`TimerIdentity`/`LiveManifestParser`/`LiveEdgeMargin`/
   `RecurringRuleRenewal`/`WebSocketFrame`/`SeriesRuleMatching`/
-  `RecurringRuleWeekdays`/`ChannelGroupFilter` (or add new Kodi-independent C++ pure-logic code), run the C++ unit test suite**
+  `RecurringRuleWeekdays`/`ChannelGroupFilter`/`AuthBackoff` (or add new Kodi-independent C++ pure-logic code), run the C++ unit test suite**
   before pushing (needs libcurl's dev headers, e.g. `libcurl4-openssl-dev`
   on Debian/Ubuntu, for `UrlEncode`'s own test -- CI hit this as a real
   "Could NOT find CURL" failure the first time this suite gained that
