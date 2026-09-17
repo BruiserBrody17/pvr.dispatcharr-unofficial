@@ -94,6 +94,17 @@ plugins and for pushing a recording-padding change back to Dispatcharr
 (reading the current value doesn't need one; the write just fails
 silently otherwise -- see [docs/RECORDINGS.md](docs/RECORDINGS.md)).
 
+This addon only speaks Dispatcharr's native REST API, not its Xtream
+Codes compatibility layer -- there's no separate "XC" username/password
+to enter anywhere. A Dispatcharr account with the restricted "Streamer"
+role can't log in through this addon at all (Dispatcharr itself rejects
+that role's login attempt with "No active account found," regardless of
+whether the username/password are correct); use a regular or admin
+account instead. Repeated login attempts against wrong or
+incompatible credentials can also trigger Dispatcharr's own request
+rate-limiting -- if you see "too many requests," wait a few minutes
+before retrying with corrected credentials.
+
 Most settings take effect immediately after saving. Connection settings
 (host/port/HTTPS/username/password) need a Kodi restart -- Kodi will tell
 you when one does.
