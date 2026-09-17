@@ -76,6 +76,7 @@ set(DISPATCHARR_SOURCES
     src/RecurringRuleRenewal.cpp
     src/WebSocketFrame.cpp
     src/SeriesRuleMatching.cpp
+    src/AuthBackoff.cpp
 )
 
 set(DISPATCHARR_HEADERS

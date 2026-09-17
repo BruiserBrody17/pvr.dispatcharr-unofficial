@@ -1,5 +1,6 @@
 #include "DispatcharrClient.h"
 
+#include "AuthBackoff.h"
 #include "CatchUpUtil.h"
 #include "ChannelParser.h"
 #include "CurlCallbacks.h"
@@ -389,7 +390,28 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error)
     return true;
   if (!m_refreshToken.empty() && RefreshAccessToken(error))
     return true;
-  return Login(error);
+
+  // Back off after repeated Login() failures instead of retrying it on
+  // every single call -- see AuthBackoff.h's own comment for the real
+  // incident (wrong/role-incompatible credentials tripping Dispatcharr's
+  // own login rate-limiter) this closes.
+  auto now = std::chrono::steady_clock::now();
+  if (m_consecutiveLoginFailures > 0 && now < m_loginBackoffUntil)
+  {
+    error = m_lastLoginError;
+    return false;
+  }
+
+  if (Login(error))
+  {
+    m_consecutiveLoginFailures = 0;
+    return true;
+  }
+
+  m_lastLoginError = error;
+  ++m_consecutiveLoginFailures;
+  m_loginBackoffUntil = now + std::chrono::seconds(ComputeLoginBackoffSeconds(m_consecutiveLoginFailures));
+  return false;
 }
 
 bool DispatcharrClient::GetAccessToken(std::string& tokenOut, std::string& error)

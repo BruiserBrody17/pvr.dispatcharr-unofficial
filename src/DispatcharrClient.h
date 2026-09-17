@@ -884,6 +884,14 @@ private:
   std::string m_accessToken;
   std::string m_refreshToken;
   std::chrono::steady_clock::time_point m_accessTokenExpiry;
+  // Login()-failure backoff state, also guarded by m_authMutex -- see
+  // AuthBackoff.h's ComputeLoginBackoffSeconds() for why this exists.
+  // Reset to 0/empty only by a successful Login() (EnsureAuthenticated()'s
+  // own job); otherwise persists for the process lifetime, which is fine
+  // since a credentials/settings fix needs a Kodi restart anyway.
+  int m_consecutiveLoginFailures = 0;
+  std::chrono::steady_clock::time_point m_loginBackoffUntil;
+  std::string m_lastLoginError;
   // Local IP curl reports (CURLINFO_LOCAL_IP) for the most recent
   // successful Request() -- i.e. the interface this machine actually
   // reaches Dispatcharr through. OpenLiveTimeshiftStream() passes this to
