@@ -4,6 +4,37 @@
 
 ## Ongoing (more will likely come up)
 
+- **Auth-retry loop never gives up or backs off on a hard authentication
+  failure, surfaced by a real early-tester bug report (2026-09-17).** A
+  new tester reported being unable to connect at all, with Dispatcharr
+  showing both "too many requests" and "no account found" against two
+  different credential sets they tried (a web-GUI admin account and an
+  Xtream-Codes-style "streamer" user/pass). Root cause of the "no account
+  found" half: this addon only supports Dispatcharr's native REST login
+  (`POST /api/accounts/token/`) -- there's no XC auth path at all, and
+  `docs/API_NOTES.md` already documents that a Dispatcharr "Streamer"-role
+  account gets rejected by that endpoint outright ("No active account
+  found"), regardless of whether the password is correct.
+
+  Added a note to `README.md`'s own Configuration section warning about
+  this -- doc-only, landed directly on `master`.
+
+  Still open, and the likely source of the "too many requests" half:
+  `EnsureAuthenticated()` re-attempts `Login()` before nearly every API
+  call with no memory of a previous hard failure, and the realtime-updates
+  WebSocket reconnect loop retries with backoff (2s, doubling to a 60s
+  cap) indefinitely on top of that -- with wrong or role-incompatible
+  credentials, neither ever stops retrying, so the addon keeps hammering
+  `/api/accounts/token/` on every periodic refresh and every reconnect
+  cycle. That's a plausible way to trip Dispatcharr's own login
+  rate-limiter on its own, independent of whatever the user first got
+  wrong. Not yet fixed: would need `EnsureAuthenticated()` (and the
+  realtime-update reconnect loop) to distinguish a hard/permanent auth
+  failure from a transient one and stop retrying (or back off much
+  further) rather than retrying forever -- a real behavior change, not a
+  doc fix, so it needs its own branch and live verification (a wrong-
+  password/streamer-role account against a real instance) before merging,
+  per this file's own conventions.
 - **Manual-testing checklist for a Kodi sanity pass, covering what
   neither the unit test suite nor the JSON-RPC-driven smoke-test tooling
   can reach (2026-09-15, updated 2026-09-16 once macOS, CoreELEC, and
