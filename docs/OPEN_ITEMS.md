@@ -35,6 +35,26 @@
   doc fix, so it needs its own branch and live verification (a wrong-
   password/streamer-role account against a real instance) before merging,
   per this file's own conventions.
+  **Update: implemented, on branch `fix/auth-retry-backoff` (2026-09-17),
+  live verification against a real bad-credentials case still pending.**
+  New `dispatcharr::ComputeLoginBackoffSeconds()` (`AuthBackoff.h`/`.cpp`,
+  covered by `tests/test_auth_backoff.cpp`) -- exponential, 30s initial,
+  doubling, capped at 30 minutes. `EnsureAuthenticated()` now tracks
+  `m_consecutiveLoginFailures`/`m_loginBackoffUntil` (reset only on a
+  successful `Login()`) and, while backed off, returns the cached error
+  from the last real attempt instead of calling `Login()` again --
+  applies uniformly to every caller through the one shared client
+  (periodic channel/EPG/recording refreshes and the realtime-update
+  reconnect loop's own `GetAccessToken()` call alike), so no separate fix
+  was needed in `PVRDispatcharr.cpp`'s reconnect loop itself. Standalone
+  Catch2 suite (`cmake -S tests -B build-tests && cmake --build
+  build-tests`) passes in full (525 assertions/228 cases, including the 5
+  new ones), and a full rebuild through Kodi's own binary-addon harness
+  (`~/kodi-build`, both stale-marker locations cleared first per this
+  file's own documented gotcha) also succeeds cleanly. Not yet done: a
+  real live run against an actual wrong-password/Streamer-role account to
+  confirm the backoff visibly stops the repeated `/api/accounts/token/`
+  POSTs in `kodi.log`, and this branch's own PR/merge.
 - **Manual-testing checklist for a Kodi sanity pass, covering what
   neither the unit test suite nor the JSON-RPC-driven smoke-test tooling
   can reach (2026-09-15, updated 2026-09-16 once macOS, CoreELEC, and
