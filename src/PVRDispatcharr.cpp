@@ -2125,11 +2125,26 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
     else
     {
       // One-time (manual or EPG-based) recording, not yet started.
-      // Deliberately doesn't touch title/custom_properties -- see
-      // UpdateOneTimeRecording()'s own comment for why (a real crash risk
+      // UpdateOneTimeRecording() itself deliberately doesn't touch title/
+      // custom_properties -- see its own comment for why (a real crash risk
       // on a bare partial PATCH, and this mirrors CreateOneTimeRecording()'s
-      // own choice not to stomp Dispatcharr's auto-enrichment).
+      // own choice not to stomp Dispatcharr's auto-enrichment). A title
+      // change is instead sent separately, via the same dedicated
+      // update-metadata/ endpoint RenameRecording() (the Kodi callback
+      // above) already uses for a completed/in-progress recording -- and
+      // only when the title actually changed, so an edit that only touches
+      // start/end time doesn't send a stale title and prematurely mark
+      // user_edited, which would block Dispatcharr's own EPG-based
+      // auto-enrichment from ever filling the title in. Real reported bug:
+      // editing a one-time timer's title from Kodi's own Timers-list edit
+      // dialog silently did nothing before this.
       ok = m_client.UpdateOneTimeRecording(id, timer.GetStartTime(), timer.GetEndTime(), error);
+      if (ok && !timer.GetTitle().empty())
+      {
+        Recording rec;
+        if (FindRecordingById(id, rec) && rec.title != timer.GetTitle())
+          ok = m_client.RenameRecording(id, timer.GetTitle(), error);
+      }
     }
   }
 
