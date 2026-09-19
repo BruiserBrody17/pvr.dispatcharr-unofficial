@@ -4,6 +4,49 @@
 
 ## Ongoing (more will likely come up)
 
+- **Dispatcharr `0.31.0`'s new DVR Output Profile setting (recordings can
+  now be transcoded instead of always raw-copied) is untested against
+  this addon's in-progress-recording read path, flagged from the
+  release notes (2026-09-19), not yet reproduced.** Everything this
+  addon assumes about a recording's on-disk shape --
+  `M3u8SegmentParser`'s `#EXTINF`/segment-URI scan,
+  `RefreshInProgressRecordingManifest()`'s append-only-merge convention,
+  the HLS-segments-then-finalized-file lifecycle documented in
+  `docs/RECORDINGS.md` -- was confirmed live only against Dispatcharr's
+  previous raw-copy-only DVR behavior. If a user sets a transcoding
+  output profile for DVR, the actual container/segment shape reaching
+  this addon while a recording is still in progress could differ in
+  ways nothing here has ever been exercised against (a real behavior
+  change on Dispatcharr's side, not something this addon's own code
+  changed to trigger). Needs a real live test once this addon is
+  actually run against a `0.31.0`+ instance: record with a non-default
+  DVR Output Profile set, confirm in-progress playback, seeking, and
+  `recording_edl` markers still work the same as the raw-copy case.
+  Not urgent -- the default (unset) still keeps the old raw-copy
+  behavior, so nothing breaks for a user who never touches this new
+  setting -- but worth checking deliberately rather than discovering it
+  from a bug report.
+- **Two Dispatcharr `0.31.0` bug fixes plausibly explain past
+  playback/logo symptoms rather than introducing anything new to track
+  -- noted from the release notes (2026-09-19), not yet confirmed
+  against a live upgrade.** (1) "HLS finalize introducing periodic
+  audio/video gaps by concatenating segments" -- Dispatcharr's own
+  server-side raw-copy finalize, not this addon's client-side
+  timeshift-buffer segment handling, but the same general class of
+  symptom this project has chased before (`docs/TIMESHIFT.md`'s
+  `Packet corrupt`/continuity-counter investigations) -- a
+  finished-recording audio/video gap report going forward could just be
+  an old-Dispatcharr-version issue now fixed upstream, not this addon.
+  (2) "DVR playback redirects/playlists (and plugin logos) dropping or
+  mishandling non-standard ports and forwarded host/scheme behind a
+  reverse proxy" -- directly touches this addon's own recording
+  playback path (`.../recordings/{id}/file/`'s redirect to an HLS
+  playlist, documented at the top of `DispatcharrClient.cpp`) and both
+  companion plugins' own logo/manifest serving behind whatever reverse
+  proxy a user runs. Worth remembering the next time a reverse-proxied
+  deployment reports recording-playback or logo weirdness: check the
+  Dispatcharr version first, since `0.31.0`+ may have already fixed it
+  server-side.
 - **Editing a one-time timer's title from Kodi's own Timers-list edit
   dialog silently did nothing, a real user-reported bug (2026-09-19),
   fixed on branch `fix/one-time-timer-title-edit`.** `UpdateTimer()`'s
