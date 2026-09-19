@@ -278,6 +278,36 @@ first, previously-working channel failed identically).
   all (see that function's own docstring for why), only that the seek
   call itself doesn't error and playback keeps progressing afterward.
 
+- **Editing an existing timer's title (or any other single field, short
+  of the timer being added/deleted) doesn't update Kodi's Timers window
+  in place -- the new value only shows up once the window is left and
+  re-entered, confirmed by reading Kodi-core's own source (2026-09-19),
+  not just observed.** A real user report against PR #52's one-time-timer
+  rename fix: the server-side rename itself was confirmed correct
+  (visible immediately once the Timers window was re-opened), but the
+  already-open window kept showing the old title. Traced through
+  `xbmc/pvr/`: a plain field edit (not an add/delete) makes
+  `CPVRTimers::UpdateEntries()` fire a `PVREvent::Timers` event
+  (`PVRTimers.cpp`'s `NotifyTimersEvent(bAddedOrDeleted)` call, with
+  `bAddedOrDeleted=false`) -- correctly reflecting the change in Kodi's
+  own in-memory timer object (`CPVRTimerInfoTag::UpdateEntry()`
+  unconditionally overwrites every field, including title, and always
+  reports "changed"). But `CGUIWindowPVRTimersBase::OnMessage()`
+  handles a plain `PVREvent::Timers` with only `SetInvalid()` -- a bare
+  repaint of the *already-built* on-screen list, not a requery. Only
+  `PVREvent::TimersInvalidated` (fired solely for an add/delete) calls
+  `Refresh(true)`, which is the one path that actually re-fetches the
+  timer list and rebuilds the displayed items' label text from the
+  updated data. So a same-window in-place edit is correct at the data
+  layer immediately, but cosmetically stale until something else forces
+  a real `Refresh()` (leaving and re-entering the window, or any other
+  add/delete elsewhere that happens to trigger one). Not fixable from
+  this addon's side -- `TriggerTimerUpdate()` is the only signal this
+  addon can send, and Kodi-core itself is what chooses `SetInvalid()`
+  over `Refresh(true)` for a non-add/delete change. Not specific to a
+  title edit either: the same would apply to any other single-field
+  timer edit (e.g. adjusting a one-time timer's start/end time alone).
+
 ## Known limitations with more than one Kodi client
 
 Not bugs in this addon -- inherent to running multiple, fully independent
