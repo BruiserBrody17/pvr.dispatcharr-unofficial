@@ -49,7 +49,7 @@
   server-side.
 - **Editing a one-time timer's title from Kodi's own Timers-list edit
   dialog silently did nothing, a real user-reported bug (2026-09-19),
-  fixed on branch `fix/one-time-timer-title-edit`.** `UpdateTimer()`'s
+  fixed and merged (PR #52, squash-merged to `master`).** `UpdateTimer()`'s
   not-yet-started-one-time-recording branch (`PVRDispatcharr.cpp`,
   around the `UpdateOneTimeRecording()` call) only ever PATCHed
   `start_time`/`end_time` to Dispatcharr -- title was read on *create*
@@ -74,11 +74,17 @@
   timer. Build verified through Kodi's real binary-addon harness
   (`~/kodi-build`); no new pure-logic extraction here since this is
   Kodi-API/HTTP-client glue, outside the unit-tested boundary described
-  in `CLAUDE.md`. Not yet live-verified
-  against a real Dispatcharr instance (rename a scheduled-but-not-started
-  one-time timer via Kodi's Timers list, confirm the new title sticks
-  and `user_edited: true` is set) -- still open before merging, per this
-  file's own conventions for a behavior change.
+  in `CLAUDE.md`.
+  **Update: live-verified against a real Dispatcharr instance
+  (2026-09-19) -- the rename itself works correctly.** A real user tested
+  the PR branch build directly: renaming a scheduled-but-not-started
+  one-time timer via Kodi's Timers list now sticks server-side. Found a
+  separate, unrelated cosmetic issue in the same test -- the already-open
+  Timers window doesn't visually show the new title until the window is
+  left and re-entered -- traced to a confirmed Kodi-core UI-refresh
+  limitation (not fixable from this addon's side), written up in
+  `docs/TROUBLESHOOTING.md`'s "Known Kodi-core quirks" section rather
+  than tracked here.
 - **`ReadLiveTimeshiftStream()`'s segment-body curl fetch is the one
   unlogged blocking network call left in that read path, found
   diagnosing a real tester bug report (2026-09-17).** A tester on
