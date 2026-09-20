@@ -8,6 +8,8 @@ docs/API_NOTES.md|setting|version_update
 docs/BUILDING.md|function|find_library
 docs/BUILDING.md|function|target_link_libraries
 docs/OPEN_ITEMS.md|function|Name
+docs/OPEN_ITEMS.md|function|_play_recording_and_verify
+docs/OPEN_ITEMS.md|function|_seek_within_recording_and_verify
 docs/OPEN_ITEMS.md|function|build_addon
 docs/RECORDINGS.md|function|AnnounceReminder
 docs/RECORDINGS.md|function|CallRecordingMenuHook
