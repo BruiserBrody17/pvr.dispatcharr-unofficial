@@ -23,7 +23,7 @@ range for -- a different major Kodi version (older or newer) isn't
 guaranteed to load or behave correctly, and hasn't been tested.
 
 **Status**: pre-1.0 and actively developed by a single maintainer --
-expect occasional rough edges. Verified against Dispatcharr `0.30.0`;
+expect occasional rough edges. Verified against Dispatcharr `0.31.0`;
 Dispatcharr's own REST API has changed shape across releases before,
 so a real incompatibility against a different version is possible and
 not guaranteed to be caught yet. Bug reports (with the detail requested
