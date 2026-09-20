@@ -26,6 +26,31 @@
   behavior, so nothing breaks for a user who never touches this new
   setting -- but worth checking deliberately rather than discovering it
   from a bug report.
+  **Update: confirmed live and closed out (2026-09-20).** Tested against
+  a real `0.31.0` instance with `dvr_output_profile_id` set to
+  Dispatcharr's built-in "Media Server (AC3 Audio)" profile (video-copy,
+  audio transcoded to AC3 -- confirmed via `GET /api/core/outputprofiles/`
+  that both of Dispatcharr's own built-in profiles are audio-transcode-
+  only, not full video re-encodes). Created a real instant recording
+  under that profile on a genuinely live channel; confirmed via
+  `tools/kodi_smoke_test.py`'s own `_play_recording_and_verify()`/
+  `_seek_within_recording_and_verify()` (driven directly against Kodi's
+  JSON-RPC, targeting the specific new recording rather than relying on
+  auto-discovery) that in-progress playback, in-progress seeking, and
+  playback after the recording completed (`status: completed`,
+  `remux_success: true`) all work identically to the raw-copy case --
+  no addon code changes needed. `recording_edl`/comskip markers weren't
+  separately re-verified (a 5-minute test clip has nothing for comskip
+  to mark), but nothing in that path depends on the output profile
+  either. One real false alarm along the way, worth remembering: a first
+  attempt failed because the test channel picked had no live stream data
+  at all (Dispatcharr's own `no_stream_data` interruption, unrelated to
+  the output profile), and a second, seemingly genuine failure on a
+  genuinely-live channel turned out to be an unrelated wedged Kodi session
+  (`Player.Open` silently stuck for *any* channel/recording, live or not)
+  that a VM-level hard reset and Kodi restart fully resolved -- neither
+  was a real DVR-transcoding compatibility bug. Test recordings and the
+  output-profile setting were cleaned up/reverted afterward.
 - **Two Dispatcharr `0.31.0` bug fixes plausibly explain past
   playback/logo symptoms rather than introducing anything new to track
   -- noted from the release notes (2026-09-19), not yet confirmed
