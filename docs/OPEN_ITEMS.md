@@ -218,10 +218,13 @@
   build-tests`) passes in full (525 assertions/228 cases, including the 5
   new ones), and a full rebuild through Kodi's own binary-addon harness
   (`~/kodi-build`, both stale-marker locations cleared first per this
-  file's own documented gotcha) also succeeds cleanly. Not yet done: a
-  real live run against an actual wrong-password/Streamer-role account to
-  confirm the backoff visibly stops the repeated `/api/accounts/token/`
-  POSTs in `kodi.log`, and this branch's own PR/merge.
+  file's own documented gotcha) also succeeds cleanly.
+  **Update: merged (PR #51, squash-merged to `master`, 2026-09-17).**
+  Still not done: a real live run against an actual wrong-password/
+  Streamer-role account to confirm the backoff visibly stops the
+  repeated `/api/accounts/token/` POSTs in `kodi.log` -- the fix shipped
+  on the strength of the unit tests and a clean build alone, not a live
+  bad-credentials reproduction.
 - **Manual-testing checklist for a Kodi sanity pass, covering what
   neither the unit test suite nor the JSON-RPC-driven smoke-test tooling
   can reach (2026-09-15, updated 2026-09-16 once macOS, CoreELEC, and
