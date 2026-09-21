@@ -2714,12 +2714,34 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
   curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
 
+  auto segmentFetchStart = std::chrono::steady_clock::now();
   CURLcode res = curl_easy_perform(curl);
   long httpCode = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
 
+  // Same reasoning as ReadInProgressRecordingStream()'s own identical log
+  // line: this was previously the ONE unlogged blocking network call in
+  // this read path -- a reachability/firewall/wrong-port failure (see
+  // docs/OPEN_ITEMS.md's own account of a real tester bug report) surfaced
+  // to Kodi only as a generic downstream demuxer-probe error, with nothing
+  // in this addon's own log pointing at why.
+  double fetchSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - segmentFetchStart).count();
+  kodi::Log(ADDON_LOG_DEBUG,
+            "pvr.dispatcharr-unofficial: ReadLiveTimeshiftStream: segment body fetch took %.3fs, "
+            "curlResult=%d httpCode=%ld url=%s",
+            fetchSec, static_cast<int>(res), httpCode, url.c_str());
+
   if (res != CURLE_OK)
   {
+    // Unlike the debug-only line above, this is logged regardless of
+    // debug_logging -- a real tester bug report (docs/OPEN_ITEMS.md) took
+    // a multi-round diagnosis to trace an otherwise-silent failure here
+    // (segment-server port unreachable) back to this exact call, with
+    // kodi.log showing only Kodi-core's own generic downstream
+    // "error probing input format" and nothing from this addon at all.
+    kodi::Log(ADDON_LOG_ERROR,
+              "pvr.dispatcharr-unofficial: ReadLiveTimeshiftStream: segment body fetch failed: %s (url=%s)",
+              curl_easy_strerror(res), url.c_str());
     // Same "reused connection went stale" handling as ReadRecordingStream().
     curl_easy_cleanup(curl);
     m_liveTimeshiftStream.curl = nullptr;
