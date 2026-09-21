@@ -72,6 +72,31 @@
   deployment reports recording-playback or logo weirdness: check the
   Dispatcharr version first, since `0.31.0`+ may have already fixed it
   server-side.
+  **Update: (1) confirmed clean, (2) deliberately deferred
+  (2026-09-21).** (1) Downloaded a real finalized recording (raw-copy,
+  default output profile, H.264 1080p59.94 + E-AC3 5.1, ~3m12s) straight
+  from a live `0.31.0` instance and ran a full `ffmpeg -v error -f null`
+  decode over the entire file -- zero errors or warnings across all
+  11,506 frames decoded start to finish; a codec-level check, not just
+  playback observation. Playback-side stalls seen along the way in an
+  earlier pass (via Kodi JSON-RPC monitoring plus `kodi.log`'s
+  `CVideoPlayerAudio::Process - stream stalled` lines) turned out to
+  have clean, unrelated explanations once isolated: ordinary cold-start
+  buffering in the first ~48s of a fresh `Player.Open`, and a one-time
+  `ActiveAE` clock-resync blip immediately after a large `Player.Seek`
+  jump (the same benign raw-clock-before-it-locks-on mechanism this
+  file's own "A consistent ~89.4s audio-sync-error reading" entry
+  already documents for stream *open*, evidently the same story for a
+  big seek) -- a second playback pass seeking straight into an
+  untouched section of the same file ran a continuous 78s with zero
+  stalls. No addon-side or Dispatcharr-side gap bug found. (2) Not
+  attempted -- this lab has no reverse proxy in front of Dispatcharr,
+  and standing one up (e.g. on the Kodi test VM itself, repointing the
+  addon's connection settings at it) was explicitly ruled out for now
+  rather than improvised mid-session. Still an open, real gap: a report
+  matching this exact symptom (reverse-proxied deployment, non-standard
+  port, DVR playback/logo failures) still needs checking against a real
+  reverse-proxy setup before ruling this addon's own code in or out.
 - **Editing a one-time timer's title from Kodi's own Timers-list edit
   dialog silently did nothing, a real user-reported bug (2026-09-19),
   fixed and merged (PR #52, squash-merged to `master`).** `UpdateTimer()`'s
