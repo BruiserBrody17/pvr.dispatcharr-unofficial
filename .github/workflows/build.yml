@@ -57,8 +57,12 @@ jobs:
       - name: Check out repo
         uses: actions/checkout@v7
 
+      # --break-system-packages: needed on a CI runner (its minimal Ubuntu image enforces PEP 668's
+      # "externally-managed-environment" restriction; GitHub's own hosted
+      # ubuntu-latest doesn't, but the flag is a no-op there either way --
+      # confirmed live, 2026-09-23, setting up the CI).
       - name: Install pytest (pinned version)
-        run: pip install -r dispatcharr-plugin/requirements-dev.txt
+        run: pip install --break-system-packages -r dispatcharr-plugin/requirements-dev.txt
 
       - name: Run pytest
         run: pytest
@@ -81,8 +85,12 @@ jobs:
       # historically, since this job never needed curl until UrlEncode was
       # added (confirmed live, 2026-09-13: real CI failure, "Could NOT find
       # CURL", the exact same gap hit locally setting up this dependency).
-      - name: Install libcurl dev headers
-        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+      # cmake/build-essential explicit too -- GitHub's hosted ubuntu-latest
+      # ships both preinstalled, but a CI runner's
+      # minimal image doesn't (confirmed
+      # live, 2026-09-23: real CI failure, "cmake: command not found").
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential libcurl4-openssl-dev
 
       - name: Configure
         run: cmake -S tests -B build-tests -DCMAKE_BUILD_TYPE=Release
@@ -105,13 +113,16 @@ jobs:
         with:
           path: addons/pvr.dispatcharr-unofficial
 
+      # A plain git clone against the fully-qualified github.com URL,
+      # rather than actions/checkout's repository: shorthand -- that
+      # shorthand resolves against whichever server is actually running
+      # the job (github.com on GitHub), and Kodi's real
+      # source only ever lives on github.com regardless of which host is
+      # running this workflow. Confirmed live, 2026-09-23: this step
+      # failed with "repository 'https://example-host.invalid/xbmc/xbmc/' not
+      # found" on the CI runner before this fix.
       - name: Check out Kodi (for the binary-addons build harness)
-        uses: actions/checkout@v7
-        with:
-          repository: xbmc/xbmc
-          ref: ${{ env.KODI_BRANCH }}
-          path: kodi-source
-          fetch-depth: 1
+        run: git clone --depth 1 --branch "$KODI_BRANCH" https://github.com/xbmc/xbmc kodi-source
 
       - name: Install build dependencies (Linux)
         if: runner.os == 'Linux'
@@ -240,13 +251,14 @@ jobs:
         with:
           path: addons/pvr.dispatcharr-unofficial
 
+      # Same fix as build-unix's own "Check out Kodi" step -- see its
+      # comment for why actions/checkout's repository: shorthand doesn't
+      # work when this workflow runs on a CI runner. Applied here for the same reason, but NOT yet live-verified
+      # on Windows specifically (no Windows runner is registered as of this
+      # writing -- Windows/macOS CI was explicitly deferred).
       - name: Check out Kodi
-        uses: actions/checkout@v7
-        with:
-          repository: xbmc/xbmc
-          ref: ${{ env.KODI_BRANCH }}
-          path: kodi-source
-          fetch-depth: 1
+        shell: pwsh
+        run: git clone --depth 1 --branch $env:KODI_BRANCH https://github.com/xbmc/xbmc kodi-source
 
       - name: Register addon with the build harness
         shell: pwsh
