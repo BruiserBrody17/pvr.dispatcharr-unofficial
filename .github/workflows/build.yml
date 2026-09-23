@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Install clang-format and ruff (pinned versions)
-        run: pip install clang-format==18.1.8 ruff==0.6.9
+        run: pip install --break-system-packages clang-format==18.1.8 ruff==0.6.9
 
       - name: clang-format check (src/)
         run: clang-format --dry-run -Werror src/*.cpp src/*.h
