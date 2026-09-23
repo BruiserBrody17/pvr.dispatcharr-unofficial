@@ -462,9 +462,10 @@ load with an API-version mismatch even if the library itself loads fine.
 ## Android (arm/arm64)
 
 Confirmed live end to end (2026-09-15/16) against two real physical
-devices on real Android builds, not an emulator: an older 32-bit ARM device and a newer 64-bit ARM device, both against a real Dispatcharr backend -- real channel
-list (a real, full-size channel lineup), real live playback, real live-timeshift seek, on
-both architectures.
+devices on real Android builds, not an emulator: an older 32-bit ARM
+device and a newer 64-bit ARM device, both against a real Dispatcharr
+backend -- real channel list (a real, full-size channel lineup), real live
+playback, real live-timeshift seek, on both architectures.
 
 Unlike every other platform this addon has been built for, this addon's
 own source (`src/*.cpp`) needed **zero** Android-specific changes --
@@ -669,10 +670,12 @@ Kodi's own platform-generic JSON-RPC API.
 
 ### A large real channel count can outrun Kodi's own first-boot EPG sync on old/slow hardware
 
-Confirmed live (2026-09-15/16) on an older, low-power 32-bit ARM device against a real account with a real, full-size channel lineup: on a fresh install,
+Confirmed live (2026-09-15/16) on an older, low-power 32-bit ARM device
+against a real account with a real, full-size channel lineup: on a fresh install,
 `PVR.GetBroadcasts` returned real, correctly-titled programme data for
 every channel, but roughly 11% of channels were
-consistently missing their own `broadcastid` field -- while a newer, faster 64-bit ARM device, given far more elapsed idle time beforehand, showed
+consistently missing their own `broadcastid` field -- while a newer,
+faster 64-bit ARM device, given far more elapsed idle time beforehand, showed
 every channel correctly. This is **not an addon bug**: confirmed by
 adding temporary diagnostic logging directly to `GetEPGForChannel()`
 (logging both the computed id via `ComputeBroadcastId()` and an
