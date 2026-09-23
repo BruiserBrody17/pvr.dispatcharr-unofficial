@@ -608,6 +608,23 @@ its own `PREFIX`. Produces
 `-android-armv7.zip` under that build tree's own
 `pvr.dispatcharr-unofficial-prefix/src/pvr.dispatcharr-unofficial-build/`.
 
+**Strip the packaged `.so` before distributing it -- this build path
+doesn't do it for you.** Unlike other platforms, where the build itself
+already produces stripped output, this one builds against the
+`-debug`-suffixed dependency trees "Android's missing addon-dependency
+wiring" above requires, so the addon's own `.so` comes out with full
+debug info -- including the local build machine's absolute paths -- still
+attached:
+
+```bash
+find . -name "libpvr.dispatcharr-unofficial.so" -exec strip {} \;
+```
+
+Confirmed live: the `0.11.0` release (the first Android release) shipped
+both ABIs' `.so` unstripped, with the build machine's local paths
+embedded, before this was caught and the already-published release
+assets were corrected after the fact.
+
 ### 5. Install Kodi and side-load the addon on a real device
 
 Kodi for Android isn't preinstalled by any stock/LineageOS image --
