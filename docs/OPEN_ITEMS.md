@@ -778,8 +778,7 @@ device, the first two platforms this project has ever run the
   review that the functional locations show the correct entry again,
   and via a restart that `recurring_rule_timezone` auto-detection works
   correctly for known zones generally. Full account in
-  `docs/RECURRING_RULES.md`'s "Update"
-  note.
+  `docs/RECURRING_RULES.md`'s "Update" note.
   **Update: 0.9.2 (batching this item plus the three recording-management
   features below) confirmed on CoreELEC/ODROID N2+ (2026-09-09).** Real
   cross-compile via the CoreELEC package.mk path (`docs/BUILDING.md`),
