@@ -235,7 +235,7 @@
   CoreELEC/ODROID N2+ install, a real macOS install -- run
   entirely by a peer Claude Code session on that last one -- and two real physical
   Android devices, one older 32-bit ARM device and one newer 64-bit ARM
-device, the first two platforms this project has ever run the
+  device, the first two platforms this project has ever run the
   same live check against on both a 32-bit and a 64-bit build of the
   addon) covers the addon's live PVR-API surface against a real
   Dispatcharr backend, provisioned via
