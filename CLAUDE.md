@@ -432,6 +432,21 @@ platform.
   bullet exists to keep that a stated, deliberate policy rather than an
   accident of current permissions, so it doesn't quietly erode later
   (e.g. if another collaborator ever gets write access).
+- **Run a data-hardening sweep before cutting any tag/release, as of
+  2026-09-25.** A tag/release is the moment this project's history
+  actually becomes something a stranger might clone, browse, or
+  download an asset from -- so it's the right gate to check before,
+  not an arbitrary calendar cadence. Before
+  tagging: run a hardening audit (an Opus subagent sweep across code,
+  docs, full git history, and every hosting-side surface -- release
+  assets, activity feed, issues/PRs -- checking known categories and a
+  general sensitive-term sweep) and resolve any real
+  finding via a `git-filter-repo` history rewrite (never a plain
+  commit) before the tag goes out, not after. A local pre-push check
+  (`.git/hooks/pre-push`) also guards ordinary commits against a list
+  of disallowed terms -- it's a backstop, not a
+  substitute for the pre-release sweep, which is what catches anything
+  genuinely new.
 - **Batch fixes into releases -- don't tag/release per individual fix.**
   Early on this project tagged and released (including the full manual
   CoreELEC build-and-upload dance) after nearly every single bug fix,
