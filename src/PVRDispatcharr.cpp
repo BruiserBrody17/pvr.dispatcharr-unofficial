@@ -1222,7 +1222,7 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid, time_t start, time_t 
     // Year and FirstAired both derive from the same XMLTV <date> element,
     // and both are only set when the programme also carries a real
     // season/episode number -- confirmed live against a real instance: a
-    // a long-running daily show with no season/episode identity at all
+    // long-running daily show with no season/episode identity at all
     // (season and episode both -1, i.e. Dispatcharr's guide source
     // genuinely has no per-episode data for it) carried the *identical*
     // <date> value on every single airing across a week of distinct
