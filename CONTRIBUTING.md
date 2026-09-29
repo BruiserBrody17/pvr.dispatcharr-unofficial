@@ -42,12 +42,13 @@ handled here.
   suite is a separate, plain CMake project (`tests/CMakeLists.txt`) that
   doesn't need any of that -- see its own comment.
 - **CI only covers part of this.** `.github/workflows/build.yml`
-  compiles the addon on Windows/macOS/Linux, packages the two plugins
-  as zips, and runs both narrow unit test suites (`unit-tests` for C++,
+  compiles the addon on Windows/Linux, packages the two plugins as
+  zips, and runs both narrow unit test suites (`unit-tests` for C++,
   `unit-tests-python` for the plugins) -- it doesn't build or test the
-  CoreELEC package, and doesn't exercise runtime behavior on any
-  platform. Green CI means "it compiles, lints, and doesn't regress the
-  unit-tested pieces," not "it works."
+  CoreELEC package or macOS (both built by hand instead, see
+  [docs/BUILDING.md](docs/BUILDING.md)), and doesn't exercise runtime
+  behavior on any platform. Green CI means "it compiles, lints, and
+  doesn't regress the unit-tested pieces," not "it works."
 
 ## Where things live
 

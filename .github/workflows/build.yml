@@ -101,12 +101,18 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build-tests --output-on-failure
 
+  # Linux only -- macOS is deliberately NOT part of CI, the same reasoning
+  # as the CoreELEC package (see docs/BUILDING.md's own "GitHub Actions
+  # job ... rejected" note there): a CI runner
+  # needs to be online to pick up a queued job, and macOS hardware is not available as always-on infrastructure -- confirmed live, 2026-09-28, after standing
+  # up a Windows runner successfully first (build-windows
+  # below): a Windows CI runner was practical, but the
+  # same approach doesn't fit a machine that isn't always
+  # reachable. Build macOS manually and attach the zip to a tagged release
+  # by hand instead -- see docs/BUILDING.md's "Linux / macOS (x86_64)"
+  # section, same release-time checklist CoreELEC already has.
   build-unix:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - name: Check out addon source
         uses: actions/checkout@v7
@@ -143,10 +149,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake libcurl4-openssl-dev pkg-config
 
-      - name: Install build dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install cmake curl pkg-config
-
       - name: Register addon with the build harness
         run: |
           mkdir -p addon-defs/pvr.dispatcharr-unofficial
@@ -177,7 +179,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
-          name: pvr.dispatcharr-unofficial-${{ matrix.os }}
+          name: pvr.dispatcharr-unofficial-ubuntu-latest
           path: dist/*.zip
 
       # Actions artifacts (above) aren't reachable from a Release page and
@@ -252,9 +254,8 @@ jobs:
 
       # Same fix as build-unix's own "Check out Kodi" step -- see its
       # comment for why actions/checkout's repository: shorthand doesn't
-      # work when this workflow runs on a CI runner. Applied here for the same reason, but NOT yet live-verified
-      # on Windows specifically (no Windows runner is registered as of this
-      # writing -- Windows/macOS CI was explicitly deferred).
+      # work when this workflow runs on a CI runner. Confirmed live on Windows too, 2026-09-28, once a Windows runner was actually stood up (registered with the windows-latest label) -- unlike macOS (see
+      # build-unix's own comment above), a Windows runner was practical here, so this leg IS real CI, not manual.
       - name: Check out Kodi
         shell: pwsh
         run: git clone --depth 1 --branch $env:KODI_BRANCH https://github.com/xbmc/xbmc kodi-source

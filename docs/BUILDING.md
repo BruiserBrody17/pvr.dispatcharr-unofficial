@@ -11,7 +11,10 @@ This needs real network access (to clone Kodi, fetch nlohmann/json and
 pugixml via CMake's `FetchContent`, and pull system libcurl) that this chat
 sandbox doesn't have -- do the actual build with **Claude Code** or your own
 machine/CI. The GitHub Actions workflow in `.github/workflows/build.yml`
-automates the Windows/macOS/Linux steps below on every push.
+automates the Windows/Linux steps below on every push -- macOS is
+deliberately not part of that automation; see its own note in the
+"Linux / macOS (x86_64)" section below for why, and how to build/release
+it by hand instead.
 
 ## Linux / macOS (x86_64)
 
@@ -83,6 +86,25 @@ automates the Windows/macOS/Linux steps below on every push.
    what you install via Kodi's
    "install from zip file" option, or publish in a self-hosted repository
    (see the "Distribution" section below).
+
+**macOS is deliberately NOT part of CI, as of 2026-09-28 -- the same
+"GitHub Actions job ... rejected" reasoning as the CoreELEC section below,
+just a different underlying constraint.** A runner only picks up a queued job once it's actually online, and macOS hardware is not available as always-on infrastructure (a Windows runner was confirmed practical the same day, see
+`.github/workflows/build.yml`'s own `build-windows` job and its comments).
+Registering a persistent runner on an intermittently-online
+machine means either jobs queue indefinitely whenever it's offline, or the
+machine stays running as a CI daemon full-time, which defeats the point of
+it being an occasional-use machine. Build macOS manually per the steps above
+instead, on whatever schedule the machine is actually available, and if
+it's for a real tagged release, attach the zip to the Release by hand the
+same way CoreELEC's own release checklist does:
+```bash
+gh release upload <tag> dist/addon-pvr.dispatcharr-unofficial-<version>-osx-*.zip
+```
+(the exact zip filename depends on the Mac's own architecture -- `find
+tools/depends/target/binary-addons -name 'addon-pvr.dispatcharr-unofficial-*.zip'`
+from within the `kodi-source` checkout, per step 5 above, to confirm the
+real name before uploading).
 
 **Confirmed live on a real Linux install (0.4.0):** the steps
 above work as documented -- gcc 14/cmake 3.31 from the distro's own repos
@@ -305,7 +327,7 @@ called out inline so a future rebuild doesn't have to rediscover them.
    deliberate signature change, not a bug in this addon's code. CoreELEC's
    actual latest stable release is `21.3-Omega` (confirmed against
    CoreELEC's own GitHub releases), tracking Kodi 21/Omega -- the same
-   branch this addon's Windows/macOS/Linux CI already targets
+   branch this addon's Windows/Linux CI already targets
    (`KODI_BRANCH` in `.github/workflows/build.yml`) and what a real device
    almost certainly runs unless deliberately flashed onto a dev/nightly
    build. This is the branch that actually built successfully:
