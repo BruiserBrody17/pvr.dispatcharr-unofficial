@@ -255,6 +255,23 @@ re-notification carrying an unchanged value becomes a no-op instead.
 Confirmed live afterward: the identical isolated `debug_logging` toggle,
 repeated, produced no restart at all.
 
+**Update (2026-09-26, a 22nd-pass audit): `recording_refresh_minutes`
+was the one settings branch left without this same guard, found via a
+project-wide review, not itself independently reproduced.** Every other
+branch in `OnAddonSettingChanged()` already compares against a cached
+last-applied value before acting -- but `recording_refresh_minutes`
+unconditionally set `m_recordingRefreshIntervalChanged = true` and woke
+the refresh thread on *every* notification, restart-triggering or not.
+Since this addon's own `PersistApiKeyIfChanged()` self-heal is itself a
+`SetSetting*()` call (triggering the identical Kodi-wide
+re-notify-every-setting behavior this section's own root cause already
+documents), and any ordinary settings-dialog save does too, this
+restarted the refresh thread's own wait with the *full* interval on
+every single save -- postponing the next recording/timer refresh and
+`RenewRecurringRules()` pass by a full cycle each time, with frequent
+saves able to delay it indefinitely. Fixed the same way as every other
+guarded branch: only wakes the thread when the value genuinely changed.
+
 **Local** (`live_timeshift_mode = 1`; removed once server-side proved
 stable, then reintroduced -- see above): `GetChannelStreamProperties()`
 routes live channel playback through `inputstream.ffmpegdirect`'s
@@ -1074,6 +1091,8 @@ right but didn't work, because Dispatcharr's own XFF handling specifically
 skips any hop that's itself a private-range address, silently discarding a
 home-LAN client's own IP as if it were just another internal proxy).
 
+**Token lifetime (`timeshift_buffer` 0.8.2, 2026-10-04):** that bearer token reaches ffmpeg as a `-headers` command-line argument, which `/proc/<pid>/cmdline` shows to every local user. ffmpeg authenticates once, when it connects (no `-reconnect` flag is set), so the token is now minted with a 120-second lifetime rather than the account's default; the exposure that remains is for those two minutes. See `docs/OPEN_ITEMS.md`.
+
 The addon's only role here is supplying the two values `start_buffer` uses:
 `OpenLiveTimeshiftStream()`/`StartTimeshiftBuffer()` pass `username` (the
 Dispatcharr account this addon is already configured with) and `client_ip`
@@ -1571,6 +1590,23 @@ recordings plus an attempt to play a live channel, with the provider's own
 concurrent-stream limit already fully used -- failed in about
 5 seconds, down from the ~15s this fix was written to address.
 
+**Update (found via a project-wide review, 2026-09-26): that remaining
+~5s floor was `WaitForTimeshiftPlaylistReady()`, not this fix's own
+`fatal` detection.** `CallTimeshiftPluginAction()` -- called by
+`StartTimeshiftBuffer()`, which runs *before* `OpenLiveTimeshiftStream()`'s
+own `fatal`-checking cold-start loop even starts -- unconditionally
+polled the playlist URL itself afterward (up to 20 attempts x 250ms
+sleep, a leftover from server-side timeshift's original
+STREAMURL+ffmpegdirect design, since removed -- see
+`CallTimeshiftPluginAction()`'s own header comment). Against a
+confirmed-dead buffer, every poll gets a fast 404, so this alone
+accounted for essentially the entire observed ~5s -- the actual `fatal`
+short-circuit this fix added runs only after that wait completes.
+Removed entirely (dead code with no remaining caller once server-side
+timeshift stopped handing a STREAMURL to ffmpegdirect); a fresh failure
+against this same condition should now be closer to one HTTP round trip
+than a multi-second wait.
+
 ## A plain Stop took ~5s, traced to ffmpeg's own slow SIGTERM response
 
 Real use surfaced one more real delay, this time on the ordinary Stop
@@ -1630,6 +1666,27 @@ after SIGTERM, sending SIGKILL` line -- the two systems' log timestamps
 agreed to within 19ms) -- confirming the shorter deadline
 is what actually fired, and that this pipeline tends to need the full
 escalation rather than exiting cleanly on `SIGTERM` alone.
+
+**Addendum (a project-wide review, 2026-09-26, not yet re-confirmed
+live): a second, related bug in the very poll loop this investigation
+was measuring may fully or partly explain the "needs the full
+escalation" conclusion above, rather than ffmpeg's own SIGTERM handling
+being genuinely slow.** `_stop_ffmpeg()`'s poll used a bare
+`os.killpg(pid, 0)` to check liveness -- signal 0 succeeds against a
+zombie (already exited, not yet reaped by its real parent -- see
+`_is_process_alive()`'s own docstring for why this poll's own worker
+usually isn't ffmpeg's real parent) exactly the same as against a
+genuinely still-running process. If ffmpeg actually exited promptly on
+`SIGTERM` but went zombie, this poll had no way to tell and would still
+wait out the *entire* remaining deadline before sending SIGKILL (itself
+a harmless no-op against an already-dead zombie) -- meaning the
+SIGKILL-warning line firing, and the ~2.2s measurement above, are
+equally consistent with "ffmpeg exited almost immediately but this poll
+couldn't detect it" as with "ffmpeg genuinely took ~2s to exit." Fixed
+by switching the poll to `_is_process_alive()` (already zombie-aware).
+Not re-measured live against a real instance since -- if a future
+investigation ever revisits Stop timing, check whether it's now
+near-instant before assuming ffmpeg itself is still the bottleneck.
 
 **A further, real gap found via that same log line, deliberately left
 open.** Dispatcharr's own upstream provider connection wasn't actually
@@ -1786,6 +1843,27 @@ build, or any client using plain passthrough with no viewer_id at all)
 just doesn't participate in per-viewer pruning, same as it never
 participated in reference counting to begin with -- no regression for
 that case, since the buffer-wide heartbeat mechanism is untouched.
+
+**Update (2026-09-27, a 68th-pass audit): a non-string `viewer_id` broke
+both halves of this, confirmed by direct reproduction against the
+plugin module, not reproduced live.** `viewer_id` is caller-supplied
+JSON and was used unchecked as both a `viewers` list element and a
+`viewer_heartbeats` dict key. An integer id went into `viewers` as an
+int but came back out of Redis as a *string* `viewer_heartbeats` key
+(JSON object keys are always strings), so `_prune_stale_viewers()`
+never found its heartbeat and treated it as permanently fresh -- the
+exact phantom-viewer leak this section's fix exists to prevent. A JSON
+array/object id was worse: `start_buffer` raised `TypeError`
+("unhashable type") at its own `viewer_heartbeats` write, which on a
+fresh start comes *after* `_start_ffmpeg()` has already spawned ffmpeg
+but before that buffer's state is saved -- an ffmpeg process nothing
+tracks, holding a provider stream slot until the container restarts.
+This addon itself always sends a string, so only another client of the
+same action could hit either. Every action now reads the id through
+`_resolve_viewer_id()`: a non-empty string passes through, an integer is
+normalized to its string form (so such a client keeps working as a
+reference-counted viewer rather than falling back to an unconditional
+`stop_buffer` teardown), and anything else counts as no `viewer_id`.
 
 Verified via isolated logic testing (the crashed-viewer scenario, the
 ordinary both-fresh case, and the pre-upgrade-state case that must NOT
@@ -1974,11 +2052,10 @@ Fixed by rewriting `SendTimeshiftHeartbeat()` to never call
 whatever access token is already cached (a mutex lock, no network call)
 and skips the heartbeat outright if that's empty, using its own
 dedicated `curl` handle with a short, fixed 2000ms timeout instead of
-`Request()`'s shared `m_config.timeoutSeconds`/retry logic -- the same
-"build a lightweight call directly instead of going through the shared
-`Request()` helper" pattern this file already uses for
-`WaitForTimeshiftPlaylistReady()`, for the same reason (different timeout
-needs than the general-purpose helper provides). Relies on
+`Request()`'s shared `m_config.timeoutSeconds`/retry logic -- building a
+lightweight call directly instead of going through the shared
+`Request()` helper, for the same reason (different timeout needs than
+the general-purpose helper provides). Relies on
 `RefreshLiveManifest()` -- called far more often than the heartbeat's
 10s interval, every read-loop iteration -- to keep the cached token
 fresh via the normal path in practice; a heartbeat skipped because the
@@ -2114,6 +2191,28 @@ through (`demuxer seek to: ..., success`, `speed:1`/`canseek:true`
 holding throughout) -- well past the ~10s mark that reliably killed it
 under 1.0.6. Confirmed safe to tag.
 
+**Update -- the plugin-side fix above only ever covered one of the two
+paths this cache actually has, a real gap found via a project-wide
+review (2026-09-26), not re-confirmed live.** "Any call that reparses
+the playlist" (the bullet above's own phrasing) was accurate but
+narrower than it needed to be: while the playlist itself is unchanged
+since the last read, `_get_live_manifest()` took a *different*, faster
+path that reused a cached entry's size outright with no re-stat at
+all -- including for what was the newest segment. Under ffmpeg's own
+normal one-segment-at-a-time behavior, a given segment is "newest" for
+exactly the one call where it first appears (the reparse path, already
+protected), then immediately demoted on every call after that (the fast
+path, unprotected) -- meaning it only ever got the single earliest,
+highest-risk sample this whole mechanism exists to double-check, with
+no actual second look ever happening. The fast path now re-stat()s the
+newest entry too, updating the cached value in place so a later fast
+-path hit reuses the corrected size. Whether this ever actually
+mattered in practice for the original failure above is unconfirmed
+either way (needs the underlying cross-process stat() visibility lag to
+be real, e.g. on some network filesystems) -- logged here as a
+completeness fix to the existing mitigation, not a claim that it
+explains a *new* observed failure.
+
 However: `Packet corrupt` did **not** go away -- it just stopped causing
 a permanent stall. Over the same session: many occurrences, recurring at
 a strikingly regular ~2.5s interval (close to the plugin's 2s
@@ -2195,12 +2294,17 @@ being cosmetic, or if a lower-risk way to confirm the hypothesis
 directly (e.g. capturing raw bytes on both sides of a real splice)
 becomes worth the effort.
 
+**Update (2026-10-02): confirmed by measurement, and fixed by switching the plugin's ffmpeg to the `hls` muxer (`timeshift_buffer` 0.8.0).**
+The "lower-risk way to confirm the hypothesis directly" above turned out to be cheap: the plugin's file server hands out each segment whole, so consecutive segments of a running buffer can simply be downloaded and read. Fourteen consecutive segments from a real stream (plugin 0.7.0): every one of the five PIDs (PAT, SDT, PMT, video, audio) restarted its continuity counter at 0 at every file boundary -- a break at almost every PID at every splice -- and `ffmpeg -i` over the concatenation reported 14 `Packet corrupt` and 12 `corrupt input packet`, one per splice; rewriting just those 4-bit counters so they run on across the files brought the count to zero, which pins the cause. Binary-patching the counters at serve time was worked out and set aside (the plugin's file server runs in several worker processes, so the per-segment counter offset would need shared state), because the `segment` muxer is the cause and the `hls` muxer keeps one muxer, and so one set of counters, across its files: the same ffmpeg run over a captured stream with `-f hls -hls_time N -hls_list_size <visible> -hls_delete_threshold <visible> -hls_flags delete_segments+omit_endlist -hls_segment_filename seg_%05d.ts` produced the same `seg_%05d.ts` files and a playlist with `#EXT-X-MEDIA-SEQUENCE` and `#EXTINF` (the parser needed no change), with no break over 55 boundary checks. Old files are now deleted rather than renamed over, and `-hls_delete_threshold` set to the old window's extra half keeps the same 2x retention.
+
+Live, against the real instance with 0.8.0: 14 consecutive segments from a real stream, byte sizes equal to the manifest's, 63 boundary checks and zero breaks, `ffmpeg` over the concatenation silent apart from one pre-existing source timestamp warning. In Kodi, the same scripted run (75 s of play, a pause, four step seeks, 20 s more) on 0.7.0 then 0.8.0: **82 `Packet corrupt` lines against 0**, with the audio-sync warnings (4 in each, right after the seeks) and `non-existing PPS 0 referenced` noise (41 and 43, a property of that channel's own stream) unchanged -- so those were never this mechanism. A 200 s pause on a 1-minute buffer, longer than the window, resumed and played on with the "behind the oldest segment" clamp logged and no fatal error; with that buffer length a segment 0 request answered 404 once it had aged out, so disk use stays bounded, while ones 40 behind the newest were still served. The segment sizes, durations and playlist shape the addon reads are unchanged; the new-plugin-with-old-addon and old-plugin-with-new-addon pairings work, since neither side depends on how files are named or reused. `plugin.py`'s `_build_ffmpeg_command()` carries the reason, and `tests/test_timeshift_buffer.py` runs the real ffmpeg (skipped when it is absent) over a generated stream and checks the counters across the files: 30 breaks with the old muxer, 0 with the new.
+
 **Deliberately left open, not chased further this pass** -- flagged
 here rather than closed out, per the live-testing session's own
 recommendation: it's the *same symptom* that started this whole
 investigation, just not currently fatal, and "harmless so far" isn't
-the same as "understood." Tracked in `docs/OPEN_ITEMS.md`'s Ongoing
-section.
+the same as "understood." Tracked in `docs/OPEN_ITEMS.md`'s "Non-fatal
+Packet corrupt on server-side live timeshift" entry.
 
 ### The "cosmetic" Packet corrupt noise stopped being cosmetic once -- first observed real failure
 
@@ -2233,7 +2337,8 @@ This is the first observed occurrence, not yet a reliable repro -- one
 data point, on one channel, after one channel switch. Deliberately not
 chased further immediately (a formatting/version-renumber PR was the
 actual focus of that testing round); tracked here and in
-`docs/OPEN_ITEMS.md`'s Ongoing section as a real, needs-fixing signal
+`docs/OPEN_ITEMS.md`'s "Non-fatal Packet corrupt on server-side live
+timeshift" entry as a real, needs-fixing signal
 now rather than a purely theoretical "revisit if it stops being
 cosmetic" trigger. Next step, whenever this gets picked back up: try to
 force a live repro deliberately (let a channel run long enough to hit
@@ -3088,6 +3193,177 @@ test's result, since Dispatcharr's own request-log surface for the
 loopback proxy wasn't accessible from outside to directly confirm no
 forged pipelined request landed -- the entry point closing is what
 mattered here, same reasoning as the `channel_uuid` verification above).
+
+**Update -- the fix above had a real, confirmed bypass, found via a
+project-wide review (2026-09-26), not yet re-verified against a live
+instance.** `ipaddress.ip_address()` alone does not universally reject
+"any value carrying embedded `\r\n`" as claimed above -- its own IPv6
+zone/scope-id handling (the `%...` suffix, e.g. `fe80::1%eth0`) only
+rejects an empty scope id or one containing another `%`; anything else,
+including embedded `\r\n`, passes straight through as a "valid" address.
+Confirmed directly: `ipaddress.ip_address("fe80::1%x\r\nX-Injected:
+evil")` does not raise. A zone/scope id is never legitimate for this
+field anyway (it only disambiguates which *local* interface a
+link-local address routes through, not something a *remote* client's
+own attribution address would ever carry), so `_stream_attribution_headers()`
+now also rejects any `client_ip` containing `%`/`\r`/`\n` explicitly,
+closing the whole class rather than just this one payload shape.
 A second `start_buffer` call with a real IPv4 `client_ip` worked
 identically end-to-end, confirming the fix doesn't break legitimate
 attribution.
+
+## Resuming after the plugin's rolling buffer has moved on
+
+*2026-09-30. Closes the open item "Live-timeshift address space never drops rolled-off segments".*
+
+`timeshift_buffer` keeps a window of `buffer_minutes` listed in its manifest, but
+ffmpeg's `-segment_wrap` is twice that: a rolled-off segment's *file* survives
+untouched for one more window, then its filename is reused for new content. The
+addon's own address space is append-only (fixed-origin byte addressing), so it kept
+listing segments the plugin had long since let go of, and a position left behind the
+window -- a long pause, or simply watching far behind live -- eventually pointed at a
+recycled file.
+
+**Reproduced live**, with the plugin's `buffer_minutes` set to 1 (so the wrap is two
+minutes) and Kodi on Server-side timeshift: watched a channel, paused, resumed after 182
+seconds. The first read behind the window logged `segment seg_00016.ts (sequence 16)
+real size (1068968, from Content-Range) disagrees with the manifest-reported size this
+session cached (1357924) -- ... giving up on this stream`, and a few seconds later Kodi's
+playback had ended. That is the `Content-Range` cross-check doing its job on a file
+reused for unrelated content, and being fatal because it can't tell this from real
+corruption. (A pause between one and two windows would have worked by accident: the old
+file was still intact.)
+
+**Fix.** The manifest is the whole current window, so its lowest `sequence`
+(`OldestLiveManifestSequence()`, `LiveManifestParser.h`) is what the plugin still holds.
+`RefreshLiveManifest()` records it (`oldestAvailableSequence`, only ever moving forward),
+and `FirstAvailableLiveSegmentIndex()` (`LiveEdgeMargin.h`) turns it into the first of
+this stream's own segments that is still real. Three places use it:
+- `ReadLiveTimeshiftStream()` moves a position behind it up to its byte offset (logged at
+  info), so the stale read never happens; MPEG-TS segments start on a keyframe, so the
+  demuxer resyncs there;
+- `SeekLiveTimeshiftStream()` clamps a seek to it, the way it already clamps to the tail;
+- `GetStreamTimes()` reports it as `PTSBegin` (`GetLiveTimeshiftStreamBeginMs()`), so the
+  seek bar stops offering history that is gone.
+
+Re-run with the same 1-minute buffer and the same 182-second pause: the first read after
+resume logged `position 20580952 is behind the oldest segment the timeshift buffer still
+holds -- continuing from byte 83896128`, and playback carried on with no
+disagreement and no fatal. (With a window that small the viewer then sits on the trailing
+edge, so the clamp repeats every few seconds; at the default 60 minutes it is a single jump.)
+The server's `buffer_minutes` was set back to its previous value afterwards.
+
+Only the part of the history that has been rolled off the *listed* window is dropped, not
+the further window the files would have lasted: a segment inside the listed window has a
+full window of life left, which is what makes the clamp safe against the recycling race.
+
+## Newest-segment size, and what the plugin's re-stat can't do for the addon
+
+*2026-09-30, a correction to how the "newest segment is re-stat()'d" mitigation above
+reads.* That mitigation lives entirely in the plugin: `_get_live_manifest()` re-stats
+the newest listed segment so a size sampled while ffmpeg was still writing it is
+corrected in the plugin's own cache. It does not reach this addon. `RefreshLiveManifest()`
+takes a segment's size once, the first time its sequence appears
+(`ParseNewLiveManifestSegments()` skips everything already merged, on the reasoning that a
+listed segment is closed), and never revisits it, so whatever it first sampled is permanent
+for that stream; the only protection on this side is the `Content-Range` cross-check,
+which ends the session rather than absorbing a corrected size. Whether this ever bites
+depends on the stat-visibility lag the plugin's re-stat guards against being real in
+practice (never observed here; ffmpeg's segment muxer lists a segment after closing it).
+Left as a design decision, see `docs/OPEN_ITEMS.md`.
+
+## Three small `timeshift_buffer` hardening fixes (0.6.6)
+
+*2026-10-01. Closes three open items from the 11th/20th-pass audits; all three are covered by
+unit tests, and all three were confirmed live on a real Dispatcharr (see `docs/OPEN_ITEMS.md`'s Fixed section).*
+
+**A fresh start no longer inherits a leftover channel directory.** `_start_ffmpeg()` only
+`mkdir(exist_ok=True)`'d the channel directory. One can survive without Redis state behind it
+(a container restart wipes Redis, not the storage volume; `_BUFFER_STATE_TTL` can expire; a
+teardown's `rmtree` can half-finish), and then, until the new ffmpeg closed its first segment and
+rewrote `live.m3u8`, `_get_live_manifest()` served the stale playlist with sequence numbers far
+above the new instance's. The addon trimmed to its last few segments, and once the new playlist
+restarted at sequence 0 every entry of it was filtered out as "not new", so the viewer stalled at
+the tail until the new numbers passed the old ones. A directory that kept its old mtime was also
+fair game for a reaper tick's 300-second orphan scrub, and the missing `cwd` then surfaced from
+`Popen` as a misleading "ffmpeg not found". `_clear_channel_dir()` now removes it first, on the
+fresh-start path only (the caller holds the channel's start lock and has already established there
+is nothing to reattach to), which also gives the recreated directory a fresh mtime.
+
+**A teardown decided from a stale copy of the state no longer destroys its replacement.**
+`get_live_manifest` read the buffer state, spent a few seconds building a manifest for a dead
+ffmpeg, then called `_teardown_buffer()` with that copy; a concurrent `start_buffer` could have
+classified the buffer dead and started a replacement in between, and the stale teardown then wrote
+the old `stopping` marker over the new state, removed the directory the new ffmpeg was writing
+into, and deleted the new state. `_teardown_buffer()` now re-reads the current state first and
+returns False, touching nothing, if it holds a *different instance* (`pid` and `started_at`, both
+set once at start and never rewritten). A state that has vanished is not a mismatch -- the old
+instance still has an ffmpeg to stop. This narrows a read-then-write window rather than closing it;
+a Redis transaction would close it.
+
+**The file server listens on IPv6 too.** It bound `0.0.0.0` only, so a client whose host resolved to
+IPv6 (a non-Docker install, which this addon's own timeshift URLs already allow for) could never
+reach it. It now binds a dual-stack `::` socket (`IPV6_V6ONLY` off, so IPv4 clients still work) and
+falls back to IPv4 alone where the host has no IPv6, the usual Docker case; it logs which it got.
+
+## Guarded state writes and stale-listener cleanup (0.6.7)
+
+*2026-10-01. Closes two open items from the 31st-pass and project-wide audits; both are covered by unit
+tests, and both were confirmed live on a real Dispatcharr (below).*
+
+**Every write to a buffer's Redis state is now a compare-and-set.** Heartbeats, viewer registration,
+reattach, the reaper's pruning and the teardown's `stopping` marker each read the whole state blob, changed
+a field and wrote the whole blob back, so two of them interleaving silently lost one. The three real
+consequences: a heartbeat overwrote a just-registered viewer (the viewer then looked idle and was pruned), a
+heartbeat overwrote the `stopping` marker (so `start_buffer` reattached to a buffer being torn down), and a
+late heartbeat recreated a state `_delete_buffer_state()` had just removed (a phantom buffer with no ffmpeg
+behind it, until its TTL ran out). `_update_buffer_state(channel_uuid, mutate)` re-reads, applies the
+mutation and stores only if the stored JSON text still equals exactly what was read -- one Lua `EVAL`, so
+the check and the write are atomic -- and on a lost race re-reads and re-applies, up to ten times, then
+reports "contended". Comparing raw text rather than decoded fields means any change by anyone, including one
+that reorders keys, counts. A mutator may return `None` to decline, and an absent state is never created.
+`_teardown_buffer()` takes an `abort_if` predicate evaluated against the fresh state inside that same
+mutation, so `stop_buffer` (a viewer joined after the last one left) and the reaper (a heartbeat landed after
+the idle check) no longer destroy a buffer that has become active again; `start_buffer`'s reattach refuses a
+`stopping` buffer with the existing retryable error. Redis servers that refuse scripts fall back to the old
+unguarded write, with one logged warning, rather than breaking playback.
+
+**A reloaded plugin stops what its previous copy started.** Dispatcharr's reload drops the plugin module
+from `sys.modules` and imports it again without calling the old copy's `stop()` in the other workers, so each
+reload left a listener on the file-server port and a reaper thread behind (observed live as per-worker
+listener sockets multiplying across reloads, SO_REUSEPORT letting them coexist, each serving from a stale
+copy of the code). The workers are gevent-patched, so the old copies' threads are visible in
+`threading.enumerate()`. Each now carries its own handle (`tsb_server`, `tsb_stop_event`), and the first
+`run()` of any import looks for threads with the plugin's thread names that are not its own and shuts them
+down. Threads started by 0.6.6 or earlier have no handle to stop; the sweep names them in one warning and
+leaves them, and a Dispatcharr restart is what clears them -- so the first reload on 0.6.7 can't prove the
+fix, the second can.
+
+*Confirmed live (2026-10-01).* The listener count on the plugin port, with the reload loop run so every worker
+re-imports the plugin and starts the new copy, went 7, 10, 13, 16 on 0.6.6 and held at 4 throughout on 0.6.7 (after
+a container restart, which the sweep needs once, since 0.6.6 threads have no handle). The three state races,
+injected through the plugin's own heartbeat against the real Redis, all lost on 0.6.6 and all held on 0.6.7.
+
+## Serialized startup of the file server and reaper (0.6.8)
+
+*2026-10-02. Closes `docs/OPEN_ITEMS.md`'s "HTTP-server and reaper startup checks are unlocked"; unit-tested only.*
+
+Every `run()` calls `_ensure_http_server_running()` and `_ensure_reaper_running()` first, and the workers are gevent-patched, so several requests can be
+inside them together on the first calls after a worker starts. Both were check-then-create with nothing serializing them. For the file server that meant two
+binds (`SO_REUSEPORT` lets the second succeed) with the module keeping only the second server's handle, leaving the first listener impossible to shut down by `stop()`;
+for the reaper, the second thread's stop event overwrote the first's, so the first could not be stopped either. The check-and-create is now under a lock in each
+(the server's is reentrant, because a changed `storage_path` or port restarts it by calling the stop path from inside, and the stop path takes the same lock).
+
+## A recycled pid is not our ffmpeg (0.6.9)
+
+*2026-10-02. Closes `docs/OPEN_ITEMS.md`'s "timeshift_buffer trusts a Redis-stored pid".*
+
+`_stop_ffmpeg()` and `_is_process_alive()` acted on whatever pid the buffer's Redis state held. Once the ffmpeg it names has exited, that number can belong to an unrelated process -- a restart resets the process table while a separately-run Redis keeps the state, or the pid wraps under heavy buffer churn -- and then a stop would SIGTERM, and after two seconds SIGKILL, someone else's process group, while a liveness check would call a dead buffer alive. `_start_ffmpeg()` now records the process's start time (`/proc/<pid>/stat` field 22, in clock ticks since boot, read after the last `)` because the command name may contain spaces and parentheses) as `pid_start_ticks`; the pair (pid, start time) is never reused. A mismatch makes `_stop_ffmpeg()` log and not signal, and `_is_process_alive()` return false without reaping. State with no recorded value (an older plugin version, or no readable `/proc`) is trusted as before, and a pid with no `/proc` entry at all is not a mismatch, so the existing already-gone handling still applies. Checked against a real process on a Linux kernel as well as with unit tests.
+
+## A dead ffmpeg no longer takes the rewind window with it (0.7.0)
+
+*2026-10-02. Closes `docs/OPEN_ITEMS.md`'s "Dead-buffer detection destroys a paused/rewound viewer's rewind window".*
+
+When the buffer's ffmpeg exits mid-session -- an upstream drop, a provider limit; it runs with no reconnect -- the playlist and every listed segment stay on disk and stay valid; only growth stops. `_get_live_manifest()` used to treat that as fatal: it raised `BufferFailedError`, and the `get_live_manifest` handler answered `fatal: true` and tore the buffer down on the spot (`rmtree` plus the Redis state). A client that is paused polls that action, so the first poll after ffmpeg died wiped the buffered window of a viewer paused or rewound well behind live, who had plenty of valid content left to play. Dead is not exhausted. Now the frozen manifest is returned with `ended: true` and the buffer is left to the normal teardown paths (`stop_buffer`, the idle reaper once nobody is polling). Only a buffer that never produced a playlist at all still fails fast.
+
+On the addon side `ended` is sticky on the stream state and `IsAtEndedTail()` decides what it means: a read behind the tail carries on, a read at the tail of an ended buffer stops waiting (no catch-up budget) and returns end-of-file. EOF, not `-1`: Kodi retries `-1` about five times a second and never ends playback, whereas EOF ends it cleanly -- the same result the in-progress-recording path already found. Verified live against the real instance by pausing a server-side-timeshift viewer ~45 s behind live, stopping the upstream channel through Dispatcharr's own stop endpoint, and resuming 25 s later: 0.6.9 had already torn the buffer down and playback ended 11 s after resume; 0.7.0 still had it (`ended: true`), played about 72 s of it, and ended by itself.

@@ -13,3 +13,4 @@ CMakeCache.txt
 __pycache__/
 *.pyc
 .pytest_cache/
+build-glue/

@@ -9,6 +9,12 @@
 namespace dispatcharr
 {
 
+// The whole seconds from `start` to `end`, 0 when `end` is not later, and at most INT_MAX. A recording
+// row ending past about 2094 made `static_cast<int>(end - start)` wrap to a negative duration for Kodi
+// (found by the 2026-10-04 fourth hardening sweep; a 64-bit time_t can hold the difference, an int
+// cannot).
+int ClampedDurationSeconds(time_t start, time_t end);
+
 // Pure field-mapping core of DispatcharrClient::ParseRecordingJson -- maps
 // a single /api/channels/recordings/ item onto a Recording, including its
 // documented time-window/custom_properties.status-override isInProgress
@@ -29,6 +35,16 @@ namespace dispatcharr
 // call) specifically so this is unit-testable standalone; see
 // ../tests/test_recording_parser.cpp.
 Recording ParseRecordingFields(const nlohmann::json& item, time_t now);
+
+// Whether a single-recording GET answered with that recording: a JSON object whose "id" is
+// `expectedId`. Request() turns an empty 2xx body into `{}`, and ParseRecordingFields({}) is
+// id 0 with neither upcoming nor in progress -- which DecideDeleteTimerAction() reads as "already
+// finished, nothing to do", so DeleteTimer() reported success without deleting a scheduled
+// recording, UpdateTimer() reduced an edit to a rename and IsInProgressContentGone() read the
+// stream as finished (found by the 2026-10-04 sixth hardening sweep; needs a misbehaving proxy or
+// server). A lookup that did not return the recording is a failed lookup, which every caller
+// already handles as "unknown".
+bool IsRecordingResponseFor(const nlohmann::json& item, int expectedId);
 
 // Pure field-mapping core of DispatcharrClient::GetRecordingEdl()'s
 // per-entry loop -- maps a single recording_edl plugin entry onto a

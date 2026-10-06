@@ -32,7 +32,7 @@ Nothing else to configure -- no storage path, no port to map.
 |---|---|---|
 | `get_edl` | Returns a recording's comskip EDL entries (`{"recording_id": <id>}`). Empty list, not an error, if comskip never ran or ran in "cut" mode. | No |
 | `scrub_orphaned_sidecars` | Removes `.edl`/`.logo.txt` files whose recording is gone, then prunes any directory left empty (including ones already empty going in). Scoped to your DVR Settings' path templates; never touches the bare `/data/recordings` root or anything dot-prefixed. | **Yes** -- confirm dialog |
-| `list_dvr_hls_staging_dirs` | Classifies every `.dvr_*_hls` directory found as `active`, `preserved_failure`, `referenced`, or `orphaned` (see table below). Reports only, changes nothing. | No |
+| `list_dvr_hls_staging_dirs` | Classifies every `.dvr_*_hls` directory found -- under `/data/recordings` and under any library an absolute DVR path template points at -- as `active`, `preserved_failure`, `referenced`, or `orphaned` (see table below). Reports only, changes nothing. | No |
 | `delete_orphaned_dvr_hls_dirs` | Deletes only directories `list_dvr_hls_staging_dirs` classified `orphaned` -- never based on whether a directory is empty. | **Yes** -- confirm dialog |
 
 `.dvr_*_hls` classifications:

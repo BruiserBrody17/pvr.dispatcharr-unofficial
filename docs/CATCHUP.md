@@ -11,10 +11,18 @@ actually is, since it's easy to conflate with TVHeadend-style timeshifting:
 
 - **It's per-channel and per-programme, not a continuous rolling buffer.**
   A channel supports it only if `Channel::catchupEnabled` (`is_catchup` in
-  the API) is true and `catchupDays` (`catchup_days`) is nonzero -- both
-  driven by whether the *upstream IPTV provider* offers catch-up/archive for
-  that specific channel (the Xtream Codes `tv_archive` flag), not something
-  Dispatcharr generates itself for every channel.
+  the API) is true -- driven by whether the *upstream IPTV provider* offers
+  catch-up/archive for that specific channel (the Xtream Codes `tv_archive`
+  flag), not something Dispatcharr generates itself for every channel.
+  `catchupDays` (`catchup_days`) is usually also nonzero, but not always:
+  *(update 2026-09-26, a 29th-pass audit, confirmed against Dispatcharr's
+  own real current upstream source, not itself independently reproduced)*
+  `catchup_days` can genuinely be `0` on a real catch-up-enabled channel --
+  Dispatcharr treats that as "archive depth unknown", not "no catch-up"
+  (a provider setting `tv_archive=1` without `tv_archive_duration`), and
+  its own server-side session creation never checks `catchup_days` at
+  all. `IsWithinCatchupWindow()` (`EpgTagUtil.cpp`) falls back to a
+  default retention window in that case rather than refusing outright.
 - **You pick a specific past (or currently-airing) EPG entry from the guide
   and it plays from that programme's start**, with normal seek/rewind
   *within that one programme* (the catch-up endpoint supports HTTP Range,
@@ -29,9 +37,11 @@ actually is, since it's easy to conflate with TVHeadend-style timeshifting:
   layered on top.
 - `IsEPGTagPlayable()` only reports true once the programme has actually
   started (`GetStartTime() <= now`) and is still within the channel's
-  `catchupDays` retention window -- there's no way to query the provider's
-  *actual* current archive depth per programme, so this is a best-effort
-  window check, not a guarantee the archive still has that exact programme.
+  `catchupDays` retention window (or a default window, when `catchupDays`
+  itself is unknown -- see above) -- there's no way to query the
+  provider's *actual* current archive depth per programme, so this is a
+  best-effort window check, not a guarantee the archive still has that
+  exact programme.
 
 ## `GetChannels()` never reported which channels actually have catch-up
 

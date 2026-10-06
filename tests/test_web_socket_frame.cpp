@@ -187,3 +187,121 @@ TEST_CASE("UnmaskPayload handles an empty payload", "[WebSocketFrame]")
   UnmaskPayload(payload, maskKey);
   CHECK(payload.empty());
 }
+
+// ---------------------------------------------------------------------
+// DecideWebSocketDataFrameAction
+// ---------------------------------------------------------------------
+
+TEST_CASE("DecideWebSocketDataFrameAction completes a single unfragmented text frame", "[WebSocketFrame]")
+{
+  WebSocketMessageKind kind = WebSocketMessageKind::kNone;
+  CHECK(DecideWebSocketDataFrameAction(0x1, /*fin=*/true, kind) == WebSocketDataFrameAction::kAccumulateAndComplete);
+  CHECK(kind == WebSocketMessageKind::kNone);
+}
+
+TEST_CASE("DecideWebSocketDataFrameAction accumulates a fragmented text message across continuations",
+          "[WebSocketFrame]")
+{
+  WebSocketMessageKind kind = WebSocketMessageKind::kNone;
+  CHECK(DecideWebSocketDataFrameAction(0x1, /*fin=*/false, kind) == WebSocketDataFrameAction::kAccumulate);
+  CHECK(kind == WebSocketMessageKind::kText);
+  CHECK(DecideWebSocketDataFrameAction(0x0, /*fin=*/false, kind) == WebSocketDataFrameAction::kAccumulate);
+  CHECK(kind == WebSocketMessageKind::kText);
+  CHECK(DecideWebSocketDataFrameAction(0x0, /*fin=*/true, kind) == WebSocketDataFrameAction::kAccumulateAndComplete);
+  CHECK(kind == WebSocketMessageKind::kNone);
+}
+
+TEST_CASE("DecideWebSocketDataFrameAction drops a non-FIN binary frame and its continuations, not returned as text",
+          "[WebSocketFrame]")
+{
+  // The exact bug this exists to fix: a non-FIN binary frame's own
+  // continuation frames (opcode 0x0) must never be accumulated/returned
+  // as a text message.
+  WebSocketMessageKind kind = WebSocketMessageKind::kNone;
+  CHECK(DecideWebSocketDataFrameAction(0x2, /*fin=*/false, kind) == WebSocketDataFrameAction::kDrop);
+  CHECK(kind == WebSocketMessageKind::kBinary);
+  CHECK(DecideWebSocketDataFrameAction(0x0, /*fin=*/false, kind) == WebSocketDataFrameAction::kDrop);
+  CHECK(kind == WebSocketMessageKind::kBinary);
+  CHECK(DecideWebSocketDataFrameAction(0x0, /*fin=*/true, kind) == WebSocketDataFrameAction::kDrop);
+  CHECK(kind == WebSocketMessageKind::kNone);
+}
+
+TEST_CASE("DecideWebSocketDataFrameAction drops a single unfragmented binary frame", "[WebSocketFrame]")
+{
+  WebSocketMessageKind kind = WebSocketMessageKind::kNone;
+  CHECK(DecideWebSocketDataFrameAction(0x2, /*fin=*/true, kind) == WebSocketDataFrameAction::kDrop);
+  CHECK(kind == WebSocketMessageKind::kNone);
+}
+
+TEST_CASE("DecideWebSocketDataFrameAction rejects a new text frame arriving mid-assembly", "[WebSocketFrame]")
+{
+  WebSocketMessageKind kind = WebSocketMessageKind::kText; // already assembling a text message
+  CHECK(DecideWebSocketDataFrameAction(0x1, /*fin=*/false, kind) == WebSocketDataFrameAction::kProtocolError);
+}
+
+TEST_CASE("DecideWebSocketDataFrameAction rejects a new binary frame arriving mid-assembly", "[WebSocketFrame]")
+{
+  WebSocketMessageKind kind = WebSocketMessageKind::kText;
+  CHECK(DecideWebSocketDataFrameAction(0x2, /*fin=*/false, kind) == WebSocketDataFrameAction::kProtocolError);
+}
+
+TEST_CASE("DecideWebSocketDataFrameAction rejects a stray continuation with no initiating frame", "[WebSocketFrame]")
+{
+  WebSocketMessageKind kind = WebSocketMessageKind::kNone;
+  CHECK(DecideWebSocketDataFrameAction(0x0, /*fin=*/true, kind) == WebSocketDataFrameAction::kProtocolError);
+}
+
+TEST_CASE("DecideWebSocketDataFrameAction ignores an unknown/reserved opcode without disturbing assembly",
+          "[WebSocketFrame]")
+{
+  WebSocketMessageKind kind = WebSocketMessageKind::kText;
+  CHECK(DecideWebSocketDataFrameAction(0x3, /*fin=*/true, kind) == WebSocketDataFrameAction::kDrop);
+  CHECK(kind == WebSocketMessageKind::kText); // untouched -- still mid-assembly
+}
+
+// ---------------------------------------------------------------------
+// IsValidServerFrame
+// ---------------------------------------------------------------------
+
+TEST_CASE("IsValidServerFrame accepts ordinary unmasked data and short control frames", "[WebSocketFrame]")
+{
+  CHECK(IsValidServerFrame(0x1, true, false, 0));
+  CHECK(IsValidServerFrame(0x1, false, false, 70000)); // data frames may be long and fragmented
+  CHECK(IsValidServerFrame(0x0, false, false, 10));
+  CHECK(IsValidServerFrame(0x2, true, false, 1 << 20));
+  CHECK(IsValidServerFrame(0x9, true, false, 125)); // ping at the limit
+  CHECK(IsValidServerFrame(0xA, true, false, 0));
+  CHECK(IsValidServerFrame(0x8, true, false, 2));
+}
+
+TEST_CASE("IsValidServerFrame refuses a masked frame, which a server must never send", "[WebSocketFrame]")
+{
+  CHECK_FALSE(IsValidServerFrame(0x1, true, true, 5));
+  CHECK_FALSE(IsValidServerFrame(0x9, true, true, 0));
+}
+
+TEST_CASE("IsValidServerFrame refuses an oversized or fragmented control frame", "[WebSocketFrame]")
+{
+  CHECK_FALSE(IsValidServerFrame(0x9, true, false, 126));
+  CHECK_FALSE(IsValidServerFrame(0x8, true, false, 70000));
+  CHECK_FALSE(IsValidServerFrame(0x9, false, false, 4)); // a ping with FIN clear
+  CHECK_FALSE(IsValidServerFrame(0xA, false, false, 0));
+}
+
+TEST_CASE("BuildMaskedControlFrame uses the 7-bit length up to exactly 125 bytes and the 16-bit form from 126",
+          "[WebSocketFrame]")
+{
+  uint8_t maskKey[4] = {1, 2, 3, 4};
+  const std::vector<uint8_t> p125(125, 0x41);
+  const std::vector<uint8_t> p126(126, 0x41);
+  const std::vector<uint8_t> f125 = BuildMaskedControlFrame(0x0A, p125, maskKey);
+  const std::vector<uint8_t> f126 = BuildMaskedControlFrame(0x0A, p126, maskKey);
+  // header(2) + mask(4) + payload; the mask bit is set, so the length byte is 0x80 | 125.
+  CHECK(f125.size() == 2 + 4 + 125);
+  CHECK(f125[1] == (0x80 | 125));
+  // 126 switches to the 2-byte extended length: header(2) + ext(2) + mask(4) + payload.
+  CHECK(f126.size() == 2 + 2 + 4 + 126);
+  CHECK(f126[1] == (0x80 | 126));
+  CHECK(f126[2] == 0x00);
+  CHECK(f126[3] == 126);
+}

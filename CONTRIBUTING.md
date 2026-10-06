@@ -8,17 +8,16 @@ handled here.
 ## Before you start
 
 - **The automated test suite is narrow, on both sides.** `tests/`
-  (Catch2, run via CI's `unit-tests` job) covers only C++ source files
-  with no Kodi SDK dependency at all -- `XmlTvParser`/`TimeUtil`/
-  `TimeZoneUtil`/`EpgTagUtil`/`StringUtil`/`DateTimeFormat`/`UrlEncode`/
-  `JsonFieldUtil`/`CurlCallbacks`/`CatchUpUtil`/`RecurringRuleUtil`/`RecordingParser`/
-  `PluginRunResult`/`RealtimeUpdateParser`/`M3u8SegmentParser`/`SegmentLookup`/
-  `ChannelParser`/`TimerRuleParser`/`TimerIdentity`/`LiveManifestParser`/
-  `LiveEdgeMargin`/`RecurringRuleRenewal`/`WebSocketFrame`/`SeriesRuleMatching`/
-  `RecurringRuleWeekdays`/`ChannelGroupFilter`/`AuthBackoff` as of 2026-09-17
-  (`AuthBackoff` is the newest addition). The addon's actual PVR API surface
-  and HTTP/WebSocket handling (`PVRDispatcharr`/`DispatcharrClient`/
-  `WebSocketClient`) aren't covered by anything automated.
+  (Catch2, run via CI's `unit-tests` jobs) covers C++ source files
+  with no Kodi SDK dependency at all -- the pure helpers pulled out of
+  `DispatcharrClient`/`PVRDispatcharr` (the parsers, the time and zone
+  arithmetic, the staleness, backoff and retry decisions, the response
+  classifiers, ...); `tests/CMakeLists.txt` lists every module, and each
+  new piece of such logic gets its test in the same change. The addon's
+  actual PVR API surface and HTTP/WebSocket handling
+  (`PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`) aren't covered by
+  Catch2 beyond `WebSocketClient`'s local-server tests; `tests/glue/` (below)
+  drives the real code against a fake Dispatcharr.
   `dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/` (pytest,
   run via CI's `unit-tests-python` job) cover each plugin's
   Dispatcharr-independent pure/filesystem logic, and each plugin's own
@@ -28,6 +27,9 @@ handled here.
   themselves stay untested. `tools/tests/` covers
   `tools/check_doc_refs.py` itself the same way (real parsing/matching
   logic against synthetic `tmp_path` docs/src, not this repo's own).
+  `tests/glue/` is an optional, by-hand harness that runs the real `DispatcharrClient`/`PVRDispatcharr`
+  code against a fake Dispatcharr outside Kodi (see its README); CI runs its scenarios as the `glue-harness`
+  job, and it is also for running by hand after touching the stream, auth or shared-curl paths.
   Verification of everything else is manual: smoke-testing against a
   real Dispatcharr instance and a real (or emulated) Kodi install. If
   your change touches the C++ addon or either Python plugin's actual
@@ -43,12 +45,13 @@ handled here.
   doesn't need any of that -- see its own comment.
 - **CI only covers part of this.** `.github/workflows/build.yml`
   compiles the addon on Windows/Linux, packages the two plugins as
-  zips, and runs both narrow unit test suites (`unit-tests` for C++,
-  `unit-tests-python` for the plugins) -- it doesn't build or test the
+  zips, and runs the unit test suites (`unit-tests`, plus its AddressSanitizer/UBSan and ThreadSanitizer
+  variants, for C++; `unit-tests-python` for the plugins) and the glue harness (`glue-harness`: the real client
+  code against a fake Dispatcharr) -- it doesn't build or test the
   CoreELEC package or macOS (both built by hand instead, see
-  [docs/BUILDING.md](docs/BUILDING.md)), and doesn't exercise runtime
-  behavior on any platform. Green CI means "it compiles, lints, and
-  doesn't regress the unit-tested pieces," not "it works."
+  [docs/BUILDING.md](docs/BUILDING.md)), and runs nothing against a real
+  Dispatcharr or Kodi. Green CI means "it compiles, lints, and
+  doesn't regress the tested pieces," not "it works."
 
 ## Where things live
 
@@ -69,17 +72,15 @@ handled here.
 
 ## Writing your change
 
-- **Format before you push.** `clang-format -i src/*.cpp src/*.h` for
-  C++, `ruff format dispatcharr-plugin/` for Python. `ruff check
-  dispatcharr-plugin/` catches some real bugs too (unused variables,
-  etc.), not just style -- run it.
-- **If you touch `XmlTvParser`/`TimeUtil`/`TimeZoneUtil`/`EpgTagUtil`/
-  `StringUtil`/`DateTimeFormat`/`UrlEncode`/`JsonFieldUtil`/`CurlCallbacks`/
-  `CatchUpUtil`/`RecurringRuleUtil`/`RecordingParser`/`PluginRunResult`/
-  `RealtimeUpdateParser`/`M3u8SegmentParser`/`SegmentLookup`/`ChannelParser`/
-  `TimerRuleParser`/`TimerIdentity`/`LiveManifestParser`/`LiveEdgeMargin`/
-  `RecurringRuleRenewal`/`WebSocketFrame`/`SeriesRuleMatching`/
-  `RecurringRuleWeekdays`/`ChannelGroupFilter`/`AuthBackoff` (or add new Kodi-independent C++ pure-logic code), run the C++ unit test suite**
+- **Format before you push.** `clang-format -i src/*.cpp src/*.h tests/*.cpp tests/glue/*.cpp`
+  for C++, `ruff format dispatcharr-plugin/ tools/ tests/glue/` for Python. `ruff check
+  dispatcharr-plugin/ tools/ tests/glue/` catches some real bugs too (unused variables,
+  etc.), not just style -- run it. CI's lint job checks the C++ of `src/`, `tests/` and `tests/glue/` and the Python folders (the two plugins,
+  `tools/` and the Python of the `tests/glue/` harness).
+- **If you touch anything under `src/` other than `PVRDispatcharr`,
+  `DispatcharrClient` and `addon.cpp` (the parts that need Kodi's SDK or a
+  real server), or add new Kodi-independent C++ pure-logic code, run the C++
+  unit test suite**
   before pushing (needs libcurl's dev headers, e.g. `libcurl4-openssl-dev`
   on Debian/Ubuntu, for `UrlEncode`'s own test -- CI hit this as a real
   "Could NOT find CURL" failure the first time this suite gained that
@@ -117,7 +118,7 @@ handled here.
   to review with no test suite backing it up.
 - Don't worry about crafting a clean commit history on your own
   branch -- accepted PRs get squash-merged into one commit, so your
-  branch's intermediate commits don't end up in `master`'s history
+  branch's intermediate commits don't end up in `Omega`'s history
   either way.
 
 ## Versioning

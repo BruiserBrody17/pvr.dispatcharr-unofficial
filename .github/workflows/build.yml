@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [master]
+    branches: [Omega]
     # No "v" prefix: matches this project's own tagging convention
     # (0.4.0, 1.0.0-beta.1, ...), confirmed against actual tag pushes --
     # "v*" here previously matched none of them, so the tag trigger below
@@ -13,10 +13,24 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # needed to upload release assets on a tag push
+  # Read at the workflow level, scoped up to write only on the three jobs
+  # that actually run softprops/action-gh-release (build-unix,
+  # package-dispatcharr-plugins, build-windows) -- fixed 2026-09-27, a
+  # 58th-pass audit, fixing a real, confirmed over-broad grant found via
+  # a project-wide review, not itself independently reproduced: this was
+  # previously contents: write for every job, including lint/unit-tests/
+  # unit-tests-python, which run on every PR (including from an external,
+  # not-yet-reviewed contributor, per CLAUDE.md's own PR-review
+  # convention) and never touch a release at all.
+  contents: read
 
 env:
-  KODI_BRANCH: Omega # match whatever Kodi major version you're targeting
+  KODI_BRANCH: Omega # the Kodi release line this build targets (names the line; the commit below is what is built)
+  # The exact Kodi commit every job builds against: the head of KODI_BRANCH when it was last verified (the same tree
+  # the by-hand and glue builds use). A moving branch meant a release build could pick up whatever Kodi pushed that
+  # day. To move it: set this to a newer head of KODI_BRANCH, run the workflow, and update docs/BUILDING.md's step 1
+  # if the checkout changes shape; tools/tests/test_dependency_pins.py checks it stays a full commit SHA.
+  KODI_COMMIT: f8815ee40f49a700c047982d752be4b2a61420e2
 
 jobs:
   # Enforces CLAUDE.md's "run clang-format/ruff format before committing"
@@ -28,20 +42,40 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
+      # persist-credentials: false on every actions/checkout in this whole
+      # workflow (added 2026-09-27, a 59th-pass audit, fixing a real,
+      # confirmed gap found via a project-wide review, not itself
+      # independently reproduced): the default (true) writes this job's
+      # own GITHUB_TOKEN into the checked-out repo's own .git/config,
+      # where any code later run *within that checkout* (a compromised or
+      # malicious build-tool dependency, for instance) could read and use
+      # it -- most consequential on the three release-upload jobs, whose
+      # own token now has real contents:write scope (see this same
+      # pass's own permissions-scoping fix above). Nothing in this
+      # workflow ever needs to `git push`/`git commit` from within a
+      # checked-out repo -- the release-upload jobs use
+      # softprops/action-gh-release's own GitHub API call, authenticated
+      # via its own token input (defaulting to the Actions runtime's own
+      # GITHUB_TOKEN, provided to every step independently of any
+      # checkout), not from a checkout's stored git credential -- so
+      # disabling this has no functional cost
+      # anywhere in this file.
       - name: Check out repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install clang-format and ruff (pinned versions)
         run: pip install --break-system-packages clang-format==18.1.8 ruff==0.6.9
 
-      - name: clang-format check (src/)
-        run: clang-format --dry-run -Werror src/*.cpp src/*.h
+      - name: clang-format check (src/, tests/, tests/glue/)
+        run: clang-format --dry-run -Werror src/*.cpp src/*.h tests/*.cpp tests/glue/*.cpp
 
-      - name: ruff format check (dispatcharr-plugin/, tools/)
-        run: ruff format --check dispatcharr-plugin/ tools/
+      - name: ruff format check (dispatcharr-plugin/, tools/, tests/glue/)
+        run: ruff format --check dispatcharr-plugin/ tools/ tests/glue/
 
-      - name: ruff lint (dispatcharr-plugin/, tools/)
-        run: ruff check dispatcharr-plugin/ tools/
+      - name: ruff lint (dispatcharr-plugin/, tools/, tests/glue/)
+        run: ruff check dispatcharr-plugin/ tools/ tests/glue/
 
       - name: doc reference check (baselined -- fails only on new dangling refs)
         run: python3 tools/check_doc_refs.py
@@ -55,7 +89,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # --break-system-packages: needed on a CI runner (its minimal Ubuntu image enforces PEP 668's
       # "externally-managed-environment" restriction; GitHub's own hosted
@@ -64,8 +100,24 @@ jobs:
       - name: Install pytest (pinned version)
         run: pip install --break-system-packages -r dispatcharr-plugin/requirements-dev.txt
 
+      # ffmpeg is what test_buffer_segments_keep_one_continuity_counter_across_files runs: the only
+      # guard on the hls-muxer "Packet corrupt" fix (timeshift_buffer 0.8.0). The test skips when ffmpeg
+      # is absent, and the stock runner images are not known to ship it, so without this the guard
+      # could silently never run (found by the 2026-10-04 second hardening sweep). REQUIRE_FFMPEG makes
+      # the test fail instead of skip if the install ever stops working. `sudo` only where it exists:
+      # the CI runner's container runs as root without it.
+      - name: Install ffmpeg
+        run: |
+          SUDO=""
+          if [ "$(id -u)" != "0" ]; then SUDO="sudo"; fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -1
+
       - name: Run pytest
-        run: pytest
+        env:
+          REQUIRE_FFMPEG: "1"
+        run: pytest -rs
 
   # Fast, Kodi-checkout-free unit tests for source files with no Kodi SDK
   # dependency -- see tests/CMakeLists.txt's own comment for why this is a
@@ -77,7 +129,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # tests/CMakeLists.txt find_package(CURL REQUIRED)s (needed by
       # UrlEncode's own test) -- ubuntu-latest doesn't ship libcurl's dev
@@ -101,23 +155,180 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build-tests --output-on-failure
 
+  # Same test suite as unit-tests above, built and run with
+  # ASan/UBSan instead of a plain Release build (added 2026-09-27, a
+  # 61st-pass audit, fixing a real, confirmed gap found via a project-wide
+  # review, not itself independently reproduced): a good number of this
+  # project's own real, confirmed bug fixes over many audit passes
+  # (FieldOr<T>'s own out-of-range guard, ParseEpisodeNum's signed-overflow
+  # guard, WebSocketFrame's decode helpers, ...) were only ever confirmed
+  # via an ad-hoc, manually-run sanitizer build in a scratchpad, never
+  # wired into CI itself -- so a FUTURE regression of any of those same UB
+  # classes would have shipped silently until the next manual audit pass
+  # happened to catch it again, rather than failing this same PR's own CI
+  # run the way a plain logic regression already would.
+  #
+  # Corrected 2026-09-27, a 62nd-pass audit (itself corrected a 63rd-pass
+  # audit, fixing two further small errors in this same paragraph's own
+  # prior wording, found via a project-wide review, confirmed by direct
+  # reproduction, not itself independently reproduced beyond that): this
+  # comment originally also cited "M3u8SegmentParser's #EXTINF clamps" as
+  # a UB class this job protects, and has since removed that citation
+  # from the list above entirely -- that specific one is NOT actually
+  # caught here: the real *float-cast-overflow* UB for that fix (not
+  # signed-integer-overflow, this paragraph's own prior wording named the
+  # wrong check -- an out-of-range double-to-int64 conversion is
+  # float-cast-overflow, per [conv.fpint]) lives in the *caller*
+  # (`static_cast<int64_t>(durationSec * 1000 + 0.5)`, `DispatcharrClient.cpp`),
+  # not inside `M3u8SegmentParser.cpp` itself (confirmed: that file does
+  # no float-to-int cast of its own), and `DispatcharrClient.cpp` is on
+  # this project's own untested Kodi/HTTP-dependent side of the boundary,
+  # never linked into this test binary at all.
+  #
+  # Also corrected the same, 62nd, pass: plain GCC `-fsanitize=undefined`
+  # does NOT include `float-cast-overflow`/`float-divide-by-zero` --
+  # confirmed by direct reproduction (a `static_cast<int64_t>(1e300)`
+  # test program ran to completion with no diagnostic and exit 0 under
+  # the original flags, the exact UB class `FieldOr<T>`'s own guard
+  # exists to prevent, confirmed reproducible all the way through
+  # `nlohmann::json::get<int64_t>()` too) -- both are now added
+  # explicitly. Separately, `-fno-sanitize-recover=undefined` only
+  # covers checks in the `undefined` group specifically, NOT
+  # `float-cast-overflow`/`float-divide-by-zero` even once those are
+  # enabled above -- also confirmed by direct reproduction: adding just
+  # `-fsanitize=float-cast-overflow` on top of the original
+  # `-fno-sanitize-recover=undefined` still printed the diagnostic but
+  # exited 0 (a silent "pass" in CI), while `-fno-sanitize-recover=all`
+  # (covering every currently-*enabled* check, not a fixed group) exits
+  # 1 as intended. The whole suite still passes clean under this
+  # corrected configuration -- confirmed by an ad-hoc build during this
+  # same pass -- so this remains a pure coverage addition, no
+  # existing-suite fallout to fix.
+  unit-tests-sanitized:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential libcurl4-openssl-dev
+
+      - name: Configure (ASan + UBSan)
+        run: |
+          cmake -S tests -B build-tests-sanitized -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined,float-cast-overflow,float-divide-by-zero -fno-sanitize-recover=all" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined,float-cast-overflow,float-divide-by-zero"
+
+      - name: Build
+        run: cmake --build build-tests-sanitized -j"$(nproc)"
+
+      - name: Run tests
+        run: ctest --test-dir build-tests-sanitized --output-on-failure
+
+  # The same suite under ThreadSanitizer (added 2026-10-06; docs/OPEN_ITEMS.md, "ThreadSanitizer had never been run on
+  # the C++ suite"). The one threaded fixture is WebSocketClient's local-server test, so this guards that class and
+  # whatever threading the pure helpers grow; the real DispatcharrClient/PVRDispatcharr glue is covered by the by-hand
+  # harness in tests/glue/ instead. Built without PIE and retried while TSan's runtime refuses the address-space
+  # layout ("unexpected memory mapping", about half of all starts on a kernel with high mmap randomisation, or a
+  # segfault before main on the CI runner's); a run that never gets as far as Catch2's summary is retried, and one that
+  # never does in 40 attempts is a failure of this job, not a pass.
+  unit-tests-tsan:
+    runs-on: ubuntu-latest
+    # A hung run holds the job until the runner's own limit otherwise (hours).
+    timeout-minutes: 30
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential libcurl4-openssl-dev
+
+      - name: Configure (ThreadSanitizer)
+        run: |
+          cmake -S tests -B build-tests-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_POSITION_INDEPENDENT_CODE=OFF \
+            -DCMAKE_CXX_FLAGS="-O1 -g -fsanitize=thread -fno-pie -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread -no-pie"
+
+      - name: Build
+        run: cmake --build build-tests-tsan -j"$(nproc)"
+
+      - name: Run tests (retrying while the TSan runtime refuses the memory layout)
+        run: |
+          export TSAN_OPTIONS="halt_on_error=0 history_size=4 report_signal_unsafe=0"
+          for attempt in $(seq 1 40); do
+            set +e
+            timeout 600 ./build-tests-tsan/pvr_dispatcharr_tests > tsan.out 2>&1
+            rc=$?
+            set -e
+            # a run that hung is a failure, not a runtime that refused the memory layout (timeout's exit status)
+            if [ "$rc" -eq 124 ]; then echo "the test run hung (killed after 600 s, attempt $attempt)"; tail -n 20 tsan.out; exit 1; fi
+            # not a finished run (the runtime refused the layout, or died before main): try again
+            if ! grep -qE "All tests passed|test cases:" tsan.out; then continue; fi
+            tail -n 8 tsan.out
+            echo "ThreadSanitizer warnings: $(grep -c 'WARNING: ThreadSanitizer' tsan.out || true) (start attempt $attempt)"
+            exit $rc
+          done
+          echo "ThreadSanitizer never started in 40 attempts"
+          exit 1
+
+  # The by-hand harness of tests/glue/ as a job (docs/OPEN_ITEMS.md, "The glue harness now runs in CI"): the real
+  # DispatcharrClient.cpp and PVRDispatcharr.cpp compiled against Kodi's dev-kit headers with the Kodi runtime stubbed,
+  # driven against a fake Dispatcharr under ASan + UBSan (tests/glue/ci.sh lists the scenarios, about three minutes).
+  # Only the dev-kit headers of the pinned Kodi commit are fetched (a sparse, blob-filtered fetch of a few MB), not the
+  # tree the build jobs compile. The TSan variant, the plugin integration run and the longer fault matrices stay by hand.
+  glue-harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential libcurl4-openssl-dev python3
+
+      - name: Fetch Kodi's dev-kit headers (pinned commit)
+        run: |
+          git init -q kodi-source
+          git -C kodi-source remote add origin https://github.com/xbmc/xbmc
+          git -C kodi-source sparse-checkout set xbmc/addons/kodi-dev-kit/include
+          git -C kodi-source fetch -q --depth 1 --filter=blob:none origin "$KODI_COMMIT"
+          git -C kodi-source checkout -q FETCH_HEAD
+
+      - name: Fetch the header-only dependencies (nlohmann-json, pugixml)
+        run: cmake -S tests -B build-tests > /dev/null
+
+      - name: Build the harness (ASan + UBSan)
+        run: KODI_INCLUDE="$PWD/kodi-source/xbmc/addons/kodi-dev-kit/include" tests/glue/build.sh asan
+
+      - name: Run the scenarios
+        run: tests/glue/ci.sh
+
   # Linux only -- macOS is deliberately NOT part of CI, the same reasoning
   # as the CoreELEC package (see docs/BUILDING.md's own "GitHub Actions
   # job ... rejected" note there): a CI runner
   # needs to be online to pick up a queued job, and macOS hardware is not available as always-on infrastructure -- confirmed live, 2026-09-28, after standing
   # up a Windows runner successfully first (build-windows
   # below): a Windows CI runner was practical, but the
-  # same approach doesn't fit a machine that isn't always
+  # same approach doesn't fit hardware that isn't always
   # reachable. Build macOS manually and attach the zip to a tagged release
   # by hand instead -- see docs/BUILDING.md's "Linux / macOS (x86_64)"
   # section, same release-time checklist CoreELEC already has.
   build-unix:
+    permissions:
+      contents: write # uploads release assets via softprops/action-gh-release below
     runs-on: ubuntu-latest
     steps:
       - name: Check out addon source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: addons/pvr.dispatcharr-unofficial
+          persist-credentials: false
 
       # A plain git clone against the fully-qualified github.com URL,
       # rather than actions/checkout's repository: shorthand -- that
@@ -127,7 +338,11 @@ jobs:
       # running this workflow. Confirmed live, 2026-09-23: this step
       # failed to resolve on the CI runner before this fix.
       - name: Check out Kodi (for the binary-addons build harness)
-        run: git clone --depth 1 --branch "$KODI_BRANCH" https://github.com/xbmc/xbmc kodi-source
+        run: |
+          git init -q kodi-source
+          git -C kodi-source remote add origin https://github.com/xbmc/xbmc
+          git -C kodi-source fetch -q --depth 1 origin "$KODI_COMMIT"
+          git -C kodi-source checkout -q FETCH_HEAD
 
       - name: Install build dependencies (Linux)
         if: runner.os == 'Linux'
@@ -175,9 +390,21 @@ jobs:
           mkdir -p dist
           find kodi-source/tools/depends/target/binary-addons -name 'addon-pvr.dispatcharr-unofficial-*.zip' -exec cp {} dist/ \;
           ls -la dist
+          # Fails loudly instead of silently going green with an empty dist/
+          # -- fixed for a real, confirmed gap found via a project-wide
+          # review (a 25th-pass audit), not itself independently reproduced:
+          # `find -exec cp` succeeds even when nothing matched, and
+          # upload-artifact/action-gh-release below both default to
+          # tolerating zero matched files (if-no-files-found: warn,
+          # fail_on_unmatched_files: false) -- so a harness change that
+          # silently stops producing this zip would give green CI and (on a
+          # tag) a published release with no Linux/macOS zip attached at
+          # all, with nothing here to say why. Matches the Windows leg's
+          # own explicit `throw` for the same failure mode below.
+          test -n "$(find dist -name '*.zip' -print -quit)"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pvr.dispatcharr-unofficial-ubuntu-latest
           path: dist/*.zip
@@ -185,10 +412,10 @@ jobs:
       # Actions artifacts (above) aren't reachable from a Release page and
       # expire after ~90 days -- a real user installing this addon needs an
       # actual downloadable zip attached to the release itself. Only on a
-      # tag push (a real version, not every commit to master/a PR).
+      # tag push (a real version, not every commit to Omega/a PR).
       - name: Attach zip to the GitHub release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/*.zip
 
@@ -202,33 +429,68 @@ jobs:
   # against a real Dispatcharr instance that a mismatch here 404s every
   # call with "Plugin not found" (see each plugin's own README).
   package-dispatcharr-plugins:
+    permissions:
+      contents: write # uploads release assets via softprops/action-gh-release below
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
+      # The tests/ folder is left out of every zip, CI artifact and release asset alike: Dispatcharr
+      # only loads plugin.py and plugin.json, and the tests need this repo's layout (they import
+      # ../plugin.py) and pytest, so on the server they are only dead weight -- over half of
+      # timeshift_buffer's zip by size. __pycache__ is excluded too in case a local run left one.
+      # TZ=UTC and -X: Info-ZIP stores each entry's time twice, a DOS field in LOCAL time and a UT
+      # extra field in UTC, so a zip built on a machine whose clock is not UTC publishes that
+      # machine's timezone offset (the same leak CLAUDE.md's release gate describes for the
+      # Windows zip). -X drops the extra fields; TZ=UTC makes the DOS time UTC as well.
+      # tools/tests/test_plugin_zip_contents.py runs this exact command, and the step after this
+      # one fails the job if a zip ever contains a tests/ entry or lacks the two plugin files.
       - name: Zip each plugin
         run: |
           mkdir -p dist
           cd dispatcharr-plugin
           for plugin in timeshift_buffer recording_edl; do
-            zip -r "../dist/${plugin}.zip" "$plugin"
+            TZ=UTC zip -X -r "../dist/${plugin}.zip" "$plugin" -x "$plugin/tests/*" -x "*/__pycache__/*"
           done
           ls -la ../dist
 
+      - name: Check the plugin zips' contents
+        run: |
+          cd dist
+          for plugin in timeshift_buffer recording_edl; do
+            entries="$(unzip -Z1 "${plugin}.zip")"
+            if echo "$entries" | grep -q '/tests/'; then
+              echo "::error::${plugin}.zip contains a tests/ entry"; exit 1
+            fi
+            for required in plugin.py plugin.json; do
+              echo "$entries" | grep -qx "${plugin}/${required}" || { echo "::error::${plugin}.zip lacks ${required}"; exit 1; }
+            done
+          done
+
       - name: Upload build artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dispatcharr-plugins
           path: dist/*.zip
 
       - name: Attach zips to the GitHub release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/*.zip
 
+  # Not run for a pull request from a fork: on a CI runner that runs jobs directly on its machine, a pull request's own CMakeLists.txt and build steps would run directly on the
+  # machine that later builds the release DLL zip. A pull request from a branch of this repository, a
+  # push, a tag and a manual dispatch all still run it. Added by the eleventh hardening sweep; if the
+  # event context does not carry the head repository the job is skipped for every pull request, which
+  # fails closed (a skipped required check is visible, a compromised release builder is not).
   build-windows:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write # uploads release assets via softprops/action-gh-release below
     runs-on: windows-latest
     steps:
       # Needed before any git clone happens on this runner, including the
@@ -248,9 +510,10 @@ jobs:
         run: git config --system core.longpaths true
 
       - name: Check out addon source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: addons/pvr.dispatcharr-unofficial
+          persist-credentials: false
 
       # Same fix as build-unix's own "Check out Kodi" step -- see its
       # comment for why actions/checkout's repository: shorthand doesn't
@@ -258,7 +521,15 @@ jobs:
       # build-unix's own comment above), a Windows runner was practical here, so this leg IS real CI, not manual.
       - name: Check out Kodi
         shell: pwsh
-        run: git clone --depth 1 --branch $env:KODI_BRANCH https://github.com/xbmc/xbmc kodi-source
+        run: |
+          git init -q kodi-source
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          git -C kodi-source remote add origin https://github.com/xbmc/xbmc
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          git -C kodi-source fetch -q --depth 1 origin $env:KODI_COMMIT
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          git -C kodi-source checkout -q FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Register addon with the build harness
         shell: pwsh
@@ -288,16 +559,86 @@ jobs:
       # another generator string.
       - name: Fetch prebuilt curl/OpenSSL/zlib for Windows
         shell: pwsh
+        # https://, not http:// (fixed 2026-09-27, a 57th-pass audit,
+        # fixing a real, confirmed supply-chain-hardening gap found via a
+        # project-wide review, confirmed live against mirrors.kodi.tv):
+        # the plain-HTTP URLs these were originally copied from redirect
+        # to an HTTPS mirror anyway, so the only effect of http:// was an
+        # unauthenticated first hop a network-position attacker on this
+        # runner could redirect elsewhere, feeding an arbitrary archive
+        # into a build later attached to a real GitHub Release -- see
+        # docs/BUILDING.md's own copy of this same fetch for the full
+        # account, including the live confirmation that https:// against
+        # the same host/path works identically.
+        #
+        # -DCMAKE_TLS_VERIFY=ON added the very next, 58th, pass -- explicit
+        # from the 59th pass onward, not a fix (corrected 2026-09-27, a
+        # 59th-pass audit, fixing a real, confirmed factual error in the
+        # 58th-pass version of this same comment, found via a project-wide
+        # review, confirmed by directly reproducing the claim against
+        # both CMake 3.28 and a real, pip-installed CMake 4.4.3, plus
+        # CMake's own bundled documentation for both changes cited below):
+        # the 58th-pass version of this comment claimed CMake's own
+        # ExternalProject_Add(URL ...) -- what Kodi's own add_internal()
+        # (cmake/addons/depends/windows/CMakeLists.txt) uses for these
+        # three downloads -- "does NOT verify the peer's TLS certificate
+        # by default", reproduced only against a local CMake 3.28
+        # install. CMake's own CMAKE_TLS_VERIFY.rst documents that this
+        # default flipped to *on* in CMake 3.31 (confirmed by reproducing
+        # both sides: an unset default silently accepted a self-signed
+        # cert on 3.28, but correctly rejected the same cert with nothing
+        # set at all on 4.4.3) -- and the "Visual Studio 18 2026" generator
+        # this same step already uses two lines up was only added in
+        # CMake 4.2 (confirmed against CMake's own 4.2.rst release notes),
+        # so any environment able to run this exact command at all already
+        # has TLS verification on by default, with nothing further needed.
+        # This flag is kept anyway as an explicit pin, not a fix: it
+        # protects against the one real escape hatch that still exists on
+        # a verifying-by-default CMake -- the CMAKE_TLS_VERIFY=0
+        # environment variable, which a corporate/CI environment doing its
+        # own TLS interception might otherwise set to work around
+        # certificate errors (confirmed reproducible: an explicit `-D` at
+        # this same configure step overrides that environment variable
+        # either way) -- rather than closing a real, currently-existing
+        # gap in this specific command. TLS verification alone doesn't
+        # cover a compromise of the legitimate mirror itself, which is what
+        # the SHA256 check below (added 2026-10-02) is for.
+        #
+        # SHA256-pinned (added 2026-10-02, closing docs/OPEN_ITEMS.md's "Prebuilt
+        # Windows dependency archives have no integrity check"): each archive is
+        # downloaded here, checked against the hash below, and only then handed to
+        # Kodi's add_internal() as a local path -- so the file that was verified is
+        # the file that gets installed, with no second download for a compromised
+        # mirror to answer differently. Kodi's add_internal() has no hash argument
+        # to hook into (and patching Kodi's own source is out of scope); a local
+        # `URL` is what makes this work without one. Hashes were computed from a
+        # fresh download of each URL and match the ones recorded in that entry on
+        # 2026-09-27. To move to a newer archive: change both the name and its hash
+        # here, in the same commit (docs/BUILDING.md carries a copy of this step).
         run: |
           $depends = "${{ github.workspace }}/build/build/depends"
           $prebuilt = "kodi-source/cmake/addons/depends/windows/prebuilt"
-          "curl http://mirrors.kodi.tv/build-deps/win32/curl-7.67.0-x64-v141-20200105.7z" |
-            Out-File -Encoding ascii "$prebuilt/curl.txt"
-          "openssl http://mirrors.kodi.tv/build-deps/win32/openssl-1.1.1q-x64-v142-20221017.7z" |
-            Out-File -Encoding ascii "$prebuilt/openssl.txt"
-          "zlib http://mirrors.kodi.tv/build-deps/win32/zlib-1.2.11-x64-v141-20200105.7z" |
-            Out-File -Encoding ascii "$prebuilt/zlib.txt"
-          cmake -S kodi-source/cmake/addons/depends/windows -B deps-build -G "Visual Studio 18 2026" -A x64 "-DADDON_DEPENDS_PATH=$depends"
+          $downloads = "${{ github.workspace }}/prebuilt-downloads"
+          New-Item -ItemType Directory -Force -Path $downloads | Out-Null
+          $archives = @(
+            @{ id = "curl";    file = "curl-7.67.0-x64-v141-20200105.7z";       sha256 = "58106b42cbb3d6d951671e71e00703dd644b5b729cfd418b2ba08e4a02780145" },
+            @{ id = "openssl"; file = "openssl-1.1.1q-x64-v142-20221017.7z";    sha256 = "d744eb075f7628156979cd8cb9545fb7c6cc567efe901a1de1ab9b103b85d4e7" },
+            @{ id = "zlib";    file = "zlib-1.2.11-x64-v141-20200105.7z";       sha256 = "c596b93016d62f6bc85b38b2f18746c8382cf89b1a99c1c56f0d2bf51ecf54f1" }
+          )
+          foreach ($a in $archives) {
+            $local = "$downloads/$($a.file)"
+            Invoke-WebRequest -Uri "https://mirrors.kodi.tv/build-deps/win32/$($a.file)" -OutFile $local
+            $actual = (Get-FileHash -Algorithm SHA256 -Path $local).Hash.ToLowerInvariant()
+            if ($actual -ne $a.sha256) {
+              throw "SHA256 mismatch for $($a.file): expected $($a.sha256), got $actual"
+            }
+            # Forward slashes: Kodi's add_internal() pastes this into a generated CMake
+            # script as a quoted string, where a Windows backslash is an invalid escape
+            # ("Invalid character escape '\g'" on the first CI run of this step).
+            $registered = $local.Replace('\', '/')
+            "$($a.id) $registered" | Out-File -Encoding ascii "$prebuilt/$($a.id).txt"
+          }
+          cmake -S kodi-source/cmake/addons/depends/windows -B deps-build -G "Visual Studio 18 2026" -A x64 "-DADDON_DEPENDS_PATH=$depends" -DCMAKE_TLS_VERIFY=ON
           cmake --build deps-build --config Release
           # Remove the registrations before the main build: the generic addon-depends
           # scan below (add_addon_depends) also globs this same prebuilt/ directory,
@@ -307,6 +648,10 @@ jobs:
       - name: Build addon (CMake, MSVC)
         shell: pwsh
         run: |
+          # The job runs that runs jobs directly on its machine on a machine that keeps its temp directory between runs, and CPack leaves its zip
+          # there (see "Collect built zip"): clear what an earlier build left, or the collect step below could pick a
+          # zip of an older version (a name sort puts 0.11.0 before 0.12.0).
+          Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharr-unofficial-*.zip' -Recurse -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
           cmake -S kodi-source/cmake/addons -B build -G "Visual Studio 18 2026" -A x64 `
             "-DADDONS_TO_BUILD=pvr.dispatcharr-unofficial" `
             "-DADDONS_DEFINITION_DIR=${{ github.workspace }}/addon-defs" `
@@ -327,19 +672,62 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $zip = Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharr-unofficial-*.zip' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $zip) { throw "Could not find built zip under $env:TEMP" }
-          Copy-Item $zip.FullName dist/
-          Get-ChildItem dist
+          # Top level only: CPack also leaves a copy of the same zip in its _CPack_Packages staging tree, which is not a second build.
+          $zips = @(Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharr-unofficial-*.zip' -File -ErrorAction SilentlyContinue)
+          if ($zips.Count -eq 0) { throw "Could not find built zip under $env:TEMP" }
+          # Exactly one: the build step cleared the older ones, so a second is a stale leftover and publishing the wrong
+          # version's zip as this release's is worse than failing.
+          if ($zips.Count -gt 1) { throw "More than one addon zip under ${env:TEMP}: $($zips.FullName -join ', ')" }
+          Copy-Item $zips[0].FullName dist/
+          Get-ChildItem dist | ForEach-Object { "$($_.Name) $($_.Length) bytes" }
+
+      # CPack's zip stores each entry's time twice: as the build host's local
+      # clock (the DOS field) and as UTC (the "UT" extended field), so the
+      # difference between the two is the build machine's timezone -- readable
+      # by anyone who downloads the release (confirmed 2026-10-03 on zips from
+      # a CI runner: a non-zero offset on every entry). GitHub-hosted runners
+      # happen to run on UTC, which hid this; another runner may not. Rewrite
+      # the zip with every entry stamped with the commit's own time, in UTC,
+      # through .NET's ZipArchive, which writes only the DOS field and no
+      # extended fields at all. Same entries, same bytes, only the metadata
+      # changes.
+      - name: Normalize zip timestamps
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # The checkout lives under addons/ (see the checkout step's `path`), not at
+          # the workspace root this step runs in; safe.directory because a directly-on-the-host runner's checkout can be owned by a different account than the job's.
+          $commitTime = git -c safe.directory='*' -C addons/pvr.dispatcharr-unofficial log -1 --format=%ct
+          if (-not $commitTime) { throw "Could not read the commit time from git" }
+          $stamp = [DateTimeOffset]::FromUnixTimeSeconds([long]$commitTime)
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          foreach ($zip in Get-ChildItem dist/*.zip) {
+            $tmp = "$($zip.FullName).tmp"
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            $in = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
+            $out = [System.IO.Compression.ZipFile]::Open($tmp, [System.IO.Compression.ZipArchiveMode]::Create)
+            foreach ($entry in $in.Entries) {
+              $copy = $out.CreateEntry($entry.FullName, [System.IO.Compression.CompressionLevel]::Optimal)
+              $copy.LastWriteTime = $stamp
+              if ($entry.Length -gt 0) {
+                $src = $entry.Open(); $dst = $copy.Open(); $src.CopyTo($dst); $dst.Dispose(); $src.Dispose()
+              }
+            }
+            $count = $in.Entries.Count
+            $out.Dispose(); $in.Dispose()
+            Move-Item -Force $tmp $zip.FullName
+            "$($zip.Name): $count entries stamped $($stamp.ToString('u'))"
+          }
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pvr.dispatcharr-unofficial-windows
           path: dist/*.zip
 
       - name: Attach zip to the GitHub release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/*.zip

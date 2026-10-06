@@ -34,8 +34,8 @@ if you'd like that; just say so in the report.
   Dispatcharr**, exposed over Dispatcharr's own plugin `run/` HTTP API.
   This is real attack surface -- anything a caller with API access could
   do that the plugin didn't intend (path traversal, injection, hitting
-  something outside the plugin's own intended scope) is in scope. Two
-  real vulnerabilities of exactly this shape have already been found and
+  something outside the plugin's own intended scope) is in scope. Real
+  vulnerabilities of exactly this shape have already been found and
   fixed here via review; see `CHANGELOG.md` and `docs/TIMESHIFT.md` for
   the write-ups.
 - **Out of scope:** vulnerabilities in Dispatcharr itself (report to

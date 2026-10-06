@@ -46,8 +46,5 @@
     <platform>@PLATFORM@</platform>
     <license>GPL-2.0-or-later</license>
     <source>https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial</source>
-    <assets>
-      <icon>resources/icon.png</icon>
-    </assets>
   </extension>
 </addon>

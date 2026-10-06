@@ -62,7 +62,7 @@ msgid "Connection timeout (seconds)"
 msgstr ""
 
 msgctxt "#30014"
-msgid "How long to wait for Dispatcharr to respond before failing a request."
+msgid "How long to wait for Dispatcharr to respond before failing a request. Stopping a stream and refreshing a stream that is already playing wait a sixth of this (between 5 and 30 seconds), so a server that answers slowly needs a larger value here."
 msgstr ""
 
 msgctxt "#30020"
@@ -110,7 +110,7 @@ msgid "Enable real-time recording/timer updates (experimental)"
 msgstr ""
 
 msgctxt "#30041"
-msgid "Connects to Dispatcharr's own real-time update feed so changes (new/edited recordings and timers) show up in Kodi immediately instead of waiting for the refresh interval above, which still runs as a fallback. Experimental: newer, less-tested networking code -- leave off if unsure. Needs a Kodi restart to take effect; Kodi will prompt you when you save."
+msgid "Connects to Dispatcharr's own real-time update feed so changes (new/edited recordings and timers) show up in Kodi immediately instead of waiting for the refresh interval above, which still runs as a fallback. It also tells the addon when Dispatcharr has finished refreshing an EPG source or an M3U account, so the new guide or channel list is fetched within minutes instead of at the next scheduled refresh. Experimental: newer, less-tested networking code -- leave off if unsure. Needs a Kodi restart to take effect; Kodi will prompt you when you save."
 msgstr ""
 
 msgctxt "#30049"
@@ -138,7 +138,7 @@ msgid "Recording padding: start early (minutes)"
 msgstr ""
 
 msgctxt "#30055"
-msgid "Mirrors Dispatcharr's own global recording padding (Settings -> DVR) -- there's no per-timer equivalent, so this changes it for every EPG-based recording at once. Doesn't affect recurring (day-of-week) timers. Kept in sync with Dispatcharr's real value on every Kodi restart. Pushing a change here needs a Dispatcharr admin account; with a lesser account it fails silently (logged to kodi.log, nothing shown in the UI). See docs/RECORDINGS.md for details."
+msgid "Mirrors Dispatcharr's own global recording padding (Settings -> DVR) -- there's no per-timer equivalent, so this changes it for every EPG-based recording Dispatcharr itself schedules at once (its own web UI, a series/recurring rule's own materialized occurrences). Currently NOT applied to a one-time recording started from Kodi's own guide (a known gap -- see docs/RECORDINGS.md). Doesn't affect recurring (day-of-week) timers either way. Kept in sync with Dispatcharr's real value on every Kodi restart. Pushing a change here needs a Dispatcharr admin account; with a lesser account it fails silently (logged to kodi.log, nothing shown in the UI). See docs/RECORDINGS.md for details."
 msgstr ""
 
 msgctxt "#30056"
@@ -146,7 +146,7 @@ msgid "Recording padding: stop late (minutes)"
 msgstr ""
 
 msgctxt "#30057"
-msgid "The end-of-recording counterpart to the start-padding setting above -- see its help text for the full explanation (global-only, EPG-based recordings only, kept in sync with Dispatcharr's real value on restart)."
+msgid "The end-of-recording counterpart to the start-padding setting above -- see its help text for the full explanation (global-only, kept in sync with Dispatcharr's real value on restart; currently not applied to a recording started from Kodi's own guide)."
 msgstr ""
 
 msgctxt "#30058"
@@ -410,5 +410,5 @@ msgid "Dispatcharr API key"
 msgstr ""
 
 msgctxt "#30034"
-msgid "Generated automatically on first connection and used only to play recordings, which Dispatcharr requires authentication for. Leave blank to have one generated for you -- only set this manually if you need to replace it (e.g. it was revoked or regenerated elsewhere), since regenerating one replaces the previous key for the whole account."
+msgid "Used only to play recordings, which Dispatcharr requires authentication for. Leave blank and the addon reads your account's existing key from Dispatcharr (it only creates a new one if your account has none), so other apps and scripts using that key keep working. Only set this manually if you want to use a specific key."
 msgstr ""

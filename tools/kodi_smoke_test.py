@@ -208,6 +208,14 @@ class DispatcharrApiClient:
                 self._token = json.loads(resp.read())["access"]
         except (urllib.error.URLError, TimeoutError) as exc:
             raise DispatcharrApiError(f"Dispatcharr login failed: {exc}") from exc
+        except ConnectionError as exc:
+            # Same class JsonRpcClient.call() already guards against (see
+            # its own comment): a raw ConnectionResetError/BrokenPipeError
+            # is a plain OSError subclass urllib does NOT wrap in
+            # URLError, flagged from a 26th-pass audit (docs/OPEN_ITEMS.md).
+            raise DispatcharrApiError(f"Dispatcharr login failed: connection reset ({exc})") from exc
+        except json.JSONDecodeError as exc:
+            raise DispatcharrApiError(f"Dispatcharr login failed: invalid JSON response ({exc})") from exc
 
     def call(self, method: str, path: str, body: dict | None = None):
         if self._token is None:
@@ -225,6 +233,10 @@ class DispatcharrApiClient:
             ) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise DispatcharrApiError(f"Dispatcharr {method} {path}: {exc}") from exc
+        except ConnectionError as exc:
+            raise DispatcharrApiError(f"Dispatcharr {method} {path}: connection reset ({exc})") from exc
+        except json.JSONDecodeError as exc:
+            raise DispatcharrApiError(f"Dispatcharr {method} {path}: invalid JSON response ({exc})") from exc
 
 
 @dataclass
@@ -246,6 +258,15 @@ class SmokeTestRun:
             self.results.append(CheckResult(name, "skip", str(exc)))
         except (JsonRpcError, DispatcharrApiError, AssertionError) as exc:
             self.results.append(CheckResult(name, "fail", str(exc)))
+        except Exception as exc:
+            # A check's own unanticipated bug (KeyError/TypeError/OSError,
+            # ...) used to kill the whole run with a raw traceback instead
+            # of a clean per-check failure, flagged from a 26th-pass audit
+            # (docs/OPEN_ITEMS.md) -- every other check still deserves to
+            # run even if this one has a real bug. KeyboardInterrupt/
+            # SystemExit aren't Exception subclasses, so Ctrl-C still
+            # aborts the run as normal.
+            self.results.append(CheckResult(name, "fail", f"unexpected {type(exc).__name__}: {exc}"))
 
     def print_summary(self) -> int:
         width = max(len(r.name) for r in self.results)
@@ -648,19 +669,50 @@ def check_recorded_playback(rpc: JsonRpcClient, recording_id: int):
     return _play_recording_and_verify(rpc, recording_id)
 
 
+def _match_recording_by_title(recordings: list[dict], titles: set[str]) -> dict | None:
+    """Pure lookup core of _find_in_progress_recording_id: the first
+    PVR.GetRecordings entry (in whatever order PVR.GetRecordings itself
+    returned) whose title is in the given set, or None if none matches."""
+    return next((r for r in recordings if r.get("title") in titles), None)
+
+
 def _find_in_progress_recording_id(rpc: JsonRpcClient) -> int:
     """Kodi's own JSON-RPC schema has no direct "is this in progress" flag
     on a recording (confirmed via JSONRPC.Introspect's
-    PVR.Details.Recording) -- inferring it from endtime > now is the same
-    signal Kodi's own PVR core effectively relies on. Raises SkipCheck
-    when nothing is currently recording, since that's real, time-dependent
-    environment state, not a bug."""
-    recordings = rpc.call("PVR.GetRecordings", {"properties": ["endtime"]})["recordings"]
-    now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-    in_progress = [r for r in recordings if r["endtime"] > now]
-    if not in_progress:
-        raise SkipCheck("no recording is currently in progress -- nothing to test against")
-    return in_progress[0]["recordingid"]
+    PVR.Details.Recording), so this matches against PVR.GetTimers' own
+    state=="recording" instead of the endtime > now heuristic this used
+    to rely on, flagged from a 26th-pass audit (docs/OPEN_ITEMS.md): a
+    recording stopped/interrupted early keeps its originally-scheduled
+    endtime (RecordingParser.cpp's own custom_properties.status-override
+    handling, see CLAUDE.md), so endtime > now alone also matched an
+    already-finished recording, silently exercising the completed-file
+    playback path instead of the in-progress one this check believes it's
+    covering. state=="recording" is Kodi's own direct, authoritative
+    signal (confirmed via JSONRPC.Introspect's PVR.TimerState enum).
+
+    Matches a "recording"-state timer to its own PVR.GetRecordings entry
+    by title, not id: PVR.Details.Recording carries no timerid of its own
+    to join on directly, only "channel" (a display name string) and
+    "channeluid" (the addon's own Dispatcharr uniqueid, per
+    check_realtime_update_push's own docstring) -- neither matches
+    Timer's own channelid (Kodi's internal PVR database id, a different
+    namespace) without an extra PVR.GetChannelDetails round trip this
+    check doesn't otherwise need. Raises SkipCheck when nothing is
+    currently recording, or when a "recording"-state timer exists but
+    Dispatcharr hasn't synced a matching Recording row yet -- both real,
+    time-dependent environment states, not a bug."""
+    timers = rpc.call("PVR.GetTimers", {"properties": ["title", "state"]})["timers"]
+    recording_titles = {t["title"] for t in timers if t.get("state") == "recording"}
+    if not recording_titles:
+        raise SkipCheck("no timer reports state=='recording' -- nothing is currently recording")
+    recordings = rpc.call("PVR.GetRecordings", {"properties": ["title"]})["recordings"]
+    match = _match_recording_by_title(recordings, recording_titles)
+    if match is None:
+        raise SkipCheck(
+            "a timer reports state=='recording' but no matching PVR.GetRecordings entry exists "
+            "yet -- Dispatcharr may not have synced the Recording row yet, retry shortly"
+        )
+    return match["recordingid"]
 
 
 def check_in_progress_recording_playback(rpc: JsonRpcClient):
@@ -673,6 +725,19 @@ def check_in_progress_recording_playback(rpc: JsonRpcClient):
     tends to land on whatever recording happens to hold the lowest id,
     which is not reliably an in-progress one."""
     return _play_recording_and_verify(rpc, _find_in_progress_recording_id(rpc))
+
+
+def _compute_forward_seek_target(total_seconds: float, before: float) -> float:
+    """Pure seek-target core of _seek_within_recording_and_verify: how far
+    forward to seek from the current position, capped at
+    RECORDING_SEEK_FORWARD_SECONDS but never past
+    RECORDING_SEEK_END_MARGIN_SECONDS before the recording's own end.
+    Can come out zero or negative if playback already auto-resumed close
+    enough to the end -- flagged from a 26th-pass audit
+    (docs/OPEN_ITEMS.md): the caller must treat that as nothing safe to
+    test, not silently seek backward/nowhere while still claiming to test
+    a forward seek."""
+    return min(RECORDING_SEEK_FORWARD_SECONDS, total_seconds - RECORDING_SEEK_END_MARGIN_SECONDS - before)
 
 
 def _seek_within_recording_and_verify(rpc: JsonRpcClient, recording_id: int) -> str:
@@ -726,7 +791,15 @@ def _seek_within_recording_and_verify(rpc: JsonRpcClient, recording_id: int) -> 
         before = _time_to_seconds(
             rpc.call("Player.GetProperties", {"playerid": playerid, "properties": ["time"]})["time"]
         )
-        target = min(RECORDING_SEEK_FORWARD_SECONDS, total_seconds - RECORDING_SEEK_END_MARGIN_SECONDS - before)
+        target = _compute_forward_seek_target(total_seconds, before)
+        if target <= 0:
+            raise SkipCheck(
+                f"playback already resumed at {before:.0f}s, leaving no room to seek "
+                f"{RECORDING_SEEK_FORWARD_SECONDS}s forward within the recording's own "
+                f"{RECORDING_SEEK_END_MARGIN_SECONDS}s end margin (total {total_seconds:.0f}s) -- "
+                "seeking a non-positive amount here would silently test a backward/no-op seek "
+                "while this check still claims to test a forward one"
+            )
         rpc.call(
             "Player.Seek",
             {"playerid": playerid, "value": {"seconds": target}},
@@ -806,6 +879,17 @@ def check_catchup_playback(rpc: JsonRpcClient):
         broadcasts = rpc.call(
             "PVR.GetBroadcasts", {"channelid": candidate_channel_id, "properties": ["starttime", "endtime"]}
         )["broadcasts"]
+        # Skip rather than crash on an entry missing "broadcastid"/"endtime"
+        # despite Kodi's own JSON-RPC schema marking both required fields of
+        # PVR.Details.Broadcast -- confirmed live (2026-09-28): a KeyError
+        # here right after wiping/rebuilding Kodi's own PVR database from
+        # scratch (a full guide imported at once), never
+        # reproduced against an already-settled EPG. Most likely a transient
+        # Kodi-core race between its own EPG-import thread and this read,
+        # not something either this script or the addon under test controls
+        # -- a real environment hiccup, so tolerate it rather than aborting
+        # the whole run over one bad entry.
+        broadcasts = [b for b in broadcasts if "broadcastid" in b and "endtime" in b]
         finished = sorted((b for b in broadcasts if b["endtime"] < now), key=lambda b: b["endtime"])
         if not finished:
             continue
@@ -833,6 +917,22 @@ def check_catchup_playback(rpc: JsonRpcClient):
 # ---------------------------------------------------------------------
 # Mutating checks -- opt-in only, see --allow-mutations
 # ---------------------------------------------------------------------
+
+
+def _find_matching_recording(candidates: list[dict], channel_id, start_time: str, end_time: str) -> dict | None:
+    """Pure lookup core of check_realtime_update_push's own POST-failure
+    recovery: which (if any) Dispatcharr recording matches the exact
+    request just sent, used to find and clean up a recording that was
+    genuinely created server-side despite the POST itself raising
+    client-side (see that function's own docstring)."""
+    return next(
+        (
+            r
+            for r in candidates
+            if r.get("channel") == channel_id and r.get("start_time") == start_time and r.get("end_time") == end_time
+        ),
+        None,
+    )
 
 
 def check_realtime_update_push(rpc: JsonRpcClient, dispatcharr: DispatcharrApiClient, channel_id: int):
@@ -867,7 +967,22 @@ def check_realtime_update_push(rpc: JsonRpcClient, dispatcharr: DispatcharrApiCl
     different, unrelated small and large integers for the same real
     channel) -- PVR.GetChannelDetails' "uniqueid"
     property is what actually matches Dispatcharr's own real channel id,
-    needed here since we're talking to Dispatcharr directly."""
+    needed here since we're talking to Dispatcharr directly.
+
+    The creating POST itself is inside the same try/finally as everything
+    else below, not before it -- flagged from a 26th-pass audit
+    (docs/OPEN_ITEMS.md), matching the same "succeeds server-side, fails
+    client-side" class this file already guards Player.Open/PVR.AddTimer
+    against elsewhere: a POST that times out or returns malformed JSON
+    after Dispatcharr already created the row used to leave a real,
+    uncleaned-up recording on the backend, since the old code read
+    recording_id from the (never received) response and had no cleanup
+    path at all if that raised. On a POST failure, this now looks up the
+    recording that may have been created anyway by the exact request just
+    sent (channel + start_time + end_time), the same best-effort
+    "did it actually happen despite the error" recovery
+    _add_and_verify_timer's own AddTimer retry already uses for Kodi's
+    side of an equivalent race."""
     details = rpc.call("PVR.GetChannelDetails", {"channelid": channel_id, "properties": ["uniqueid"]})["channeldetails"]
     dispatcharr_channel_id = details["uniqueid"]
 
@@ -876,14 +991,24 @@ def check_realtime_update_push(rpc: JsonRpcClient, dispatcharr: DispatcharrApiCl
     start = datetime.now(timezone.utc) + timedelta(minutes=REALTIME_UPDATE_TEST_LEAD_MINUTES)
     end = start + timedelta(minutes=REALTIME_UPDATE_TEST_DURATION_MINUTES)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
-    recording = dispatcharr.call(
-        "POST",
-        "/api/channels/recordings/",
-        {"channel": dispatcharr_channel_id, "start_time": start.strftime(fmt), "end_time": end.strftime(fmt)},
-    )
-    recording_id = recording["id"]
+    start_str, end_str = start.strftime(fmt), end.strftime(fmt)
 
+    recording_id = None
     try:
+        try:
+            recording = dispatcharr.call(
+                "POST",
+                "/api/channels/recordings/",
+                {"channel": dispatcharr_channel_id, "start_time": start_str, "end_time": end_str},
+            )
+            recording_id = recording["id"]
+        except DispatcharrApiError:
+            candidates = dispatcharr.call("GET", "/api/channels/recordings/") or []
+            match = _find_matching_recording(candidates, dispatcharr_channel_id, start_str, end_str)
+            if match is None:
+                raise
+            recording_id = match["id"]
+
         deadline = time.monotonic() + REALTIME_UPDATE_POLL_TIMEOUT_SECONDS
         new_timer = None
         while time.monotonic() < deadline:
@@ -902,7 +1027,77 @@ def check_realtime_update_push(rpc: JsonRpcClient, dispatcharr: DispatcharrApiCl
         )
         return f"realtime push confirmed: timer {new_timer['timerid']} ({new_timer['title']}) appeared with no restart"
     finally:
-        dispatcharr.call("DELETE", f"/api/channels/recordings/{recording_id}/")
+        if recording_id is not None:
+            with contextlib.suppress(DispatcharrApiError):
+                dispatcharr.call("DELETE", f"/api/channels/recordings/{recording_id}/")
+
+
+def _windows_overlap(candidate_start: str, candidate_end: str, existing_windows: list[tuple[str, str]]) -> bool:
+    """Pure overlap check shared by _pick_conflict_free_broadcast: whether
+    a candidate's [start, end) window overlaps any of a channel's existing
+    timer windows. Timestamps are Kodi's own "%Y-%m-%d %H:%M:%S" strings,
+    which compare correctly as plain strings (zero-padded, fixed-width,
+    lexicographic order matches chronological order)."""
+    return any(candidate_start < end and start < candidate_end for start, end in existing_windows)
+
+
+def _pick_conflict_free_broadcast(future: list[dict], existing_windows: list[tuple[str, str]]) -> dict | None:
+    """Pure selection core of _add_and_verify_timer's own broadcast pick --
+    returns None, never a possibly-conflicting fallback, when every
+    candidate overlaps an existing timer's own window, flagged from a
+    26th-pass audit (docs/OPEN_ITEMS.md): the original version fell back to
+    future[0] in that case, which this function's own caller had already
+    confirmed live can hang Kodi with a blocking dialog or fail outright
+    with -32100 -- exactly the two failure shapes this selection exists to
+    avoid in the first place, so silently falling back into one defeated
+    the point."""
+    return next((b for b in future if not _windows_overlap(b["starttime"], b["endtime"], existing_windows)), None)
+
+
+def _select_new_timers(
+    timers: list[dict],
+    existing_timerids: set,
+    *,
+    timerrule: bool,
+    broadcast_id: int,
+    channel_id: int,
+) -> list[dict]:
+    """Pure selection core of _add_and_verify_timer's own new-timer lookup.
+
+    For a one-off timer (timerrule=False), a new entry sharing the
+    originating broadcastid is the match.
+
+    For a recurring rule, a rule's own timer entry doesn't reliably carry
+    the originating broadcastid the way a one-off timer does
+    (PVR.Details.Timer's broadcastid defaults to -1) -- matched instead on
+    "a new istimerrule=true entry not present before". Confirmed live
+    (2026-09-16, a real account): creating a
+    recurring rule against a real backend with real EPG data to match
+    against also auto-spawns a concrete one-off occurrence timer for its
+    nearest matching broadcast -- exactly how every one of that account's
+    own pre-existing recurring rules was structured (a rule entry paired
+    with a plain occurrence timer, same channel/title). Missing this left
+    a real orphaned occurrence timer behind (the rule itself got cleaned
+    up correctly, its auto-spawned occurrence didn't), so this also
+    matches any new, non-rule timer sharing a rule entry's own channel and
+    title, not just the rule entry itself. Rule entries are returned
+    first -- this order is what the caller reports as the created
+    timer/rule's own id (matching[0]), not a deletion order; see
+    _add_and_verify_timer's own delete loop for why occurrences are
+    actually deleted first."""
+    new_timers = [t for t in timers if t["timerid"] not in existing_timerids]
+    if not timerrule:
+        return [t for t in new_timers if t.get("broadcastid") == broadcast_id]
+    rule_entries = [t for t in new_timers if t.get("istimerrule")]
+    if not rule_entries:
+        return []
+    rule_titles = {t.get("title") for t in rule_entries}
+    occurrences = [
+        t
+        for t in new_timers
+        if not t.get("istimerrule") and t.get("channelid") == channel_id and t.get("title") in rule_titles
+    ]
+    return rule_entries + occurrences
 
 
 def _add_and_verify_timer(rpc: JsonRpcClient, channel_id: int, timerrule: bool) -> int:
@@ -966,9 +1161,6 @@ def _add_and_verify_timer(rpc: JsonRpcClient, channel_id: int, timerrule: bool) 
     ]
     existing_timerids = {t["timerid"] for t in existing}
 
-    def overlaps_existing(candidate_start: str, candidate_end: str) -> bool:
-        return any(candidate_start < end and start < candidate_end for start, end in existing_windows)
-
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
     broadcasts = rpc.call(
         "PVR.GetBroadcasts", {"channelid": channel_id, "properties": ["title", "starttime", "endtime"]}
@@ -976,7 +1168,13 @@ def _add_and_verify_timer(rpc: JsonRpcClient, channel_id: int, timerrule: bool) 
     future = sorted((b for b in broadcasts if b["starttime"] > now), key=lambda b: b["starttime"])
     if not future:
         raise SkipCheck(f"no future EPG entries on channel {channel_id} to create a test timer from")
-    broadcast = next((b for b in future if not overlaps_existing(b["starttime"], b["endtime"])), future[0])
+    broadcast = _pick_conflict_free_broadcast(future, existing_windows)
+    if broadcast is None:
+        raise SkipCheck(
+            f"every future EPG entry on channel {channel_id} overlaps an existing timer's own window -- "
+            "picking one anyway risks the exact blocking-dialog/-32100 hang this function's own "
+            "docstring already documents, so this skips rather than gambling on it"
+        )
     broadcast_id = broadcast["broadcastid"]
 
     add_error = None
@@ -986,41 +1184,13 @@ def _add_and_verify_timer(rpc: JsonRpcClient, channel_id: int, timerrule: bool) 
         add_error = exc
 
     def find_new(timers):
-        new_timers = [t for t in timers if t["timerid"] not in existing_timerids]
-        if timerrule:
-            # A rule's own timer entry doesn't reliably carry the
-            # originating broadcastid the way a one-off timer does
-            # (PVR.Details.Timer's broadcastid defaults to -1) -- match
-            # on "a new istimerrule=true entry not present before" instead.
-            rule_entries = [t for t in new_timers if t.get("istimerrule")]
-            if not rule_entries:
-                return []
-            # Confirmed live (2026-09-16, a real
-            # account): creating a recurring rule against a real backend
-            # with real EPG data to match against also auto-spawns a
-            # concrete one-off occurrence timer for its nearest matching
-            # broadcast -- exactly how every one of this account's own
-            # pre-existing recurring rules is structured (a rule entry
-            # paired with a plain occurrence timer, same channel/title).
-            # A test account with no real EPG match for the rule's own
-            # title never spawns one, which is why this wasn't caught
-            # earlier. Missing this left a real orphaned occurrence
-            # timer behind (the rule itself got cleaned up correctly,
-            # its auto-spawned occurrence didn't) -- catch any new,
-            # non-rule timer sharing a rule entry's own channel and
-            # title too, not just the rule entry itself.
-            rule_titles = {t.get("title") for t in rule_entries}
-            occurrences = [
-                t
-                for t in new_timers
-                if not t.get("istimerrule") and t.get("channelid") == channel_id and t.get("title") in rule_titles
-            ]
-            # Rule entries first here -- this order is what the caller
-            # reports as the created timer/rule's own id (matching[0]),
-            # not a deletion order; see the delete loop below for why
-            # occurrences are actually deleted first.
-            return rule_entries + occurrences
-        return [t for t in new_timers if t.get("broadcastid") == broadcast_id]
+        return _select_new_timers(
+            timers,
+            existing_timerids,
+            timerrule=timerrule,
+            broadcast_id=broadcast_id,
+            channel_id=channel_id,
+        )
 
     # Confirmed live (2026-09-16, a real account
     # with many existing timers): a successful AddTimer response is not a

@@ -217,19 +217,28 @@
         <!-- Visible-but-permanently-disabled, same pattern (and same reason)
              as dispatcharr_timezone_info above: read-only reference so the
              greyed-out padding fields right below are self-explanatory
-             instead of a silent mystery -- placed directly above them, not
+             instead of a silent mystery: placed directly above them, not
              next to the unrelated timezone settings, for exactly that
              reason. <control><hidden>true</hidden></control> (the password
              field's pattern) only masks a text control's displayed value
              and does nothing useful on a toggle control (confirmed live,
-             2026-09-09) -- not used here. A first version instead used
-             visible="false" (a real attribute confirmed against Kodi's own
-             source, AddonSettings.cpp) to hide this row entirely, on the
+             2026-09-09); not used here. A first version instead used
+             visible="false" as an attribute on <setting> itself, on the
              reasoning that it's addon-managed state a user shouldn't hand-
-             toggle -- reconsidered: <enable>false</enable> already prevents
+             toggle; reconsidered: <enable>false</enable> already prevents
              that (same as the timezone reference field), without also
              hiding the one piece of context that explains why the padding
-             fields below are disabled. -->
+             fields below are disabled. That reasoning happened to be right
+             for an unrelated reason found later (2026-09-27, a 46th-pass
+             audit, confirmed against Kodi's own real current source): the
+             attribute form was never a real, working mechanism to begin
+             with: this file's own <settings version="1"> root parses
+             visibility only via a <visible> child element
+             (ISetting::Deserialize(), settings/lib/ISetting.cpp), and
+             silently ignores the attribute form entirely (only the legacy
+             version="0" definitions parser reads it). The api_key_host/
+             api_key_username settings below made exactly this mistake for
+             real and had to be corrected; see their own comment. -->
         <setting id="dispatcharr_is_admin" type="boolean" label="30117" help="30118">
           <level>1</level>
           <default>true</default>
@@ -238,7 +247,7 @@
         </setting>
         <!-- Gated on dispatcharr_is_admin above, same proven <dependencies>
              pattern as recurring_rule_utc_offset_minutes further up (see
-             that setting's own comment) -- Dispatcharr itself rejects a
+             that setting's own comment): Dispatcharr itself rejects a
              write to these from a non-admin account (confirmed against its
              real source, CoreSettingsViewSet's update action requires
              IsAdmin), so a non-admin account can read the current padding
@@ -248,7 +257,18 @@
           <default>0</default>
           <constraints>
             <minimum>0</minimum>
-            <maximum>120</maximum>
+            <!-- Raised from 120 (a 27th-pass audit, 2026-09-26): Dispatcharr's
+                 own DVR settings form sets no maximum at all (confirmed
+                 against its real frontend source), so a real server-side
+                 value above this addon's own old, lower cap made Kodi's own
+                 SetSettingInt() a silent no-op (CSettingInt::CheckValidity()
+                 rejects an out-of-range value, confirmed against Kodi's real
+                 source), with real, confirmed consequences, see
+                 PVRDispatcharr.cpp's own constructor comment on this exact
+                 setting. 1440 (24h) comfortably covers any real padding use
+                 case (e.g. a multi-hour sports-overrun post-padding value)
+                 while still bounding the field to something sane. -->
+            <maximum>1440</maximum>
           </constraints>
           <control type="edit" format="integer" />
           <dependencies>
@@ -260,7 +280,8 @@
           <default>0</default>
           <constraints>
             <minimum>0</minimum>
-            <maximum>120</maximum>
+            <!-- Same 27th-pass fix as recording_pre_offset_minutes above. -->
+            <maximum>1440</maximum>
           </constraints>
           <control type="edit" format="integer" />
           <dependencies>
@@ -284,6 +305,65 @@
             <allowempty>true</allowempty>
           </constraints>
           <control type="edit" format="string" />
+        </setting>
+        <!-- Hidden addon-managed state, not user-facing: which
+             server/username api_key above was actually generated for (the
+             stored value is scheme://host:port, not a bare host, since a
+             48th-pass audit folded port and scheme into it too; the
+             setting id itself stayed api_key_host unchanged), so the
+             constructor can tell a stored key apart from a *different*
+             account/server's key that happens to still be sitting in
+             settings.xml. Added specifically because OnAddonSettingChanged()
+             itself must never call SetSetting*() synchronously (a real,
+             confirmed GUI-thread deadlock otherwise; see
+             PVRDispatcharr.cpp's own comment on why the host/username
+             branch no longer clears api_key directly): Kodi's own
+             TransferSettings() re-delivers every setting on the very same
+             call stack a settings-dialog save already re-enters through,
+             so persisting host/username here at the same time as api_key
+             (both from PersistApiKeyIfChanged(), never from inside a live
+             settings-change callback) and having the constructor compare
+             them is what actually detects a stale key now, not a
+             synchronous clear at change time. Uses a real <visible> child
+             element, not a `visible="false"` attribute (fixed 2026-09-27,
+             a 46th-pass audit, correcting a real, confirmed mistake in
+             this same fix one pass earlier, confirmed against Kodi's own
+             real current source): this file's own <settings version="1">
+             root routes through CAddonSettings::InitializeDefinitionsFromXml()
+             (AddonSettings.cpp), whose ISetting::Deserialize()
+             (settings/lib/ISetting.cpp) reads visibility only via
+             XMLUtils::GetBoolean(node, "visible", ...): FirstChild("visible"),
+             a child element, never an attribute on <setting> itself. The
+             attribute form is silently ignored by this parser (it's only
+             ever read by ParseOldSettingElement(), the legacy
+             version="0" definitions this file doesn't use), so both
+             settings below rendered as two extra, fully visible, editable
+             "API key" rows (reusing label 30033) showing the stored
+             host/username in plain text, the opposite of the intent.
+             (Corrected 2026-09-27, a 56th-pass audit: this comment
+             previously said the dispatcharr_is_admin setting further up
+             "cites this same wrong attribute-form claim in its own older
+             comment": that was itself stale by the time it was written;
+             that setting's own comment had already been corrected to say
+             the attribute form "was never a real, working mechanism to
+             begin with", not the wrong claim this comment described.) -->
+        <setting id="api_key_host" type="string" label="30033" help="30034">
+          <level>2</level>
+          <default></default>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <control type="edit" format="string" />
+          <visible>false</visible>
+        </setting>
+        <setting id="api_key_username" type="string" label="30033" help="30034">
+          <level>2</level>
+          <default></default>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <control type="edit" format="string" />
+          <visible>false</visible>
         </setting>
       </group>
     </category>

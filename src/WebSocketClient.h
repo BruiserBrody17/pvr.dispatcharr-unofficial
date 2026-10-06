@@ -24,7 +24,11 @@
 // this is used for, and this client never needs to send anything but a
 // pong reply.
 
+#include "WebSocketFrame.h"
+
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -48,6 +52,17 @@ public:
   bool Connect(const std::string& host, int port, bool useTls, const std::string& pathAndQuery, bool verifySsl,
                int connectTimeoutSeconds, std::string& error);
 
+  // A check this client makes while it waits (during the TCP/TLS connect, the handshake and every
+  // read or write wait, all sliced to about half a second): when it returns true the wait ends at
+  // once with an error, instead of running out its timeout. Without it a shutdown with an
+  // unresponsive server waited for the realtime thread to give up on its own, up to a connect
+  // timeout per phase (30 s measured live at the default; 90 s or more when the timeout is
+  // raised). Optional; called from whichever thread uses the client, so it must be thread-safe.
+  void SetStopCheck(std::function<bool()> shouldStop)
+  {
+    m_shouldStop = std::move(shouldStop);
+  }
+
   // Blocks until a complete text message is received, the connection is
   // closed (by either side) or fails, or `timeoutSeconds` elapses with no
   // data at all. Ping frames are answered with a pong automatically and
@@ -65,6 +80,12 @@ public:
   }
 
 private:
+  bool Stopping() const
+  {
+    return m_shouldStop && m_shouldStop();
+  }
+  std::function<bool()> m_shouldStop;
+
   // Blocks until all `len` bytes are handed to the OS (not necessarily
   // acknowledged by the peer) or `timeoutSeconds` elapses with the socket
   // never becoming writable, in which case this fails with `error` set --
@@ -79,11 +100,15 @@ private:
   // onward), waiting up to timeoutSeconds for the socket to become
   // readable if no data is immediately available. Returns 1 on success,
   // 0 on timeout, -1 on error/close.
-  int FillBuffer(int timeoutSeconds, std::string& error);
+  // `deadline` is an absolute point in time rather than a per-call number of seconds:
+  // a per-call budget restarts on every chunk received, so a peer trickling bytes in
+  // just under it could keep a loop calling this running far past what the caller meant
+  // (docs/OPEN_ITEMS.md, "Lower-severity WebSocketClient.cpp gaps").
+  int FillBuffer(std::chrono::steady_clock::time_point deadline, std::string& error);
   // Consumes exactly `len` bytes from the buffered/received stream into
   // `out`, calling FillBuffer() as needed. Same return convention as
   // FillBuffer().
-  int ReadExact(uint8_t* out, size_t len, int timeoutSeconds, std::string& error);
+  int ReadExact(uint8_t* out, size_t len, std::chrono::steady_clock::time_point deadline, std::string& error);
   bool SendPong(const std::vector<uint8_t>& payload, int timeoutSeconds, std::string& error);
   bool SendClose(int timeoutSeconds, std::string& error);
 
@@ -91,6 +116,20 @@ private:
 
   std::vector<uint8_t> m_recvBuffer;
   size_t m_recvPos = 0;
+
+  // Fragmented-message reassembly state, moved here from ReceiveTextMessage()'s
+  // own locals -- a real, confirmed bug this fixes: a plain read timeout
+  // (this method's own documented `0` return, "connection is presumed
+  // still alive") used to discard whatever partial message had already
+  // been accumulated across FIN=0/continuation frames, since those used
+  // to be stack-local and were destroyed the moment the function
+  // returned. A caller retrying after a `0` (exactly what this return
+  // value is documented to invite) now resumes the same in-progress
+  // message instead of silently losing it. Reset in Close() -- a fresh
+  // connection can't meaningfully continue a fragment left over from a
+  // prior one.
+  std::vector<uint8_t> m_assembledMessage;
+  WebSocketMessageKind m_messageKind = WebSocketMessageKind::kNone;
 };
 
 } // namespace dispatcharr

@@ -38,6 +38,8 @@ def _repo_root_is_tmp_path(tmp_path, monkeypatch):
     REPO_ROOT regardless of which check produced the finding, so every
     test needs it pinned to its own tmp_path, not this repo's real root."""
     monkeypatch.setattr(check_doc_refs, "REPO_ROOT", tmp_path)
+    # The real CLAUDE.md/CONTRIBUTING.md are not part of any synthetic test layout.
+    monkeypatch.setattr(check_doc_refs, "EXTRA_CITING_FILES", [])
 
 
 # ---------------------------------------------------------------------
@@ -89,6 +91,79 @@ def test_get_headings_bold_pseudo_headings(tmp_path):
 
     assert "the permission requirement" in headings
     assert "update (2026-09-08):" in headings
+
+
+def test_get_headings_ignores_shell_comments_inside_a_fenced_code_block(tmp_path):
+    """Regression test for a real, confirmed defect: HEADING_RE matches
+    any line starting with 1-6 '#' characters, which a shell comment
+    inside a ```bash fenced example (e.g. docs/API_NOTES.md's own
+    "# Get a token (only works...)" lines) satisfies just as well as a
+    real markdown heading -- without fence-tracking, these became false
+    heading matches that could satisfy a citation of a completely
+    unrelated section."""
+    doc = tmp_path / "X.md"
+    doc.write_text(
+        "\n".join(
+            [
+                "# A Real Heading",
+                "```bash",
+                "# Get a token (only works for accounts with full login permissions)",
+                "curl -X POST https://example/api/accounts/token/",
+                "```",
+                "## Another Real Heading",
+            ]
+        )
+    )
+
+    headings = check_doc_refs.get_headings(doc)
+
+    assert headings == {"a real heading", "another real heading"}
+
+
+def test_get_headings_resumes_matching_after_the_fence_closes(tmp_path):
+    doc = tmp_path / "X.md"
+    doc.write_text(
+        "\n".join(
+            [
+                "```bash",
+                "# Not a heading",
+                "```",
+                "# A Real Heading After The Fence",
+            ]
+        )
+    )
+
+    headings = check_doc_refs.get_headings(doc)
+
+    assert headings == {"a real heading after the fence"}
+
+
+# ---------------------------------------------------------------------
+# title_matches_headings
+# ---------------------------------------------------------------------
+
+
+def test_title_matches_headings_exact_match():
+    assert check_doc_refs.title_matches_headings("concurrent viewers", {"concurrent viewers"})
+
+
+def test_title_matches_headings_citation_is_a_substring_of_a_real_heading():
+    # The legitimate direction: citing "Concurrent viewers" against a
+    # real "Concurrent viewers (a real, live-confirmed bug)" heading.
+    assert check_doc_refs.title_matches_headings(
+        "concurrent viewers", {"concurrent viewers (a real, live-confirmed bug)"}
+    )
+
+
+def test_title_matches_headings_false_with_no_overlap():
+    assert not check_doc_refs.title_matches_headings("some unrelated topic", {"a totally different heading"})
+
+
+def test_title_matches_headings_a_short_real_heading_does_not_satisfy_a_longer_citation():
+    """The loophole closed 2026-10-02: the check used to also accept a real heading that is a
+    substring of the citation, so a short generic heading ("not") satisfied a citation of an
+    unrelated, longer section whose title merely contained it and hid a dangling citation."""
+    assert not check_doc_refs.title_matches_headings("live pause is not supported here", {"not"})
 
 
 # ---------------------------------------------------------------------
@@ -539,3 +614,161 @@ def test_main_reports_resolved_baseline_entries(tmp_path, monkeypatch, capsys):
 
     assert exit_code == 0
     assert "no longer triggering" in out
+
+
+# ---------------------------------------------------------------------
+# check_possessive_citations
+# ---------------------------------------------------------------------
+
+
+def _possessive_layout(tmp_path, monkeypatch, target_text, citing_doc=None, src_text=None):
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    target = docs_dir / "TARGET.md"
+    target.write_text(target_text)
+    doc_files = [target]
+    if citing_doc is not None:
+        citing = docs_dir / "CITING.md"
+        citing.write_text(citing_doc)
+        doc_files.append(citing)
+    if src_text is not None:
+        (src_dir / "Thing.h").write_text(src_text)
+    monkeypatch.setattr(check_doc_refs, "DOCS_DIR", docs_dir)
+    monkeypatch.setattr(check_doc_refs, "DOC_FILES", doc_files)
+    monkeypatch.setattr(check_doc_refs, "SRC_DIR", src_dir)
+    monkeypatch.setattr(check_doc_refs, "PLUGIN_FILES", [])
+
+
+def test_possessive_citation_in_a_source_comment_is_checked(tmp_path, monkeypatch):
+    _possessive_layout(
+        tmp_path, monkeypatch, "#### A real heading\n", src_text='// see docs/TARGET.md\'s "No such heading" entry\n'
+    )
+    errors = check_doc_refs.check_possessive_citations()
+    assert len(errors) == 1
+    assert "src/Thing.h" in errors[0][0] and "No such heading" in errors[0][0]
+
+
+def test_possessive_citation_matching_a_real_heading_is_clean(tmp_path, monkeypatch):
+    _possessive_layout(
+        tmp_path, monkeypatch, "#### A real heading\n", src_text='// see docs/TARGET.md\'s "A real heading" entry\n'
+    )
+    assert check_doc_refs.check_possessive_citations() == []
+
+
+def test_possessive_citation_wrapped_across_comment_lines_is_still_matched(tmp_path, monkeypatch):
+    # The title itself breaks across two comment lines: unwrapping must rejoin it with one space.
+    _possessive_layout(
+        tmp_path,
+        monkeypatch,
+        "#### A real heading that is long\n",
+        src_text='// see docs/TARGET.md\'s "A real heading\n// that is long" entry\n',
+    )
+    assert check_doc_refs.check_possessive_citations() == []
+
+
+def test_possessive_citation_wrapped_across_lines_still_flags_a_wrong_title(tmp_path, monkeypatch):
+    _possessive_layout(
+        tmp_path,
+        monkeypatch,
+        "#### A real heading that is long\n",
+        src_text='// see docs/TARGET.md\'s "A real heading\n// that is NOT long" entry\n',
+    )
+    assert len(check_doc_refs.check_possessive_citations()) == 1
+
+
+def test_possessive_citation_needs_no_trailing_word_section_in_docs(tmp_path, monkeypatch):
+    _possessive_layout(
+        tmp_path,
+        monkeypatch,
+        "# Other\n",
+        citing_doc='Compare docs/TARGET.md\'s "Missing one" for why.\n',
+    )
+    assert len(check_doc_refs.check_possessive_citations()) == 1
+
+
+def test_possessive_citation_to_a_missing_file_is_skipped(tmp_path, monkeypatch):
+    _possessive_layout(tmp_path, monkeypatch, "# x\n", src_text='// docs/GONE.md\'s "Whatever it was" entry\n')
+    assert check_doc_refs.check_possessive_citations() == []
+
+
+def test_possessive_citation_in_an_indented_docstring_wrapped_across_lines_is_matched(tmp_path, monkeypatch):
+    # Indentation from a wrapped docstring must not end up inside the quoted title.
+    _possessive_layout(
+        tmp_path,
+        monkeypatch,
+        "#### trusts a stored pid\n",
+        src_text='    """see docs/OPEN_ITEMS.md, "trusts\n    a stored pid" for why"""\n',
+    )
+    monkeypatch.setattr(check_doc_refs, "DOCS_DIR", tmp_path / "docs")
+    (tmp_path / "docs" / "OPEN_ITEMS.md").write_text("#### trusts a stored pid\n")
+    assert check_doc_refs.check_possessive_citations() == []
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
+        'docs/TARGET.md\'s "No such heading"',
+        'docs/TARGET.md, "No such heading"',
+        'docs/TARGET.md: "No such heading"',
+        'docs/TARGET.md\'s own "No such heading"',
+    ],
+)
+def test_possessive_citation_recognises_every_citation_form(tmp_path, monkeypatch, citation):
+    _possessive_layout(tmp_path, monkeypatch, "#### A real heading\n", src_text=f"// see {citation} entry\n")
+    assert len(check_doc_refs.check_possessive_citations()) == 1
+
+
+# ---------------------------------------------------------------------
+# The 2026-10-05 tenth hardening sweep: backtick form, CLAUDE.md/CONTRIBUTING.md, wrapped bold leads
+# ---------------------------------------------------------------------
+
+
+def test_possessive_citation_in_the_backtick_form_is_checked(tmp_path, monkeypatch):
+    # `docs/X.md`'s "Title" -- the form 59 of 83 real citations use -- used to match nothing.
+    _possessive_layout(
+        tmp_path, monkeypatch, "#### A real heading\n", src_text='// see `docs/TARGET.md`\'s "No such heading" entry\n'
+    )
+    assert len(check_doc_refs.check_possessive_citations()) == 1
+
+
+def test_possessive_citation_in_the_backtick_form_matching_a_heading_is_clean(tmp_path, monkeypatch):
+    _possessive_layout(
+        tmp_path, monkeypatch, "#### A real heading\n", src_text='// see `docs/TARGET.md`\'s "A real heading" entry\n'
+    )
+    assert check_doc_refs.check_possessive_citations() == []
+
+
+def test_possessive_citation_is_checked_in_claude_md_and_contributing_md(tmp_path, monkeypatch):
+    _possessive_layout(tmp_path, monkeypatch, "#### A real heading\n")
+    claude = tmp_path / "CLAUDE.md"
+    claude.write_text('See `docs/TARGET.md`\'s "No such heading".\n')
+    contributing = tmp_path / "CONTRIBUTING.md"
+    contributing.write_text('See docs/TARGET.md\'s "Another missing one".\n')
+    monkeypatch.setattr(check_doc_refs, "EXTRA_CITING_FILES", [claude, contributing, tmp_path / "ABSENT.md"])
+    keys = [key for key, _ in check_doc_refs.check_possessive_citations()]
+    assert any(k.startswith("CLAUDE.md|") for k in keys)
+    assert any(k.startswith("CONTRIBUTING.md|") for k in keys)
+    assert len(keys) == 2
+
+
+def test_get_headings_joins_a_bold_lead_that_wraps_across_lines(tmp_path):
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "- **One install's addon can silently invalidate another install's stored\n"
+        "  API key, breaking playback.** Dispatcharr keeps exactly one key.\n"
+        "- **Unclosed lead with no end\n"
+        "\n"
+        "plain text\n"
+    )
+    headings = check_doc_refs.get_headings(doc)
+    assert check_doc_refs.normalize(
+        "One install's addon can silently invalidate another install's stored API key"
+    ) in "|".join(headings)
+    assert not any("unclosed lead" in h and "plain text" in h for h in headings)
+
+
+def test_normalize_ignores_quote_characters_so_a_cited_title_with_quotes_matches():
+    assert check_doc_refs.normalize("The 'cosmetic' noise") == check_doc_refs.normalize('The "cosmetic" noise')
+    assert check_doc_refs.normalize("The ‘cosmetic’ noise") == check_doc_refs.normalize("The cosmetic noise")

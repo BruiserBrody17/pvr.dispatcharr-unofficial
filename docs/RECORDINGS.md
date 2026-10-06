@@ -7,6 +7,15 @@ below), a real recording and two real series rules were created, listed,
 and deleted -- both directly over the API and through Kodi's own PVR
 manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
 
+- **Enrichment ignores a channel's EPG override (Dispatcharr-side, 2026-10-02 note).** Dispatcharr's
+  `prefetch_recording_artwork`/`run_recording` match a recording against `rec.channel.epg_data`, the channel's
+  raw EPG link, not its effective/override one (`ChannelOverride.epg_data_id`, which this addon's guide
+  already follows). Seen live on a channel whose raw and effective `epg_data_id` differed: a recording a day
+  out never got a `title`/`sub_title`/`description`/`id` (the poster fell back to the channel logo) although
+  Kodi's guide showed a programme in that slot, while one a few minutes out enriched within seconds -- most
+  likely the raw source simply does not reach as far ahead (not confirmed; that needs the server's database).
+  Nothing to fix here, and this addon's own recordings still resolve guide data through the effective chain;
+  it is why a recording's title can stay blank until the programme itself is matched.
 - A `Recording` created with **no** `custom_properties` gets auto-enriched
   by Dispatcharr itself from whatever EPG programme was actually airing,
   nested as `custom_properties.program.{title,sub_title,description}`
@@ -153,6 +162,65 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   as documented -- and that a genuinely non-recording timer's delete
   (`forceDelete=false`) still correctly removes it entirely via
   `DeleteRecording()`.
+- **A completed recording that finished within Kodi's own stale-timer-cache
+  window could still be deleted entirely instead of just having its
+  now-stale Timers entry drop off, found via a project-wide review
+  (2026-09-26), not itself independently reproduced.** `forceDelete`
+  (see the bullet above) comes from Kodi's own *cached* copy of a
+  timer's state, only refreshed by this addon's own `GetTimers()` -- up
+  to `recording_refresh_minutes` stale (5 minutes by default, up to 60).
+  A separate, earlier fix (`dispatcharr::ShouldStopInsteadOfDelete()`,
+  `RecordingVisibility.h`) already closed the "recording started within
+  that stale window" half: a fresh server-side lookup at delete time
+  correctly routes to `StopRecording()` even when Kodi's own cache still
+  thought nothing was recording yet. But a recording short enough to
+  both *start and finish* inside one `recording_refresh_minutes`
+  interval (any recording shorter than that setting, e.g. a 30-minute
+  show against the default 5-minute refresh) can still show as a
+  SCHEDULED timer to Kodi's own stale cache even though the server-side
+  recording already completed normally -- `forceDelete=false` and the
+  fresh lookup's own `isInProgress=false` (correctly, it's done) both
+  routed to `DeleteRecording()`, permanently deleting the just-completed
+  recording's real, wanted content, not merely cancelling a timer that
+  never ran. Fixed by checking, before that existing Stop-vs-Delete
+  decision, whether the fresh lookup confirms the recording is neither
+  in progress nor upcoming at all (`dispatcharr::IsAlreadyFinishedRecording()`,
+  same header) -- when true, `DeleteTimer()` does neither: nothing to
+  stop or delete, Kodi's own next refresh naturally drops the now-stale
+  Timers entry once this addon's own cache catches up.
+- **Update (2026-09-26): the exact same stale-cache window applies to
+  `UpdateTimer()` too, the missed counterpart of the fix above, found via
+  a project-wide review, not itself independently reproduced.** An edit
+  on an already-finished recording caught in that window used to fall
+  into `UpdateTimer()`'s own "not yet started" branch, which PATCHes
+  `start_time`/`end_time` via `UpdateOneTimeRecording()` -- resending an
+  `end_time` already in the past, which Dispatcharr's own
+  `RecordingSerializer.validate()` explicitly rejects (`end_time < now`,
+  already confirmed live -- see `UpdateOneTimeRecording()`'s own
+  comment). That failed even a harmless title-only edit outright, since
+  `RenameRecording()` was never reached once that PATCH failed first.
+  Fixed the same way: `IsAlreadyFinishedRecording()` checked before the
+  existing not-yet-started branch, and when true, only a rename applies
+  -- any other field Kodi's dialog might have changed (start/end time)
+  is silently ignored, since there's nothing left to reschedule.
+
+  **Update (2026-09-26, a 21st-pass audit): a second, distinct
+  stale-cache window hits the same "not yet started" branch the same
+  way, found via a project-wide review, not itself independently
+  reproduced.** A recurring occurrence stuck at `status=="scheduled"`
+  forever (see `IsMissedOccurrence()`'s own comment, `RecordingVisibility.h`)
+  is already excluded from Kodi's Timers list -- but if Kodi's own
+  cached copy of it was fetched before that occurrence's window fully
+  elapsed (a slower client refresh, a timer-edit dialog left open), an
+  edit on it still reaches `UpdateTimer()` with a genuinely stale
+  `rec.isUpcoming=true` looking fresh. Same failure as above: it falls
+  into the "not yet started" branch, PATCHes an already-past `end_time`,
+  and Dispatcharr rejects it. Fixed the same way -- `IsMissedOccurrence()`
+  checked as its own branch before the existing not-yet-started one
+  (deliberately *not* folded into `IsAlreadyFinishedRecording()` itself,
+  since `DeleteTimer()` also uses that function and widening it would
+  make Delete a silent no-op for a missed occurrence a user is actually
+  trying to remove) -- only a rename applies.
 - Stopping a recording early leaves its `end_time` at the originally
   *scheduled* value -- Dispatcharr doesn't rewrite it to the actual stop
   time, only `custom_properties.stopped_at` reflects that. `isInProgress`
@@ -170,6 +238,29 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   `TriggerRecordingUpdate()` after a successful stop/delete (previously
   only `TriggerTimerUpdate()`), for the same reason `AddTimer()` needed
   one: the change affects the Recordings view too, not just Timers.
+
+  **Update (2026-09-26, a 26th-pass audit): the same untouched `end_time`
+  also left the recording's own *duration* wrong, not just its
+  in-progress status, confirmed against Dispatcharr's own real current
+  upstream source (cloned into a scratchpad, never committed to this
+  repo -- stronger than the API shape alone, not the same standard as a
+  live test).** `ParseRecordingFields()`'s own `durationSeconds` was
+  computed from `end_time - start_time` unconditionally -- so a
+  recording stopped 10 minutes into a scheduled hour still reported a
+  full hour's duration in Kodi's recordings list and info panel, and its
+  JSON-RPC `endtime` stayed in the future. Fixed the same way as the
+  in-progress fix above: `custom_properties.stopped_at`
+  (`"YYYY-MM-DD HH:MM:SS.ffffff+00:00"`, already parseable by
+  `TimeFromIso()`'s own fixed-digit-position parse, indifferent to the
+  `T`-vs-space separator -- *update, 2026-09-26, a 37th-pass audit:*
+  `TimeFromIso()` now also reads and applies a trailing offset (a
+  35th-pass fix), but `stopped_at`'s own `+00:00` is a
+  genuine zero, so this still parses the same real instant either way)
+  recomputes `durationSeconds` as `stopped_at - start_time` whenever it parses to a
+  sane value strictly between `start_time` and `end_time`. Deliberately
+  scoped to `status == "stopped"` only (not `"interrupted"`, which is
+  set from several different code paths server-side with less certain
+  per-instance timing semantics -- not chased this pass).
 - **A recording that *did* show up under Recordings still failed to
   play, silently ("Error creating demuxer" in the log, no player ever
   started).** This took real digging, and an earlier note in this file
@@ -210,20 +301,48 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   fails with a clear error instead of trying and silently corrupting
   playback. See the separate `inputstream.ffmpegdirect`-based path below
   for how this is actually solved when opted into.
+
+  **Update (2026-09-26, a 22nd-pass audit): a completed recording's own
+  file can still change size out from under an already-open
+  `ReadRecordingStream()`, confirmed against Dispatcharr's own real
+  current upstream source (cloned into a scratchpad, never committed to
+  this repo -- stronger than the API shape alone, not the same standard
+  as a live test), not reproduced live.** Dispatcharr's own
+  `comskip_process_recording()` runs automatically right after a
+  recording finishes (when comskip is enabled), and its own "cut" mode
+  replaces the original file with a shorter, commercial-trimmed one
+  in-place (`os.replace()`, or a non-atomic `shutil.copy()` fallback) --
+  reachable while a client is already mid-playback if it started
+  watching the recording right after it finished, before comskip (which
+  can take minutes) is done. `ReadRecordingStream()` had no cross-check
+  against this at all, unlike the live-timeshift read path's own
+  analogous guard -- it kept using the length cached when the stream was
+  opened against the new, shorter file's actual bytes at the same
+  offsets, silently reading the wrong content with no error anywhere.
+  Fixed with new `dispatcharr::HasRecordingFileChanged()`
+  (`RecordingHttpUtil.h`), comparing each read's own fresh
+  `Content-Range` total (via the same `RecordingHeaderCallback` already
+  used by `OpenRecordingStream()`'s own probe) against the cached
+  length, failing the read outright on a disagreement rather than
+  risking silent corruption.
 - Both endpoints above (recording file and the HLS redirect target) also
   confirmed to return a flat **403 for a fully anonymous request**,
   despite their schema listing anonymous access (`{}`) as one of the
   allowed security schemes -- a Bearer token or `X-API-Key` header is
   actually required. A JWT access token expires after 30 minutes
   (confirmed by decoding one -- `exp - iat` -- see the login note above),
-  too short for most recordings, so this addon generates a Dispatcharr
-  API key on first use via `POST /api/accounts/api-keys/generate/` and
-  persists it to its own `api_key` setting. Regenerating that endpoint
-  replaces the account's previous key (confirmed: two calls returned two
-  different keys) -- **account-wide, not per-installation**, which matters
-  once more than one Kodi install shares the same Dispatcharr account; see
-  "Known limitations with more than one Kodi client" below for the
-  self-heal this addon now does about it.
+  too short for most recordings, so this addon obtains a Dispatcharr
+  API key on first use and persists it to its own `api_key` setting --
+  reading the account's *existing* key via `GET /api/accounts/api-keys/`
+  and only calling `POST /api/accounts/api-keys/generate/` when the
+  account has none (it used to generate unconditionally; fixed
+  2026-09-30, see `docs/OPEN_ITEMS.md`). Regenerating replaces the
+  account's previous key (confirmed: two calls returned two different
+  keys) -- **account-wide, not per-installation**, which matters once
+  more than one Kodi install (or any other script/tool) shares the same
+  Dispatcharr account; see "Known limitations with more than one Kodi
+  client" in `docs/TROUBLESHOOTING.md` for the self-heal this addon does
+  about a key another client replaced.
 - **In-progress recording playback, via `inputstream.ffmpegdirect`
   (`enable_inprogress_playback` setting, off by default, experimental).**
   Confirmed query-param auth is **not** a usable alternative to the
@@ -723,6 +842,15 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   it would mean an addon install stays silently on the periodic-refresh-
   only fallback until restarted, worth a dedicated look later.
 
+  **Update (2026-09-26): the dedicated look happened, via a project-wide
+  review, not a repeat of this exact live session.** This was a real gap,
+  not the connection surviving fine -- see `docs/API_NOTES.md`'s own
+  "OS sleep/wake and the real-time-updates WebSocket" section for the
+  full mechanism (a half-open connection that never receives a FIN/RST
+  is indistinguishable, from this thread's own perspective, from a
+  healthy one with nothing new to report) and the fix (TCP keepalive).
+  Not yet re-confirmed against a fresh live outage-and-recovery test.
+
   **The macOS-vs-Windows seek discrepancy investigated earlier is probably
   not a real platform difference -- more likely the same class of
   duration-metadata issue described next, not yet re-tested under that
@@ -940,6 +1068,35 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   on the first attempt -- not a bug in the realtime-update feature
   itself, just a test-channel-selection collision with this project's
   own prior testing on the same account.
+
+  **Update (2026-09-26, a 24th-pass audit): "every recording lifecycle
+  event this addon cares about is already broadcast" above overclaims
+  for a plain *edit*, confirmed against Dispatcharr's own real current
+  upstream source (cloned into a scratchpad, never committed to this
+  repo -- stronger than the API shape alone, not the same standard as a
+  live test).** `Recording`'s own `post_save` signal
+  (`schedule_task_on_save`, `apps/channels/signals.py`) schedules
+  `prefetch_recording_artwork` after any save, but that task only sends
+  `recording_updated` when it actually changes one of a specific set of
+  enrichment fields (poster/rating/season/episode/onscreen episode) --
+  gated on `updated` being true. There's no separate, unconditional push
+  anywhere for a plain schedule edit: `RecordingViewSet` has no
+  `perform_update()`/`perform_create()` override of its own that pushes
+  one either. So editing an already-enriched recording's start/end time
+  (this addon's own `UpdateOneTimeRecording()` PATCH, seen from a
+  *second* Kodi install, or the identical edit made via Dispatcharr's
+  own web UI) usually changes none of those enrichment fields and
+  sends nothing -- confirmed indirectly by Dispatcharr's own frontend,
+  whose `api.js` `updateRecording()` refetches manually right after its
+  own PATCH rather than relying on a push. Recurring rules have an
+  analogous gap: `purge_recurring_rule_impl()`/`sync_recurring_rule_impl()`
+  only notify `if removed or total_created`, so deleting or disabling a
+  rule with no future occurrences left to purge sends nothing either.
+  Impact in both cases is bounded to the existing periodic-poll
+  fallback's own worst case (`recording_refresh_minutes`, default 5) --
+  not a correctness bug, just this doc's own wording (and `README.md`'s
+  "show up immediately" feature-list line, corrected the same day)
+  claiming more coverage than actually exists.
 - **`ReadRecordingStream()` used to open a brand-new libcurl easy handle
   (fresh TCP connection, fresh TLS handshake if HTTPS) for every single
   demuxer read**, rather than reusing one across the life of an open
@@ -1245,8 +1402,13 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
      `offsetInSegment` instead of trusting the server to honor a `Range`
      header it ignores. The cache holds only the one segment current reads
      are landing in (replaced, not accumulated, the moment `position`
-     moves into a different one), so memory use stays bounded to a single
-     segment's size regardless of recording length; a seek into an
+     moves into a different one), so memory use stays bounded to
+     (transiently, up to twice -- noted 2026-09-27, a 57th-pass audit,
+     since a 56th-pass audit's own fix now briefly holds the outgoing and
+     incoming segment's bytes at once while a fetch is in flight, to
+     avoid a cache-coherency bug a failed fetch used to risk -- see
+     `ReadInProgressRecordingStream()`'s own comment) a single segment's
+     size regardless of recording length; a seek into an
      already-cached segment is free, a seek into a new one costs one fresh
      full-segment fetch, matching the seek-cost tradeoff already accepted
      elsewhere in this addon. Re-verified live end-to-end after the fix:
@@ -1299,6 +1461,24 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   rather than an empty `Directory`, the same grouping behavior a real
   named show gets. Confirmed live: a real EPG-matched test recording came back from `PVR.GetRecordingDetails`
   with its `directory` matching its `title` exactly.
+
+  **Update (2026-09-26, a 21st-pass audit): "provably identical at the
+  source" above was only true for a title with none of a small set of
+  characters, confirmed against Dispatcharr's own real current upstream
+  source (cloned into a scratchpad, never committed to this repo --
+  stronger than the API shape alone, not the same standard as a live
+  test).** `_build_output_paths` doesn't use `program.get('title')`
+  completely raw -- it passes both `show` and `title` through its own
+  `_safe_name()` first, which strips `[\/:*?"<>|]` and trims. A title
+  containing a forward slash (e.g. "Face/Off", "20/20") passed straight
+  to `SetDirectory()` turned into a *nested* Kodi folder instead of
+  Dispatcharr's own single flat one for that show -- confirmed against
+  Kodi's own real source, `CPVRRecordingsPath` treats a raw `/` in
+  `Directory` as a path separator, and only the title itself gets
+  `CURL::Encode()`'d, not the directory. Fixed with new
+  `dispatcharr::SanitizeRecordingDirectory()` (`RecordingDirectory.h`),
+  mirroring `_safe_name()`'s own character set and falling back to
+  `"Recording"` for the rare case sanitizing consumes the whole title.
 - **Recording pre/post padding is now surfaced as two addon settings
   (`recording_pre_offset_minutes`/`recording_post_offset_minutes`) that
   mirror Dispatcharr's own global padding setting directly, rather than
@@ -1321,6 +1501,86 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   Recurring-rule recordings are simply unaffected by this setting no
   matter what it's set to -- not something this addon can fix, just
   documented rather than silently wrong.
+
+  **Update (2026-09-26, a 20th-pass audit): this is only true of a
+  recurring occurrence's own *initial* scheduling -- *changing* the
+  padding setting afterward can still reach (and, per Dispatcharr's own
+  logic, duplicate) an already-materialized recurring occurrence,
+  confirmed against Dispatcharr's own real current upstream source
+  (cloned into a scratchpad, never committed to this repo -- stronger
+  than the API shape alone, not the same standard as a live test).**
+  `CoreSettingsViewSet.update()` runs a `reschedule_upcoming_recordings_
+  for_offset_change` task whenever pre/post actually changes, and that
+  task re-pads every future `Recording` whose own
+  `custom_properties.program` carries a `start_time`/`end_time` -- which
+  a recurring occurrence's own row does, set by `sync_recurring_rule_impl`
+  itself, the same function this entry's own paragraph above already
+  cites for never applying the offset *at creation*. The hourly
+  `maintain_recurring_recordings` beat task (`sync(drop_existing=False)`)
+  then checks for an already-existing occurrence at the rule's own
+  *unpadded* `start_time`, doesn't find one (it's now padded), and
+  creates a second, unpadded, overlapping recording for that same
+  occurrence -- two recordings, two provider streams, from one setting
+  change. This self-heals within about `kRecurringRuleWindowDays`/2 days
+  of the change, once this addon's own periodic renewal PATCH purges and
+  regenerates every future occurrence unpadded again (`sync(drop_existing=
+  True)`) -- but not before. This is an upstream Dispatcharr behavior
+  this addon's own settings screen can trigger, not something addressed
+  here; see `docs/OPEN_ITEMS.md`.
+
+  **Update (2026-09-26, a 25th-pass audit): "an EPG-matched one-time
+  recording" above only ever describes a recording created through
+  Dispatcharr's *own* UI, not one created by this addon itself,
+  confirmed against Dispatcharr's own real current upstream source
+  (cloned into a scratchpad, never committed to this repo -- stronger
+  than the API shape alone, not the same standard as a live test).**
+  `RecordingSerializer.validate()` only applies the pre/post offset when
+  `isinstance(custom_properties.get("program"), dict)` -- but
+  `DispatcharrClient::CreateOneTimeRecording()` deliberately sends no
+  `custom_properties` at all (see its own comment: an explicit value on
+  create would *replace* Dispatcharr's own auto-enrichment rather than
+  merge with it), so a recording created by pressing "Record" in Kodi's
+  own EPG guide gets exactly the raw EPG start/end times, no padding
+  applied, regardless of what this addon's own `recording_pre/post_
+  offset_minutes` settings are set to -- contradicting this addon's own
+  user-facing text (`strings.po` #30055/#30057's "every EPG-based
+  recording", `README.md`'s "synced with Dispatcharr's own global
+  setting"). Corrected the same day, not yet a code fix: sending
+  `custom_properties: {"program": {"start_time", "end_time"}}` only for
+  an EPG-based timer (`timer.GetEPGUid() != PVR_TIMER_NO_EPG_UID`), with
+  no title/id so Dispatcharr's own enrichment still runs afterward,
+  looks viable but needs a live test -- specifically to confirm this
+  doesn't suppress that enrichment the way an existing comment elsewhere
+  in this codebase already documents a *different*, full-custom_properties
+  create call doing. A later padding-setting change would then also
+  reach these recordings via `reschedule_upcoming_recordings_for_offset_
+  change` (see the paragraph just above) once they carry a real
+  `program.start_time`/`end_time` -- the same behavior Dispatcharr's own
+  UI-created recordings already have, just new for this addon's own
+  creates specifically.
+
+  **Fixed and confirmed live, 2026-09-29 (see `docs/OPEN_ITEMS.md`'s own
+  entry for the full test account).** The enrichment-suppression risk
+  above was confirmed safe first, live: two real recordings, one with
+  this exact `custom_properties` shape and one with none, both came
+  back fully enriched within seconds of Dispatcharr's own
+  `prefetch_recording_artwork` task, with the shaped one's own
+  `start_time`/`end_time` merging in alongside the new fields rather
+  than being replaced. `BuildOneTimeRecordingCreateBody()`
+  (`TimerRequestBuilder.{h,cpp}`) gained an `includeEpgProgramWindow`
+  parameter implementing exactly this; `CreateOneTimeRecording()`/
+  `AddTimer()` (`DispatcharrClient.cpp`/`PVRDispatcharr.cpp`) pass
+  `timer.GetEPGUid() != PVR_TIMER_NO_EPG_UID` for it, so a manual
+  (non-EPG) recording stays unaffected. Re-verified live end-to-end
+  against a real Kodi client afterward: pressing "Record" on a real EPG
+  guide entry produced a recording padded by exactly the instance's own
+  configured offsets. While re-verifying, found (and logged separately,
+  `docs/OPEN_ITEMS.md`) a real, unrelated Dispatcharr-side gap this fix
+  doesn't touch: its own auto-enrichment queries a channel's *raw*
+  `epg_data`, not the effective/override one this addon's own guide
+  display already correctly uses -- a channel with an EPG override can
+  have its recordings silently never enrich for a slot outside the raw
+  source's own coverage, independent of anything this addon sends.
 
   Dispatcharr stores this pair (`pre_offset_minutes`/`post_offset_minutes`,
   minutes, default 0 for both) inside a single shared `CoreSettings` row
@@ -1524,6 +1784,155 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   isn't reading one logs a scary-looking error even though the request
   itself, from curl's side, already succeeded. Dispatcharr-side log noise,
   not a real failure -- confirmed by hard evidence rather than assumed.
+- **Pausing an in-progress recording's playback past the recording's own
+  end killed playback on resume -- fixed with a periodic keep-alive that
+  only runs while the viewer still has unread segments (2026-09-30).**
+  Flagged by a 28th-pass source audit (2026-09-26), then reproduced live:
+  a real 4-minute recording, played while still recording and paused
+  ~48s in, ended at +240s; by +301s Dispatcharr had removed the HLS
+  directory (the playlist URL answered 302 to the completed file), and on
+  resume playback ran ~12s from Kodi's own cache, then 63 consecutive
+  segment fetches came back 404 over ~8s (~7.8/s) and the player ended by
+  itself 17s after resume.
+
+  Root cause: once a recording finishes, Dispatcharr's own recording task
+  waits for the `dvr:hls_viewer:{id}` Redis key to lapse before it removes
+  the HLS directory (`apps/channels/tasks.py`), and the HLS view sets that
+  key (20s TTL) for a `.ts` request and nothing else
+  (`apps/channels/api_views.py`). A paused viewer's own background
+  traffic -- the `GetStreamTimes()` polling that keeps running through a
+  pause -- is a playlist fetch and a status lookup, neither of which
+  touches the key (`ProbeSegmentByteSize()` does, but only for segments
+  that newly appeared, and none do once the recording is over). So the key
+  lapsed ~20s after the last real segment request and the directory went
+  with it, out from under a viewer still holding unread segments.
+
+  Fix: `MaybeSendInProgressHlsKeepAlive()` (`DispatcharrClient.cpp`, called
+  at the top of `RefreshInProgressRecordingManifest()`, which
+  `GetStreamTimes()`'s polling keeps reaching through a pause) sends a
+  HEAD on the newest known segment every 10s (`kHlsKeepAliveInterval`),
+  retrying a transient failure after 2s. DRF maps HEAD to the same view
+  function a GET runs and `ProbeSegmentByteSize()` already HEADs `.ts`
+  URLs, so it refreshes the key without downloading anything. Every request
+  this addon makes that itself lands on a `.ts` URL (a segment body fetch,
+  a newly discovered segment's size probe) pushes the schedule out the
+  same way, so a stream that is actually playing never sends one. The
+  decision logic is `dispatcharr::ShouldSendHlsViewerKeepAlive()`
+  (`HlsViewerKeepAlive.h`, unit-tested, including a simulated 5-minute
+  pause checked against the server's TTL).
+
+  **One deliberately non-obvious rule: it only runs while the reader still
+  has unread bytes (`position < totalBytes`).** Dispatcharr only finalizes
+  a finished recording -- removes the HLS directory, *then* flips its
+  status to `completed` -- after the viewer key lapses, and this addon only
+  learns a recording is finished (and reports EOF) from exactly that
+  finalization. A reader waiting at the tail that also kept the key alive
+  would hold the recording open forever, waiting for an EOF its own
+  keep-alive prevents. The keep-alive as first sketched in the audit entry
+  ("while the recording is still open and unfinished") would have had that
+  deadlock.
+
+  Side effects worth knowing. For as long as a viewer sits paused with
+  unread segments, Dispatcharr keeps the recording in its `recording`
+  status and defers finalizing it -- the same "deferring HLS directory
+  cleanup until client disconnects" behavior its own web UI's HLS viewer
+  gets, capped at 4 hours by its own safety timeout -- so Kodi keeps
+  showing it as recording, and the completed-file URL isn't available,
+  until the viewer resumes and plays through to the end or stops. Reaching
+  the end of the recording costs a ~20s stall at the tail while the key
+  lapses (the same wait a viewer following the live edge already had).
+  And Dispatcharr's own log gets one more `HEAD ... Broken pipe` line per
+  keep-alive, the same harmless noise the entry above explains.
+
+  Confirmed live after the fix (Linux test client, a real 3-minute
+  recording, paused at position 18s and left paused ~110s past the
+  recording's end): 12 keep-alives, every ~10.1s, all answered 200; the
+  HLS playlist still answered 200 (not 302) and the recording still read
+  `recording` at +300s. On resume, playback ran through to the recording's
+  real end with zero segment 404s, stalled ~22s at the tail, ended by
+  itself, and the server then reported `completed` with the playlist
+  answering 302 -- the tail-stall/finalization sequence above, working as
+  designed. The same scenario on the Windows test client (a 2-minute
+  recording, paused ~60s past its end) behaved identically. `GetStreamTimes()`'s
+  polling turned out to be roughly twice a second throughout the pause (392
+  real manifest refreshes in ~245s), far more often than the 10s interval
+  needs. Not covered: a directory that is
+  already gone by the time a paused viewer resumes (a pause past Dispatcharr's
+  4-hour cap, the device asleep past the TTL, a network outage longer than
+  the TTL) still hits the old unbounded segment-404 retry -- see
+  `docs/OPEN_ITEMS.md`'s entry on this.
+- **Opening an in-progress recording within its first ~3 seconds failed
+  outright instead of waiting for it to start (2026-09-30).** With
+  real-time updates on, Kodi lists a newly started recording about a second
+  after it is created, and opening it then (or up to about +2.5s) failed
+  every time -- 6 of 6 in one live run -- with "Dispatcharr returned HTTP
+  404 fetching in-progress playlist" after a single attempt. Opens at +3s
+  and later worked. Cause: `RecordingViewSet.hls()` answers 404 both when
+  the recording has no HLS directory yet and when the directory exists but
+  has no `index.m3u8` yet, and `OpenInProgressRecordingStream()`'s
+  cold-start loop -- whose own 45s budget was already confirmed live as
+  necessary for a playlist that exists but has no segment in it yet --
+  returned on the first *failed* refresh, so that budget only ever covered
+  a fetch that succeeded. Real exposure was small (a person can't reach a
+  recording that fast; a script or a very quick "record, then play" can),
+  but the behavior was inconsistent with the wait right next to it.
+
+  Fixed: a failed first refresh is now waited out, on the same budget, when
+  it is a plain 404 *and* the server says the recording is in progress
+  right now (`dispatcharr::ShouldRetryInProgressColdStart()`,
+  `RecordingVisibility.h`). Anything else still fails fast -- a redirect
+  (the HLS directory is already gone and the file is complete), a transport
+  failure, a 401 or a 5xx say nothing about the recording being young, and a
+  recording that finished, failed or was deleted must not burn the whole
+  budget. Confirmed live: opens made 0.9-1.0s after creation now retry the
+  missing playlist 2-3 times and reach advancing playback in 4.1-5.8s (4 of
+  4), where the same window failed every time before. One thing the live
+  runs showed about the wait itself: how long Dispatcharr takes to produce
+  the playlist varies from a couple of seconds to more than 9 (it depends on
+  how fast the channel connects), so an open right at the start can
+  legitimately take that long -- the retry budget covers it, but a caller
+  that gives up on playback sooner will still see a failure.
+
+- **Watching an in-progress recording that got deleted (or finished with
+  its HLS directory removed) kept the addon polling a server that could only
+  answer 404, for as long as Kodi kept the stream open (2026-09-30).** With
+  real-time updates off -- the default, and the only case where Kodi can't
+  find out another way -- deleting a recording on the server while a viewer
+  sat at its tail made the addon alternate a recording lookup and an HLS
+  playlist fetch roughly every 0.3s, every one a 404: measured through a
+  counting proxy, 766 requests over 98s (~7.8/s), ending only when Kodi's own
+  no-data timeout closed the stream (101s and 109s in two runs). The lookup
+  404 was already recognizable, but `ResolveInProgressFinished()`'s "a failed
+  lookup is unknown, don't assume finished" rule -- right for a network blip
+  -- swallowed it, and the refresh throttle only ever arms on a successful
+  refresh, so nothing slowed the loop down.
+
+  Fixed with `dispatcharr::IsInProgressContentGone()` (`RecordingVisibility.h`)
+  and a sticky `contentGone` flag on the stream. A refresh that finds the
+  playlist 404 (or a redirect) for a stream that already had segments, with
+  either a lookup that answered 404 (deleted) or a lookup that says the
+  recording is no longer in progress (finished, directory removed), marks the
+  content gone: `finished` goes true, every later refresh returns immediately
+  without a request, and a read that needs a segment it doesn't already hold
+  returns EOF rather than `-1` (which Kodi retries near-immediately). A
+  segment 404 in the read path runs one throttled refresh so a viewer
+  mid-buffer finds out as well. A lookup that failed some other way (5xx,
+  timeout) stays "unknown", and one that says the recording is *still* in
+  progress never counts -- a naturally completing recording's status is only
+  written after its directory is removed, and that window resolves itself on
+  the next refresh.
+
+  Confirmed live on the same harness: after the delete the addon made exactly
+  two requests (lookup and playlist, both 404, 0.6s in), logged that the
+  recording is gone, and stayed silent; the player ended ~10s later, which is
+  Kodi playing out what it had already buffered. The paused-viewer and
+  playing-mid-recording variants behaved the same, and a viewer whose addon
+  couldn't reach the server while the recording finalized and lost its
+  directory ended cleanly (one lookup, one playlist request) once it could --
+  the situation that produced 63 consecutive segment 404s before the
+  keep-alive existed and would still have, had the server stayed unreachable
+  past the viewer-key TTL.
+
 - **Opening an in-progress recording got slower the longer it had already
   been running, and re-paid that cost on every open, not just the first --
   fixed by parallelizing the segment probe and caching results across
@@ -1631,6 +2040,24 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   original, connection-sharing `CURLSH` exactly as before, unchanged --
   the same combination already proven crash-free through this project's
   extensive prior live testing.
+
+  **Update (2026-10-05, the thirteenth hardening sweep): the "other call
+  sites keep connection sharing, proven crash-free" conclusion above did
+  not hold, and the main share no longer shares connections either.** The
+  crash is not specific to macOS's libcurl: the real `DispatcharrClient`
+  linked against stub Kodi functions and driven by 16 threads
+  (`GetChannels`/`GetRecordings`/`InvalidateAccessToken`) against a local
+  fake server segfaulted inside `curl_easy_perform` on the stock Ubuntu
+  24.04 libcurl 8.5.0 in 4 of 5 runs, and 0 of 6 with connection sharing off;
+  a 30-line plain-C program with the same lock callbacks crashed 5 of 5 at 8
+  threads and 3 of 3 at 16, and never with sharing off (3, 4 and 6 threads did
+  not crash in 5 runs each). The addon can have five to seven transfers in
+  flight at once, just under that measured threshold, so the earlier
+  crash-free experience was luck of low concurrency, not a safe combination.
+  `m_curlShareState` now shares DNS and TLS sessions only; the long-lived
+  read handles keep their own keep-alive connections, and what is lost is
+  reusing one short request's connection for the next. Which libcurl version
+  fixed it is not established.
 
   Confirmed live on Windows after the fix: the same in-progress recording
   opened cleanly with no crash, still fast (2,600 elapsed segments probed
@@ -1771,6 +2198,190 @@ using that occurrence's real times on the rule's own row, plus wiring up
 matching recording nests under the rule in Kodi's UI too. Confirmed live:
 after the fix, the rule's own row showed the same real start/end time as
 its matched child recording instead of the epoch.
+
+**Update (2026-09-26): the epoch bug above could still come back
+through a title case mismatch, found via a project-wide review by
+downloading and reading Dispatcharr's own current upstream source
+(`apps/channels/tasks.py`, `main` branch as of this writing) into a
+scratchpad -- not written into this repo, and not the same standard of
+proof as a live test against a real running instance, but stronger than
+guessing from the API shape alone.** `evaluate_series_rules_impl()`
+matches "exact" `title_mode` case-insensitively
+(`programs_qs.filter(title__iexact=series_title)`), so a rule whose
+title differs only in case from the EPG programme's own title still
+records correctly server-side -- but `MatchRecordingsToSeriesRules()`'s
+own title comparison was case-sensitive, purely for this addon's own
+client-side re-linking (parent-index/display-time only; the recording
+itself was never at risk). A title typed in a different case than the
+EPG's own (more likely now that "Search guide for" is the field that
+actually reaches Dispatcharr -- see the entry just below) recorded fine
+but never linked back to its own rule row, reintroducing the epoch
+display and leaving the recording appearing as an unparented one-time
+timer. Fixed by comparing case-insensitively
+(`dispatcharr::ToLower()`, `StringUtil.h`).
+
+**Update (2026-09-27, a 68th-pass audit): the same epoch/unparented
+symptom was still reachable through leading/trailing whitespace on the
+rule's own title, confirmed against Dispatcharr's own real current
+upstream source (the same scratchpad clone), not itself independently
+reproduced.** `evaluate_series_rules_impl()` matches on
+`(rule.get("title") or "").strip()`, but `SeriesRulesAPIView.post()`
+(`apps/channels/api_views.py`) stores `title` exactly as sent, and
+Kodi's own timer dialog doesn't trim "Search guide for" either
+(`GUIDialogPVRTimerSettings.cpp`) -- so a stray space typed there
+reached Dispatcharr verbatim, recorded fine, and never linked back.
+`MatchRecordingsToSeriesRules()` now strips the rule's title (ASCII
+whitespace only at that point -- see the update just below for the
+Unicode half) before comparing; the recording's own title is
+deliberately left unstripped, since the server compares against each
+programme's raw title too.
+
+**Update (2026-09-30): the same epoch/unparented symptom was still
+reachable through a rule whose `title_mode` isn't "exact", through
+non-ASCII whitespace and letter case, and through a description filter --
+all confirmed live against the real instance and fixed.** Dispatcharr
+materializes a recording from a series rule with nothing but a `program`
+snapshot (title, description, tvg_id, epg_source_id) in
+`custom_properties` -- never a reference back to the rule -- so this addon
+can only link a recording to its rule by re-running the rule's own
+filters against that snapshot, and had only ever re-implemented the
+"exact" one, and only for ASCII. Reading the rest of the server's side
+(`_evaluate_series_rules_locked()`, `apps/epg/query_utils.py`, Dispatcharr
+0.31.0) showed what those filters really are: `"exact"` is
+`title__iexact`; every other title mode (including `"contains"`, and any
+mode name the server doesn't know) goes through `parse_text_query()` -- an
+`icontains` with an AND/OR/double-quote/parenthesis grammar applied
+strictly left to right, `"search"` anchoring each term on a regex word
+boundary, `"regex"` passing the whole value to PostgreSQL as a regular
+expression; a description is always run through that same parser; and a
+rule's title and description filters are ANDed. Both the title and the
+description are `.strip()`ped (Python's, so the no-break space and the
+rest of Unicode whitespace too) while the stored rule stays unstripped.
+
+Confirmed live before changing anything: a `contains` rule "ZZZ_TEST Alpha"
+beside a recording "ZZZ_TEST Alpha Report" (an exact-mode control linked, the
+`contains` rule read "Any day at any time"), a rule with a trailing no-break
+space, and a rule "ZZZ_TEST ÜNDER TEST" against a recording "ZZZ_TEST ünder
+test" all stayed unlinked. And a probe through the channel list's `icontains`
+filter (`UPPER(name) LIKE UPPER(...)` -- the same function `title__iexact`
+uses) found a channel named "ÜNDER" by searching "ünder", so the real
+instance's database does fold non-ASCII case, as the stock Debian-based
+postgres image's libc collation does.
+
+Fixed by `SeriesRuleTextMatch` (exact, contains and search modes, a
+faithful port of `parse_text_query()` -- see its header for the quirks it
+reproduces on purpose) and `UnicodeText` (Python-identical whitespace
+stripping, and simple-uppercase case folding from a table generated from
+glibc's `towupper()`, the function PostgreSQL's `UPPER()` calls on such a
+database -- not from Python's `str.upper()`, whose full mapping differs in
+exactly the places that matter here). A regex filter is deliberately left
+unevaluated: PostgreSQL's regular-expression syntax isn't ECMAScript's, so
+a regex rule stays unlinked rather than being guessed at. Verified against
+the real upstream parser (loaded unmodified, with Django's `Q` replaced by
+a small fake that keeps its empty-operand rule) on ~108,000 random
+query/text pairs with zero disagreements, every Unicode code point against
+glibc and Python exhaustively, and live: eleven rules covering each mode
+beside eight recordings, every one linked or left unlinked exactly as
+predicted.
+
+**Series timers sent Kodi's cosmetic "Name" field to Dispatcharr as the
+actual EPG-title match pattern instead of "Search guide for", found via
+a project-wide review (2026-09-26), not itself independently
+reproduced.** `GetTimerTypes()` declares
+`PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH` for the series type, which
+makes Kodi's own timer-settings dialog show "Search guide for"
+(`timer.GetEPGSearchString()`) as a separate field from "Name"
+(`timer.GetTitle()`) -- confirmed against Kodi's own source
+(`xbmc/pvr/dialogs/GUIDialogPVRTimerSettings.cpp`): the two fields are
+edited and saved back completely independently, with no relationship
+Kodi itself enforces between them. But `AddTimer()`/`UpdateTimer()`'s
+own series branches sent `GetTitle()` to `CreateSeriesRule()` as the
+actual match pattern and never read `GetEPGSearchString()` at all, and
+`GetTimers()` never called `SetEPGSearchString()` either. Two real
+consequences: editing "Search guide for" alone was silently dropped
+(the addon never read it), and editing "Name" alone -- which Kodi's own
+dialog presents as a cosmetic label -- silently changed Dispatcharr's
+own match rule instead, creating a *second*, separate rule under the
+new identity per the upsert limitation documented above rather than
+renaming the original. The ordinary "Record" button from an EPG guide
+entry happened to work correctly only by coincidence: Kodi's own
+`CPVRTimerInfoTag::CreateFromEpg()` sets both fields to the same EPG
+title for a brand-new timer, so nothing ever revealed the addon was
+reading the wrong one. Fixed by routing both create/update
+(`dispatcharr::ResolveSeriesRuleMatchTitle()`, `TimerIdentity.h` --
+prefers `GetEPGSearchString()`, falling back to `GetTitle()` only when
+the search string is empty, matching Kodi's own dialog convention for a
+brand-new timer) and display (`GetTimers()` now also calls
+`SetEPGSearchString(rule.title)`, since Dispatcharr's own single
+`title` field serves as both the cosmetic name and the match pattern --
+there's no separate field server-side) through the actual match
+pattern instead.
+
+**Update (2026-09-26, a 17th-pass audit): the fix above means the
+existing "editing a series rule's identity creates a duplicate instead
+of renaming" limitation (documented in `UpdateTimer()`'s own comment,
+"Not worked around here") is now reached through the *correct* field
+("Search guide for") instead of the previously-read, cosmetic one
+("Name").** This isn't a new bug from the fix above -- that exact
+create-a-duplicate-on-identity-change behavior already existed and was
+already documented before this fix, and editing "Name" pre-fix
+triggered the identical duplicate-creation path, just via the wrong
+field. What changes is that a genuine "widen my search pattern" edit
+from Kodi -- the scenario this field exists for -- now reaches that
+same limitation directly, rather than being silently dropped as it was
+before. Confirmed against Dispatcharr's own current upstream source
+(`SeriesRulesAPIView.post()`, downloaded to a scratchpad for review,
+not committed to this repo): the upsert genuinely appends a new rule
+whenever `(tvg_id, title, epg_source_id)` doesn't match an existing one,
+leaving the old rule (and its own future recordings) fully in place --
+not just a guess from the API shape. A more complete fix (detect the
+identity change against the cached rule and delete the old one first)
+is possible but has a real data-loss-ordering subtlety of its own
+(delete-then-create risks losing the rule entirely if create then
+fails; create-then-delete risks the old rule's own delete wiping
+recordings the new rule's server-side evaluation had already
+materialized) -- logged to `docs/OPEN_ITEMS.md` rather than implemented
+blind, since it needs a live test either way.
+
+**Editing a channel-less series rule (one with no pinned channel) from
+Kodi always failed with a 400, confirmed and fixed by an 18th-pass audit
+(2026-09-26) that cloned Dispatcharr's own real current upstream source
+into a scratchpad, never committed to this repo.** Such a rule is real
+and reachable in practice, not hypothetical -- Dispatcharr's own
+"Record series" Guide button creates one with no pinned channel, sent
+into Kodi as `PVR_CHANNEL_INVALID_UID` (-1) since this addon's own
+convention for "no channel" is `channelId <= 0`.
+`DispatcharrClient::CreateSeriesRule()` unconditionally included
+`channel_id` in its POST body, unlike `tvg_id` (already conditionally
+omitted when empty) -- so an edit sent `channel_id: -1` literally,
+which Dispatcharr's own validation rejects outright ("channel_id does
+not exist"), since Dispatcharr's own schema documents `channel_id` as
+genuinely optional too ("Optional channel to pin recordings to"). Fixed
+by omitting `channel_id` from the body whenever `channelId <= 0`,
+mirroring the existing `tvg_id` pattern. Still open: such a rule's own
+row in Kodi's Timers list still shows the Unix-epoch placeholder and
+its recordings still appear unparented, since
+`MatchRecordingsToSeriesRules()` requires a matching `channelId` --
+logged to `docs/OPEN_ITEMS.md` rather than fixed this same pass, since a
+proper fix needs `RecordingParser` to also read
+`custom_properties.program.tvg_id`, a larger change.
+
+**Update (2026-09-26, a 30th-pass audit, confirmed against Kodi's own
+real current SDK source, not itself independently reproduced): the
+above never actually let a real Kodi-driven edit of a channel-less rule
+reach this addon at all.** Kodi's own `GUIDialogPVRTimerSettings` only
+auto-selects a channel for an *existing* timer whose channel uid is
+`PVR_CHANNEL_INVALID_UID` when the timer type declares
+`PVR_TIMER_TYPE_SUPPORTS_ANY_CHANNEL` (never declared here) -- without
+it, editing such a rule from Kodi's own dialog failed with "Could not
+update the timer" before this addon's `UpdateTimer()` was ever called,
+for the whole edit, not just the channel. Fixed this pass: the series
+timer type now declares that flag, and `UpdateTimer()`'s own cache-match
+comparison (which a plain `channelId == clientChannelUid` check would
+still miss, since one side's "no channel" sentinel is `0` and the
+other's is `-1`) now goes through `dispatcharr::IsSameSeriesRuleChannel()`
+(`TimerIdentity.h`) instead. See `docs/OPEN_ITEMS.md`'s own entry for
+the fuller account, including what still needs a live dialog check.
 
 **A `<date>` value can be a series-level placeholder, not a real
 per-episode original air date -- reported live (2026-09-10) as a
@@ -2128,3 +2739,504 @@ recording) have since been implemented and confirmed live (see the
 "Update" paragraphs above). See `docs/OPEN_ITEMS.md` for the tracked
 history.
 
+**Update (2026-09-26, a 19th-pass audit): `DeleteTimer()`'s series-rule
+branch could send the wrong title on its rare cache-miss fallback,
+found via a project-wide review, not itself independently reproduced.**
+`DeleteTimer()` prefers the rule's own originally-stored identity from
+`m_cachedTimerRules` (see the `FindSeriesRuleIndexByClientIndex()` fix
+in `TimerIdentity.h`), falling back to a freshly re-derived title/tvg_id
+only when the rule isn't found in the cache at all. That fallback took
+`title = timer.GetTitle()` ("Name", a cosmetic label) directly, rather
+than `dispatcharr::ResolveSeriesRuleMatchTitle(timer.GetEPGSearchString(),
+timer.GetTitle())` -- the same "Search guide for" preference
+`AddTimer()`/`UpdateTimer()` already apply when building the identical
+kind of request. A series rule whose match pattern differs from its
+displayed name (edited "Search guide for" separately from "Name",
+confirmed as two genuinely independent fields against Kodi's own
+source -- see `ResolveSeriesRuleMatchTitle()`'s own comment) hitting
+this fallback path sent a title Dispatcharr's own title+tvg_id delete
+identity never matched, silently no-opping the delete -- the same
+failure mode the tvg_id-preference fix above exists to avoid, just
+through the title half of that same identity instead. Fixed by using
+`ResolveSeriesRuleMatchTitle()` here too.
+
+**Update (2026-09-27, a 41st-pass audit): a real, confirmed latch bug in
+Kodi's own `CPVRRecording::IsInProgress()` could permanently mark a
+genuinely-in-progress recording as finished, found via a project-wide
+review and confirmed against Kodi's own real current SDK source, not
+itself independently reproduced.** `IsInProgress()` (`PVRRecording.cpp`)
+only re-checks `GetRecordingTimer()` (whether a matching RECORDING-state
+timer still exists) while its own cached `m_bInProgress` is still
+`true` -- the moment that check ever comes back `false`, it latches
+permanently, never re-checking again regardless of what changes
+afterward. A brand-new `CPVRRecording` starts with `m_bInProgress = true`
+(`Reset()`), so a just-started recording whose corresponding timer
+hasn't reached Kodi's own Timers list *yet* gets latched to "not in
+progress" the instant anything calls `IsInProgress()` on it in that
+gap. Something does, ambiently, roughly once a second regardless of any
+user action: `CPVRManager::Process()`'s own main loop (confirmed:
+`CThread::Sleep(1000ms)` between iterations) calls
+`TriggerRecordingsSizeInProgressUpdate()` (which calls `IsInProgress()`
+on every recording) on every iteration, once any client declares
+`SetSupportsRecordingSize(true)` -- which this addon does. The addon's
+own `InvalidateAndTriggerRecordingUpdate()`/`InvalidateAndTriggerTimerUpdate()`
+pair (`PVRDispatcharr.cpp`) each schedule an independent, asynchronous
+Kodi job backed by its own separate HTTP round-trip to Dispatcharr; two
+of that pair's three call sites (the periodic recording-refresh
+thread's own loop, and `HandleRealtimeUpdateMessage()`) fired the
+recordings trigger *before* the timers trigger, leaving exactly the gap
+described above open between the two round-trips completing --
+`AddTimer()`'s own already-established order (timers, then recordings,
+with its own comment on why) never had this problem. Once latched, the
+symptom is a real, live-confirmed-mechanism (not just cosmetic)
+regression: Kodi's own `CPVRContextMenus`-driven "Stop recording" option
+disappears in favor of "Delete" (this addon's own `DeleteRecording()`
+sends an unconditional `DELETE`, ending the still-genuinely-running
+recording and removing its partial file), the recording can get marked
+watched at the live edge, and `PVR.IsPlayingActiveRecording` reads
+false. Fixed by swapping the order at both remaining call sites to match
+`AddTimer()`'s: timers before recordings.
+
+**Update (2026-09-27, a 42nd-pass audit): four more sites left the same
+window open, found via a project-wide review, confirmed against Kodi's
+own real current SDK source, not itself independently reproduced --
+worse than the two the update above fixed, since none of these four
+queued a timer refresh at all, not even one running slightly behind.**
+`DeleteRecording()` and `RenameRecording()` each fired only
+`InvalidateAndTriggerRecordingUpdate()`, `AddTimer()`'s own delayed
+5-second re-enrichment thread (see its own comment on why that delay
+exists) did the same, and `OnSystemWake()` fired no recordings/timers
+trigger of any kind. The risk isn't specific to whichever recording a
+given call is actually acting on -- a recordings-only refresh re-fetches
+*every* recording, so it's equally capable of exposing a *different*,
+freshly-started recording (one Dispatcharr began recording since this
+addon's last successful `GetRecordings()`) to Kodi's own ambient,
+roughly-once-a-second `IsInProgress()` check (see the update above) if
+its own corresponding timer update hasn't independently caught up yet.
+`OnSystemWake()` matters more than it looks: `CPVRManager::OnWake()`
+(`PVRManager.cpp`) calls `CPVRClients::OnSystemWake()` -- which is what
+invokes this addon's own `OnSystemWake()` callback, synchronously, for
+every client -- *before* `OnWake()` itself goes on to call
+`TriggerRecordingsUpdate()` ahead of `TriggerTimersUpdate()` a few lines
+later; Kodi's own job queue (`CPVRManagerJobQueue::AppendJob()`,
+confirmed FIFO, deduping only against another already-pending job of
+the exact same type) means a timer-update job queued from inside this
+addon's own `OnSystemWake()` is guaranteed to run before whatever
+`TriggerRecordingsUpdate()` queues moments later in that same call --
+this is the one place in this entire ordering problem where the addon
+can actually get *ahead* of Kodi's own sequencing (a device resuming
+from suspend), not just avoid making an existing race worse. Fixed by
+adding a timer trigger at all four sites, ordered before the recordings
+trigger wherever both are present.
+
+
+**Update (2026-09-27, a 44th-pass audit): a permanently empty API key
+never self-healed, silently failing every recording (completed and
+in-progress) for the whole addon session, found via a project-wide
+review, confirmed against Dispatcharr's own real current upstream
+source, not itself independently reproduced.** The constructor only
+generates an API key once, and only inside an `else if` gated on that
+same construction's own initial `EnsureAuthenticated()` call having
+already succeeded -- if that first login attempt fails (Dispatcharr not
+yet reachable at Kodi startup, the same startup timing this project has
+now found real bugs around three passes running), the key generation
+branch is skipped entirely, and nothing else in this addon ever
+revisits "no key yet" afterward: every other `GenerateApiKey()` call
+site only fires reactively, on a `401` response. Confirmed against
+Dispatcharr's own real current upstream source that an *empty* key
+never reaches that self-heal at all: `RecordingViewSet`'s `file`/`hls`
+actions use `AllowAny` at the DRF permission-class level specifically
+so `_user_can_play_recording()` (its own actual authorization gate) gets
+to run for an unauthenticated request too -- and that function returns
+**403**, not 401, for a request with no credentials (`user.is_authenticated`
+false). Only a *bad*, non-empty key gets a 401
+(`ApiKeyAuthentication.authenticate()`'s own `AuthenticationFailed` for
+an unrecognized key, which DRF's exception handling maps to 401 since
+that authenticator implements `authenticate_header()`). Fixed by
+generating a key proactively, right at the top of `OpenRecordedStream()`,
+whenever one isn't already present -- reusing the same
+`keyBefore`/`PersistApiKeyIfChanged()` wrapper this function already
+applies for the reactive-regeneration case, so a freshly generated key
+here gets persisted the same way.
+
+**Update (2026-09-27, a 44th-pass audit): a stale API key survived a
+Dispatcharr host/username change untouched, letting recording playback
+keep authorizing as the *previous* account after switching to a new
+one -- found via a project-wide review, confirmed against Dispatcharr's
+own real current upstream source, not itself independently
+reproduced.** A `host`/`username` settings change already returns
+`ADDON_STATUS_NEED_RESTART` (this addon's connection settings aren't
+something to change on a live instance), but the stored `api_key`
+setting itself was never cleared -- so the fresh instance created by
+that restart still saw a (still server-side-valid, if the old account
+still exists) key and skipped generating a new one. Since Dispatcharr's
+own `ApiKeyAuthentication` resolves a request's user purely from the
+key itself (`User.objects.get(api_key=raw_key)`), independent of
+whichever account this addon's own JWT login now separately
+authenticates as for every other API call, recording playback kept
+authorizing as the *old* account -- switching from an admin/manage
+account to a lower-privileged view-only one could still let recording
+playback reach content outside the new account's own channel scope
+(`recordings_queryset_for_user()`, `apps/channels/dvr_access.py`).
+Fixed by clearing the stored `api_key` setting whenever `host` or
+`username` actually changes (not `port`/`use_https`/`verify_ssl`/
+`timeout`/`password` -- none of those changes *who* the key
+authenticates as), so the fresh instance the resulting restart creates
+generates one scoped to whichever account is now configured.
+
+**Update (2026-09-27, a 45th-pass audit): the fix above caused a real,
+confirmed GUI-thread deadlock, caught and corrected one pass later --
+confirmed against Kodi's own real current source, not itself
+independently reproduced.** Calling `kodi::addon::SetSettingString(
+"api_key", "")` directly inside `OnAddonSettingChanged()`'s own
+`host`/`username` branch, as the fix above did, is unsafe:
+`CAddonDispatcharr::SetSetting()` (`addon.cpp`) holds `m_instancesMutex`
+for its entire call into `OnAddonSettingChanged()`, and
+`SetSettingString()` unconditionally calls `CAddonDll::SaveSettings()`,
+which -- once the settings dialog that triggered the change has already
+closed (a modal `dialog->Open()` that returns only after `Close()`,
+`CGUIDialogAddonSettings::ShowForSingleInstance()`) -- re-enters
+`TransferSettings()` and re-delivers *every* setting again, including
+`host`/`username` themselves, back into `CAddonDispatcharr::SetSetting()`
+on the very same call stack. That tries to re-lock the still-held
+`m_instancesMutex` on the same thread: undefined behavior for a plain
+`std::mutex`, and a real, permanent hang in practice on every mainstream
+implementation (glibc's default `PTHREAD_MUTEX_NORMAL` explicitly
+documents self-relock as deadlocking). Kodi's GUI thread hung permanently
+on any real `host`/`username` change made through the settings dialog --
+the user had to kill Kodi, though the new host and cleared key were
+already written to disk by that point (`CAddon::SaveSettings()` writes
+before `TransferSettings()` runs), so the *next* start worked, masking
+how the previous one had actually ended.
+
+Fixed by never calling any `SetSetting*()` variant from inside
+`OnAddonSettingChanged()` at all. Two new hidden settings,
+`api_key_host`/`api_key_username` (`resources/settings.xml`, a real
+`<visible>false</visible>` child element -- see this update's own
+follow-up note below), record which account the stored `api_key`
+actually belongs to -- written by `PersistApiKeyIfChanged()` alongside
+`api_key` itself, from its own already-safe (non-reentrant) call sites.
+The constructor -- an ordinary, non-reentrant call path -- compares them
+against the current `host`/`username` and treats a mismatch the same as
+"no key yet," achieving the same result the reactive clear was trying
+to, safely: the fresh instance a `host`/`username` change's own
+`ADDON_STATUS_NEED_RESTART` already creates generates a new key scoped
+to whichever account is now configured, the first time it constructs.
+
+**Update (2026-09-27, a 46th-pass audit): the two new settings above
+weren't actually hidden, a real, confirmed mistake in this same fix,
+found via a project-wide review and confirmed against Kodi's own real
+current source.** The original version used `visible="false"` as an
+XML *attribute* on `<setting>` itself. `resources/settings.xml`'s own
+`<settings version="1">` root routes through
+`CAddonSettings::InitializeDefinitionsFromXml()` (`AddonSettings.cpp`),
+whose `ISetting::Deserialize()` (`settings/lib/ISetting.cpp`) reads
+visibility only via `XMLUtils::GetBoolean(node, "visible", ...)` --
+`FirstChild("visible")`, a child *element*, never an attribute; the
+attribute form is only ever read by the legacy `version="0"` definitions
+parser this file doesn't use. Both settings rendered as two extra,
+fully visible, editable "API key" rows in the Advanced category (reusing
+label 30033, the real `api_key` field's own label), showing the stored
+host/username in plain text -- the opposite of the intent. Fixed by
+using a real `<visible>false</visible>` child element instead.
+
+**Update (2026-09-27, a 46th-pass audit): two more real, confirmed gaps
+in the same 45th-pass fix, found via a project-wide review, confirmed
+against Kodi's own real current source and Dispatcharr's own real
+current upstream source, not itself independently reproduced.**
+
+First, the account-mismatch comparison only ever runs inside
+`EnsureAuthenticated()`'s success branch in the constructor, and only
+actually resolves a detected mismatch if the follow-up
+`GenerateApiKey()` call also succeeds right then. If the initial login
+fails (the same startup-timing class of gap the 43rd/44th-pass fixes
+already addressed for channels/EPG and the plain-empty-key case) or that
+regeneration attempt itself fails, the mismatch is silently never
+resolved, and -- unlike an empty key -- nothing else in this addon ever
+revisits a merely *wrong-account* (non-empty) key for the rest of the
+session; `OpenRecordedStream()`'s own pass-44 self-heal only fires on
+`keyBefore.empty()`. Fixed with a new `m_apiKeyOwnershipVerified` flag,
+checked (and retried) alongside the existing empty-key case in
+`OpenRecordedStream()` on every open until it actually succeeds.
+
+Second, `PersistApiKeyIfChanged()` stamped `api_key_host`/
+`api_key_username` from `m_lastAppliedConfig.host`/`.username` --
+written with no lock by `OnAddonSettingChanged()` on the settings/GUI
+thread, a genuine data race against this read from whatever thread
+calls `OpenRecordedStream()`/`ReadRecordedStream()`/etc. Worse than the
+race itself: `m_lastAppliedConfig.host`/`.username` reflect the *latest
+delivered* setting, not necessarily what `m_client` is still actually
+using -- `CAddonStatusHandler::Process()` (`AddonStatusHandler.cpp`)
+shows a *blocking* OK dialog before actually restarting the addon on
+`ADDON_STATUS_NEED_RESTART`, and this old, not-yet-destroyed instance
+keeps running (and can still self-heal/regenerate the key mid-playback)
+for however long the user takes to dismiss it. Stamping the *new*,
+not-yet-applied host/username against a key regeneration that actually
+happened against the *old* connection made the next instance's own
+owner-check wrongly treat a foreign-account key as already matching,
+keeping it permanently. Fixed with two new `const` members,
+`m_apiKeyOwnerHost`/`m_apiKeyOwnerUsername`, snapshotting what `m_client`
+was actually constructed with once, at construction -- safe to read from
+any thread with no lock at all, and immune to the NEED_RESTART-dialog
+window since they never change for this instance's whole lifetime.
+
+A minor, related gap fixed the same pass: `OpenRecordedStream()`'s own
+proactive key generation ran before the actual stream-open attempt, but
+a freshly generated key was only persisted if that open then succeeded
+-- if it failed for an unrelated reason (the recording genuinely
+doesn't exist, a transient network issue), the new key stayed live
+server-side but unpersisted, so the next restart saw the *old*,
+already-invalidated key and needlessly regenerated again. Fixed by
+persisting on that early-failure path too.
+
+**Update (2026-09-27, a 47th-pass audit): the `m_apiKeyOwnershipVerified`
+flag the 46th-pass fix above added had its own regression, caught the
+very next pass, confirmed by code trace, not itself independently
+reproduced.** The comparison against `m_apiKeyOwnerHost`/
+`m_apiKeyOwnerUsername` (which only reads local settings, no network
+call) was computed and stored inside the constructor's
+`EnsureAuthenticated()` success branch -- so if the *initial* login
+attempt failed (the same startup-timing class of gap already fixed
+elsewhere: channels/EPG, the empty-API-key case), `m_apiKeyOwnershipVerified`
+stayed at its default `false` even when the stored key genuinely already
+belonged to this account, since the comparison that would have proven
+that was never even run. The very first `OpenRecordedStream()` call
+then saw `!m_apiKeyOwnershipVerified` and rotated a perfectly valid key
+-- silently invalidating it for every other install/tool/script already
+using that same account's key, exactly the disruption this whole
+owner-tracking mechanism exists to avoid causing unnecessarily. Fixed
+by moving the comparison (and the flag it sets) to run unconditionally,
+before the `EnsureAuthenticated()` check, keeping only the actual
+regeneration attempt itself gated on login having succeeded.
+
+See `docs/OPEN_ITEMS.md`'s own entry on a related, bigger, deliberately
+deferred API-key issue: two installs sharing one Dispatcharr account
+regenerating each other's key several times a second during
+*simultaneous active playback*, not just once per restart.
+
+**Update (2026-09-27, a 47th-pass audit): the realtime-update WebSocket
+thread had the same "live settings vs. construction-time snapshot"
+mistake as the API-key owner tracking above, found via a project-wide
+review, confirmed against Kodi's own real current source, not itself
+independently reproduced.** `StartRealtimeUpdateThread()`'s own
+reconnect loop called `PVRDispatcharr::LoadConfigFromSettings()` fresh
+on every iteration -- a *live* settings read -- for the host/port/
+`use_https`/`verify_ssl`/`timeoutSeconds` it connects with, while using
+`m_client`'s own (construction-time) JWT for the connection itself.
+During the same NEED_RESTART-dialog window described above (this old,
+not-yet-destroyed instance keeps running for however long the user
+takes to dismiss Kodi's blocking OK dialog), a reconnect landing in that
+window sent the *previous* server's own JWT to whatever *new* host/port
+had just been typed in -- a real credential-disclosure risk if that new
+host happens to accept it (e.g. a cloned/staging instance sharing the
+same Django `SECRET_KEY`), and at best a pointless connection attempt
+otherwise. Fixed with a new `DispatcharrClient::GetConnectionSettings()`
+accessor exposing `m_client`'s own construction-time connection fields
+(safe to read from any thread with no locking, the same reasoning as
+`m_apiKeyOwnerHost`/`m_apiKeyOwnerUsername`, since none of them ever
+change after construction -- a change to any of them always returns
+`ADDON_STATUS_NEED_RESTART` instead) -- the reconnect loop now reads
+from that instead of taking a fresh, live settings snapshot.
+
+**Update (2026-09-27, a 48th-pass audit): a failed rename/delete could
+leave Kodi's own UI wrong or show a spurious error, found via a
+project-wide review, confirmed against Kodi's own real current SDK
+source, not itself independently reproduced.**
+
+`CPVRRecording::Rename()` (`PVRRecording.cpp`) sets its own `m_strTitle`
+to the new name *before* ever calling into this addon, unconditionally
+-- so a failed rename here still left Kodi displaying the new,
+never-actually-applied title, with nothing correcting it:
+`AsyncRecordingAction::Run()` (`PVRGUIActionsRecordings.cpp`), the
+caller, only triggers a recordings refresh on *success*. Fixed by also
+calling `InvalidateAndTriggerRecordingUpdate()` on `RenameRecording()`'s
+own failure path, so Kodi's wrongly-optimistic in-memory title gets
+corrected back to the real server-side value promptly instead of
+staying wrong until some unrelated refresh happens to occur.
+
+Separately, `DeleteRecording()` treated a 404 the same as any other
+failure -- but a 404 here means the recording is already gone, exactly
+the end state this call was trying to reach (whether it was already
+deleted by another Kodi install sharing this account, or Dispatcharr's
+own automatic cleanup). Confirmed against Kodi's own real current SDK
+source that `CPVRGUIActionsRecordings::DeleteRecording()` surfaces any
+non-`PVR_ERROR_NO_ERROR` return here as a "PVR backend error" dialog to
+the user, for something that's already true. Fixed by treating a 404
+specifically as success.
+
+**Update (2026-09-27, a 48th-pass audit): the API-key owner stamp
+ignored port and scheme, found via a project-wide review, confirmed
+against Kodi's own real current source, not itself independently
+reproduced.** The account-mismatch comparison added a couple of passes
+ago compared only host and username -- so switching to a *different*
+Dispatcharr instance reachable on the same host but a different port or
+scheme (two containers on `127.0.0.1` at different ports, a staging
+instance) with the same username kept treating the old instance's key
+as already belonging to the new one. Worse than the plain host/username
+case this whole mechanism already guards against: an API key never
+expires on its own, so `OpenRecordedStream()` skipped regeneration
+entirely (ownership already marked verified) and silently sent the
+*previous* server's key to the *new* one in `X-API-Key`, only
+self-healing once that server's own 401 triggered a regeneration. Fixed
+by folding port and scheme into the same stored identity
+(`ComputeApiKeyOwnerServer()`, `PVRDispatcharr.cpp`'s anonymous
+namespace) -- the setting id `api_key_host` is unchanged, only what it
+stores changed, so no new hidden setting was needed. This is still the
+same minimal, stamp-based approach, not the bigger "read the server's
+own current key via `GET /api/accounts/api-keys/`" redesign the related
+multi-install entry above already defers -- that redesign would also
+close this gap more completely (an authoritative check rather than a
+locally-stored guess), but wasn't attempted blind this pass either.
+
+**Update (2026-09-27, a 49th-pass audit): the whole owner-tracking
+mechanism above (`api_key_host`/`api_key_username`, added the two
+passes prior) had no migration path for an install already running a
+released version that predates it, found via a project-wide review,
+confirmed against `master`'s own current `addon.xml.in` (`0.11.0`), not
+itself independently reproduced.** Neither setting existed before this
+same, 45th, pass, so an install upgrading from `0.11.0` or earlier
+already has a perfectly valid `api_key` but both settings read back as
+their empty `GetSettingString()` default -- indistinguishable from a
+genuine host/username mismatch by the plain comparison this mechanism
+uses. Left as-is, every existing user's key would have been silently
+rotated once on the very first post-upgrade start, invalidating it for
+any other install/tool/script already using that same account's key --
+exactly the disruption this whole mechanism exists to avoid causing
+unnecessarily. Fixed by treating "both stamps empty and `HasApiKey()`"
+as a one-time migration case in the constructor: trust the existing key
+as already belonging to the current account, and stamp the real
+host/username values right then (safe from the constructor, the same
+reasoning `PersistApiKeyIfChanged()`'s own calls already rely on) so a
+*later* genuine host/username change is still caught as a real mismatch
+by the next instance's own constructor, rather than this bypass
+silently applying forever. The one gap this leaves: a user who already
+changed host/username on the pre-migration version before upgrading
+won't get the wrong-account protection for that specific change -- but
+that protection didn't exist there either, so nothing regresses.
+
+**Update (2026-09-27, a 49th-pass audit): `StopRecording()`/
+`DeleteRecurringRule()` had the same 404-tolerance gap `DeleteRecording()`
+was fixed for above, found via a project-wide review, not itself
+independently reproduced.** Same reasoning: a 404 from either endpoint
+means the target is already gone (already stopped/deleted by another
+install sharing this account, or Dispatcharr's own automatic cleanup),
+exactly the end state the call was trying to reach, not a real failure.
+Fixed the same way, treating a 404 specifically as success in both.
+`DeleteSeriesRule()` was independently checked and does NOT need this
+fix -- confirmed against Dispatcharr's own real current upstream source
+that `SeriesRulesAPIView.delete()` always returns HTTP 200 regardless of
+whether anything actually matched.
+
+**Update (2026-09-27, a 49th-pass audit): `UpdateTimer()`/`DeleteTimer()`
+only triggered a Kodi timer/recording refresh on their own success path,
+found via a project-wide review, confirmed against Kodi's own real
+current SDK source, not itself independently reproduced.** A failed
+update/delete/stop can still have partially changed server-side state
+before the failure occurred (or reflect state that changed for an
+unrelated reason, e.g. another install), but with no trigger on the
+failure path, Kodi's own cached copy of that timer/recording stayed
+wrong until some unrelated refresh happened to occur -- the same class
+of gap already fixed for `RenameRecording()`'s own failure path above,
+just for `UpdateTimer()`/`DeleteTimer()` instead. Fixed by moving both
+trigger calls to run unconditionally, before each function's own
+`if (!ok)` failure check, rather than only inside a success branch.
+
+## A user Stop stranded an in-progress recording's final segment
+
+*2026-09-30. Closes the open item "User Stop plus status-before-playlist reorder can
+strand a recording's final segment".*
+
+`RefreshInProgressRecordingManifest()` decides a recording is finished from its status
+(`ResolveInProgressFinished()`), checked before the playlist is fetched. The 18th-pass
+source reading found that `RecordingViewSet.stop()` writes `status = "stopped"`
+synchronously and tears the stream down in a background thread afterwards, so the
+playlist could still be one segment short when the status had already flipped. **Measured
+live** against the real instance (record, then Stop while polling the playlist every
+~30ms): after the status changed, the playlist stayed at 9 segments with no
+`#EXT-X-ENDLIST` for about three seconds, then showed 10 segments and the tag in the same
+read, and about half a second later the `hls` endpoint started answering 302.
+
+The addon side reproduced it: a viewer at the live edge saw `finished=1` at its final byte count and, 2.6 seconds later, a new segment probed -- after the reader had
+already been given EOF, so it never played. (How much is lost depends on how much of the
+last segment ffmpeg had written; this was a partial one.)
+
+`GateFinishedOnEndList()` (`RecordingVisibility.h`) now sits between the status decision
+and the stored `finished`: while the status says finished but the playlist
+(`M3u8HasEndList()`) doesn't yet, `finished` stays false and the wait is timed; it turns true
+when the tag appears, or after a 15-second grace so a recording that died without ever writing
+it still ends. The path where Dispatcharr has already removed the HLS directory (a redirect or
+404 on the playlist) is untouched: the tag is gone with the directory and that path ends the
+stream by its own rule. Re-run with the same scenario: `finished=0` on the cycle that saw the
+status flip, then `finished=1` on the cycle where the final segment (a small one this time) and the
+tag arrived together -- the segment is now merged before EOF.
+
+## The in-progress manifest refresh no longer re-checks the API key
+
+*2026-09-30.* Every refresh used to GET the playlist, then GET it again (`Range: 0-0`) to
+check the API key, then look the recording up. `FetchRawInProgressPlaylist()` already sends
+the same key to the same URL and regenerates it on a 401, so a successful fetch had already
+proven the key, and the second GET was pure overhead. Removed (with its `IsApiKeyValidFor()`
+helper). Measured through a counting proxy with a viewer at the live edge of a recording:
+130 playlist requests in 40 seconds before, 65 after, the recording lookups unchanged at 65.
+
+## Two live checks of the in-progress read path (2026-10-01)
+
+*Both open items were `Needs a live check`; neither is fixed here, see `docs/OPEN_ITEMS.md` for the proposals.*
+
+**How the probes were put behind a proxy.** `index.m3u8` for an in-progress recording lists each segment as an absolute URL at the
+server's own host and port, so a forwarder in front of the addon's configured host sees the playlist and API calls but never the
+segment HEAD/GET requests, which go straight to the server. An HTTP-aware proxy that rewrites those URLs in the playlist back
+through itself sees all of it and can break one segment (`Content-Length: 0` on its HEAD, or a 404) while passing the rest.
+
+**An unsizeable segment stalls the stream, floods the server and pins the recording open.** With segment 20 of a six-minute recording
+answering its HEAD with a zero length: playback advanced to 1:16 (the first 20 segments) and stopped for good. The addon then sent about
+14 HEADs a second -- the unmerged tail is probed again on every refresh because `CountLeadingProbedSegments()` throws away the
+successful sizes behind the first failure -- each refresh took 3-5 s, and every blocking `Read()` ran its full catch-up budget
+(49 attempts, 200-255 s). Kodi's Stop only completed when the read it was waiting on returned (it took 4 min 24 s).
+Meanwhile the recording's playlist had its `#EXT-X-ENDLIST` and 92 segments, yet its status stayed `recording` until 25 s after
+the stream closed: Dispatcharr finalizes a finished recording only once its viewer key (refreshed by any `.ts` request,
+including these HEADs) lapses, so the stuck probing held it open indefinitely. Kodi's displayed position also jumped from 1:16 to 4:36
+when the first blocked read returned empty, which is Kodi's own bookkeeping and no data.
+
+**A forward seek at the tail can land a little behind the reader.** Sitting at the tail of a five-minute in-progress recording,
+Kodi's forward steps produced `SeekInProgressRecordingStream()` calls that clamped to `tailTarget` below the current position by 262,144 bytes
+(four times), 524,288 and 1,310,720 -- under a quarter of a multi-MB segment each, the structural ceiling given the one-segment
+margin. Kodi's displayed time never went backward; a +30 s step with less than 30 s left reads as "nothing happened" because Kodi asks for
+the end of the stream, the clamp puts the reader a quarter-megabyte behind where it was and Kodi's follow-up end probing settles on the
+same time. Reaching the tail needs only the reader to wait there, not an accelerated catch-up.
+
+**Both fixed and re-verified live (2026-10-01).**
+
+`UnprobeableSegment.h` (`ShouldProbeOnlyLeadingSegment()`, `UpdateUnprobeableSegmentTracker()`, `CountMergeableSegments()`): once the leading unmerged
+segment has failed on a refresh it is probed alone, since nothing behind it can be merged and the old per-refresh probing of the whole tail only
+fed the flood; after five consecutive failed refreshes spanning 30 seconds (a segment briefly absent while the server writes it never gets
+there, and a down server never reaches the probe at all) it is merged as a zero-byte placeholder with one logged warning. A placeholder
+keeps every later byte and time offset exact, and no stream position can fall inside it, so it cannot reintroduce the duplicated-chunk bug the
+leading-merge rule exists for; the cost is a few seconds of missing picture where the segment was. Re-running the same fault (segment 20 of a
+four-minute recording answering its HEAD with a zero length): 47 probes of that one segment in the 30 s (against ~14 a second over the
+whole tail), the warning at 30 s, playback through to the end of the recording, and `completed` status seconds after the player closed. With the
+break placed ahead of a viewer waiting at the live edge: a 28 s stall, then playback resumed.
+
+`ClampSeekToTail()` (`LiveEdgeMargin.h`) replaces the plain `newPos > tailTarget` clamp in both seek paths: a target past the tail target lands on it, or on the
+current position if the reader is already past it, or stays on the requested position if that is behind the reader. At the tail of a young
+in-progress recording the same Kodi forward steps now leave every clamped seek with delta 0 (ten of ten; before, 262,144 to
+1,310,720 bytes backward), the seek-to-live from far behind still lands on the tail target, and Kodi's own short backward seeks inside the margin land
+where asked. Live timeshift's three-segment margin shares the helper and was not exercised.
+
+## Series-rule edits, delete safety, guide links and segment URLs (2026-10-02)
+
+*Each of these closes an entry in `docs/OPEN_ITEMS.md`; what was and was not exercised live is stated there.*
+
+**Editing a series rule's match pattern replaces the rule.** A changed title or channel-derived `tvg_id` is a new identity to Dispatcharr's upsert and used to leave the old rule and its future recordings in place. `UpdateTimer()` now creates the new rule first and deletes the old by `(title, tvg_id, source)` only after that succeeded (`ShouldReplaceSeriesRuleOnEdit()`, `TimerIdentity.h`). A source-only difference is deliberately not a replacement: the delete omits the source when the rule is unpinned and would then match every source's rule with that title and `tvg_id`, including one the same save upgraded in place. Dispatcharr does not evaluate a rule at create time, so the delete cannot take recordings the new rule has already materialized.
+
+**A failed lookup no longer decides a delete.** `DeleteTimer()` on a one-time recording used to fall through to the destructive delete when the server lookup failed and Kodi's stale `forceDelete` was false. Both guesses are wrong in a real way -- Delete destroys a running recording's file, and Stop (answered 200 for everything but completed/interrupted/failed) leaves a terminal-status row with no file for one that has not started -- so `DecideDeleteTimerAction()` (`RecordingVisibility.h`) treats a 404 as already gone, keeps Stop when Kodi itself says it is recording, and otherwise refuses and tells the user to try again.
+
+**A recording's guide link outlives the guide.** `RecordingEpgLinks.h` remembers, per recording id, the start time of the EPG programme it was matched to (the broadcast id is `ComputeBroadcastId(channel, programme start)`, so that is all that is needed), because the cached guide drops an ended programme at its next refresh. `ResolveRecordingBroadcastId()` falls back to it, and it is persisted as `recording_epg_links.json` in the addon's user directory. It is validated against the recording's channel and start time, pruned against a successfully loaded recording list, capped, and an unreadable file is ignored and rebuilt.
+
+**Segment URLs follow the configured address.** An in-progress recording's playlist lists absolute segment URLs built from the request Dispatcharr received; behind a proxy that forwards neither the port nor `X-Forwarded-*` that is the internal port. `RebaseRecordingSegmentUrl()` (`M3u8SegmentParser.h`) points the recording's own `/api/channels/recordings/<id>/hls/` URLs at the configured address and leaves others alone, so a playlist that names an address of the server's own ends up at the configured one. A segment URL naming a *different* host is left alone and, since 2026-10-04, is fetched without the API key -- see `docs/OPEN_ITEMS.md`'s "The API key was attached to a segment URL on any host". Confirmed live with a proxy that leaves the playlist naming the server's own address: every segment request still went through the configured address.
+
+**A view-only account is not offered the DVR actions.** See `DvrAccess.h`: `GetCapabilities()` advertises timers, recording delete and rename only when the account can manage the DVR (admin, or `custom_properties.dvr_access` of `manage`). Confirmed live with a disposable Standard user: Kodi reported `supportstimers: false`, and recordings were still listed and playable.
+
+## A server that ignores Range ends the recording instead of playing wrong bytes (2026-10-02)
+
+`ReadRecordingStream()` and the live-timeshift segment read both accepted a plain 200 to a ranged GET at a non-zero offset and advanced their position as if the bytes started there -- but a 200 means the server (or a proxy that drops `Range`) sent the file from byte 0, so the wrong data was silently spliced into playback. `ServerIgnoredRangeRequest()` (`RecordingHttpUtil.h`) recognises it. Neither obvious response is right: a retry is a storm (Kodi retries a `-1` read near-immediately), and skipping to the offset downloads everything before it on every read. So a recording ends (EOF, once, with a log line and a notification, later reads returning EOF with no request) and a live-timeshift stream is marked fatal. Dispatcharr's own file endpoint and the plugin's file server both answer 206 correctly (checked live), so this only ever fires behind a Range-dropping proxy. Confirmed live with such a proxy.

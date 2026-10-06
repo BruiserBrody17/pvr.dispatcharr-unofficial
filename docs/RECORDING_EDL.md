@@ -62,9 +62,13 @@ recordings simply never showing commercial-break markers.
 `docker/comskip.ini` (`[Output]` section) and `apps/channels/tasks.py`'s
 own parsing of the same file: plain text, one entry per line,
 whitespace-separated `<start_seconds> <end_seconds> <type>`. Dispatcharr's
-ini sets `edl_skip_field=3`, so every line's type is already Kodi's own
-`PVR_EDL_TYPE_COMBREAK` (3) -- the plugin passes the type field through
-as-written rather than hardcoding it, but in practice it's always 3.
+ini sets `edl_skip_field=3`, so with that ini every line's type is Kodi's own
+`PVR_EDL_TYPE_COMBREAK` (3). The plugin passes the type field through
+as-written rather than hardcoding it, and that matters: Dispatcharr's DVR settings let a user supply
+their own comskip ini, which takes precedence over the shipped one, and comskip's own default for
+`edl_skip_field` is `0` (`PVR_EDL_TYPE_CUT`, a hard cut rather than a skippable break). So 3 is what
+the shipped ini produces, not a guarantee; a custom ini can legitimately yield other valid types, and
+they reach Kodi unchanged (a value outside 0-3 is coerced to 3 by the addon, never cast blindly).
 
 **Only ever populated in comskip "mark" mode.** Confirmed via
 `apps/channels/tasks.py`'s `comskip_process_recording`: the *default*
@@ -74,12 +78,29 @@ remove the commercials via ffmpeg and remux the file in place, then
 `custom_properties.comskip` in that mode has no `mode` key at all by the
 time a recording shows `status: completed`. Only `"mark"` mode (keep the
 full recording, just flag the breaks) leaves the `.edl` file on disk to
-be fetched. The plugin doesn't need to special-case this: in cut mode
-`custom_properties.comskip.edl` is simply absent, and `get_edl` returns
-an empty `entries` list either way -- "no markers" is the correct,
-unremarkable outcome for a cut-mode recording (the commercials are
-already gone from the file) as well as for the much more common case of
-a recording comskip never touched at all.
+be fetched.
+
+**Update (2026-09-26, a 23rd-pass audit): "in cut mode
+`custom_properties.comskip.edl` is simply absent" above was wrong,
+confirmed against Dispatcharr's own real current upstream source
+(cloned into a scratchpad, never committed to this repo -- stronger
+than the API shape alone, not the same standard as a live test).** The
+cut branch's own `cp["comskip"]` still sets `"edl": os.path.basename(edl_path)`
+-- pointing at the exact filename it just deleted -- alongside a
+`"segments_kept"` key neither the "mark" branch nor the
+no-commercials-skipped branch ever sets. So `_edl_path_for()` originally
+still resolved a real-looking path for a cut-mode recording, and
+`get_edl` then hit a `FileNotFoundError` on the read (caught, logged at
+`logger.warning`, still returning "no entries" either way -- so this was
+functionally harmless, just a spurious warning on every single playback
+of a cut-mode recording with commercials, and fragile if a same-named
+file ever legitimately existed at that path some other way). Fixed:
+`_edl_path_for()` now returns `None` outright whenever `comskip`
+contains `segments_kept` -- the real distinguishing signal, not a
+`mode` key (which "mark" sets but "cut" doesn't, and older Dispatcharr
+versions' own "mark" branch might not have set either) -- treating it
+the same as "nothing legitimate to fetch" from the start, without ever
+attempting the doomed read.
 
 Also confirmed via the same source: EDL data is never populated for an
 **in-progress** recording -- comskip only ever runs against a file after
@@ -197,6 +218,25 @@ before ffmpeg writes its first segment, so a genuinely active recording
 can legitimately look empty for its first few seconds. Emptiness was
 never the safety signal; a real, current Recording row is.
 
+**Follow-up (2026-09-27, a 64th-pass audit, confirmed by direct
+reproduction against the plugin's own regex, not reproduced live): the
+directory-name-to-recording-id step itself was looser than the name
+Dispatcharr actually writes.** `tasks.py` only ever creates
+`f".dvr_{recording_id}_hls"` -- plain ASCII digits, no padding -- but
+`_hls_staging_dir_recording_id()` used `re.match(r"^\.dvr_(\d+)_hls$")`,
+which also accepted Unicode decimal digits (Python's `\d` on a `str`
+pattern isn't ASCII-only, and `int()` parses them: `.dvr_٣_hls` read as
+recording 3), a zero-padded id (`.dvr_0005_hls` as recording 5), and a
+trailing newline (`$` matches just before one). `rglob(".dvr_*_hls")`
+finds the first two forms, so a directory Dispatcharr never created,
+whose parsed id happened to have no Recording row, landed in `orphaned`
+-- the one classification `delete_orphaned_dvr_hls_dirs` removes
+outright. Now only the exact canonical form is accepted (an ASCII-only
+full match plus a no-leading-zeros round-trip check, the same "match
+exactly what this system writes, not merely something shaped like it"
+approach `timeshift_buffer`'s own `_is_canonical_uuid()` already takes);
+anything else is skipped entirely, never classified at all.
+
 ## A malformed `.edl` line could take down the whole result, not just itself
 
 Found via a comparative architecture review (the same pass that also
@@ -235,3 +275,39 @@ incident-driven safety scoping from earlier sessions (see the orphaned-
 sidecar scan-root section above, and `.dvr_*_hls` classification just
 above this one) that a fresh read didn't find anything further to add
 to.
+
+## Upstream limitations to know (2026-10-02)
+
+Found by audits against Dispatcharr's own source, not reproduced live, and nothing the plugin or addon can fix;
+recorded so they are not rediscovered as plugin bugs.
+
+- **A recording under an absolute path template no longer plays or deletes upstream.** Dispatcharr's
+  `RecordingViewSet.file()` and `destroy()` resolve a recording's `file_path` through
+  `resolve_safe_local_data_path`, which requires the real path to sit under `/data/recordings`. A recording
+  whose absolute DVR path template points outside that tree 404s on playback and cannot be deleted through
+  the API. This plugin still finds and scrubs sidecars and staging directories in such libraries (see the
+  next section), but the older framing of absolute templates as simply "supported" no longer holds on a
+  current Dispatcharr.
+- **A failed comskip "cut" leaves its temporary files behind.** `comskip_process_recording()`'s cut mode has no
+  cleanup on its exception path, so a failure leaves `segment_NNN.mkv`, `concat_list.txt` and
+  `<base>.cut.mkv` in the recording's folder. They waste disk and stop this plugin's empty-folder sweep from
+  removing that folder; the names are fixed per folder, so two cut runs in one show's folder could overwrite
+  each other's segments. The failed run also leaves `custom_properties.comskip` as `{"status": "error"}` with
+  no `edl` key, so a still-valid `.edl` from an earlier successful run is not served afterwards. The plugin
+  deliberately does not delete these files: nothing marks them as safe against a cut that is still running.
+
+## The staging-directory scan covers absolute-template libraries (0.2.1)
+
+*2026-10-01.* `list_dvr_hls_staging_dirs` and `delete_orphaned_dvr_hls_dirs` only walked
+`/data/recordings`, but Dispatcharr creates the staging directory *beside the recording's final file*
+(`os.path.join(os.path.dirname(final_path), f".dvr_{recording_id}_hls")`, `_build_output_paths()` in
+`apps/channels/tasks.py`), and an absolute DVR path template puts that file in another library
+entirely. An orphaned staging directory there was never listed or cleaned, while the sidecar scrub in
+the same file already walked those roots (a false negative, not a data-loss risk).
+`_dvr_hls_staging_scan_roots()` now returns the default root plus every root
+`_dvr_sidecar_scan_roots()` resolves from the four path templates, de-duplicated so nothing is walked
+twice. The default root stays because a template that resolves straight into it is excluded from the
+sidecar roots on purpose. Reading the templates needs Dispatcharr's Django models, which this scan never
+needed before, so if that lookup fails it falls back to the default root alone -- exactly the old
+behavior. Widening the roots doesn't widen what can be deleted: it is still only a directory with the
+exact `.dvr_<id>_hls` name whose id has no `Recording` row, and a root that isn't mounted is skipped.

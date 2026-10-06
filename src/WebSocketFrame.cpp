@@ -54,4 +54,57 @@ void UnmaskPayload(std::vector<uint8_t>& payload, const uint8_t maskKey[4])
     payload[i] ^= maskKey[i % 4];
 }
 
+WebSocketDataFrameAction DecideWebSocketDataFrameAction(uint8_t opcode, bool fin, WebSocketMessageKind& kind)
+{
+  if (opcode == 0x0) // continuation
+  {
+    if (kind == WebSocketMessageKind::kNone)
+    {
+      // A continuation with no matching initiating frame -- never seen
+      // live (Dispatcharr's own consumers.py only ever sends whole text
+      // frames), but genuinely invalid per RFC 6455, so treated as an
+      // error rather than silently guessed at.
+      return WebSocketDataFrameAction::kProtocolError;
+    }
+    bool wasText = kind == WebSocketMessageKind::kText;
+    if (fin)
+      kind = WebSocketMessageKind::kNone;
+    if (!wasText)
+      return WebSocketDataFrameAction::kDrop;
+    return fin ? WebSocketDataFrameAction::kAccumulateAndComplete : WebSocketDataFrameAction::kAccumulate;
+  }
+
+  if (opcode == 0x1 || opcode == 0x2) // text / binary -- both start a new message
+  {
+    if (kind != WebSocketMessageKind::kNone)
+    {
+      // A new initiating frame while a previous message is still being
+      // assembled -- a peer that violates its own fragmentation isn't
+      // one this client should keep trying to parse.
+      return WebSocketDataFrameAction::kProtocolError;
+    }
+    if (opcode == 0x2) // binary -- unexpected for this server's event payloads; skip it
+    {
+      kind = fin ? WebSocketMessageKind::kNone : WebSocketMessageKind::kBinary;
+      return WebSocketDataFrameAction::kDrop;
+    }
+    kind = fin ? WebSocketMessageKind::kNone : WebSocketMessageKind::kText;
+    return fin ? WebSocketDataFrameAction::kAccumulateAndComplete : WebSocketDataFrameAction::kAccumulate;
+  }
+
+  // Any other/reserved data opcode -- ignore without disturbing whatever
+  // message (if any) is already being assembled.
+  return WebSocketDataFrameAction::kDrop;
+}
+
+bool IsValidServerFrame(uint8_t opcode, bool fin, bool masked, uint64_t payloadLength)
+{
+  if (masked)
+    return false;
+  const bool control = opcode >= 0x8;
+  if (control && (!fin || payloadLength > 125))
+    return false;
+  return true;
+}
+
 } // namespace dispatcharr

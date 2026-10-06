@@ -18,6 +18,16 @@ TimerRule ParseTimerRuleJson(const nlohmann::json& item)
   t.titlePattern = FieldOr<std::string>(item, "title_pattern", t.title);
   t.isSeries = true;
   t.recordNewOnly = FieldOr<std::string>(item, "mode", "all") == "new";
+  // See TimerRule::titleMode's own comment (DispatcharrClient.h) for why
+  // these are cached at all -- defaults here match Dispatcharr's own
+  // SeriesRulesAPIView.post() server-side defaults exactly, so a rule
+  // that genuinely has none of these customized round-trips identically
+  // either way.
+  t.titleMode = FieldOr<std::string>(item, "title_mode", "exact");
+  t.description = FieldOr<std::string>(item, "description", "");
+  t.descriptionMode = FieldOr<std::string>(item, "description_mode", "contains");
+  t.untaggedIsNew = FieldOr(item, "untagged_is_new", false);
+  t.epgSourceId = FieldOr(item, "epg_source_id", 0);
   return t;
 }
 

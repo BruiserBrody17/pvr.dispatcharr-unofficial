@@ -22,7 +22,7 @@ Verified 2026-08-30 against a real Dispatcharr instance's own
 |---|---|---|
 | Login | POST | `/api/accounts/token/` (returns `{access, refresh}`) |
 | Refresh | POST | `/api/accounts/token/refresh/` |
-| API key auth | header | `X-API-Key: <key>` -- accepted as an alternative to the JWT bearer token on nearly every endpoint. Generate via `POST /api/accounts/api-keys/generate/`. **Accounts with restricted ("streamer") permissions may not be able to log in via `/api/accounts/token/` at all** (confirmed: a real streamer-role account got "No active account found" from the login endpoint) -- if login fails for a permissions reason rather than a wrong-password reason, an API key is the working alternative. The addon implements both: it logs in with username/password to get a JWT pair, then generates and caches an API key (`GenerateApiKey()`/`HasApiKey()` in `DispatcharrClient.cpp`), falling back to it automatically on a 401. |
+| API key auth | header | `X-API-Key: <key>` -- accepted as an alternative to the JWT bearer token on nearly every endpoint. Read the account's existing key via `GET /api/accounts/api-keys/` (`{"key": <str|null>}`, any authenticated role, does not replace it); generate one via `POST /api/accounts/api-keys/generate/` **only when the account has none**, since that call overwrites the account's single key and silently revokes it for every other client. **Accounts with restricted ("streamer") permissions may not be able to log in via `/api/accounts/token/` at all** (confirmed: a real streamer-role account got "No active account found" from the login endpoint) -- if login fails for a permissions reason rather than a wrong-password reason, an API key is the working alternative. The addon implements both: it logs in with username/password to get a JWT pair, then obtains and caches the account's API key (`ObtainApiKey()`/`HasApiKey()` in `DispatcharrClient.cpp` -- adopts the existing key, generating only when there isn't one), re-obtaining it automatically on a 401. |
 | List channels | GET | `/api/channels/channels/` -- returns **every** channel regardless of the caller's account; there's no server-side, per-account restriction based on channel profile membership (confirmed against the real `ChannelViewSet.get_queryset()`: the base queryset is just `Channel.objects.all()`/`super().get_queryset()`, and `channel_profile_id` is only applied as a filter if the *caller* passes it as a query param -- opt-in curation, not access control). See "Channel profiles" below. |
 | Channel groups | GET | `/api/channels/groups/` (**not** `/api/channels/channel-groups/`, which doesn't exist -- Dispatcharr's SPA serves its own `index.html` for unmatched routes, so that guess returned a misleading HTTP 200 of HTML, not JSON) |
 | List streams | GET | `/api/channels/streams/` |
@@ -41,6 +41,34 @@ Verified 2026-08-30 against a real Dispatcharr instance's own
 | Backend version | GET | `/api/core/version/` -- **public, no auth needed at all** (`AllowAny`), returns `{"version": ..., "timestamp": ...}` straight from Dispatcharr's own `version.py`. Confirmed against the live source (`core/api_views.py`), not just the schema. **Wired up (2026-09-09):** `DispatcharrClient::GetServerVersion()`, fetched once at startup and cached; `GetBackendVersion()` in `PVRDispatcharr.cpp` reports the real value now (confirmed live: `0.30.0`, shown in Kodi's own System Info -> PVR service panel), no longer this addon's own placeholder protocol string. |
 | Full timezone list | GET | `/api/core/timezones/` -- **requires auth** (confirmed live: 401 without it, matching its view's `Authenticated()` permission -- unlike the version endpoint above, not `AllowAny`), returns `{"timezones": [...], "grouped": {...}, "count": N}`, `timezones` being `sorted(pytz.common_timezones)`, ~440 real IANA names (confirmed against the live source, `core/api_views.py`'s `TimezoneListView`, not just a live call). **Wired up (2026-09-09), scope narrower than "genuinely comprehensive" turned out to be honest:** the real bottleneck was never the zone *name* list, it's DST *rule* coverage -- this addon can only auto-compute a correct offset for a zone matching one of two hand-verified rule families (`kUsCanada`, `kEu`) or a confirmed no-DST zone, and Southern Hemisphere zones need a third (inverted-season) rule family this addon doesn't have, so they're deliberately still excluded rather than risking a wrong offset half the year. `DispatcharrClient::GetSupportedTimezones()` calls this endpoint; used in the startup timezone-sync diagnostic to tell "a real IANA zone, no DST rule for it yet" apart from "not a recognized zone at all" for whatever Dispatcharr reports itself configured to. Separately, `kKnownTimeZones` (`TimeZoneUtil.cpp` as of 2026-09-13, pulled out of `DispatcharrClient.cpp` so this logic is unit-testable standalone -- see `tests/test_timezone_util.cpp`) itself was broadened from ~25 to ~50 entries within those two rule families -- see `docs/RECURRING_RULES.md`. |
 | Current user / own access level | GET, PATCH | `/api/accounts/users/me/` -- confirmed against the real source (`apps/accounts/api_views.py`'s `UserViewSet.me`): needs only ordinary authentication, not admin, unlike the admin-only user list/detail routes on the same ViewSet. Returns the full `UserSerializer` shape for your own account, including `user_level` (`0` Streamer / `1` Standard / `10` Admin, from `apps/accounts/models.py`'s `User.UserLevel`) and `is_staff`/`is_superuser`. Confirmed against `apps/accounts/permissions.py` that `IsAdmin` -- the exact permission class gating `CoreSettingsViewSet.update`/`partial_update`, i.e. the recording-padding write this addon already makes -- is precisely `user_level >= 10`. **Wired up (2026-09-09):** `DispatcharrClient::IsCurrentUserAdmin()`, checked once at startup and written into a hidden `dispatcharr_is_admin` addon setting, which gates (via the same `<dependencies>` mechanism already used elsewhere in `settings.xml`) whether `recording_pre_offset_minutes`/`recording_post_offset_minutes` render enabled -- see `README.md`'s recording-padding bullet. |
+
+**Update (2026-09-26, a 26th-pass audit): the "no server-side, per-account
+restriction" claim above and the "it's opt-in" claim just below are both
+now stale against a current Dispatcharr version, confirmed against
+Dispatcharr's own real current upstream source (cloned into a
+scratchpad, never committed to this repo -- stronger than the API shape
+alone, not the same standard as a live test).** `ChannelViewSet.get_queryset()`
+now does automatically restrict a non-admin (`user_level < 10`) account's
+own `list`/`get_ids`/`summary` results: to channels at or below the
+caller's own `user_level` (plus hiding adult content per that user's own
+preference), and, if the account has any `ChannelProfile`s assigned at
+all, to only the *enabled* memberships within those assigned profiles --
+without the caller ever passing `channel_profile_id` explicitly. Every
+`list`-style read (matching the actions above) also now excludes
+`hidden_from_output` channels by default (`visibility_filter="active"`),
+regardless of account level -- a single `retrieve`/`update`/`destroy` by
+id still reaches a hidden channel, matching the "frontend can unhide"
+comment in that code. An admin account (this addon's own documented,
+recommended setup -- see the login-endpoint note above about a
+restricted "streamer" account's own separate, different problem) is
+unaffected by the `user_level`/profile restriction either way. This
+doesn't necessarily mean this addon's own channel list is currently
+missing anything (that depends entirely on which account level/profile
+assignment a given install actually uses), just that the "opt-in
+curation only, not access control" framing no longer fully describes
+current Dispatcharr for a non-admin account -- worth a live check
+against a real non-admin, profile-assigned account before relying on
+either claim as still fully accurate.
 
 ## Channel profiles: a real curated-lineup feature, unused by this addon
 
@@ -67,6 +95,10 @@ Plausible implementation: a dropdown addon setting populated from that
 endpoint, passed as `channel_profile_id` on `GetChannels()`'s own
 `/api/channels/channels/` call. Not investigated further than
 confirming the mechanism is real and currently unused.
+
+**Update (2026-09-26, a 26th-pass audit): "it's opt-in" above is now
+stale for a non-admin, profile-assigned account -- see the correction
+note just above this section for the full account.**
 
 ## System notifications: a real, underused feature surface
 
@@ -160,7 +192,51 @@ off the remote session driving the test. Confidence here comes from
 tracing all three cases the modified predicate has to handle (stop,
 wake, natural timeout) by hand, not a live repro.
 
-### `WebSocketClient::SendAll()` could hang this thread indefinitely
+**Update -- "the thread's own read timeout already notices and
+reconnects" above was only accurate for a connection that actually
+receives a close signal, a real gap found via a project-wide review
+(2026-09-26), not yet re-confirmed live.** A plain read *timeout*
+(`ReceiveTextMessage()` returning 0, "nothing new yet") is not itself
+evidence of a dead connection -- it's the normal, expected outcome
+whenever nothing happens to arrive within the 5-second read window, and
+the loop just tries again indefinitely either way. Only a genuine
+socket-level error (`result < 0`) triggers a reconnect, and a *half-open*
+connection (the peer vanishes without ever sending a FIN/RST -- an
+application crash a reverse proxy or the OS's own TCP stack doesn't
+surface, a NAT mapping silently expiring, a network path dropping) never
+produces one on its own: `recv()` on a socket like that just keeps
+returning "no data yet", indistinguishable from a healthy idle
+connection, since this client never sends anything of its own accord
+either (only answers the server's own pings) to ever provoke a failure.
+This directly matches `docs/RECORDINGS.md`'s own previously-unexplained
+observation (a real-time-updates WebSocket "appearing not to reconnect
+after a Dispatcharr outage-and-recovery," only one "connected" log line
+the whole session) -- exactly the symptom a half-open connection would
+produce. Fixed by enabling TCP keepalive on the connect-only curl handle
+(`WebSocketClient::Connect()`) -- lets the OS itself eventually surface
+a dead peer as a real socket error, which this thread's existing
+`result < 0` reconnect path already handles correctly. Not yet
+re-confirmed against a fresh live outage-and-recovery test.
+
+**Update -- `OnSystemWake()`'s own nudge only ever helped the
+*disconnected* case, a related gap found in the same project-wide
+review (2026-09-26), not yet re-confirmed live.** The paragraph above
+describes cutting short "whatever backoff wait the thread is currently
+in" -- but that's only one of the two states a suspend can catch this
+thread in. If the thread is currently *connected* (sitting in the inner
+read loop, sending nothing itself and just waiting on
+`ReceiveTextMessage()`) at the moment of suspend, `m_wakeRealtimeUpdateThread`
+being set on wake was never checked anywhere in that loop -- only in
+the *outer* reconnect wait. A session that looked "connected" going
+into suspend was left completely unchecked, falling back to whatever
+TCP keepalive eventually notices (up to ~195s on Linux, per the update
+above) instead of reacting to the wake immediately -- defeating the
+entire point of an explicit wake nudge for exactly the scenario a
+suspend/resume is most likely to produce. Fixed by also checking the
+flag inside the inner read loop: a plain read timeout with a pending
+wake nudge (and no message having arrived since to prove the session
+survived) now forces an immediate reconnect, the same as the outer wait
+already did for a disconnected thread.
 
 Found via a project-wide code review (not a live incident): `SendAll()`'s
 retry loop on `CURLE_AGAIN` called `select()` with a fixed 5s timeout,
@@ -196,6 +272,39 @@ connection (would need a way to simulate a TCP peer that accepts a
 connect but never drains -- not attempted this pass); confidence comes
 from the fix directly mirroring `FillBuffer()`'s already-proven pattern
 in the same file.
+
+**Update -- the realtime-update connection could never complete its
+handshake at all behind a reverse proxy that negotiates HTTP/2, found
+via a project-wide review (a 30th-pass audit, 2026-09-26), confirmed
+against the real curl 8.6.0 source this addon's own CoreELEC and
+Android depends builds actually link against (both build with nghttp2),
+not itself reproduced live.** `Connect()` never set `CURLOPT_HTTP_VERSION`.
+A curl built with nghttp2 defaults its own `httpwant` to
+`CURL_HTTP_VERSION_2TLS` (curl's `url.c`), and `CURLOPT_CONNECT_ONLY`
+doesn't change what ALPN offers -- `alpn_get_spec()` (curl's `vtls.c`)
+only looks at `httpwant`, so this handle's TLS `ClientHello` offered
+"h2, http/1.1" regardless. If the peer (a reverse proxy in front of
+Dispatcharr -- Caddy/Traefik negotiate h2 by default, nginx does with
+`http2 on`) picked h2, curl installed its own HTTP/2 filter on the
+connection unconditionally (`cf-https-connect.c`'s `baller_connected()`
+doesn't check connect-only mode either). Every later `curl_easy_send()`
+of this handshake's raw HTTP/1.1 upgrade request then went through that
+filter's own `cf_h2_send()` -> `h2_submit()` (curl's `http2.c`), which
+parses the raw bytes as an HTTP/1 request and re-encodes them as an
+HTTP/2 HEADERS frame -- silently dropping the `Connection`/`Upgrade`
+headers a WebSocket handshake depends on, neither valid in HTTP/2. The
+server then never answers `HTTP/1.1 101`, `IsWebSocketHandshakeAccepted()`
+always failed, and realtime updates could never connect at all behind
+such a proxy -- silently, at debug log level only, with no user-visible
+error and a permanent fallback to the periodic refresh. Fixed by
+pinning `CURLOPT_HTTP_VERSION` to `CURL_HTTP_VERSION_1_1` on this
+handle -- safe regardless of what the peer would otherwise have picked,
+since nothing on this connection needs (or, per RFC 6455, is defined
+for) anything beyond HTTP/1.1 anyway. Only relevant with `use_https` on
+and only behind a proxy that actually negotiates h2; this project's own
+lab has no reverse proxy in front of Dispatcharr (see this file's own
+"How to verify quickly" section), so the fix is unconfirmed against a
+real h2-terminating proxy.
 
 ## Single-instance assumption: partially hardened, not fully
 
@@ -260,3 +369,51 @@ curl http://<host>:9191/api/schema/ | grep -A30 '/api/channels/recordings/:'
 Once you've confirmed a field/path, update the corresponding line in
 `DispatcharrClient.cpp` (they're grouped near the top and clearly commented)
 and update TROUBLESHOOTING.md's "Still unconfirmed" list.
+
+## Credentials and redirects, response limits, and the WebSocket handshake (2026-09-30)
+
+Four small hardening changes in `DispatcharrClient`/`WebSocketClient`, each confirmed live against a
+real Kodi and the real instance with a proxy in front that injected the failure.
+
+**Credentialed requests only follow redirects to the same host.** `Request()` (a bearer token, and a login's
+username and password in the POST body), `SendTimeshiftHeartbeat()` and `OpenRecordingStream()` (an `X-API-Key`
+header) used libcurl's `CURLOPT_FOLLOWLOCATION`, which withholds only an `Authorization` header on a cross-host
+redirect (and only since curl 7.58): an `X-API-Key` header is sent wherever the redirect points, a 307/308
+re-sends the whole POST body, and an `http://` target sends it in the clear. They now follow redirects
+themselves (`PerformWithSafeRedirects()`), vetting each hop with `IsSafeRedirectTarget()` (`RedirectPolicy.h`):
+same host, never https to http, no `user:pass@` in the target, at most five hops. A different port or an
+http-to-https upgrade on the same host is still followed (a reverse proxy does both), and a refused redirect
+is returned as the 3xx itself, with only the hosts logged since a query string can carry a token.
+**Reproduced first** with a proxy answering the login POST with a 307 to a different loopback address:
+the previous build re-sent the password to it (a listener on the other address logged a request with the
+password in its body, twice); the new build sent nothing there and logged "refused to follow a redirect (HTTP 307) from
+... to ...". `GetXmlTvGuide()` carries no credentials and still follows redirects normally.
+
+**A response can no longer grow without limit.** `WriteCallback` appended every byte it was given, so a
+runaway response ended in `std::bad_alloc` thrown inside a C callback, very likely `std::terminate()`.
+`BoundedWriteCallback` stops at a per-call-site ceiling, chosen from sizes measured on the live instance
+rather than one number for all: API JSON 128 MiB (the largest real one, the channel list, is far below it), the XMLTV guide 512 MiB (measured well below it), an in-progress recording's playlist 64 MiB (about 100 bytes
+per segment). Past it the transfer fails with an error that names the limit. Confirmed live: a proxy
+streaming an endless body in answer to the channel list was cut off after 136 MB (the 128 MiB limit plus what was
+already in flight) with "failed to load channels: HTTP response exceeded the 128 MiB limit", and Kodi carried on.
+
+**A 401 now goes through `EnsureAuthenticated()`.** `Request()` handled a 401 by calling `RefreshAccessToken()`
+and `Login()` directly, bypassing `AuthBackoff` and the transient cooldown. A token Dispatcharr revoked while the
+local four-minute freshness hint still looked valid therefore sent every request in that window through its
+own refresh and login. It now invalidates the hint, but only if the token is still the one that was
+rejected (threads that got a 401 together share one refresh), and lets `EnsureAuthenticated()` apply its
+gates. Confirmed live with a proxy that answers every API call 401 once the addon is logged in:
+**11 login POSTs and 11 refresh POSTs in 170 seconds for 10 authenticated requests before; 3 logins, 1 refresh
+and 1 request after.**
+
+**The WebSocket handshake checks `Sec-WebSocket-Accept`.** RFC 6455 requires the client to verify it
+(base64 of the SHA-1 of its key plus a fixed GUID); only the 101 and the `Upgrade` header were checked, so a proxy
+that never read the connection's key could pass. `Sha1.h` is a small dependency-free SHA-1 (checked against the
+FIPS vectors, a million `a`s and the padding boundaries against a reference), and
+`IsWebSocketHandshakeAcceptedForKey()` compares exactly, because base64 is case-sensitive. Confirmed live: a
+proxy rewriting the accept value made the previous build report "connected"; the new build refuses with a
+message that says the answer was wrong rather than blaming the account, and still connects to the real server.
+
+## WebSocket reads are bounded by deadlines, and the socket wait uses poll() (2026-10-02)
+
+`WebSocketClient` (the realtime-update connection) now works from absolute deadlines. `ReceiveTextMessage()` has one for the whole call -- a peer feeding a steady stream of ping/pong/binary frames used to keep it from ever returning, and the realtime thread has to come back up to notice a stop request -- and one per frame, started when its header arrives: a frame dripped in a byte at a time fails "mid-frame" within the timeout instead of after a payload's worth of timeouts. Frames are checked against two RFC 6455 rules the client used to assume (a server never masks; a control frame is at most 125 bytes and unfragmented). The wait for the socket is `WaitForSocketReady()` (`SocketWait.h`): `poll()` on POSIX, because `select()`'s `fd_set` cannot hold a descriptor numbered 1024 or more (`FD_SET` on one is undefined behaviour) and `FD_SET(-1)` is no better when curl reports no active socket; an invalid socket is refused up front. All of it is tested against a real local WebSocket server (`tests/test_web_socket_client.cpp`) and was confirmed live (a recording created straight against Dispatcharr reached Kodi's timers in under 3 s).

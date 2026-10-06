@@ -10,6 +10,415 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased] -- addon
+
+Addon changes since `0.11.0`, not yet in a release. Bundled plugin changes have their own entries below.
+This list is the user-visible part; the reasoning for each is in `docs/OPEN_ITEMS.md`'s Fixed entries.
+
+### Fixed
+
+- **Faster updates from Dispatcharr** (with "Enable real-time recording/timer updates" on): when Dispatcharr
+  finishes refreshing an EPG source, the addon fetches the new guide about six minutes later (after
+  Dispatcharr's own cache of it has expired), and when an M3U refresh changes channels it fetches the new
+  channel list within a minute, instead of waiting for the next polling interval (hours).
+- **Slow servers**: how long stopping a stream, refreshing a playing stream and the startup check wait for a
+  server that has stopped answering now follows the "Connection timeout" setting (a sixth of it, 5 seconds at
+  the default of 30), so a server that answers slowly can be accommodated by raising that one setting.
+- **Recurring timers**: if Dispatcharr applies a different UTC offset than the addon's built-in time zone table
+  (a server with older or newer time zone data), the addon now notices from the occurrences Dispatcharr has
+  already scheduled and uses the offset Dispatcharr applies, instead of recording an hour off. It looks only at
+  occurrences still to come, accepts a difference of at most an hour, follows the zone's older rules instant by
+  instant when that is what the server is doing (British Columbia and Alberta on a server with time zone data
+  from before 2026c), and takes two checks in a row to agree before it changes anything.
+- **Recurring timers**: on the one day a year a clock change falls between a rule's start and end time, the
+  end time shown in Kodi's Timers list was an hour off (the stored rule was right).
+- **Playback with an unresponsive server**: stopping live timeshift, a read waiting at the live edge and
+  Kodi's startup each waited up to a full request timeout against a server that accepts connections and never
+  answers; they now give up after about five seconds, authentication included (opening a stream still waits the
+  configured timeout, so a slow server can start one). A recording whose file can no longer be read (removed,
+  or refused by the server) now ends playback with a notification after a few seconds instead of retrying
+  without end, and one segment Dispatcharr cannot size no longer makes the player re-check the whole backlog
+  on every refresh or merge a long backlog one segment at a time. Stopping an in-progress recording while
+  the server is unreachable waits seconds instead of minutes, and a proxy that drops `Range` no longer makes
+  a recording read download the whole file before giving up. Opening a recording that has no file (stopped
+  before anything was recorded) now says so instead of showing only a generic playback error. A recording read no longer ends for good
+  on a few seconds of server errors (HTTP 500).
+- **Recurring timers**
+  - Times and weekdays are now converted correctly when Kodi and Dispatcharr are in different time zones,
+    including around daylight-saving changes; British Columbia and Alberta (which stop changing their
+    clocks on 2026-11-01) are handled.
+  - An unchanged recurring rule is no longer re-sent, and its occurrences regenerated, every time it is
+    edited; moving just the end time no longer shifts the start; seconds carried by Kodi's dialog are
+    dropped; a rule with no end date can be edited again.
+  - Moving a single occurrence of a recurring rule is refused (Dispatcharr would recreate the original slot),
+    and rules the addon renews are marked so a rule you made in Dispatcharr is never renewed for you.
+- **Series rules**: editing a rule no longer resets its hidden settings (title mode, description, EPG
+  source) or deletes a source-pinned rule that shares its title; rules are linked to their recordings for
+  every title mode Dispatcharr offers, in any script.
+- **Recordings and timers**
+  - Deleting or editing a timer that had already started (or already finished) no longer deletes the
+    recording.
+  - A recording whose title contains a slash no longer shows as a nested folder.
+  - Pressing Record on a programme already under way now links the timer to the guide entry, with your
+    padding applied.
+  - A scheduled recording's channel change is no longer dropped.
+  - Edits no longer overwrite a real title with a placeholder.
+- **Playing a recording that is still being made**: opening one within its first seconds works; pausing past
+  its end no longer loses the last minutes; a user Stop no longer cuts off the final segment; a recording
+  deleted while you watch ends cleanly instead of hammering the server; one unreadable segment no longer
+  stops playback.
+- **Live timeshift**: a brief server outage no longer ends playback for good, a long pause no longer ends it
+  when the server's rolling buffer moves on, and seeking forward at the live edge never moves backward.
+- **Channels and guide**
+  - Fractional channel numbers (5.1) and channels with no number get their own guide.
+  - Two channels sharing a number no longer show each other's guide.
+  - A server that was unreachable at Kodi's start no longer empties your channel list, and recovers by
+    itself.
+  - Catch-up is only offered when Dispatcharr allows it.
+  - The guide now carries enough history for catch-up on a fresh install.
+  - A guide entry's genre is no longer guessed from a keyword in the middle of a word, and a series rule whose
+    title differs from a programme's only in capitals is matched to it.
+  - A programme whose number is only given as "E12" (no season) now shows its episode number.
+  - A channel group whose name is over 1023 bytes no longer shows as empty.
+  - A series rule with nothing to record yet is no longer shown as 1 January 1970.
+  - Choosing catch-up playback asks Dispatcharr for one session, not two, which starts it about 0.3 s sooner.
+- **Account and security**
+  - Wrong credentials, or an account whose role cannot use the API, are retried with a growing wait instead
+    of on every request (which tripped Dispatcharr's own login rate limit).
+  - A view-only Dispatcharr account is no longer offered timer, delete and rename actions it cannot use, and a
+    finished recording keeps its link to its guide entry after the guide drops the programme.
+  - A response with text that is not valid UTF-8 no longer terminates Kodi; the request fails cleanly.
+  - The addon no longer replaces your Dispatcharr API key on first run or on a 401, which signed out every
+    other client of the account.
+  - The API key and login are never sent to another host, even through a redirect or a playlist that names
+    one; a proxy that rewrites the WebSocket handshake is detected.
+  - Oversized or malformed server responses are refused instead of exhausting memory.
+- **Settings and shutdown**: the recording padding you set is no longer reverted by an older value, a saved
+  API key is not lost while the settings dialog is open, and Kodi exits within seconds even while a request
+  is hung.
+- **Stability**: concurrent requests no longer risk crashing libcurl (the connection cache is no longer shared
+  between threads), and text matching no longer misbehaves under a Turkish or other non-English character
+  locale.
+- **Packaging**: the add-on no longer declares an icon that was never shipped.
+
+## `timeshift_buffer` [0.8.12] - 2026-10-06
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **The file server can no longer be made to hold hundreds of megabytes by a client that sends no token.** A
+  request's headers were limited in time (10 s) but not in size, so a client could send about 6 MB of headers
+  per connection and stall: 64 such connections measured 418 MB. A request that has not finished its headers
+  after 16 KiB (a real client sends under 1 KiB) is now dropped.
+- **The per-client connection limit now works for IPv6**: a host with an IPv6 /64 could use a new source
+  address for every connection and so never reach the limit; peers are counted by their /64 (an IPv4-mapped
+  address by its IPv4 address).
+- **Disabling or deleting the plugin while Redis is down** no longer leaves its file server listening in that
+  worker until Dispatcharr restarts.
+- **A single unreadable buffer entry in Redis** no longer stops the reaper, the orphan scrub and the list and
+  stop-all actions; it is skipped and logged once. Listing buffers uses `SCAN` instead of `KEYS`, so it no
+  longer blocks the Redis that also carries Dispatcharr's own traffic (a key `SCAN` returns twice is counted once).
+- The orphan check compares a buffer's age on the same clock it was stamped with, and the `ffmpeg.log` trim
+  uses the buffer's own storage path after the setting has changed.
+
+## `timeshift_buffer` [0.8.11] - 2026-10-06
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **Clock differences between Dispatcharr workers no longer make buffers look idle.** The idle checks
+  compared timestamps written by one worker with the clock of another, which differ when Redis runs on
+  another host. They now use Redis's own clock, which all workers share. (This entry first said a clock
+  stepped on the host itself was handled too; it is not, because Redis shares that clock: see 0.8.12.)
+
+## `timeshift_buffer` [0.8.10] - 2026-10-05
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **"Max concurrent buffers" now holds across channels.** Two channels starting at the same moment each
+  counted the same running buffers and could both start, going over the limit; counting and registering
+  a new buffer is now one step, and a start that arrives during another one is told to retry in a moment.
+- **A buffer's `ffmpeg.log` can no longer grow without limit.** A source that makes ffmpeg warn on every
+  packet could add hundreds of megabytes a day; the log is trimmed to its last lines once it passes
+  16 MB.
+- The "Segment length" help text names the right ffmpeg option (`-hls_time`).
+
+## `timeshift_buffer` [0.8.9] - 2026-10-05
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **A Dispatcharr worker no longer keeps a cached playlist for every channel it ever served.** Each
+  worker held one entry per channel (about 400 KB at the defaults) until the process ended, since only
+  the worker that stopped a buffer dropped its entry; the cache is now limited to the 16 most recently
+  used channels, and a dropped one is simply rebuilt on its next request.
+
+## `timeshift_buffer` [0.8.8] - 2026-10-05
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **The manual test from the README can be followed again.** The file server answers 403 to
+  any request without the buffer's own access token, and the Plugins page only shows an
+  action's message, so a plain `http://<host>:<http_port>/<channel-uuid>/live.m3u8` always
+  failed. "Start Test Buffer" now prints the playlist URL with its token, and the README says
+  to use it. A buffer started by the Kodi addon never has its token printed.
+
+## `timeshift_buffer` [0.8.7] - 2026-10-04
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **A step of the system clock no longer cuts short the two-second grace ffmpeg gets
+  to exit before it is killed.** The grace now runs on a clock that cannot be set.
+- **A Redis server that denies scripting to the plugin's user is handled.** Releasing
+  the per-channel start lock and updating a buffer's state fall back to their
+  non-script path for every "response error" Redis reports (a permission denial is a
+  subclass of one), where the fallback only ran for the base class.
+- **An infinite number in a numeric plugin setting falls back to the default** instead
+  of breaking every action of the plugin.
+
+## `timeshift_buffer` [0.8.6] - 2026-10-04
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **A request for `live.m3u8` that landed while ffmpeg was replacing it could get a
+  truncated playlist.** The response size now comes from the file that was actually
+  opened rather than an earlier look at the path.
+- **Releasing a channel's start lock is now one atomic step** (where Redis allows
+  scripts), so a lock that expired and was taken by the next caller can no longer be
+  released by the previous one.
+
+## `recording_edl` [0.2.2] - 2026-10-04
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- **`get_edl` no longer reads whatever file a recording's stored data names.** It only
+  reads a regular `.edl` file that lies inside a DVR directory, never more than 1 MiB of
+  it, and never opens a device or pipe. A path pointing at the recording's own video or at
+  a device used to be read whole into memory until the Dispatcharr worker was killed.
+- **`delete_orphaned_dvr_hls_dirs` re-checks each directory right before removing it**,
+  so one that became live since the listing is left alone.
+
+## `timeshift_buffer` [0.8.5] - 2026-10-04
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **Stopping a buffer whose state had already been lost could remove a buffer started in
+  the meantime.** That teardown now takes the channel's start lock and re-checks first.
+- **A client draining a response body very slowly could hold a connection for far longer
+  than intended.** A response body now has one overall deadline (the 60 second timeout
+  plus the time the body needs at a 32 KiB/s floor) instead of a fresh timeout per chunk.
+- **The idle-buffer reaper no longer stops for good if Redis is briefly unavailable when it
+  starts,** and a Redis outage now logs one error per five minutes instead of one every
+  fifteen seconds.
+
+## `timeshift_buffer` [0.8.4] - 2026-10-04
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **The orphan scrub could stop a buffer that had only just been started and
+  delete its directory** (most likely right after Redis loses its state, when
+  every buffer is an orphan at once). The scrub now takes each channel's start
+  lock and re-checks it before touching anything.
+- **The file server no longer serves `ffmpeg.log` or any file but the playlist
+  and its segments, and sends responses in chunks** instead of reading a whole
+  file into memory first.
+
+### Documented
+
+- A `storage_path` must not be shared between two Dispatcharr instances that can
+  see each other's processes.
+
+## `timeshift_buffer` [0.8.3] - 2026-10-04
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **A buffer whose state was lost (a Redis restart or flush while Dispatcharr kept
+  running) no longer leaves its ffmpeg running forever, and the next start no longer
+  runs a second ffmpeg into the same directory.** Each buffer's directory now records
+  which ffmpeg owns it; the orphan scrub stops an untracked one that has been running
+  for over five minutes, and a fresh start stops one before clearing the directory.
+- **A large segment read slowly was cut off after about ten seconds** (0.8.1
+  regression: the time left over from the request deadline became the write timeout).
+- **One client address can no longer fill every connection slot** (64 per address of
+  the 256), and refused connections are reported at most every 30 seconds.
+
+## `timeshift_buffer` [0.8.2] - 2026-10-04
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Changed
+
+- **The access token placed on the buffer's ffmpeg command line now lasts two
+  minutes instead of the account's default access lifetime.** The command line
+  is readable by every local user through `/proc`, and ffmpeg authenticates
+  only once, when it connects, so nothing needs the longer life.
+
+## `timeshift_buffer` [0.8.1] - 2026-10-04
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **A client that sent a request one byte at a time could hold a connection
+  open indefinitely.** The file server now gives a request line plus headers
+  one absolute 10-second deadline (a late client is disconnected), and
+  caps concurrent connections at 256.
+
+## `timeshift_buffer` [0.8.0] - 2026-10-02
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Changed
+
+- **The buffer's ffmpeg now writes segments with the `hls` muxer instead of
+  the `segment` muxer.** The `segment` muxer restarts every stream's MPEG-TS
+  continuity counter in each file, and the addon splices the files into one
+  byte stream, so every splice was a demuxer "Packet corrupt" line in Kodi's
+  log (14 of 14 splices measured; none after). Same file names and playlist
+  shape, so no addon change is needed; old segments are deleted rather than
+  overwritten in place.
+
+## `timeshift_buffer` [0.7.0] - 2026-10-02
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- **A viewer paused or rewound behind live kept their rewind window when the
+  buffer's ffmpeg died.** The first poll after ffmpeg exited used to tear the
+  whole buffer down, wiping the segments that viewer could still have played.
+  The manifest is now returned frozen and flagged `ended`, and the addon ends
+  playback only once everything that was recorded has been played.
+
+## `timeshift_buffer` [0.6.9] - 2026-10-02
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- **A recycled process id is no longer mistaken for the buffer's own ffmpeg.**
+  The buffer records its ffmpeg's start time and refuses to signal, or call
+  alive, a process whose start time differs -- after a container restart the
+  stored pid can belong to an unrelated process.
+
+## `timeshift_buffer` [0.6.8] - 2026-10-02
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- **Two requests landing together on a fresh worker could start two file
+  servers or two reapers.** Starting either is now serialized, so the second
+  caller finds the first one's instead of binding beside it.
+
+## `timeshift_buffer` [0.6.7] - 2026-10-01
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- **Buffer state updates no longer lose each other's writes.** Every
+  read-modify-write of a buffer's state (heartbeats, viewer registration, the
+  stopping marker) now goes through a compare-and-set, so a heartbeat can no
+  longer overwrite a viewer another request just registered, or resurrect a
+  buffer that was just torn down.
+- **A plugin reload no longer leaves a stale file server and reaper running
+  in every worker.** Threads left by an earlier load of the plugin are found
+  and stopped on the next import.
+
+## `timeshift_buffer` [0.6.6] - 2026-10-01
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- **A fresh buffer no longer starts on top of a previous instance's leftover
+  files.** A stale playlist with high sequence numbers used to stall a new
+  viewer at the tail until the new numbers caught up, and an old directory
+  timestamp exposed the fresh buffer to the orphan scrub.
+- **A teardown decided from a stale copy of the state no longer destroys a
+  buffer that was restarted meanwhile.**
+- **The file server now binds a dual-stack IPv6 socket where one is
+  available**, falling back to IPv4 only where there is no IPv6, so a client
+  reaching Dispatcharr over IPv6 can reach the buffer's segments too.
+
+## `recording_edl` [0.2.1] - 2026-10-01
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- **The `.dvr_<id>_hls` staging-directory listing and cleanup now cover every
+  directory a DVR path template points at**, not only the default
+  `/data/recordings` root. Dispatcharr creates the staging directory beside the
+  recording's final file, so an absolute template put it somewhere the scan
+  never looked.
+
+## `timeshift_buffer` [0.6.5] - 2026-09-29
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- **A viewer pruned as stale during a long network stall is counted again on
+  its next heartbeat** instead of being ignored for good, so its buffer is no
+  longer torn down under it once every other viewer stops.
+- **A client whose buffer was replaced by a newer one for the same channel
+  is told so** (`fatal`) instead of being served the new buffer's unrelated
+  segments.
+
+## `timeshift_buffer` [0.6.4] - 2026-09-29
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- **Two near-simultaneous `start_buffer` calls for one channel could each
+  start their own ffmpeg, leaving one untracked forever.** A per-channel lock
+  now serializes the start; the loser gets a retryable error and the addon
+  retries briefly.
+
+## `timeshift_buffer` [0.6.3] - 2026-09-29
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- **A paused viewer's own heartbeat went stale and could get its buffer torn
+  down.** `get_live_manifest` -- the only call a paused client still makes --
+  now refreshes that viewer's own heartbeat, not just the buffer-wide one.
+
 ## [0.11.0] - 2026-09-16
 
 Addon only -- neither companion plugin changed for this pass.

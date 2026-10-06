@@ -5,7 +5,7 @@ section" references and backtick-quoted function/setting names -- not
 markdown [text](url) links, which a generic link-checker already covers
 and this project's docs barely use for cross-references.
 
-Three checks, each independent and best-effort (static text matching, not
+Four checks, each independent and best-effort (static text matching, not
 a real parser -- expect to eyeball the output, not treat every hit as a
 guaranteed bug):
 
@@ -15,6 +15,13 @@ guaranteed bug):
    and src/*.h.
 3. Backtick-quoted setting ids, only on lines that also mention the word
    "setting", against resources/settings.xml's real <setting id="..."> list.
+4. The possessive form `docs/X.md's "Some Heading"` (also `docs/X.md, "..."`,
+   `docs/X.md: "..."` and `docs/X.md's own "..."`; no trailing word
+   "section" required), in the docs AND in src/*.cpp, src/*.h and each
+   plugin.py -- code comments cite docs far more often than docs cite each
+   other, and neither the "section"-suffixed check above nor check 2 looked
+   at them, so a renamed or removed heading left a dangling pointer in a
+   comment that nothing flagged (found 2026-10-04, a hardening sweep).
 
 Baselined against tools/doc_refs_baseline.txt: a first run against docs
 that had never been checked before flagged 76 hits, almost all legitimate
@@ -39,12 +46,29 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DOCS_DIR = REPO_ROOT / "docs"
 DOC_FILES = sorted(DOCS_DIR.glob("*.md")) + [REPO_ROOT / "CHANGELOG.md"]
+# Files outside docs/ that also cite headings by name; only the citation-form check (4) reads them,
+# since their backtick-quoted function and setting names are mostly about code that is not in the
+# corpus the other two checks use.
+EXTRA_CITING_FILES = (
+    [REPO_ROOT / "CLAUDE.md", REPO_ROOT / "CONTRIBUTING.md"]
+    # The workflow and the glue harness cite OPEN_ITEMS headings too, and a heading that was reworded when its item was
+    # closed ("had never been run") left two of those citations dangling unseen.
+    + sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml"))
+    + sorted((REPO_ROOT / "tests" / "glue").glob("*.md"))
+    + sorted((REPO_ROOT / "tests" / "glue").glob("*.cpp"))
+    + sorted((REPO_ROOT / "tests" / "glue").glob("*.py"))
+    + sorted((REPO_ROOT / "tests" / "glue").glob("*.sh"))
+)
 SRC_DIR = REPO_ROOT / "src"
 PLUGIN_FILES = sorted((REPO_ROOT / "dispatcharr-plugin").glob("*/plugin.py"))
 SETTINGS_XML = REPO_ROOT / "pvr.dispatcharr-unofficial" / "resources" / "settings.xml"
 BASELINE_PATH = Path(__file__).resolve().parent / "doc_refs_baseline.txt"
 
 SECTION_TITLE_RE = re.compile(r'"([^"]{4,100})"\s+section')
+# docs/X.md's "Title" -- the target file is part of the citation itself, so
+# this form needs no look-back to find it. Comment/paragraph wrapping is
+# undone before matching (see _joined_text()).
+POSSESSIVE_CITATION_RE = re.compile(r'`?docs/(\w+\.md)`?(?:\'s(?:\s+own)?|,|:)\s+"([^"]{4,200})"')
 # Either a bare "docs/X.md" mention or a relative markdown link whose
 # target is a local .md file -- "[TIMESHIFT.md](TIMESHIFT.md)" is a real,
 # common citation form within docs/ itself (no "docs/" prefix needed
@@ -76,16 +100,77 @@ def rel(path: Path) -> str:
 
 
 def normalize(text: str) -> str:
-    return re.sub(r"[`*_]", "", text).strip().lower()
+    # Quote characters too: a citation is itself wrapped in double quotes, so a title that has quotes
+    # of its own ("The 'cosmetic' noise ...") is cited with the other kind, or typographic ones.
+    return re.sub(r"[`*_\"'\u2018\u2019\u201c\u201d]", "", text).strip().lower()
+
+
+BOLD_LEAD_OPEN_RE = re.compile(r"^[\s\-*]*\*\*(.+)$")
+
+
+def _multiline_bold_heading(lines: list[str], start: int) -> str | None:
+    """The text of a bold lead that wraps across lines ("- **One install's addon can ... stored\n
+    API key, ...**"): this project's docs wrap prose at about 80 columns, so a long bold lead
+    rarely closes on its own line. Joins up to the closing `**`, within a few lines, or None."""
+    m = BOLD_LEAD_OPEN_RE.match(lines[start])
+    if not m or "**" in m.group(1):
+        return None
+    parts = [m.group(1).strip()]
+    for follow in lines[start + 1 : start + 6]:
+        if "**" in follow:
+            parts.append(follow.split("**", 1)[0].strip())
+            return " ".join(p for p in parts if p)
+        if not follow.strip():
+            return None
+        parts.append(follow.strip())
+    return None
 
 
 def get_headings(path: Path) -> set[str]:
     headings = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
+    in_fence = False
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for index, line in enumerate(lines):
+        # Fix for a real, confirmed defect: without this, a shell/code
+        # comment inside a fenced code block (e.g. "# Get a token
+        # (only works for...)" in docs/API_NOTES.md's own bash examples)
+        # matches HEADING_RE just as well as a real markdown heading, so
+        # it got added to this doc's own heading set -- a false-positive
+        # match target no citation should ever be checked against.
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
         m = HEADING_RE.match(line) or BOLD_PSEUDO_HEADING_RE.match(line)
         if m:
             headings.add(normalize(m.group(1)))
+        else:
+            wrapped = _multiline_bold_heading(lines, index)
+            if wrapped:
+                headings.add(normalize(wrapped))
     return headings
+
+
+def title_matches_headings(normalized_title: str, headings) -> bool:
+    """Whether a citation's own normalized title counts as matching one
+    of a target doc's real headings -- pulled out of check_section_titles()
+    specifically so it's unit-testable standalone; see
+    tests/test_check_doc_refs.py. A citation only needs to be a substring
+    of a real heading, not an exact match (see
+    test_check_section_titles_tolerates_a_partial_title_match for why:
+    citing "Concurrent viewers" against a real "## Concurrent viewers (a
+    real, live-confirmed bug)" heading).
+
+    Tightened 2026-10-02 (docs/OPEN_ITEMS.md, "check_doc_refs: heading-match
+    check may be too loose"): the check used to also accept the OTHER
+    direction -- a real heading that is a substring of the citation -- so a
+    short, generic heading (a few characters) satisfied a citation of a
+    completely different, longer section that merely contained it, hiding a
+    genuinely dangling citation. An audit of every real citation in this
+    repo (2026-09-29) found none relying on that direction, so removing it
+    surfaced nothing and closed the loophole."""
+    return any(normalized_title in h for h in headings)
 
 
 def check_section_titles() -> list[tuple[str, str]]:
@@ -117,12 +202,52 @@ def check_section_titles() -> list[tuple[str, str]]:
                     heading_cache[target_path] = get_headings(target_path)
                 headings = heading_cache[target_path]
                 normalized_title = normalize(title)
-                if not any(normalized_title in h or h in normalized_title for h in headings):
+                if not title_matches_headings(normalized_title, headings):
                     doc_rel = rel(doc)
                     target_rel = rel(target_path)
                     key = f"{doc_rel}|section|{title}|{target_rel}"
                     message = f'{doc_rel}:{lineno}: cites "{title}" section in {target_rel}, no matching heading found'
                     errors.append((key, message))
+    return errors
+
+
+def _joined_text(text: str) -> str:
+    """The text with source-comment markers and single newlines folded to
+    spaces, so a citation wrapped across comment/paragraph lines matches as
+    one string (a blank line still separates paragraphs)."""
+    text = re.sub(r"\n[ \t]*(?://+|#+|\*)[ \t]?", " ", text)
+    text = re.sub(r"(?<!\n)\n(?!\s*\n)", " ", text)
+    # An indented docstring or comment wraps with its indentation, which would otherwise sit inside a
+    # quoted title as a run of spaces.
+    return re.sub(r"[ \t]{2,}", " ", text)
+
+
+def check_possessive_citations() -> list[tuple[str, str]]:
+    errors = []
+    heading_cache: dict[Path, set[str]] = {}
+    citing_files = (
+        DOC_FILES
+        + [f for f in EXTRA_CITING_FILES if f.exists()]
+        + list(SRC_DIR.glob("*.cpp"))
+        + list(SRC_DIR.glob("*.h"))
+        + PLUGIN_FILES
+    )
+    for citing in citing_files:
+        citing_rel = rel(citing)
+        for m in POSSESSIVE_CITATION_RE.finditer(_joined_text(citing.read_text(encoding="utf-8"))):
+            title = m.group(2).rstrip(".")
+            if title in GENERIC_TITLES:
+                continue
+            target_path = DOCS_DIR / m.group(1)
+            if not target_path.exists():
+                continue
+            if target_path not in heading_cache:
+                heading_cache[target_path] = get_headings(target_path)
+            if not title_matches_headings(normalize(title), heading_cache[target_path]):
+                target_rel = rel(target_path)
+                key = f"{citing_rel}|possessive|{title}|{target_rel}"
+                message = f'{citing_rel}: cites {target_rel}\'s "{title}", no matching heading found'
+                errors.append((key, message))
     return errors
 
 
@@ -188,7 +313,7 @@ def write_baseline(keys: set[str]) -> None:
 
 
 def main() -> int:
-    findings = check_section_titles() + check_functions() + check_settings()
+    findings = check_section_titles() + check_possessive_citations() + check_functions() + check_settings()
 
     if "--update-baseline" in sys.argv[1:]:
         write_baseline({key for key, _ in findings})

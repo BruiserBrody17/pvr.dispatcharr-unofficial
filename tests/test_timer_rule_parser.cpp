@@ -42,6 +42,43 @@ TEST_CASE("ParseTimerRuleJson defaults recordNewOnly to false for mode=all or ab
   CHECK_FALSE(ParseTimerRuleJson(json::object()).recordNewOnly);
 }
 
+TEST_CASE("ParseTimerRuleJson maps title_mode/description/description_mode/untagged_is_new/epg_source_id",
+          "[TimerRuleParser]")
+{
+  json item = {{"title_mode", "contains"},
+               {"description", "a real filter"},
+               {"description_mode", "regex"},
+               {"untagged_is_new", true},
+               {"epg_source_id", 7}};
+
+  TimerRule t = ParseTimerRuleJson(item);
+
+  CHECK(t.titleMode == "contains");
+  CHECK(t.description == "a real filter");
+  CHECK(t.descriptionMode == "regex");
+  CHECK(t.untaggedIsNew);
+  CHECK(t.epgSourceId == 7);
+}
+
+TEST_CASE("ParseTimerRuleJson defaults title_mode/description/description_mode/untagged_is_new/epg_source_id "
+          "to Dispatcharr's own server-side defaults when absent",
+          "[TimerRuleParser]")
+{
+  // Real, confirmed bug this fix exists to prevent (docs/OPEN_ITEMS.md):
+  // these defaults must match SeriesRulesAPIView.post()'s own exactly,
+  // so a rule that genuinely has none of these customized round-trips
+  // identically either way -- a mismatch here would make every such
+  // rule look "customized" to UpdateTimer()'s own echo-back logic when
+  // it isn't.
+  TimerRule t = ParseTimerRuleJson(json::object());
+
+  CHECK(t.titleMode == "exact");
+  CHECK(t.description.empty());
+  CHECK(t.descriptionMode == "contains");
+  CHECK_FALSE(t.untaggedIsNew);
+  CHECK(t.epgSourceId == 0);
+}
+
 TEST_CASE("ParseRecurringRuleJson maps the bare fields", "[TimerRuleParser]")
 {
   json item = {{"id", 3}, {"channel", 7}, {"name", "Weekly Show"}, {"enabled", false}};
@@ -86,4 +123,13 @@ TEST_CASE("ParseRecurringRuleJson leaves daysOfWeek empty when days_of_week is a
 {
   CHECK(ParseRecurringRuleJson(json::object()).daysOfWeek.empty());
   CHECK(ParseRecurringRuleJson(json{{"days_of_week", "not-an-array"}}).daysOfWeek.empty());
+}
+
+TEST_CASE("ParseRecurringRuleJson keeps only integer weekdays from days_of_week", "[TimerRuleParser]")
+{
+  // 1.5 and "2" are not integers; the weekday list must not pick them up by coercion.
+  auto item = nlohmann::json::parse(R"({"id":3,"days_of_week":[1.5,"2",null,true]})");
+  CHECK(ParseRecurringRuleJson(item).daysOfWeek.empty());
+  auto good = nlohmann::json::parse(R"({"id":3,"days_of_week":[0,2,4]})");
+  CHECK(ParseRecurringRuleJson(good).daysOfWeek == std::vector<int>{0, 2, 4});
 }

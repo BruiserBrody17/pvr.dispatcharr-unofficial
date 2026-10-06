@@ -1,9 +1,10 @@
 # Formatting/linting for the two Dispatcharr server-side plugins
 # (dispatcharr-plugin/timeshift_buffer, dispatcharr-plugin/recording_edl)
 # and this repo's own Python tooling (tools/check_doc_refs.py and its
-# test suite) -- the only committed Python in this repo. Not the addon
+# test suite) and the Python of the by-hand glue harness (tests/glue/) -- the
+# only committed Python in this repo. Not the addon
 # itself, which is C++ (see .clang-format for that). CI applies this
-# against dispatcharr-plugin/ and tools/ explicitly, not the whole repo
+# against dispatcharr-plugin/, tools/ and tests/glue/ explicitly, not the whole repo
 # (see .github/workflows/build.yml's lint job), so a future top-level
 # directory this config was never meant to opine on doesn't silently
 # start failing lint.

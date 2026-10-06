@@ -50,23 +50,37 @@
 //                                                         NOT /{id}/ -- series rules
 //                                                         have no path-addressable id
 //   POST   {base}/api/channels/series-rules/evaluate/ -> evaluate series rules
+//   GET    {base}/api/accounts/api-keys/              -> {key: <str|null>}. The calling
+//                                                         account's CURRENT key, read
+//                                                         without replacing it -- what
+//                                                         ObtainApiKey() tries first
 //   POST   {base}/api/accounts/api-keys/generate/     -> {key, user}. Regenerating
 //                                                         replaces the previous key
 //                                                         (confirmed: calling this
 //                                                         twice returns two different
-//                                                         keys) -- only call this once
-//                                                         per account and cache the
-//                                                         result, see GenerateApiKey()
+//                                                         keys) -- only when the
+//                                                         account has no key at all,
+//                                                         see ObtainApiKey()
 //
 // A Recording's custom_properties key names (title/subtitle/description
 // nested under "program", plus status/file paths/poster logo) and a
 // series-rules list item's shape are both confirmed against real created
 // objects too -- see docs/API_NOTES.md for the details.
 
+#include "ApiKeyRecovery.h"
+#include "DvrAccess.h"
+#include "RecurringRuleEdit.h"
+#include "RequestTimeout.h"
+#include "SegmentFetchFailure.h"
+#include "UnprobeableSegment.h"
+
+#include <atomic>
 #include <chrono>
+#include <functional>
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -84,16 +98,18 @@ struct Config
   std::string password;
   bool verifySsl = true;
   int timeoutSeconds = 30;
-  bool debugLogging = false;
   // Long-lived Dispatcharr API key, used only to authenticate recording
   // playback (see OpenRecordingStream()) -- unlike the JWT access token
   // (30-minute lifetime), this doesn't expire on its own. It CAN still go
   // stale, though: Dispatcharr keeps only one active key account-wide, so
-  // another Kodi install regenerating its own key silently invalidates
-  // this one -- OpenRecordingStream()/ReadRecordingStream() detect that (a
-  // 401) and self-heal by regenerating and retrying. Auto-generated and
-  // persisted back to the addon's own settings on first use if left empty;
-  // see PVRDispatcharr's constructor.
+  // any other client regenerating that account's key (another Kodi
+  // install, a script) silently invalidates this one --
+  // OpenRecordingStream()/ReadRecordingStream() detect that (a 401) and
+  // self-heal by re-reading the account's current key and retrying (see
+  // ObtainApiKey()). If left empty, the account's existing key is read
+  // and persisted back to the addon's own settings on first use -- a new
+  // one is only generated when the account has none; see PVRDispatcharr's
+  // constructor.
   std::string apiKey;
 };
 
@@ -102,8 +118,18 @@ struct Channel
   int id = 0;
   std::string uuid; // used to build the live-stream proxy URL
   std::string name;
-  int logoId = -1;       // -1 means no logo; pass to GetChannelLogoUrl()
-  int channelNumber = 0; // also what the XMLTV guide's <channel id="..."> uses, not tvgId
+  int logoId = -1; // -1 means no logo; pass to GetChannelLogoUrl()
+  // Dispatcharr's channel_number is a float server-side, so a subchannel
+  // like 5.1 is real -- see ChannelNumber.h for how it splits into Kodi's
+  // channel/sub-channel numbers and the exact text (also what the XMLTV
+  // guide's <channel id="..."> uses, not tvgId) the guide lookup keys by.
+  // 0 for a null channel_number too -- `hasChannelNumber` below tells the two
+  // apart.
+  double channelNumber = 0.0;
+  // False for a null channel_number (which `channelNumber` above reads as 0):
+  // the guide export keys such a channel by its id, not a number -- see
+  // FormatChannelGuideKey() (ChannelNumber.h). A literal 0 is a number.
+  bool hasChannelNumber = true;
   int groupId = -1;
   std::string groupName;
   std::string tvgId;
@@ -177,6 +203,36 @@ struct Recording
   // this occurrence back to its parent rule as a Kodi PVR_TIMER child
   // (PVRTimer::SetParentClientIndex()).
   int recurringRuleId = 0;
+  // The EPG programme's own, never-padded/never-clamped start/end time,
+  // from custom_properties.program.start_time/end_time -- 0 when absent
+  // (added 2026-09-26, a 34th-pass audit, fixing a real, confirmed gap
+  // found via a project-wide review, confirmed against Dispatcharr's own
+  // real current upstream source, not itself independently reproduced).
+  // Only present for a recording created with an explicit
+  // custom_properties.program in its own create/update request --
+  // Dispatcharr's own web UI Guide "Record" button always sends one
+  // (frontend/src/pages/Guide.jsx), and series-rule-materialized
+  // occurrences carry one from their own snapshot (apps/channels/tasks.py)
+  // -- never this addon's own CreateOneTimeRecording(), which
+  // deliberately omits custom_properties on create (see that function's
+  // own comment) and whose later server-side enrichment
+  // (_match_epg_program_by_timeslot(), apps/channels/tasks.py) only ever
+  // fills in id/title/sub_title/description, never times. This is the
+  // one place this addon can recover a recording's real programme window
+  // independent of RecordingSerializer.validate()'s own pre/post-padding
+  // and past-start-time clamping (both applied to startTime/endTime
+  // above, never to this field) -- see
+  // dispatcharr::FindEpgEntryIndexByStartTime()'s own comment
+  // (EpgProgramMatch.h) for why the padded/clamped window alone isn't
+  // always enough to find the right EPG entry.
+  time_t programStartTime = 0;
+  time_t programEndTime = 0;
+  // custom_properties.program.tvg_id: the guide id of the programme this
+  // recording was materialized from, empty when the snapshot carries none. A
+  // series rule with no pinned channel is identified by its own tvg_id instead of
+  // a channel, so this is what links such a recording back to its rule (see
+  // MatchRecordingsToSeriesRules()).
+  std::string programTvgId;
 };
 
 // A scheduled recording: either a one-off (isSeries == false) or a
@@ -192,6 +248,24 @@ struct TimerRule
   time_t endTime = 0;
   bool isSeries = false;
   bool recordNewOnly = false; // Dispatcharr's mode == "new" vs "all"
+  // Series rules only, added 2026-09-29 fixing a real, confirmed bug
+  // (see docs/OPEN_ITEMS.md): CreateSeriesRule()'s own POST/upsert never
+  // sent these, and Dispatcharr's own SeriesRulesAPIView.post() does a
+  // full existing.clear(); existing.update(rule_record) on match -- so
+  // any edit from Kodi (even a bare enable/disable-equivalent toggle)
+  // silently reset a rule's own title_mode/description/description_mode
+  // customized via Dispatcharr's own web UI back to these plain
+  // defaults. Cached here (populated by ParseTimerRuleJson()) so
+  // UpdateTimer()'s own series-rule branch can echo them straight back
+  // on every edit instead of letting them default. epgSourceId <= 0
+  // means "not pinned to a specific EPG source" (Dispatcharr's own
+  // "omit to use every mapped copy of that tvg_id" default), matching
+  // this project's established channelId <= 0 "no channel" convention.
+  std::string titleMode = "exact";
+  std::string description;
+  std::string descriptionMode = "contains";
+  bool untaggedIsNew = false;
+  int epgSourceId = 0;
 };
 
 // A recurring day-of-week rule, backed by Dispatcharr's own
@@ -249,14 +323,44 @@ public:
 
   // Logs in with username/password and stores the JWT pair. Safe to call
   // repeatedly; it is a no-op if a still-valid token is already held.
-  bool EnsureAuthenticated(std::string& error);
+  // timeoutMsOverride, when positive, bounds the login/refresh request this call may have to make (a caller that
+  // promises a short worst case, like Stop and the live-edge manifest refresh, must not wait out the configured
+  // timeout in the authentication step before its own bounded request even starts -- found by the fifteenth
+  // hardening sweep: Close took 30 s, not 5, once the token hint had lapsed during a blackhole).
+  bool EnsureAuthenticated(std::string& error, long timeoutMsOverride = 0);
+  // Forgets the cached access token's freshness hint so the next authenticated
+  // call refreshes it first. For a wake from suspend: the hint is a
+  // steady_clock deadline a few minutes out, and steady_clock does not advance
+  // while the system sleeps, so a token minted just before a long sleep reads as
+  // fresh long after the server's own lifetime has passed it.
+  void InvalidateAccessToken();
+  // Makes EnsureAuthenticated() stop trusting the cached token, but only if it
+  // is still `rejectedToken` -- a request that was answered 401 uses this so
+  // that a token another thread has already replaced isn't invalidated again.
+  void InvalidateAccessTokenIfCurrent(const std::string& rejectedToken);
 
   bool GetChannels(std::vector<Channel>& out, std::string& error);
   bool GetChannelGroups(std::vector<ChannelGroup>& out, std::string& error);
 
   // Full-body caller must fetch and parse this with XmlTvParser; this
   // client only returns the raw document.
-  bool GetXmlTvGuide(std::string& xmlOut, std::string& error);
+  // `httpStatusOut` (optional) receives the HTTP status, or 0 for a
+  // transport failure -- EnsureEpgLoaded() needs it to tell a durable
+  // rejection (Network Access 403) from an outage, see
+  // dispatcharr::ShouldCountTowardEpgFailureBackoff().
+  // `prevDays` > 0 asks for that many days of already-aired programmes too
+  // (`?prev_days=N`), see dispatcharr::ComputeGuidePrevDays().
+  // Makes every request in flight (and any started later) fail immediately. Called when
+  // the addon instance is being destroyed, so shutdown does not wait out a request to an
+  // unresponsive server -- see CurlCallbacks.h's TransferAbortResult().
+  void AbortInFlightRequests()
+  {
+    m_abortRequests = true;
+  }
+  // `responseUnusableOut` is set when the server answered but the body went past the size ceiling or
+  // exhausted memory (no HTTP status is kept for those) -- see ShouldCountTowardEpgFailureBackoff().
+  bool GetXmlTvGuide(std::string& xmlOut, std::string& error, long* httpStatusOut = nullptr, int prevDays = 0,
+                     bool* responseUnusableOut = nullptr);
 
   // Plain live-stream URL passthrough for live_timeshift_mode's "Off"
   // setting -- no server-side buffering, no admin-account requirement.
@@ -291,7 +395,19 @@ public:
   // Dispatcharr's own source (apps/accounts/permissions.py) that the
   // plugin run endpoint requires IsAdmin (user_level >= 10) for POST, not
   // just any authenticated user.
-  bool StartTimeshiftBuffer(const std::string& channelUuid, std::string& playlistUrlOut, std::string& error);
+  // retryableOut (when non-null) is set from the plugin's own "retryable"
+  // response field -- true means this specific failure (currently just
+  // its own buffer being mid-teardown, see plugin.py's
+  // _classify_existing_buffer()) is expected to clear up on its own
+  // shortly, unlike a genuinely permanent one (e.g. max_concurrent_buffers,
+  // ffmpeg not found). OpenLiveTimeshiftStream() uses this to retry
+  // briefly instead of failing outright -- a real gap found via a
+  // project-wide review: this window is normally brief (bounded by
+  // _stop_ffmpeg's own ~2s SIGTERM deadline plus file removal), but a
+  // caller opening the same channel inside it used to get a hard,
+  // non-retried failure.
+  bool StartTimeshiftBuffer(const std::string& channelUuid, std::string& playlistUrlOut, std::string& error,
+                            bool* retryableOut = nullptr);
   // Tells the plugin this specific viewer (m_liveTimeshiftStream.viewerId)
   // is done with the channel's buffer -- NOT an unconditional stop. The
   // plugin reference-counts viewers per buffer (registered by
@@ -341,7 +457,17 @@ public:
   // GetRecordings() call every ~500ms during in-progress playback, since
   // it only ever needs one recording's current state (was previously
   // O(every recording) just to check one id's isInProgress flag).
-  bool GetRecordingById(int id, Recording& out, std::string& error);
+  // `httpStatusOut`, if given, is set to the real HTTP status the server
+  // answered with, or left 0 when no response arrived at all (or
+  // authentication itself failed first) -- lets a caller tell a lookup that
+  // answered 404 (the recording is gone) apart from one that merely failed.
+  // Bound for the requests a viewer waits on when the server is gone (Stop, steady-state refreshes, the startup
+  // version check and the authentication before them); follows the configured connection timeout. RequestTimeout.h.
+  long ShortRequestTimeoutMs() const;
+  // `authenticationNotCompletedOut`, if given, is set when authentication itself did not succeed (refused during a
+  // backoff, or failed): no request about the recording was made, which is not the same as the server not answering it.
+  bool GetRecordingById(int id, Recording& out, std::string& error, long* httpStatusOut = nullptr,
+                        long timeoutMsOverride = 0, bool* authenticationNotCompletedOut = nullptr);
   // Fetches comskip-detected commercial-break markers for a completed
   // recording via this addon's companion Dispatcharr plugin
   // (dispatcharr-plugin/recording_edl/ in this repo -- not built into
@@ -401,15 +527,47 @@ public:
   bool ExtendRecording(int recordingId, int extraMinutes, std::string& error);
 
   // True if Config::apiKey is already set. Callers use this to decide
-  // whether GenerateApiKey() is worth calling at all. Deliberately reads
+  // whether ObtainApiKey() is worth calling at all. Deliberately reads
   // m_config.apiKey directly rather than through GetApiKey() -- safe
   // unlocked only because its one real call site (PVRDispatcharr's
   // constructor) runs before any thread that could concurrently call
-  // GenerateApiKey() exists yet; do not add a second call site without
+  // ObtainApiKey() exists yet; do not add a second call site without
   // reconsidering that.
   bool HasApiKey() const
   {
     return !m_config.apiKey.empty();
+  }
+  // The connection settings (host/port/useHttps/verifySsl/timeoutSeconds)
+  // this client was actually constructed with -- added 2026-09-27, a
+  // 47th-pass audit, fixing a real, confirmed bug found via a
+  // project-wide review, not itself independently reproduced: unlike
+  // apiKey, none of these ever change after construction (a host/
+  // username/etc. settings change always returns
+  // ADDON_STATUS_NEED_RESTART instead, tearing down this whole
+  // instance -- OnAddonSettingChanged()'s own comment), so this is safe
+  // to call from any thread with no locking, the same reasoning as
+  // m_apiKeyOwnerHost/m_apiKeyOwnerUsername (PVRDispatcharr.h).
+  // StartRealtimeUpdateThread()'s own reconnect loop used to call
+  // PVRDispatcharr::LoadConfigFromSettings() fresh on every iteration
+  // instead -- a *live* settings read, not a construction-time snapshot
+  // -- while using this client's own (construction-time) JWT
+  // (GetAccessToken() below) for the connection itself. During the
+  // window between a host/username change being delivered and Kodi's
+  // own blocking NEED_RESTART OK dialog actually being dismissed (this
+  // old, not-yet-destroyed instance keeps running the whole time,
+  // confirmed against Kodi's real source, AddonStatusHandler.cpp), a
+  // reconnect landing in that window sent the *previous* server's own
+  // JWT to whatever *new* host/port was just typed in -- a real
+  // credential-disclosure risk if that new host happens to accept it
+  // (e.g. a cloned/staging instance sharing the same Django SECRET_KEY),
+  // and at best a pointless connection attempt otherwise.
+  void GetConnectionSettings(std::string& host, int& port, bool& useHttps, bool& verifySsl, int& timeoutSeconds) const
+  {
+    host = m_config.host;
+    port = m_config.port;
+    useHttps = m_config.useHttps;
+    verifySsl = m_config.verifySsl;
+    timeoutSeconds = m_config.timeoutSeconds;
   }
   // A currently-valid JWT access token, for the real-time-updates
   // WebSocket connection (see PVRDispatcharr's realtime-update thread) --
@@ -421,37 +579,63 @@ public:
   // (re)connecting.
   bool GetAccessToken(std::string& tokenOut, std::string& error);
   // Current API key, e.g. to re-persist it after OpenRecordingStream()/
-  // ReadRecordingStream() have silently regenerated a stale one (see their
-  // comments below) -- this client has no knowledge of Kodi's settings
-  // storage, so the caller must notice the change and save it itself.
-  // Thread-safe (m_apiKeyMutex) -- GenerateApiKey() can be triggered by a
-  // self-healing regenerate-on-401 from any of this client's several
-  // stream-opening call sites, on whichever Kodi/background thread
-  // happens to be using them, concurrently with another thread reading
-  // the key for its own request.
+  // ReadRecordingStream() have silently swapped a stale one for the
+  // account's current key (see ObtainApiKey()) -- this client has no
+  // knowledge of Kodi's settings storage, so the caller must notice the
+  // change and save it itself. Thread-safe (m_apiKeyMutex) --
+  // ObtainApiKey() can be triggered by a self-healing 401 recovery from
+  // any of this client's several stream-opening call sites, on whichever
+  // Kodi/background thread happens to be using them, concurrently with
+  // another thread reading the key for its own request.
   std::string GetApiKey() const
   {
     std::lock_guard<std::mutex> lock(m_apiKeyMutex);
     return m_config.apiKey;
   }
-  // Generates a new Dispatcharr API key and stores it in this client's own
-  // config for immediate use by OpenRecordingStream()/ReadRecordingStream().
-  // Regenerating replaces any previous key for the account (confirmed against a live
-  // instance) -- Dispatcharr keeps only one active key account-wide, so
-  // running this addon against the same account from more than one Kodi
-  // install means whichever one last called this silently invalidates
-  // every other install's stored key. OpenRecordingStream()/
-  // ReadRecordingStream() call this automatically on a 401 to self-heal
-  // from that; call it directly only when HasApiKey() is false (e.g. first
-  // run), and persist the result so a restart doesn't invalidate a key
-  // some other install is actively relying on.
-  bool GenerateApiKey(std::string& keyOut, std::string& error);
+  // Makes sure this client holds a working API key for the configured
+  // account, storing it in this client's own config for immediate use by
+  // OpenRecordingStream()/ReadRecordingStream() -- the caller must persist
+  // it itself (see GetApiKey()). The one entry point for every "I need a
+  // key" path: first-run setup, a stored key that belongs to a different
+  // account, and every 401 self-heal.
+  //
+  // Reads the account's EXISTING key from Dispatcharr first
+  // (GET /api/accounts/api-keys/) and adopts it as-is; only generates a
+  // new one when the account genuinely has none, or an older Dispatcharr
+  // can't report it. Dispatcharr keeps exactly ONE key per account and
+  // generating overwrites it unconditionally (confirmed against a live
+  // instance and its real upstream source), so every generate silently
+  // revokes the key for every other client of that account -- other Kodi
+  // installs, scripts, MCP/automation tools. This used to generate
+  // unconditionally on first run and on every 401; a real report against
+  // 0.11.0 showed just enabling the addon broke every other client on the
+  // account, and a live two-install test (docs/OPEN_ITEMS.md) showed two
+  // Kodi installs playing back at once churned the key roughly every 24s.
+  // With this, every install and tool on one account converges on the one
+  // shared key instead.
+  //
+  // Returns false without generating anything when the lookup itself
+  // failed transiently (no response, 5xx, 408/429): rotating a key blind
+  // could revoke a perfectly good one, so the caller's own retry
+  // (OpenRecordedStream() re-tries on every open, each 401 path once per
+  // read) tries again later instead. Serialized by m_apiKeyRecoveryMutex --
+  // two threads recovering at once used to be able to each generate a key
+  // and leave m_config.apiKey holding the loser's. Never logs the key.
+  bool ObtainApiKey(std::string& keyOut, std::string& error);
 
   bool GetTimerRules(std::vector<TimerRule>& out, std::string& error);
   // title is used only as a client-side placeholder (see GetRecordings()'s
   // pending-title cache) -- not sent to Dispatcharr itself; see the .cpp for
-  // why.
-  bool CreateOneTimeRecording(int channelId, time_t start, time_t end, const std::string& title, std::string& error);
+  // why. isEpgBased (added 2026-09-29, fixing a real, confirmed,
+  // live-verified bug -- see dispatcharr::BuildOneTimeRecordingCreateBody()'s
+  // own comment, TimerRequestBuilder.h) should be true only for a
+  // genuinely EPG-based timer (timer.GetEPGUid() != PVR_TIMER_NO_EPG_UID)
+  // -- lets Dispatcharr's own configured pre/post padding actually apply
+  // to a recording created by pressing "Record" in Kodi's own EPG guide,
+  // which previously always got the raw, unpadded EPG start/end times
+  // instead.
+  bool CreateOneTimeRecording(int channelId, time_t start, time_t end, const std::string& title, bool isEpgBased,
+                              std::string& error);
   // Reschedules an existing one-time recording's start/end time via
   // PATCH /api/channels/recordings/{id}/. Deliberately sends ONLY
   // start_time/end_time, mirroring CreateOneTimeRecording()'s own choice
@@ -470,17 +654,38 @@ public:
   // present) -- confirmed live, not just theorized either way, so this
   // method sends exactly the new times without trying to work around a
   // compounding-offset bug that didn't actually reproduce.
-  bool UpdateOneTimeRecording(int recordingId, time_t start, time_t end, std::string& error);
+  //
+  // channelId (0 = leave unchanged) moves a not-yet-started recording to
+  // another channel, alongside the two times (see
+  // BuildOneTimeRecordingPatchBody()). Confirmed live 2026-09-30 that this
+  // reschedules cleanly; Dispatcharr leaves the recording's
+  // custom_properties.program snapshot (an EPG-derived title/subtitle/
+  // description) as it was, so those stay the old channel's.
+  bool UpdateOneTimeRecording(int recordingId, time_t start, time_t end, int channelId, std::string& error);
   // recordNewOnly maps to Dispatcharr's SeriesRuleRequest.mode ("new" vs
   // the server default "all") -- confirmed against the live schema: "all"
   // records every matching episode including reruns, "new" only
   // first-run ones.
+  //
+  // titleMode/description/descriptionMode/untaggedIsNew/epgSourceId
+  // added 2026-09-29 -- see dispatcharr::BuildSeriesRuleRequestBody()'s
+  // own comment (TimerRequestBuilder.h) for the real, live-confirmed bug
+  // this fixes. AddTimer()'s create path (nothing cached yet) passes
+  // ""/""/""/false/0; UpdateTimer()'s edit path passes the cached
+  // TimerRule's own values so an edit doesn't collaterally reset them.
   bool CreateSeriesRule(int channelId, const std::string& tvgId, const std::string& titlePattern, bool recordNewOnly,
-                        std::string& error);
+                        const std::string& titleMode, const std::string& description,
+                        const std::string& descriptionMode, bool untaggedIsNew, int epgSourceId, std::string& error);
   // Series rules have no numeric id in Dispatcharr's API at all -- they're
   // deleted by DELETE /api/channels/series-rules/?title=...&tvg_id=...
   // (confirmed against the live OpenAPI schema), not by path id.
-  bool DeleteSeriesRule(const std::string& title, const std::string& tvgId, std::string& error);
+  //
+  // epgSourceId added 2026-09-29 -- see
+  // dispatcharr::BuildSeriesRuleDeleteQuery()'s own comment
+  // (TimerRequestBuilder.h) for the real, confirmed data-loss bug this
+  // fixes (omitting it deleted every EPG source's own copy of a rule
+  // sharing title+tvgId, not just the one pinned copy the user meant).
+  bool DeleteSeriesRule(const std::string& title, const std::string& tvgId, int epgSourceId, std::string& error);
   // Resolves the tvg_id that actually backs a channel's *effective* EPG
   // data row (its epgDataId), rather than trusting the channel's own
   // (possibly stale) tvgId field directly -- confirmed live against a real
@@ -512,9 +717,20 @@ public:
   // create despite the model declaring them nullable (confirmed against
   // its live validation code) -- endDate should already reflect the
   // caller's chosen "how far out" default (see AddTimer()), not left at 0.
+  // `enabled` reflects Kodi's own timer-settings dialog Enabled toggle at
+  // create time -- fixed for a real, confirmed bug found via a
+  // project-wide review, not itself independently reproduced: this used
+  // to always send `enabled: true` unconditionally, silently ignoring a
+  // user unchecking Enabled while creating a new recurring timer (the
+  // same dialog UpdateTimer()'s own edit path already honors this for,
+  // since PVR_TIMER_TYPE_SUPPORTS_ENABLE_DISABLE -- see GetTimerTypes() --
+  // is a per-timer-type capability Kodi's shared Add/Edit dialog applies
+  // to both, not an edit-only affordance) -- a rule created disabled, to
+  // stage it for later, instead started materializing and recording
+  // occurrences immediately.
   bool CreateRecurringRule(int channelId, const std::string& name, const std::vector<int>& daysOfWeek,
                            int startTimeOfDaySeconds, int endTimeOfDaySeconds, time_t startDate, time_t endDate,
-                           std::string& error);
+                           bool enabled, std::string& error);
   // Edits an existing recurring rule -- also how Kodi's own "enable/
   // disable" timer action reaches this rule type
   // (PVR_TIMER_TYPE_SUPPORTS_ENABLE_DISABLE), since Dispatcharr has no
@@ -528,9 +744,16 @@ public:
   // own comment on why that's a somewhat arbitrary "far enough out"
   // value) is preserved automatically rather than needing to be
   // re-fetched and resent on every edit.
-  bool UpdateRecurringRule(int ruleId, int channelId, const std::string& name, const std::vector<int>& daysOfWeek,
-                           int startTimeOfDaySeconds, int endTimeOfDaySeconds, time_t startDate, bool enabled,
-                           std::string& error);
+  //
+  // Sends only the fields in `patch` (see RecurringRuleEdit.h) -- an edit of one
+  // field no longer re-sends, and so reverts, the others.
+  // `httpStatusOut` (optional) receives the response's HTTP status, 0 when there was none -- what
+  // lets a caller tell a rejection that will repeat from a transient failure.
+  bool UpdateRecurringRule(int ruleId, const dispatcharr::RecurringRuleEditPatch& patch, std::string& error,
+                           long* httpStatusOut = nullptr);
+  // One rule, fresh from the server (the cached list can be minutes old). A
+  // missing rule is reported through `httpStatusOut` (404), not just `error`.
+  bool GetRecurringRuleById(int ruleId, RecurringRule& out, std::string& error, long* httpStatusOut = nullptr);
   bool DeleteRecurringRule(int ruleId, std::string& error);
   // Extends an existing recurring rule's end_date forward -- a partial
   // PATCH sending only that one field, the same partial-update-safe
@@ -558,10 +781,21 @@ public:
   // (custom_properties has no per-recording/per-rule equivalent -- this
   // is genuinely global-only, confirmed against Dispatcharr's own
   // source). Only actually applied server-side to EPG-based scheduling
-  // (series rules, an EPG-matched one-time recording) -- confirmed a
+  // where custom_properties.program is present -- confirmed a
   // recurring (day-of-week) rule's own scheduler never reads or applies
   // this at all, a real inconsistency on Dispatcharr's side this addon
-  // can't fix, just report accurately.
+  // can't fix, just report accurately. Corrected 2026-09-26 (a 25th-pass
+  // audit, confirmed against Dispatcharr's own real current upstream
+  // source): "an EPG-matched one-time recording" here used to describe
+  // this addon's own CreateOneTimeRecording()-created recordings too --
+  // it doesn't. That call deliberately sends no custom_properties at
+  // all (see its own comment), so RecordingSerializer.validate()'s own
+  // isinstance(custom_properties.get("program"), dict) check is never
+  // true for a recording created through this addon, and no padding is
+  // ever applied to it -- only true of one created through Dispatcharr's
+  // own UI. See docs/RECORDINGS.md's own follow-up note and
+  // docs/OPEN_ITEMS.md for the full account; not yet fixed, needs a live
+  // test first.
   bool GetDvrOffsetMinutes(int& preMinutesOut, int& postMinutesOut, std::string& error);
   // Read-modify-write: Dispatcharr stores this alongside several other,
   // unrelated settings (comskip mode/hw-accel, recording path templates)
@@ -570,7 +804,25 @@ public:
   // just padding. Fetches the current blob first and only changes the
   // two offset keys within it, so a naive whole-field overwrite doesn't
   // silently wipe out the unrelated settings sharing that same row.
-  bool SetDvrOffsetMinutes(int preMinutes, int postMinutes, std::string& error);
+  //
+  // preMinutes/postMinutes are nullable: nullptr leaves that offset
+  // exactly as this call's own fresh fetch found it, rather than
+  // overwriting it with a value the caller supplies -- see
+  // dispatcharr::MergeDvrOffsetMinutes()'s own comment (JsonFieldUtil.h)
+  // for the real, confirmed bug this fixes.
+  //
+  // `onResult`, when given, is called with the outcome while the call still holds the
+  // DVR-settings mutex, so the order callers learn their results in is the order the requests
+  // reached the server (found by the 2026-10-04 eighth hardening sweep: results applied after
+  // the call returned could be applied in a different order than the PATCHes landed, which no
+  // bookkeeping can undo). It must not call back into this client.
+  // The same push, but with what to send decided under m_dvrSettingsMutex: `choose` fills in the
+  // sides to send (left empty = not sent), after any push that was ahead of it has finished. When it
+  // leaves both empty nothing is sent, `onResult` is not called and true is returned.
+  bool SetDvrOffsetMinutesChosen(const std::function<void(std::optional<int>& pre, std::optional<int>& post)>& choose,
+                                 std::string& error, const std::function<void(bool)>& onResult);
+  bool SetDvrOffsetMinutes(const int* preMinutes, const int* postMinutes, std::string& error,
+                           const std::function<void(bool)>& onResult = nullptr);
 
   // Dispatcharr's own configured system timezone (CoreSettings key
   // "system_settings", field "time_zone"), as a raw IANA zone name --
@@ -597,7 +849,8 @@ public:
   // point other callers already use.
   // `nowUtc` is a parameter purely for testability; real callers should
   // always pass the actual current time.
-  static bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc, int& offsetMinutesOut);
+  static bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc, int& offsetMinutesOut,
+                                            bool applyZoneRuleChanges = true);
 
   // GET /api/core/version/ -- public, no auth required at all (confirmed
   // against the live source, core/api_views.py's `version` view:
@@ -606,7 +859,14 @@ public:
   // PVRDispatcharr::GetBackendVersion(), which previously had no real
   // server-version source and reported this addon's own protocol version
   // instead.
-  bool GetServerVersion(std::string& versionOut, std::string& error);
+  // `httpStatusOut` (when non-null) is the HTTP status, or 0 when no response was received at all.
+  bool GetServerVersion(std::string& versionOut, std::string& error, long* httpStatusOut = nullptr);
+
+  // Starts the same short, non-escalating cooldown a transient Login() failure does, without attempting a
+  // login: for a caller that has just learned the server is not answering (the startup version check timed out)
+  // and would otherwise make every later startup call, beginning with the login, wait out a full timeout of its
+  // own. The background thread's deferred syncs and the next EnsureAuthenticated() after the cooldown try again.
+  void DeferAuthenticationAfterUnresponsiveServer(const std::string& reason);
 
   // GET /api/core/timezones/ -- requires auth (confirmed live: 401 without
   // it, matching its view's plain `Authenticated()` permission, unlike
@@ -639,6 +899,34 @@ public:
   // this addon enforces -- Dispatcharr's own server-side check is still
   // what actually matters.
   bool IsCurrentUserAdmin(bool& isAdminOut, std::string& error);
+
+  // CoreSettings key "system_settings", field "catchup_enabled" -- the
+  // instance-wide catch-up on/off switch. Confirmed live 2026-09-28
+  // (docs/OPEN_ITEMS.md) that Dispatcharr's own catch-up endpoint
+  // (apps/timeshift/api_views.py) 403s "Catch-up is disabled" when this
+  // is false, entirely independent of any per-channel catchupEnabled
+  // flag -- see dispatcharr::ShouldOfferCatchup()'s own comment
+  // (EpgTagUtil.h) for what this addon does with it. Defaults
+  // enabledOut to `true` and returns the fetch's own success/failure
+  // separately, so a startup-time caller can fail open (same reasoning
+  // as IsCurrentUserAdmin()'s own comment: Dispatcharr's own 403 is
+  // still the authoritative enforcement either way) rather than
+  // spuriously hiding catch-up entirely just because this one read
+  // failed.
+  // The account's DVR access level (see DvrAccess.h), from the same
+  // /api/accounts/users/me/ response IsCurrentUserAdmin() reads.
+  bool GetCurrentUserDvrAccess(dispatcharr::DvrAccess& accessOut, std::string& error);
+  bool IsCatchupEnabledGlobally(bool& enabledOut, std::string& error);
+
+  // GET /api/accounts/users/me/ -- same endpoint IsCurrentUserAdmin()
+  // already calls, just reading a different field
+  // (custom_properties.catchup_enabled) from the same response. Kept as
+  // its own separate call rather than an extra out-parameter on
+  // IsCurrentUserAdmin() itself, so each function still answers exactly
+  // one question -- the extra round trip is a one-time startup cost, not
+  // a hot path. See IsCatchupEnabledGlobally()'s own comment for the
+  // fail-open convention this matches.
+  bool IsCatchupEnabledForCurrentUser(bool& enabledOut, std::string& error);
 
   // Raw byte-range recording playback, called through the addon's
   // OpenRecordedStream/ReadRecordedStream/SeekRecordedStream/
@@ -686,6 +974,17 @@ public:
   // live buffer does (see kodi-dev-kit's own PVRStreamTimes doc comment:
   // "For Live TV, this must be ... point to end of the timeshift buffer").
   int64_t GetLiveTimeshiftStreamDurationMs();
+  // Where the seekable part of the live-timeshift stream begins, as a
+  // timestamp in ms (matching GetLiveTimeshiftStreamDurationMs()'s own
+  // timeline): 0 until the plugin's rolling buffer has started letting
+  // segments go, then the start of the oldest one it still has. For
+  // GetStreamTimes()'s PTSBegin. 0 when no stream is open.
+  int64_t GetLiveTimeshiftStreamBeginMs();
+
+  // Byte position of the oldest segment still real server-side -- see
+  // dispatcharr::FirstAvailableLiveSegmentIndex(). 0 when nothing has rolled
+  // off yet. The caller must hold m_liveStateMutex.
+  int64_t FirstAvailableLiveByteOffset() const;
   // Real UTC wall-clock moment corresponding to this session's local byte
   // 0/PTS 0 (see LiveTimeshiftStreamState::wallClockAnchor's own comment)
   // -- for GetStreamTimes()'s startTime, which must NOT be 0/unset: Kodi-
@@ -761,16 +1060,46 @@ public:
   bool IsInProgressRecordingStreamOpen() const;
 
 private:
+  // SetDvrOffsetMinutes()'s GET-merge-PATCH; the caller holds m_dvrSettingsMutex.
+  bool SetDvrOffsetMinutesLocked(const int* preMinutes, const int* postMinutes, std::string& error);
+
   std::string BaseUrl() const;
-  bool Login(std::string& error);
-  bool RefreshAccessToken(std::string& error);
+  // Whether `url` (taken from a server-supplied playlist) is on exactly the configured
+  // scheme, host and port: the only place the X-API-Key may be sent for it. A request to
+  // anything else is not made at all -- see dispatcharr::IsSameOrigin().
+  bool IsOnConfiguredServer(const std::string& url) const;
+  // Whether the one warning about such a segment has been logged yet (it is retried every refresh).
+  mutable std::atomic<bool> m_loggedForeignSegment{false};
+  // httpStatusOut (added 2026-09-27, a 43rd-pass audit -- see
+  // dispatcharr::ShouldCountTowardLoginBackoff()'s own comment,
+  // AuthBackoff.h, for why): the real HTTP status /api/accounts/token/
+  // returned, or 0 if no response was received at all (a transport
+  // failure). Left null by the 401-retry call site inside Request()
+  // itself, which only cares about the plain bool; EnsureAuthenticated()
+  // passes a real pointer so it can decide whether this failure should
+  // count toward its own consecutive-failure backoff.
+  bool Login(std::string& error, long* httpStatusOut = nullptr, long timeoutMsOverride = 0);
+  // httpStatusOut (added 2026-09-27, a 47th-pass audit, fixing a real,
+  // confirmed gap found via a project-wide review, not itself
+  // independently reproduced -- see EnsureAuthenticated()'s own comment
+  // for the full account): before this, EnsureAuthenticated() tried
+  // RefreshAccessToken() *before* either of its own backoff gates, with
+  // no way to classify a failure here the way Login()'s own
+  // httpStatusOut lets it. A refresh token, once obtained, never expires
+  // from this addon's own perspective until it's actually rejected --
+  // unlike Login(), which only runs once per outage until its own
+  // backoff clears -- so this was actually the *more* common path for a
+  // mid-session outage to hit completely unthrottled, not a rare corner
+  // of it.
+  bool RefreshAccessToken(std::string& error, long* httpStatusOut = nullptr, long timeoutMsOverride = 0);
 
   // Finds the one CoreSettings row with the given key and returns its id
   // and full value blob (unmodified) -- GetDvrOffsetMinutes()/
   // SetDvrOffsetMinutes() (key kDvrSettingsKey) and GetSystemTimeZone()
   // (key kSystemSettingsKey) all need this same lookup, just against
   // different rows of the same /api/core/settings/ list.
-  bool FindCoreSettingsRow(const std::string& key, int& idOut, nlohmann::json& valueOut, std::string& error);
+  bool FindCoreSettingsRow(const std::string& key, int& idOut, nlohmann::json& valueOut, std::string& error,
+                           bool* valueWasObjectOut = nullptr);
 
   // Shared by GetRecordings() (once per list item) and GetRecordingById()
   // (once, for its single item) so the two never drift apart -- same
@@ -781,10 +1110,31 @@ private:
 
   // Fetches the raw HLS playlist text for an in-progress recording, with a
   // self-healing retry on a 401. Returns false (with `error` set) on a
-  // genuine network/HTTP failure. Called from
-  // RefreshInProgressRecordingManifest().
+  // genuine network/HTTP failure. `wasNotFoundOut`, if given, is set true
+  // for a definitive HTTP 404, OR a 3xx redirect (Dispatcharr has genuinely
+  // removed this recording's HLS directory, per docs/RECORDINGS.md's own
+  // documented concat-plus-viewer-wait-grace removal), and false for every
+  // other failure (a transient network/5xx blip) -- lets
+  // RefreshInProgressRecordingManifest() distinguish "this recording is
+  // genuinely gone" from "try again next cycle" instead of treating both
+  // identically. The redirect case is real, confirmed against Dispatcharr's
+  // own current upstream source, not itself independently reproduced: on a
+  // *naturally*-completed recording (not a user Stop), the server's own
+  // `hls()` view (apps/channels/api_views.py) 302-redirects a `.m3u8`
+  // request to the permanent `/file/` endpoint once its own HLS directory
+  // is gone, rather than 404ing the way a Stop/deleted-recording case does
+  // -- this addon never sets CURLOPT_FOLLOWLOCATION here, so that 3xx
+  // otherwise came back indistinguishable from a plain 5xx/network blip,
+  // and RefreshInProgressRecordingManifest()'s own `finished` flag never
+  // went true for this case. Called from RefreshInProgressRecordingManifest().
+  // `httpStatusOut`, if given, is set to the last HTTP status the server
+  // answered with (0 when no response arrived at all) -- what lets
+  // RefreshInProgressRecordingManifest() tell a plain 404 ("no playlist yet,
+  // the recording is very young") apart from a 3xx, which `wasNotFoundOut`
+  // deliberately lumps together with it.
   bool FetchRawInProgressPlaylist(int recordingId, const std::string& playlistUrl, std::string& playlistText,
-                                  std::string& error);
+                                  std::string& error, bool* wasNotFoundOut = nullptr, long* httpStatusOut = nullptr,
+                                  long timeoutMsOverride = 0);
 
   // The CURLSH* behind m_curlShareState, or nullptr if it failed to
   // initialise -- pass to CURLOPT_SHARE on every easy handle this client
@@ -815,33 +1165,56 @@ private:
   // separate). `curl`/`share` are void* (actually CURL*/CURLSH*) for the
   // same reason as GetCurlShare().
   void ApplyStandardCurlOptions(void* curl, void* share) const;
+  // Set once the addon instance is being torn down: every request in flight, and every
+  // one started afterwards, then ends at once instead of running to its timeout.
+  // Mutable because ApplyStandardCurlOptions() is const and hands libcurl its address.
+  mutable std::atomic<bool> m_abortRequests{false};
 
-  // A tiny ranged GET with the current API key attached, used by
-  // RefreshInProgressRecordingManifest() as a proactive self-heal check
-  // (cheaper to catch a stale key here than mid-read of an actual
-  // segment). Returns true on anything but a 401 (a transport error or
-  // other status isn't this check's problem to solve -- fail open rather
-  // than block playback on a check that was only ever a best-effort head
-  // start on a problem the caller can't fully prevent anyway).
-  bool IsApiKeyValidFor(const std::string& url) const;
+  // curl_easy_perform() on `curl` for `startUrl`, following up to five redirects
+  // but only ones dispatcharr::IsSafeRedirectTarget() allows (same host, never
+  // https -> http); anything else is returned as the 3xx response. For requests
+  // that carry credentials, in place of CURLOPT_FOLLOWLOCATION. `onRedirect`
+  // runs before each followed hop to reset the caller's response buffers;
+  // `switchPostToGet` repeats a POST answered 301/302/303 as a GET, as libcurl
+  // does. Sets CURLOPT_URL itself. Returns a CURLcode (as an int, since this
+  // header doesn't include <curl/curl.h>).
+  int PerformWithSafeRedirects(void* curl, const std::string& startUrl, const std::function<void()>& onRedirect,
+                               bool switchPostToGet);
+
+  // GET /api/accounts/api-keys/ (APIKeyViewSet.list(): `{"key": <str|null>}`
+  // for the authenticated caller, permission class `Authenticated` only, so
+  // any role can use it) -- reads the account's current key WITHOUT
+  // replacing it, unlike GenerateApiKey(). Always sets `lookupOut`
+  // (classified via dispatcharr::ParseApiKeyListResponse()/
+  // ClassifyApiKeyLookupFailure(), ApiKeyRecovery.h); returns whether the
+  // request itself succeeded. Only ObtainApiKey() calls this.
+  bool FetchCurrentApiKey(dispatcharr::ServerApiKeyLookup& lookupOut, std::string& error);
+
+  // POST /api/accounts/api-keys/generate/ -- creates a new key and stores
+  // it in this client's own config. LAST RESORT, only ever called from
+  // ObtainApiKey() when the account genuinely has no key: Dispatcharr keeps
+  // one key per account and this overwrites it unconditionally
+  // (`user.api_key = secrets.token_urlsafe(40)`, confirmed against
+  // Dispatcharr's own real upstream source), so every call silently
+  // revokes the previous key for every other client of the account. Kept
+  // private so nothing can reach for it directly again.
+  bool GenerateApiKey(std::string& keyOut, std::string& error);
 
   // Performs one HTTP call. `body` is sent as the JSON request body for
   // POST/PATCH/DELETE-with-body; pass an empty object for bodyless calls.
   // On success, parses the response into `responseOut` (may be left null
-  // for 204 No Content) and returns true.
+  // for 204 No Content) and returns true. `httpStatusOut` (added
+  // 2026-09-27, a 43rd-pass audit), if non-null, is set to the real HTTP
+  // status received, or left at 0 for a transport failure (no response
+  // received at all) -- every existing call site leaves this null and is
+  // unaffected; only Login() currently passes a real pointer through, so
+  // EnsureAuthenticated() can distinguish a genuine credential rejection
+  // from a transient network/server failure (see
+  // dispatcharr::ShouldCountTowardLoginBackoff()'s own comment,
+  // AuthBackoff.h).
   bool Request(const std::string& method, const std::string& path, const nlohmann::json& body,
-               nlohmann::json& responseOut, std::string& error, bool withAuth = true, int retryOnAuthFailure = 1);
-
-  // Confirmed live: a freshly-(re)started buffer's playlist URL can be
-  // unreachable for a real moment after CallTimeshiftPluginAction()
-  // returns it -- ffmpeg needs time to connect, probe, and write its first
-  // segment/playlist, and the plugin's own response comes back as soon as
-  // it's been launched, not once it's produced anything. Best-effort poll
-  // (a few seconds, small sleeps between tiny GETs against the playlist
-  // URL itself, no auth needed) so the common case doesn't race this;
-  // returns false rather than blocking indefinitely if it times out, but
-  // callers proceed with the URL regardless either way.
-  bool WaitForTimeshiftPlaylistReady(const std::string& playlistUrl);
+               nlohmann::json& responseOut, std::string& error, bool withAuth = true, int retryOnAuthFailure = 1,
+               long* httpStatusOut = nullptr, long timeoutMsOverride = 0);
 
   // Calls the timeshift_buffer plugin's run/ endpoint for `action` and
   // unwraps a {status, http_port, playlist_route} response shape. Only
@@ -853,8 +1226,13 @@ private:
   // the envelope" call against a differently-shaped response, so the split
   // still documents the shared pattern even with one caller of this exact
   // signature.
+  // retryableOut (when non-null) is set from the plugin's own structured
+  // "retryable" response field, the same convention RefreshLiveManifest()'s
+  // own fatalOut already uses for "fatal" -- see StartTimeshiftBuffer()'s
+  // own comment for why this exists (a caller opening a channel while its
+  // buffer is mid-teardown gets this instead of a permanent failure).
   bool CallTimeshiftPluginAction(const std::string& action, const std::string& channelUuid, std::string& playlistUrlOut,
-                                 std::string& error, const nlohmann::json& extraParams);
+                                 std::string& error, const nlohmann::json& extraParams, bool* retryableOut = nullptr);
 
   Config m_config;
   // Guards only m_config.apiKey -- every other Config field is set once in
@@ -864,27 +1242,37 @@ private:
   // its own comment on why -- a self-healing regenerate-on-401, callable
   // from several different stream-opening code paths on whichever thread
   // happens to be using them). Mutable so the several const read sites
-  // (GetApiKey(), IsApiKeyValidFor()) can still lock it.
+  // (GetApiKey()) can still lock it.
   mutable std::mutex m_apiKeyMutex;
-  // Recursive: Login()/RefreshAccessToken() each hold this for their own
-  // full duration (including the nested Request() call that actually
-  // performs the HTTP round-trip) so every write to the token fields
-  // below is serialized regardless of caller -- EnsureAuthenticated()
-  // already held this across calling them, but Request()'s own 401-retry
-  // path (see Request()'s definition) calls them directly, with no lock
-  // of its own, and Request() also reads m_accessToken to build the auth
-  // header. A plain mutex would deadlock the moment any of these nest on
-  // the same thread (EnsureAuthenticated -> Login -> Request all doing
-  // so already); recursive_mutex allows that same-thread re-entry while
-  // still serializing genuinely concurrent callers on different threads
-  // -- confirmed necessary, not just theoretical, once the channel/EPG
-  // refresh thread and realtime-updates thread joined Kodi's own
-  // PVR-calling threads as concurrent callers into this client.
-  std::recursive_mutex m_authMutex;
+  // Serializes ObtainApiKey() end to end (unlike m_apiKeyMutex, which only
+  // guards the string itself and is never held across network I/O): the
+  // in-progress-recording manifest refresh and the read thread can each hit
+  // a 401 at the same time, and two unserialized recoveries could each
+  // generate a key, leaving m_config.apiKey holding whichever finished
+  // storing last while the server holds the other's. Lock order:
+  // m_apiKeyRecoveryMutex -> m_authFlowMutex -> m_authStateMutex ->
+  // m_apiKeyMutex, never the reverse (nothing holding either auth mutex
+  // ever calls ObtainApiKey()).
+  std::mutex m_apiKeyRecoveryMutex;
+  // Two mutexes, so that a thread that only needs the current token is never held up behind a login or refresh
+  // (docs/OPEN_ITEMS.md, "m_authMutex held across a network round trip"; it was one recursive mutex held across
+  // the whole HTTP call, so the live read's manifest refresh, a heartbeat or the realtime thread could wait a
+  // full request timeout for another thread's login):
+  //   - m_authStateMutex guards the token fields and the login-failure state below. Held only for short reads
+  //     and writes, never across a network call or a call that locks the other.
+  //   - m_authFlowMutex serializes the login/refresh flow itself and is held across its network calls, but only
+  //     a thread that actually has to authenticate ever takes it: EnsureAuthenticated() returns on a valid cached
+  //     token before reaching it, and looks again after getting it (another thread may just have succeeded, or
+  //     failed and set a backoff that answers for this call too).
+  // Lock order: m_authFlowMutex, then m_authStateMutex. Login() and RefreshAccessToken() require the flow mutex
+  // to be held and take the state mutex only to write their result. Neither needs to be recursive: nothing
+  // under the flow mutex re-enters EnsureAuthenticated() (they call Request() without auth and without retry).
+  std::mutex m_authStateMutex;
+  std::mutex m_authFlowMutex;
   std::string m_accessToken;
   std::string m_refreshToken;
   std::chrono::steady_clock::time_point m_accessTokenExpiry;
-  // Login()-failure backoff state, also guarded by m_authMutex -- see
+  // Login()-failure backoff state, also guarded by m_authStateMutex -- see
   // AuthBackoff.h's ComputeLoginBackoffSeconds() for why this exists.
   // Reset to 0/empty only by a successful Login() (EnsureAuthenticated()'s
   // own job); otherwise persists for the process lifetime, which is fine
@@ -892,6 +1280,43 @@ private:
   int m_consecutiveLoginFailures = 0;
   std::chrono::steady_clock::time_point m_loginBackoffUntil;
   std::string m_lastLoginError;
+  // A short, fixed, non-escalating cooldown for a transient Login()
+  // failure (added 2026-09-27, a 46th-pass audit, fixing a real,
+  // confirmed regression in the 43rd-pass fix that added
+  // dispatcharr::ShouldCountTowardLoginBackoff() -- see its own comment,
+  // AuthBackoff.h, for the fix that made this necessary): that fix
+  // correctly stopped a transport failure/5xx from escalating the same
+  // exponential backoff a genuine credential rejection does, but left a
+  // transient failure with *no* backoff at all -- m_consecutiveLoginFailures
+  // stays 0, so the gate above never engages, so `EnsureAuthenticated()`
+  // re-attempts `Login()` on every single call from every thread during
+  // an extended network outage (a blackholed host, a firewall DROP
+  // causing a slow TCP-level timeout rather than a fast refused/RST).
+  // `Login()` ran under the one auth mutex that `EnsureAuthenticated()`/
+  // `RefreshAccessToken()`/`Request()`'s own token-copy all used (now split, see m_authFlowMutex) -- for its
+  // own full blocking HTTP call (up to `timeoutSeconds`, 30s default), so
+  // this addon's own several concurrent callers (the background channel/
+  // EPG thread, now waking every minute for a never-loaded state per the
+  // 43rd-pass fix, the recording-refresh thread, the realtime-update
+  // WebSocket reconnect loop, and Kodi's own per-channel
+  // GetEPGForChannel() sweep, now retrying every 5 minutes per that same
+  // fix) would each serialize behind, then repeat, a full ~30s blocking
+  // login attempt for as long as the outage lasts -- exactly the
+  // thundering-herd/serialization storm AuthBackoff.h's own original
+  // comment already documents a real incident for for bad credentials,
+  // just reopened here for a genuine outage instead. Set (not escalated)
+  // on any Login() failure ShouldCountTowardLoginBackoff() says shouldn't
+  // count toward the real backoff; checked the same way as
+  // m_channelsLastFailedAt/dispatcharr::IsRetryDue() elsewhere in this
+  // codebase.
+  std::chrono::steady_clock::time_point m_transientLoginFailedAt;
+  // Whether that cooldown was armed by an attempt that only waited the short bound
+  // (dispatcharr::IsTransientCooldownBlocking()).
+  bool m_transientLoginArmedByShortAttempt = false;
+  // Matches ComputeLoginBackoffSeconds()'s own kInitialSeconds (AuthBackoff.cpp)
+  // -- a transient failure gets the same first-failure wait a genuine
+  // credential rejection does, it just never escalates beyond it.
+  static constexpr int kTransientLoginRetrySeconds = 30;
   // Local IP curl reports (CURLINFO_LOCAL_IP) for the most recent
   // successful Request() -- i.e. the interface this machine actually
   // reaches Dispatcharr through. OpenLiveTimeshiftStream() passes this to
@@ -919,7 +1344,8 @@ private:
   // independently exposed to a fresh-connection latency spike produced a
   // visible (1.8s-10s observed) delay before Kodi's own "recording started"
   // notification appeared, versus a low latency under calm conditions.
-  void* m_curlShareState = nullptr;
+  void* m_curlShareState =
+      nullptr; // DNS and TLS-session sharing only, never the connection cache (see the constructor)
 
   // Second CURLSH, used only by ProbeSegmentByteSize() when called from
   // RefreshInProgressRecordingManifest()'s concurrent probe fan-out (up to
@@ -938,6 +1364,31 @@ private:
   // crash mechanism entirely rather than working around one specific
   // libcurl build/version.
   void* m_probeCurlShareState = nullptr;
+
+  // Caches the last successful CreateCatchupSession() result so a
+  // second call with the exact same (channelUuid, programmeStart,
+  // durationMinutes) within a short window can reuse it instead of
+  // creating (and immediately discarding) a redundant Dispatcharr
+  // catch-up session -- see dispatcharr::ShouldReuseCachedCatchupSession()'s
+  // own comment (CatchupSessionCache.h) for the real, live-confirmed bug
+  // this fixes and why kMaxCatchupSessionCacheAge is well under
+  // Dispatcharr's own handshake-expiry window. Guarded by its own mutex
+  // rather than m_apiKeyMutex/the auth mutexes -- unrelated state, and
+  // CreateCatchupSession() itself already calls EnsureAuthenticated()
+  // (which takes the auth mutexes internally) before ever touching this, so
+  // reusing either existing mutex here would risk a confusing,
+  // unnecessary lock-ordering dependency between otherwise-unrelated
+  // state for no real benefit.
+  struct CatchupSessionCacheState
+  {
+    std::string channelUuid;
+    time_t programmeStart = 0;
+    int durationMinutes = 0;
+    std::string playbackUrl;
+    std::chrono::steady_clock::time_point cachedAt; // default-constructed == "never cached"
+  };
+  std::mutex m_catchupSessionCacheMutex;
+  CatchupSessionCacheState m_catchupSessionCache;
 
   // Kodi only ever has one recording open for playback at a time.
   struct RecordingStreamState
@@ -960,8 +1411,18 @@ private:
     // header doesn't need <curl/curl.h>; CURL is itself just an opaque alias
     // for void in curl.h, so the cast back in the .cpp is exact.
     void* curl = nullptr;
+    // Set when a ranged read came back as a plain 200 -- the server (or a proxy
+    // in front of it) ignores Range, so the bytes cannot be trusted at any offset
+    // past 0. Every later read then ends the stream (EOF) without another request,
+    // see ServerIgnoredRangeRequest().
+    bool rangeIgnored = false;
+    // Consecutive reads that failed for a reason that will not clear, see RecordPermanentReadFailure().
+    PermanentReadFailureTracker permanentReadFailures;
   };
   RecordingStreamState m_recordingStream;
+  // Counts a read of a completed recording that failed for a reason that will not clear: -1 until the run has
+  // lasted long enough (RecordPermanentReadFailure()), then 0 (end of stream) from then on.
+  int FailRecordingReadPermanently(long httpCode);
 
   struct LiveTimeshiftSegmentInfo
   {
@@ -1003,6 +1464,11 @@ private:
     // RefreshLiveManifest()'s merge logic and get_live_manifest's own
     // docstring in plugin.py for why sequence is the stable join key.
     std::vector<LiveTimeshiftSegmentInfo> segments;
+    // The lowest sequence the plugin's latest manifest still lists (-1 until
+    // the first one arrives) -- everything in `segments` below it has been
+    // rolled off server-side. See dispatcharr::FirstAvailableLiveSegmentIndex()
+    // (LiveEdgeMargin.h) for what depends on it and why.
+    int64_t oldestAvailableSequence = -1;
     int64_t totalBytes = 0;
     int64_t totalDurationMs = 0;
     int64_t position = 0;
@@ -1037,6 +1503,12 @@ private:
     // that function) instead of on every single read.
     std::chrono::steady_clock::time_point lastHeartbeatSent{};
     void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
+    // Set once a manifest says the plugin's ffmpeg has exited (`ended`): the buffer is
+    // frozen, so a read at the tail ends the stream instead of waiting, while a read
+    // behind the tail still plays -- see IsAtEndedTail(). Sticky, unlike `fatal`, it never
+    // blocks reading what is already known.
+    bool ended = false;
+    bool endedLogged = false; // the end-of-buffer message is logged once, not on every read
     // Set once RefreshLiveManifest() reports the plugin's own `fatal` flag
     // during a *steady-state* refresh (not the cold-start one OpenLiveTimeshiftStream()
     // already handles) -- confirmed this buffer will never produce another
@@ -1050,8 +1522,42 @@ private:
     // Checked up front so a confirmed-dead buffer short-circuits
     // immediately, without paying for another doomed network round trip.
     bool fatal = false;
+    // This Open() session's own running count of segment-body fetches that
+    // have failed with an HTTP status other than 200/206/404 in a row --
+    // reset to 0 by any 200/206/404 response. See
+    // dispatcharr::ShouldGiveUpAfterSegmentFetchFailure()'s own comment
+    // (SegmentFetchFailure.h) for the real, live-confirmed request-storm
+    // bug this bounds: without a cap, a segment fetch failing for a reason
+    // RefreshLiveManifest() itself can't positively confirm as fatal (a
+    // stale access_token against a buffer that silently restarted with a
+    // fresh one is the known case; see that header's own comment) retried
+    // forever with no backoff.
+    int consecutiveSegmentFetchFailures = 0;
+    // When the current streak of those failures began (value-initialized when there is none), so a give-up needs the
+    // streak to have lasted -- see dispatcharr::ShouldGiveUpAfterSegmentFetchFailure().
+    std::chrono::steady_clock::time_point firstSegmentFetchFailureAt{};
   };
   LiveTimeshiftStreamState m_liveTimeshiftStream;
+
+  // Locking for the live-timeshift state above (docs/OPEN_ITEMS.md, "No locking around live-timeshift /
+  // in-progress stream state"). Kodi may call GetStreamTimes()/the length getters (which refresh the manifest)
+  // on a different thread from Read/Seek/Open/Close, so:
+  //   - m_liveStateMutex guards every field of m_liveTimeshiftStream and m_liveSession. It is held only for
+  //     short reads and writes of that state, never across a network call, a sleep, or a call into another
+  //     function that locks it (it is not recursive).
+  //   - m_liveRefreshMutex makes RefreshLiveManifest() one-at-a-time: a refresh that finds one already running
+  //     returns at once unless forced, in which case it waits its turn. Without it two refreshes merged the same
+  //     new segments twice.
+  //   - m_liveCurlMutex is held while the persistent segment-fetch handle (`curl`) is in use or being freed, so
+  //     Close cannot free it under a transfer.
+  //   - m_liveSession changes on every open and close. Anything that drops m_liveStateMutex around a network
+  //     call remembers the session first and discards its result if it moved, so a result for a closed stream
+  //     never lands in the next one.
+  // Lock order, outermost first: m_liveCurlMutex or m_liveRefreshMutex, then m_liveStateMutex.
+  mutable std::mutex m_liveStateMutex;
+  std::mutex m_liveRefreshMutex;
+  std::mutex m_liveCurlMutex;
+  uint64_t m_liveSession = 0;
 
   // Fetches the plugin's get_live_manifest action and merges any segments
   // not already known into m_liveTimeshiftStream, extending its fixed-origin
@@ -1067,7 +1573,27 @@ private:
   // OpenLiveTimeshiftStream()'s cold-start retry loop passes one, to stop
   // retrying immediately instead of waiting out its full budget against
   // something that can't recover on its own.
-  bool RefreshLiveManifest(bool force, std::string& error, bool* fatalOut = nullptr);
+  // `coldStart` (OpenLiveTimeshiftStream()'s own wait for the first segment) uses the configured request timeout
+  // instead of the short bound steady-state refreshes get: Open is allowed to take a full timeout, and with the
+  // short bound an API that merely answers slowly (6 s per request) could never start a stream -- live check,
+  // docs/OPEN_ITEMS.md's "The unresponsive-server timeout changes".
+  bool RefreshLiveManifest(bool force, std::string& error, bool* fatalOut = nullptr, bool coldStart = false);
+
+  // Shared give-up-or-retry handling for ReadLiveTimeshiftStream()'s
+  // segment-body fetch, called after a failure (a transport-level curl
+  // error, or an HTTP status other than 200/206/404) the caller has
+  // already logged its own failure-specific detail for. See
+  // dispatcharr::ShouldGiveUpAfterSegmentFetchFailure()'s own comment
+  // (SegmentFetchFailure.h) for the full incident and design -- this owns
+  // the RefreshLiveManifest() call and the bounded-retry-vs-fatal
+  // decision, returning the value ReadLiveTimeshiftStream() itself should
+  // return (kRetrySegmentFetch to retry within the same call, -1 once given up and
+  // m_liveTimeshiftStream.fatal is set).
+  int HandleLiveTimeshiftSegmentFetchFailure();
+  // One pass of ReadLiveTimeshiftStream(); returns kRetrySegmentFetch when a segment fetch failed and the
+  // caller should try again.
+  int ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int size);
+  static constexpr int kRetrySegmentFetch = -2;
 
   struct InProgressRecordingSegmentInfo
   {
@@ -1101,7 +1627,13 @@ private:
     // ReadInProgressRecordingStream() treat "caught up to the known tail"
     // as genuine EOF instead of polling for more that will never come.
     bool finished = false;
+    // When `finished` was first held back for want of an #EXT-X-ENDLIST --
+    // see dispatcharr::GateFinishedOnEndList().
+    std::optional<std::chrono::steady_clock::time_point> endListWaitingSince;
     std::chrono::steady_clock::time_point lastManifestFetch{};
+    // The leading unmerged segment that could not be sized, and for how long -- see
+    // UnprobeableSegment.h.
+    dispatcharr::UnprobeableSegmentTracker unprobeableSegment;
     // Same seek-probe-vs-real-catch-up distinction as
     // LiveTimeshiftStreamState -- see ReadLiveTimeshiftStream()'s comment
     // for why this matters; the same generic Kodi/ffmpeg seek-probing
@@ -1131,8 +1663,37 @@ private:
     // moment position moves to a different segment.
     std::vector<uint8_t> cachedSegmentBytes;
     int64_t cachedSegmentByteOffset = -1;
+    // When MaybeSendInProgressHlsKeepAlive() next owes the server a request
+    // to keep this recording's HLS directory alive -- see
+    // HlsViewerKeepAlive.h for why a paused viewer needs one. Pushed out
+    // by every request that itself lands on a `.ts` URL (segment fetches,
+    // size probes), so a playing stream never sends any. Zero means due.
+    std::chrono::steady_clock::time_point nextHlsKeepAliveAt{};
+    // Set once a keep-alive came back 404/3xx (the directory is already
+    // gone), so a paused viewer doesn't keep asking every retry interval
+    // for something that can't come back.
+    bool hlsKeepAliveGone = false;
+    // The server has positively confirmed this recording's HLS content is
+    // permanently gone (deleted outright, or finished with its directory
+    // already removed) -- see dispatcharr::IsInProgressContentGone().
+    // Sticky, unlike `finished`: nothing that is gone comes back, so every
+    // later refresh returns immediately without touching the network and a
+    // read needing a segment it doesn't already hold reports EOF instead
+    // of asking a server that will only answer 404.
+    bool contentGone = false;
+    // Consecutive segment reads that failed for a reason that will not clear, see RecordPermanentReadFailure().
+    PermanentReadFailureTracker permanentReadFailures;
   };
   InProgressRecordingStreamState m_inProgressRecordingStream;
+
+  // The same rules as the live-timeshift state's (see the block at m_liveStateMutex). m_inProgressStateMutex
+  // guards every field of m_inProgressRecordingStream and m_inProgressSession. m_inProgressCurlMutex is held
+  // for a whole segment fetch and the copy out of `cachedSegmentBytes` that follows it, so Close, which takes it
+  // before resetting the state, never frees the handle or the cached bytes under a read.
+  mutable std::mutex m_inProgressStateMutex;
+  std::mutex m_inProgressRefreshMutex;
+  std::mutex m_inProgressCurlMutex;
+  uint64_t m_inProgressSession = 0;
 
   // Cross-open cache of already-probed segments for an in-progress
   // recording, keyed by recordingId. Dispatcharr's in-progress HLS output
@@ -1154,6 +1715,18 @@ private:
     std::vector<InProgressRecordingSegmentInfo> segments;
     int64_t totalBytes = 0;
     int64_t totalDurationMs = 0;
+    // Set every time this entry is touched -- backs the opportunistic
+    // TTL-based prune RefreshInProgressRecordingManifest() runs alongside
+    // its own normal cache-touch. Real, confirmed leak this fixes (found
+    // via code reading): the "finished" cleanup above only ever runs if
+    // this exact recording's stream is reopened again after it finishes
+    // -- a recording watched partway while in progress, then abandoned
+    // (channel changed, never tuned back in) before it naturally
+    // completes, otherwise leaked its entry for the rest of this
+    // DispatcharrClient instance's lifetime (a completed recording is
+    // watched through OpenRecordingStream() instead, which never looks
+    // at this map at all).
+    std::chrono::steady_clock::time_point lastUpdated{};
   };
   std::map<int, InProgressRecordingSegmentCache> m_inProgressSegmentCache;
   std::mutex m_inProgressSegmentCacheMutex;
@@ -1166,8 +1739,24 @@ private:
   // same pattern as RefreshLiveManifest(), adapted for a plain HLS text
   // response instead of the timeshift plugin's own JSON manifest action.
   // `force` bypasses the small throttle that keeps a tight demux-read loop
-  // from re-fetching on every single call.
-  bool RefreshInProgressRecordingManifest(bool force, std::string& error);
+  // from re-fetching on every single call. `coldStartRetryableOut`, if
+  // given, is set true when a failed refresh is worth waiting out rather
+  // than giving up on -- see dispatcharr::ShouldRetryInProgressColdStart()
+  // (RecordingVisibility.h); only OpenInProgressRecordingStream()'s
+  // cold-start loop reads it.
+  // `coldStart` is set by OpenInProgressRecordingStream()'s own loop: an open keeps the configured timeout even when
+  // it was seeded with segments from a previous open of the same recording (dispatcharr::IsInProgressSteadyState()).
+  bool RefreshInProgressRecordingManifest(bool force, std::string& error, bool* coldStartRetryableOut = nullptr,
+                                          bool coldStart = false);
+
+  // Sends the periodic HEAD on the newest known segment that keeps
+  // Dispatcharr from removing a finished recording's HLS directory out from
+  // under a viewer that is paused with segments still unread -- see
+  // HlsViewerKeepAlive.h for the full story, including why it deliberately
+  // stops once the reader has caught up to the tail. Cheap no-op unless one
+  // is actually due; called from RefreshInProgressRecordingManifest(),
+  // which GetStreamTimes()'s polling keeps reaching through a pause.
+  void MaybeSendInProgressHlsKeepAlive();
 
   // A tiny HEAD request to learn one segment's total byte size via
   // Content-Length -- HLS playlists carry each segment's duration
@@ -1178,41 +1767,83 @@ private:
   // -1 on any failure (network error, non-200, or no parseable
   // Content-Length); the caller skips a segment it can't size rather than
   // corrupting the cumulative offsets that follow.
-  int64_t ProbeSegmentByteSize(const std::string& segmentUrl) const;
+  // `timeoutMsOverride` > 0 bounds the HEAD (a steady-state refresh, see dispatcharr::IsInProgressSteadyState(): up to
+  // 16 of them run at once, and each would otherwise wait the whole connection timeout on a server that has stopped
+  // answering).
+  int64_t ProbeSegmentByteSize(const std::string& segmentUrl, long timeoutMsOverride = 0) const;
 
   // Client-side placeholder for a just-created one-time recording's title,
-  // matched by channelId (not also start time -- see below) to whatever
-  // this addon was called with in CreateOneTimeRecording(). Dispatcharr
-  // only learns a recording's real title asynchronously (custom_properties.
-  // program.title, populated a moment after the recording actually starts,
-  // see GetRecordings()), but Kodi already told AddTimer() the correct
-  // EPG-derived title *before* this client ever calls Dispatcharr --
-  // CreateFromEpg() reads it from the EPG tag the user clicked "Record" on.
-  // Caching that and using it in GetRecordings() in place of the
-  // "Recording <id>" fallback means the correct title shows immediately,
-  // without needing to wait for Dispatcharr's enrichment or a later refresh
-  // to catch up at all, for the common EPG-matched case.
-  // Deliberately NOT also matched on start time: confirmed against a real
-  // recording of an already-airing EPG event that Dispatcharr silently
-  // clamps the stored start_time to the moment it actually began recording
-  // (e.g. "now"), not the EPG programme's own start time this addon sent --
-  // exact-time matching missed every such case, which is the single most
-  // common one ("Record" on something currently on). Matching by channel
-  // alone (picking the most recently inserted match, left in place rather
-  // than erased -- see GetRecordings()'s own comment for why erasing on
-  // match would make the title flicker) is good enough for what this is:
-  // a short-lived, best-effort bridge, not an authoritative mapping.
+  // matched by the real Dispatcharr recording id (parsed from
+  // CreateOneTimeRecording()'s own POST response) to whatever this addon
+  // was called with. Dispatcharr only learns a recording's real title
+  // asynchronously (custom_properties.program.title, populated a moment
+  // after the recording actually starts, see GetRecordings()), but Kodi
+  // already told AddTimer() the correct EPG-derived title *before* this
+  // client ever calls Dispatcharr -- CreateFromEpg() reads it from the EPG
+  // tag the user clicked "Record" on. Caching that and using it in
+  // GetRecordings() in place of the "Recording <id>" fallback means the
+  // correct title shows immediately, without needing to wait for
+  // Dispatcharr's enrichment or a later refresh to catch up at all, for
+  // the common EPG-matched case.
+  //
+  // Keyed by recordingId, not channelId (changed 2026-09-26, a 32nd-pass
+  // audit, fixing a real, confirmed bug flagged but not fixed by an
+  // earlier, 25th-pass audit, not itself independently reproduced): the
+  // start-time-clamping case above (Dispatcharr silently clamps an
+  // already-airing recording's own stored start_time to the moment it
+  // actually began, not the EPG programme's own start time this addon
+  // sent) is why this was never matched on start time either, but
+  // matching by channel ALONE went further than that clamp required --
+  // it let ANY other untitled recording on the same channel (an old
+  // completed "Custom Recording" that never gets a title from Dispatcharr
+  // at all, or an unrelated future scheduled timer) borrow this one's
+  // in-flight title for the rest of the cache entry's TTL, not just the
+  // specific recording this addon actually just created. See
+  // dispatcharr::FindPendingTitleForRecording()'s own comment
+  // (PendingTitleLookup.h) for the real corruption path that opened.
   // Entries expire after a few minutes regardless
   // (pruned in GetRecordings()) since Dispatcharr's own enrichment should
   // have long since caught up by then, and to avoid an unbounded cache.
   struct PendingTitle
   {
-    int channelId = 0;
+    int recordingId = 0;
     std::string title;
     std::chrono::steady_clock::time_point insertedAt;
   };
   std::mutex m_pendingTitlesMutex;
   std::vector<PendingTitle> m_pendingTitles;
+
+  // Serializes SetDvrOffsetMinutes()'s own GET-merge-PATCH -- fix for a
+  // real, confirmed regression found via a project-wide review (a
+  // 21st-pass audit), not itself independently reproduced: a settings
+  // dialog save that changes BOTH recording_pre_offset_minutes and
+  // recording_post_offset_minutes in one go delivers two
+  // OnAddonSettingChanged() notifications back to back (confirmed
+  // against Kodi's own source: CAddonDll::SaveSettings()'s own
+  // TransferSettings() re-delivers every changed setting synchronously,
+  // in settings.xml order), each spawning its own detached
+  // SetDvrOffsetMinutes() call. Before this addon's own nullable-pointer
+  // fix (see MergeDvrOffsetMinutes()'s own comment, JsonFieldUtil.h),
+  // both concurrent calls pushed the *same* two values (both read from
+  // Kodi's own already-saved local settings), so the race was harmless
+  // regardless of interleaving. That fix made each call push only the
+  // one offset it's actually responsible for, relying on its own fresh
+  // GET to preserve the other -- but two such calls running concurrently
+  // can each GET the row *before* either one's PATCH lands, so the
+  // second PATCH's own "preserve the other key" merge is built from a
+  // value that's already stale by the time it's sent, silently losing
+  // the first call's own edit. Without serializing the two, a single
+  // settings-dialog save that changes both offsets at once can leave
+  // Dispatcharr with only one of the two edits actually applied, while
+  // Kodi's own local settings show both as changed successfully.
+  //
+  // Also guards CreateSeriesRule()/DeleteSeriesRule() (added 2026-09-26,
+  // a 27th-pass audit) -- see either one's own comment: Dispatcharr
+  // stores its own series-rule list inside this exact same shared
+  // dvr_settings row, reached through a different, non-merging write
+  // path than the padding PATCH above, so the two need to be serialized
+  // from this addon's own side to avoid one undoing the other.
+  std::mutex m_dvrSettingsMutex;
 };
 
 } // namespace dispatcharr

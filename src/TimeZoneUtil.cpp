@@ -113,11 +113,21 @@ enum class DstFamily
   kEu,
 };
 
+// From 2026-11-01 tzdata (2026c) keeps British Columbia and Alberta on their summer offset for good:
+// America/Vancouver stays at UTC-7 and America/Edmonton at UTC-6 instead of falling back, and
+// Dispatcharr's scheduler (current tzdata or pytz) follows. The table's US/Canada rule would fall back
+// on that date, putting every recurring rule in those zones an hour off (found by the 2026-10-04 eighth
+// hardening sweep, by comparing the whole table against zoneinfo). 2026-11-01T00:00:00Z is a moment both
+// zones are still on daylight time, so switching to the fixed summer offset there is continuous.
+constexpr time_t kPermanentDaylightFromNov2026Utc = 1793491200; // 2026-11-01T00:00:00Z
+
 struct KnownTimeZone
 {
   const char* ianaName;
   int standardOffsetMinutes;
   DstFamily family;
+  // When non-zero: from this instant the zone stays on standardOffsetMinutes + 60 year-round.
+  time_t permanentDaylightFromUtc = 0;
 };
 
 // Deliberately narrow: only zones with simple, stable, well-documented DST
@@ -155,8 +165,8 @@ constexpr KnownTimeZone kKnownTimeZones[] = {
     // Canada
     {"America/Toronto", -300, DstFamily::kUsCanada},
     {"America/Winnipeg", -360, DstFamily::kUsCanada},
-    {"America/Edmonton", -420, DstFamily::kUsCanada},
-    {"America/Vancouver", -480, DstFamily::kUsCanada},
+    {"America/Edmonton", -420, DstFamily::kUsCanada, kPermanentDaylightFromNov2026Utc},
+    {"America/Vancouver", -480, DstFamily::kUsCanada, kPermanentDaylightFromNov2026Utc},
     {"America/Halifax", -240, DstFamily::kUsCanada},
     {"America/Regina", -360, DstFamily::kNone}, // Saskatchewan: no DST
     // Mexico: DST abolished nationally in 2022 (except the US-border
@@ -205,14 +215,106 @@ constexpr KnownTimeZone kKnownTimeZones[] = {
     {"Etc/UTC", 0, DstFamily::kNone},
 };
 
+// Older names for zones in kKnownTimeZones. Dispatcharr's own settings page
+// fills its timezone picker from the browser's Intl.supportedValuesOf(
+// 'timeZone'), and Chromium's engine still lists the pre-rename ids -- checked
+// against a real V8 (Node 22, ICU 78): it offers America/Indianapolis,
+// Asia/Calcutta and Europe/Kiev and none of America/Indiana/Indianapolis,
+// Asia/Kolkata or Europe/Kyiv -- so picking India in Chrome stores
+// "Asia/Calcutta", which the exact-match lookup below used to reject, leaving
+// recurring timers on the manual offset. The rest are IANA's own `backward`
+// links to a zone in the table (the old US/*, Canada/* and country-name ids a
+// server admin might set through the API), all the same rules today.
+struct ZoneAlias
+{
+  const char* alias;
+  const char* canonical;
+};
+
+constexpr ZoneAlias kZoneAliases[] = {
+    {"US/Eastern", "America/New_York"},
+    {"US/Central", "America/Chicago"},
+    {"US/Mountain", "America/Denver"},
+    {"Navajo", "America/Denver"},
+    {"America/Shiprock", "America/Denver"},
+    {"US/Pacific", "America/Los_Angeles"},
+    {"US/Alaska", "America/Anchorage"},
+    {"US/Arizona", "America/Phoenix"},
+    {"US/Hawaii", "Pacific/Honolulu"},
+    {"Pacific/Johnston", "Pacific/Honolulu"},
+    {"US/Michigan", "America/Detroit"},
+    {"America/Indianapolis", "America/Indiana/Indianapolis"},
+    {"America/Fort_Wayne", "America/Indiana/Indianapolis"},
+    {"US/East-Indiana", "America/Indiana/Indianapolis"},
+    {"Canada/Eastern", "America/Toronto"},
+    {"America/Montreal", "America/Toronto"},
+    {"America/Nipigon", "America/Toronto"},
+    {"America/Thunder_Bay", "America/Toronto"},
+    {"Canada/Central", "America/Winnipeg"},
+    {"America/Rainy_River", "America/Winnipeg"},
+    {"Canada/Mountain", "America/Edmonton"},
+    {"America/Yellowknife", "America/Edmonton"},
+    {"Canada/Pacific", "America/Vancouver"},
+    {"Canada/Atlantic", "America/Halifax"},
+    {"Canada/Saskatchewan", "America/Regina"},
+    {"Mexico/General", "America/Mexico_City"},
+    {"GB", "Europe/London"},
+    {"GB-Eire", "Europe/London"},
+    {"Europe/Belfast", "Europe/London"},
+    {"Eire", "Europe/Dublin"},
+    {"Portugal", "Europe/Lisbon"},
+    {"Europe/San_Marino", "Europe/Rome"},
+    {"Europe/Vatican", "Europe/Rome"},
+    {"Europe/Busingen", "Europe/Zurich"},
+    {"Poland", "Europe/Warsaw"},
+    {"Europe/Bratislava", "Europe/Prague"},
+    {"Arctic/Longyearbyen", "Europe/Oslo"},
+    {"Atlantic/Jan_Mayen", "Europe/Oslo"},
+    {"Europe/Mariehamn", "Europe/Helsinki"},
+    {"Europe/Kiev", "Europe/Kyiv"},
+    {"Europe/Uzhgorod", "Europe/Kyiv"},
+    {"Europe/Zaporozhye", "Europe/Kyiv"},
+    {"Japan", "Asia/Tokyo"},
+    {"PRC", "Asia/Shanghai"},
+    {"Asia/Chongqing", "Asia/Shanghai"},
+    {"Asia/Chungking", "Asia/Shanghai"},
+    {"Asia/Harbin", "Asia/Shanghai"},
+    {"Hongkong", "Asia/Hong_Kong"},
+    {"Singapore", "Asia/Singapore"},
+    {"Asia/Calcutta", "Asia/Kolkata"},
+    {"Etc/UCT", "Etc/UTC"},
+    {"Etc/Universal", "Etc/UTC"},
+    {"Etc/Zulu", "Etc/UTC"},
+    {"UCT", "Etc/UTC"},
+    {"Universal", "Etc/UTC"},
+    {"Zulu", "Etc/UTC"},
+};
+
 } // namespace
 
-bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc, int& offsetMinutesOut)
+std::string CanonicalKnownZoneName(const std::string& ianaZoneName)
 {
+  for (const auto& alias : kZoneAliases)
+  {
+    if (ianaZoneName == alias.alias)
+      return alias.canonical;
+  }
+  return ianaZoneName;
+}
+
+bool ComputeKnownZoneOffsetMinutes(const std::string& requestedZoneName, time_t nowUtc, int& offsetMinutesOut,
+                                   bool applyZoneRuleChanges)
+{
+  const std::string ianaZoneName = CanonicalKnownZoneName(requestedZoneName);
   for (const auto& zone : kKnownTimeZones)
   {
     if (ianaZoneName != zone.ianaName)
       continue;
+    if (applyZoneRuleChanges && zone.permanentDaylightFromUtc != 0 && nowUtc >= zone.permanentDaylightFromUtc)
+    {
+      offsetMinutesOut = zone.standardOffsetMinutes + 60;
+      return true;
+    }
     switch (zone.family)
     {
     case DstFamily::kNone:
@@ -229,6 +331,15 @@ bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUt
     return true;
   }
   return false;
+}
+
+std::string DesiredRecurringRuleTimezoneSetting(const std::string& ianaZoneName, time_t nowUtc, bool* knownOut)
+{
+  int unusedOffset = 0;
+  const bool known = ComputeKnownZoneOffsetMinutes(ianaZoneName, nowUtc, unusedOffset);
+  if (knownOut)
+    *knownOut = known;
+  return known ? CanonicalKnownZoneName(ianaZoneName) : "manual";
 }
 
 } // namespace dispatcharr

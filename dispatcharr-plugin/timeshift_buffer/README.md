@@ -43,9 +43,10 @@ section for why.
    (**the folder name inside the zip must match `timeshift_buffer`
    exactly**, or every call 404s with "Plugin not found" -- already
    correct in the release zip). Alternatively, copy this directory to
-   `data/plugins/timeshift_buffer/` on the host
-   (`/app/data/plugins/timeshift_buffer/` inside the container), wherever
-   your compose file bind-mounts `data/` -- useful if you're working from
+   `plugins/timeshift_buffer/` under the directory your compose file
+   bind-mounts as `/data` (so `/data/plugins/timeshift_buffer/` inside the
+   container -- Dispatcharr's default plugins directory, unless
+   `DISPATCHARR_PLUGINS_DIR` overrides it) -- useful if you're working from
    a repo checkout rather than a release.
 2. In Dispatcharr's UI, open the Plugins page, click refresh, enable
    "Timeshift Buffer" (accept the trust-warning modal -- this plugin runs
@@ -53,10 +54,15 @@ section for why.
 3. **Set `storage_path` to real, persistent storage** before using it --
    left on the container's own unmapped filesystem, continuous rolling
    writes will fill up whatever's backing that (often a small cache
-   volume) fast.
+   volume) fast. Don't share one `storage_path` between two Dispatcharr
+   instances that can see each other's processes (the same container, or
+   `--pid=host`): each treats a buffer directory its own Redis doesn't
+   know as abandoned and stops the ffmpeg that owns it after five minutes.
 4. **Map `http_port` (default `9192`) through your container config**,
    the same way `9191` already is -- without this, the plugin's file
    server is only reachable from inside the container.
+   The file server listens on IPv6 as well as IPv4 where the host has
+   IPv6 (a dual-stack `::` socket), and on IPv4 alone where it doesn't.
 5. Check `internal_base_url` matches how this plugin reaches Dispatcharr's
    own web service from inside the container (default
    `http://127.0.0.1:9191`).
@@ -69,9 +75,13 @@ Paste a channel's UUID into the `test_channel_uuid` setting and save
 (action buttons can't take click-time input), then use "Start Test
 Buffer" / "Get Test Manifest" / "List Active Buffers" / "Stop Test
 Buffer" on the Plugins page to confirm segments and a playlist appear
-under `storage_path`, and that
-`http://<dispatcharr-host>:<http_port><playlist_route>` is fetchable.
-"Stop All Buffers" is there for cleanup if something's stuck.
+under `storage_path`, and that the playlist is fetchable. The file server
+answers 403 to any request without the buffer's own access token, so use the
+URL "Start Test Buffer" prints in its message
+(`http://<dispatcharr-host>:<http_port>/<channel-uuid>/live.m3u8?token=...`);
+a plain URL without `?token=` is refused on purpose. A buffer started by an
+API caller (the Kodi addon) hands its token back in the response instead and
+never prints it. "Stop All Buffers" is there for cleanup if something's stuck.
 
 ## If a code change to this plugin doesn't seem to take effect
 

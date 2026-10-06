@@ -21,4 +21,16 @@ int ComputeLoginBackoffSeconds(int consecutiveFailures)
   return static_cast<int>(std::min<long long>(backoff, kMaxSeconds));
 }
 
+int ComputeNextReconnectBackoffSeconds(int currentSeconds, bool wokenByNudge)
+{
+  if (wokenByNudge)
+    return kInitialReconnectBackoffSeconds;
+  return std::min(currentSeconds * 2, kMaxReconnectBackoffSeconds);
+}
+
+bool WasSessionHealthy(std::chrono::steady_clock::duration sessionDuration)
+{
+  return sessionDuration >= std::chrono::seconds(kMinHealthySessionSeconds);
+}
+
 } // namespace dispatcharr

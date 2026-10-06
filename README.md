@@ -44,12 +44,20 @@ in the issue template) are genuinely useful for exactly this reason.
   Dispatcharr's comskip integration has marked (needs the
   `recording_edl` companion plugin)
 - One-time, series, and recurring (day-of-week) timers, all editable in
-  place from Kodi's own timer list
+  place from Kodi's own timer list. A recurring rule created from Kodi is
+  tagged `[Kodi]` in Dispatcharr's own web UI (Kodi never shows the tag):
+  that tag is how the addon knows the rule is its own, so it keeps
+  extending the rule's end date for you, and picks it back up if no Kodi
+  ran for a while. Rules you make in Dispatcharr yourself are never
+  touched. Remove the tag to make the addon stop managing a rule
 - Catch-up/archive playback ("play from guide") for channels whose
   provider supports it
-- Optional real-time push updates for recordings/timers, so changes made
-  elsewhere (another Kodi install, Dispatcharr's web UI) show up
-  immediately, not on the next periodic refresh
+- Optional real-time push updates for recordings/timers, so most changes
+  made elsewhere (another Kodi install, Dispatcharr's web UI) show up
+  immediately rather than waiting for the next periodic refresh (a few
+  narrower cases still wait for that refresh -- see `docs/RECORDINGS.md`); the same feed also tells the
+  addon when Dispatcharr has finished refreshing an EPG source or an M3U account, so a new guide or
+  channel list arrives within minutes rather than hours
 
 ## Companion Dispatcharr plugins
 
@@ -82,7 +90,7 @@ Each has its own README with install steps.
 3. Enable and configure the addon under **Settings -> PVR & Live TV ->
    General -> PVR client add-ons** (or **Add-ons -> My add-ons -> PVR
    clients**, the same list either way): select **Dispatcharr PVR
-   Client**, enable it, then **Configure** (see below).
+   Client (Unofficial)**, enable it, then **Configure** (see below).
 
 ## Configuration
 

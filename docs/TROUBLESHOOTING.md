@@ -311,6 +311,31 @@ Dispatcharr server, worth writing down since it's easy to mistake for one:
   playback still succeeded, with the corrected key written back to
   `settings.xml` automatically.
 
+  **Update (2026-09-27, a 44th-pass audit): this self-heal is far less
+  invisible than it looks once both installs are actively playing back
+  at the same time, not just regenerating once per restart -- see
+  `docs/OPEN_ITEMS.md`'s own entry on the sharper failure mode (settings-
+  file write storms, and a real chance of a read failure ending playback
+  outright), logged for a future pass rather than fixed here.**
+
+  **Fixed (2026-09-30): the addon no longer generates a key when the
+  account already has one.** Every "I need a key" path -- first run, a
+  stored key belonging to a different account, and each 401 recovery --
+  now reads the account's existing key first (`GET /api/accounts/api-keys/`)
+  and adopts it, only calling `generate/` when the account genuinely has
+  none. Several Kodi installs, and any script or automation tool using
+  the same account's key, now converge on the one shared key instead of
+  revoking each other's; see `docs/OPEN_ITEMS.md`'s own entries for the
+  live confirmation. This also closes a sharper symptom this entry
+  didn't describe: simply enabling the addon with an empty `api_key`
+  setting used to replace the account's existing key, so every *other*
+  client of that account (a script, another app) started
+  getting `401 Invalid API key` -- with nothing logged by this addon,
+  since from its side the generate call succeeded. Note the one case that
+  can't avoid it: an account with *no* key yet still gets one generated
+  on first use (nothing exists to adopt), and a Dispatcharr too old to
+  report its key falls back to the previous generate-on-need behavior.
+
 ## Two PVR client addons enabled in the same Kodi against the same backend
 
 Not the "more than one Kodi client" scenario above (separate installs) --
@@ -369,6 +394,35 @@ has done -- worth watching for on other real hardware, and a live
 disable/re-enable toggle is the known, confirmed workaround if
 `PVR.GetChannels`/etc. keep failing with `-32100` well past the normal
 startup window with no addon-side log activity at all.
+
+## Empty EPG guide, but channels/playback/recordings all work fine
+
+Flagged from a 24th-pass audit (2026-09-26), confirmed against
+Dispatcharr's own real current upstream source (cloned into a
+scratchpad, never committed to this repo -- stronger than the API shape
+alone, not the same standard as a live test), not reproduced live.
+
+If `kodi.log` shows `Dispatcharr returned HTTP 403 for /output/epg`
+while every other feature (login, channel list, live playback,
+recordings) works normally, this is almost always Dispatcharr's own
+**Network Access** setting, not a login/permission problem with this
+addon. Dispatcharr's `/output/epg` endpoint is the *one* endpoint whose
+own "M3U / EPG Endpoints" network-access restriction defaults to
+**local-network-only** IP ranges (127.0.0.1/8, 10.0.0.0/8,
+172.16.0.0/12, 192.168.0.0/16, plus the IPv6 equivalents) -- every other
+endpoint this addon calls defaults to allow-all instead. A Kodi client
+that reaches Dispatcharr from outside those ranges gets denied here
+specifically:
+
+- A Tailscale or other CGNAT-range client address.
+- A remote/off-LAN Kodi install.
+- A dual-stack LAN where Dispatcharr's own configured host setting
+  resolves to a global IPv6 address rather than a private IPv4 one --
+  realistic on an ordinary home network, not just an exotic setup.
+
+**Fix:** on the Dispatcharr server, go to Settings -> Network Access ->
+"M3U / EPG Endpoints" and add the Kodi client's own actual source IP
+(or range) to the allowed list.
 
 ## Still unconfirmed (verify before relying on in production)
 

@@ -43,8 +43,15 @@ std::string Base64Encode(const uint8_t* data, size_t len)
 
 std::string ToLower(std::string s)
 {
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return AsciiToLower(c); });
   return s;
+}
+
+std::string FormatHostForUrl(const std::string& host)
+{
+  if (host.empty() || host.front() == '[' || host.find(':') == std::string::npos)
+    return host;
+  return "[" + host + "]";
 }
 
 } // namespace dispatcharr

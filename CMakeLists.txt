@@ -27,7 +27,7 @@ include(FetchContent)
 FetchContent_Declare(
   json
   GIT_REPOSITORY https://github.com/nlohmann/json.git
-  GIT_TAG        v3.11.3
+  GIT_TAG        9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03 # v3.11.3
 )
 FetchContent_MakeAvailable(json)
 
@@ -36,7 +36,7 @@ FetchContent_MakeAvailable(json)
 FetchContent_Declare(
   pugixml
   GIT_REPOSITORY https://github.com/zeux/pugixml.git
-  GIT_TAG        v1.14
+  GIT_TAG        db78afc2b7d8f043b4bc6b185635d949ea2ed2a8 # v1.14
 )
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(pugixml)
@@ -59,24 +59,47 @@ set(DISPATCHARR_SOURCES
     src/DispatcharrClient.cpp
     src/XmlTvParser.cpp
     src/WebSocketClient.cpp
+    src/SocketWait.cpp
     src/TimeZoneUtil.cpp
     src/EpgTagUtil.cpp
+    src/RedirectPolicy.cpp
+    src/Sha1.cpp
     src/StringUtil.cpp
     src/DateTimeFormat.cpp
     src/UrlEncode.cpp
     src/CurlCallbacks.cpp
     src/RecurringRuleUtil.cpp
+    src/RefreshEvents.cpp
+    src/ServerOffsetCrossCheck.cpp
     src/RecordingParser.cpp
     src/PluginRunResult.cpp
+    src/ApiKeyRecovery.cpp
     src/RealtimeUpdateParser.cpp
+    src/JsonResponse.cpp
+    src/BoundedParallel.cpp
     src/M3u8SegmentParser.cpp
+    src/UnprobeableSegment.cpp
     src/ChannelParser.cpp
+    src/ChannelNumber.cpp
     src/TimerRuleParser.cpp
     src/LiveManifestParser.cpp
     src/RecurringRuleRenewal.cpp
+    src/RecurringRuleEdit.cpp
+    src/ManagedRecurringRule.cpp
+    src/DvrAccess.cpp
+    src/RecordingEpgLinks.cpp
     src/WebSocketFrame.cpp
     src/SeriesRuleMatching.cpp
+    src/SeriesRuleTextMatch.cpp
+    src/UnicodeText.cpp
     src/AuthBackoff.cpp
+    src/StreamSeek.cpp
+    src/RecordingVisibility.cpp
+    src/PluginUrlUtil.cpp
+    src/StreamPropertyUtil.cpp
+    src/RecordingHttpUtil.cpp
+    src/EpgProgramMatch.cpp
+    src/TimerRequestBuilder.cpp
 )
 
 set(DISPATCHARR_HEADERS
@@ -84,9 +107,17 @@ set(DISPATCHARR_HEADERS
     src/DispatcharrClient.h
     src/XmlTvParser.h
     src/WebSocketClient.h
+    src/SocketWait.h
+    src/CatchupSessionCache.h
+    src/CatchupSessionRequest.h
+    src/ChannelLineupChange.h
+    src/PaddingPush.h
+    src/SegmentFetchFailure.h
     src/TimeUtil.h
     src/TimeZoneUtil.h
     src/EpgTagUtil.h
+    src/RedirectPolicy.h
+    src/Sha1.h
     src/StringUtil.h
     src/CurlCallbacks.h
     src/CatchUpUtil.h
@@ -96,19 +127,49 @@ set(DISPATCHARR_HEADERS
     src/RecurringRuleUtil.h
     src/RecordingParser.h
     src/PluginRunResult.h
+    src/ApiKeyRecovery.h
     src/RealtimeUpdateParser.h
+    src/JsonResponse.h
+    src/BoundedParallel.h
     src/M3u8SegmentParser.h
+    src/UnprobeableSegment.h
     src/SegmentLookup.h
     src/ChannelParser.h
+    src/ChannelNumber.h
     src/TimerRuleParser.h
     src/TimerIdentity.h
     src/LiveManifestParser.h
     src/LiveEdgeMargin.h
     src/RecurringRuleRenewal.h
+    src/RecurringRuleEdit.h
+    src/ManagedRecurringRule.h
+    src/DvrAccess.h
+    src/RecordingEpgLinks.h
     src/WebSocketFrame.h
     src/SeriesRuleMatching.h
+    src/SeriesRuleTextMatch.h
+    src/UnicodeText.h
     src/RecurringRuleWeekdays.h
     src/ChannelGroupFilter.h
+    src/AuthBackoff.h
+    src/WebSocketHandshake.h
+    src/StreamSeek.h
+    src/SegmentAppendOffsets.h
+    src/PendingTitleLookup.h
+    src/RecordingVisibility.h
+    src/Staleness.h
+    src/RequestTimeout.h
+    src/ServerOffsetCrossCheck.h
+    src/RefreshEvents.h
+    src/PluginUrlUtil.h
+    src/StreamPropertyUtil.h
+    src/RecordingHttpUtil.h
+    src/RecordingDirectory.h
+    src/ChannelRenumbering.h
+    src/InProgressSegmentCache.h
+    src/HlsViewerKeepAlive.h
+    src/EpgProgramMatch.h
+    src/TimerRequestBuilder.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}

@@ -18,6 +18,28 @@ namespace dispatcharr
 // standalone (see ../tests/test_timezone_util.cpp).
 // `nowUtc` is a parameter purely for testability; real callers should
 // always pass the actual current time.
-bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc, int& offsetMinutesOut);
+// Also accepts the older names of those zones (Asia/Calcutta for Asia/Kolkata,
+// US/Central for America/Chicago, ...) -- see CanonicalKnownZoneName().
+// `applyZoneRuleChanges` false leaves out a zone's rule change that took effect recently (British Columbia and
+// Alberta staying on daylight time from 2026-11-01): what a server whose tz data predates the change still applies
+// (ServerOffsetCrossCheck.h).
+bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc, int& offsetMinutesOut,
+                                   bool applyZoneRuleChanges = true);
+
+// The name the table (and so settings.xml's recurring_rule_timezone dropdown)
+// knows `ianaZoneName` by: the modern name for a known older alias, anything
+// else unchanged. Dispatcharr's web UI stores whatever the browser's timezone
+// list offers, which in Chromium is the older spelling for several zones.
+std::string CanonicalKnownZoneName(const std::string& ianaZoneName);
+
+// The recurring_rule_timezone setting value SyncTimezoneFromDispatcharr() selects
+// for Dispatcharr's configured zone: the table's own (canonical) name when the
+// zone -- or an alias of it -- is one this addon has DST rules for, otherwise
+// "manual", the dropdown's fallback to the plain numeric offset. `knownOut`, when
+// given, says which of the two it was. The alias half was a live-confirmed gap
+// (docs/RECURRING_RULES.md): a zone Chromium spells the old way left the setting
+// on "manual".
+std::string DesiredRecurringRuleTimezoneSetting(const std::string& ianaZoneName, time_t nowUtc,
+                                                bool* knownOut = nullptr);
 
 } // namespace dispatcharr

@@ -24,6 +24,9 @@ it by hand instead.
    ```bash
    git clone --branch Omega --depth 1 https://github.com/xbmc/xbmc.git kodi-source
    ```
+   (CI does not track the branch: `KODI_COMMIT` in `.github/workflows/build.yml` names the exact Kodi
+   commit every job builds, so a release build never picks up whatever Kodi pushed that day. To
+   reproduce a CI build exactly, check that commit out instead.)
 2. Clone this addon next to it (any path):
    ```bash
    git clone https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial.git addons/pvr.dispatcharr-unofficial
@@ -92,10 +95,8 @@ it by hand instead.
 just a different underlying constraint.** A runner only picks up a queued job once it's actually online, and macOS hardware is not available as always-on infrastructure (a Windows runner was confirmed practical the same day, see
 `.github/workflows/build.yml`'s own `build-windows` job and its comments).
 Registering a persistent runner on an intermittently-online
-machine means either jobs queue indefinitely whenever it's offline, or the
-machine stays running as a CI daemon full-time, which defeats the point of
-it being an occasional-use machine. Build macOS manually per the steps above
-instead, on whatever schedule the machine is actually available, and if
+device means either jobs queue indefinitely whenever it's offline, or the
+machine stays running as a CI daemon full-time, which is not worth it. Build macOS manually per the steps above instead, whenever the hardware is available, and if
 it's for a real tagged release, attach the zip to the Release by hand the
 same way CoreELEC's own release checklist does:
 ```bash
@@ -181,19 +182,80 @@ Windows build machine, not just a CI-specific patch.
    own `CURLConfig.cmake` pulls both in transitively). Point
    `ADDON_DEPENDS_PATH` at the *same* depends directory the main addon build
    will look in by default (`<BUILD_DIR>/depends`), so one `find_package`
-   picks up both Kodi's own generated config and these:
+   picks up both Kodi's own generated config and these. Use `https://`, not
+   `http://` (fixed 2026-09-27, a 57th-pass audit, fixing a real, confirmed
+   supply-chain-hardening gap found via a project-wide review, confirmed
+   live against `mirrors.kodi.tv`): the plain-HTTP URL these were
+   originally copied from (matching upstream Kodi's own docs at the time)
+   redirects to an HTTPS mirror anyway, so the only effect of using
+   `http://` is an unauthenticated first hop a network-position attacker
+   could redirect elsewhere -- confirmed live that `https://` against the
+   same host and path works identically (a 302 to an HTTPS mirror), so
+   this costs nothing to fix. Also pass `-DCMAKE_TLS_VERIFY=ON` (added
+   the very next, 58th, pass -- explicit from the 59th pass onward, not a
+   fix, corrected 2026-09-27, a 59th-pass audit, fixing a real, confirmed
+   factual error in the 58th-pass version of this same wording, found via
+   a project-wide review, confirmed by directly reproducing the claim
+   against both CMake 3.28 and a real, pip-installed CMake 4.4.3, plus
+   CMake's own bundled documentation): the 58th-pass wording claimed
+   CMake's own `ExternalProject_Add(URL ...)` -- what Kodi's own
+   `add_internal()` (`cmake/addons/depends/windows/CMakeLists.txt`) uses
+   for these three downloads -- "does NOT verify the peer's TLS
+   certificate by default", reproduced only against a local CMake 3.28
+   install. CMake's own `CMAKE_TLS_VERIFY.rst` documents that this
+   default flipped to *on* in CMake 3.31 (confirmed by reproducing both
+   sides: an unset default silently accepted a self-signed cert on 3.28,
+   but correctly rejected the same cert with nothing set at all on
+   4.4.3) -- and the `Visual Studio 18 2026` generator this same command
+   already uses was only added in CMake 4.2 (confirmed against CMake's
+   own `4.2.rst` release notes), so any environment able to run this
+   exact command at all already has TLS verification on by default, with
+   nothing further needed. This flag is kept anyway as an explicit pin,
+   not a fix: it protects against the one real escape hatch that still
+   exists on a verifying-by-default CMake -- the `CMAKE_TLS_VERIFY=0`
+   environment variable, which a corporate network doing its own TLS
+   interception might otherwise set to work around certificate errors
+   (confirmed reproducible: an explicit `-D` at this same configure step
+   overrides that environment variable either way, so if a corporate CA
+   genuinely needs trusting here, `-DCMAKE_TLS_CAINFO=<path to that CA
+   bundle>` is the correct escape hatch, not disabling verification) --
+   rather than closing a real, currently-existing gap in this specific
+   command:
    ```powershell
    $depends = "$pwd\build\build\depends"
    $prebuilt = "kodi-source\cmake\addons\depends\windows\prebuilt"
-   "curl http://mirrors.kodi.tv/build-deps/win32/curl-7.67.0-x64-v141-20200105.7z" `
-     | Out-File -Encoding ascii "$prebuilt\curl.txt"
-   "openssl http://mirrors.kodi.tv/build-deps/win32/openssl-1.1.1q-x64-v142-20221017.7z" `
-     | Out-File -Encoding ascii "$prebuilt\openssl.txt"
-   "zlib http://mirrors.kodi.tv/build-deps/win32/zlib-1.2.11-x64-v141-20200105.7z" `
-     | Out-File -Encoding ascii "$prebuilt\zlib.txt"
-   cmake -S kodi-source\cmake\addons\depends\windows -B deps-build -G "Visual Studio 18 2026" -A x64 "-DADDON_DEPENDS_PATH=$depends"
+   $downloads = "$pwd\prebuilt-downloads"
+   New-Item -ItemType Directory -Force -Path $downloads | Out-Null
+   $archives = @(
+     @{ id = "curl";    file = "curl-7.67.0-x64-v141-20200105.7z";    sha256 = "58106b42cbb3d6d951671e71e00703dd644b5b729cfd418b2ba08e4a02780145" },
+     @{ id = "openssl"; file = "openssl-1.1.1q-x64-v142-20221017.7z"; sha256 = "d744eb075f7628156979cd8cb9545fb7c6cc567efe901a1de1ab9b103b85d4e7" },
+     @{ id = "zlib";    file = "zlib-1.2.11-x64-v141-20200105.7z";    sha256 = "c596b93016d62f6bc85b38b2f18746c8382cf89b1a99c1c56f0d2bf51ecf54f1" }
+   )
+   foreach ($a in $archives) {
+     $local = "$downloads\$($a.file)"
+     Invoke-WebRequest -Uri "https://mirrors.kodi.tv/build-deps/win32/$($a.file)" -OutFile $local
+     $actual = (Get-FileHash -Algorithm SHA256 -Path $local).Hash.ToLowerInvariant()
+     if ($actual -ne $a.sha256) { throw "SHA256 mismatch for $($a.file): expected $($a.sha256), got $actual" }
+     $registered = $local.Replace('\', '/')   # forward slashes: a backslash is an invalid escape in Kodi's generated CMake script
+     "$($a.id) $registered" | Out-File -Encoding ascii "$prebuilt\$($a.id).txt"
+   }
+   cmake -S kodi-source\cmake\addons\depends\windows -B deps-build -G "Visual Studio 18 2026" -A x64 "-DADDON_DEPENDS_PATH=$depends" -DCMAKE_TLS_VERIFY=ON
    cmake --build deps-build --config Release
    ```
+   Each archive is downloaded and checked against a pinned SHA256 *before*
+   Kodi's own `add_internal()` sees it, and the registration `.txt` then
+   names the verified local file rather than the mirror URL (added
+   2026-10-02, closing the "no integrity check" gap noted above: TLS
+   verification does not cover a compromise of the legitimate mirror itself).
+   `add_internal()` has no hash argument to hook into and patching Kodi's own
+   source is out of scope, but it hands `URL` to `ExternalProject_Add`, which
+   accepts a local path -- so the file that was verified is the file that is
+   installed, with no second download for a compromised mirror to answer
+   differently. The local path must contain no spaces (the registration file is
+   split on them) and must use forward slashes (it is pasted into a generated
+   CMake script as a quoted string, where `\g` and the like are invalid escapes --
+   the first CI run of this step failed exactly that way). To move to a newer archive, change its name and hash
+   together; `.github/workflows/build.yml` carries the same step.
    Then delete the three `.txt` files you just created. The main build's own
    generic dependency scan (`add_addon_depends`) also globs this same
    `prebuilt/` directory, and having both declare a same-named CMake target
@@ -230,10 +292,22 @@ Windows build machine, not just a CI-specific patch.
    ```powershell
    Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharr-unofficial-*.zip' -Recurse
    ```
+   On a machine that keeps its temp directory between builds (a CI runner), delete the zips an
+   earlier build left before building: the name carries the version and a name sort puts `0.11.0` before
+   `0.12.0`, so "the first match" can be an old release's zip. CI clears them first (including CPack's
+   `_CPack_Packages` staging copy) and fails when more than one is found directly in the temp directory.
    That zip bundles `libcurl.dll` and `zlib.dll` alongside
    `pvr.dispatcharr-unofficial.dll` (see `CMakeLists.txt`'s `DISPATCHARR_ADDITIONAL_BINARY`),
    since a standalone Windows install can't assume those are already present
    the way Kodi's own bundled curl, or Linux's system libcurl, would be.
+5. CPack writes each zip entry's time both as the build machine's local clock
+   and as UTC (an extended field), so the pair gives away the build machine's
+   timezone to anyone who downloads the zip (confirmed 2026-10-03 on a CI runner's output; GitHub-hosted runners run on UTC, which hid
+   it). `build.yml`'s "Normalize zip timestamps" step rewrites the zip with
+   every entry stamped with the commit time in UTC and no extended fields,
+   same bytes otherwise. A hand-built zip for a release needs the same
+   treatment before upload; the step's PowerShell runs as-is on any machine
+   with `pwsh` and `git`.
 
 ## CoreELEC on an ODROID N2+ (Amlogic S922X)
 
@@ -645,8 +719,11 @@ find . -name "libpvr.dispatcharr-unofficial.so" -exec strip {} \;
 
 Confirmed live: the `0.11.0` release (the first Android release) shipped
 both ABIs' `.so` unstripped, with the build machine's local paths
-embedded, before this was caught and the already-published release
-assets were corrected after the fact.
+embedded, and the published assets were still the unstripped builds when
+re-checked on 2026-10-03 (an earlier note here claiming they had been
+corrected was wrong). Stripped builds go up with the next release; run
+`strings` over every asset before uploading, per `CLAUDE.md`'s release
+sweep.
 
 ### 5. Install Kodi and side-load the addon on a real device
 
@@ -742,3 +819,7 @@ repository (a small `repository.xml`-style addon whose own zip contains an
 GitHub Pages). Claude Code can generate that repository structure once the
 desktop builds above are working, if you want "install from repository"
 rather than "install from zip file."
+
+## What Windows TLS this addon actually uses (2026-10-02)
+
+The Windows release zip carries `libcurl.dll` and `zlib.dll` (curl 7.67.0 with an OpenSSL 1.1.1d compiled into it), but they are not what runs. On a stock Kodi for Windows, `kodi.exe` already has its own `libcurl.dll` and `zlib.dll` (the same versions) loaded from its install directory, and Windows will not load a second DLL under a name that is already loaded, so the addon's HTTPS goes through Kodi's copy -- checked on a real Kodi 21.3 install by listing the modules of the running process. That makes this addon's TLS exactly as current as Kodi's own, an upstream dependency shared by every addon and by Kodi itself; Kodi's dependency mirror has no newer prebuilt x64 curl than 7.67.0 to move to. The bundled copies are kept only so the addon still loads on a Kodi build that does not ship its own. If this ever needs to change, the realistic route is building a current curl from a pinned source commit with Schannel and linking it statically into the addon DLL on Windows -- a build-system change that diverges from Kodi's own choice and alters certificate and revocation behaviour, so it is a deliberate project, not a version bump (`docs/OPEN_ITEMS.md`, "Windows release bundles end-of-life OpenSSL 1.1.1d and curl 7.67.0").

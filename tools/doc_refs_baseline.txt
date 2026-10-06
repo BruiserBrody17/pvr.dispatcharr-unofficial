@@ -1,3 +1,5 @@
+CHANGELOG.md|possessive|Sports events get extra recording padding automatically|docs/EPG.md
+CHANGELOG.md|possessive|`WebSocketClient::SendAll()` could hang this thread indefinitely|docs/API_NOTES.md
 CHANGELOG.md|setting|sports_extra_padding_minutes
 docs/API_NOTES.md|setting|is_staff
 docs/API_NOTES.md|setting|is_superuser
@@ -5,20 +7,57 @@ docs/API_NOTES.md|setting|partial_update
 docs/API_NOTES.md|setting|setting_recommendation
 docs/API_NOTES.md|setting|user_level
 docs/API_NOTES.md|setting|version_update
+docs/BUILDING.md|function|add_internal
 docs/BUILDING.md|function|find_library
 docs/BUILDING.md|function|target_link_libraries
-docs/OPEN_ITEMS.md|function|Name
+docs/CATCHUP.md|setting|tv_archive_duration
+docs/OPEN_ITEMS.md|function|ComputeSeriesRuleDisplayFields
+docs/OPEN_ITEMS.md|function|DeleteFromClient
+docs/OPEN_ITEMS.md|function|FetchContent_Declare
+docs/OPEN_ITEMS.md|function|FindLatestPendingTitleForChannel
+docs/OPEN_ITEMS.md|function|GetText
+docs/OPEN_ITEMS.md|function|GetTimezoneBias
+docs/OPEN_ITEMS.md|function|IsApiKeyValidFor
+docs/OPEN_ITEMS.md|function|MatchDayOfWeek
+docs/OPEN_ITEMS.md|function|PlatformSupportsAddon
+docs/OPEN_ITEMS.md|function|SetFirstDayFromLocalTime
+docs/OPEN_ITEMS.md|function|_add_and_verify_timer
+docs/OPEN_ITEMS.md|function|_authenticate
+docs/OPEN_ITEMS.md|function|_compute_forward_seek_target
+docs/OPEN_ITEMS.md|function|_find_in_progress_recording_id
+docs/OPEN_ITEMS.md|function|_find_matching_recording
+docs/OPEN_ITEMS.md|function|_match_recording_by_title
+docs/OPEN_ITEMS.md|function|_matches
+docs/OPEN_ITEMS.md|function|_pick_conflict_free_broadcast
 docs/OPEN_ITEMS.md|function|_play_recording_and_verify
 docs/OPEN_ITEMS.md|function|_seek_within_recording_and_verify
+docs/OPEN_ITEMS.md|function|_select_new_timers
+docs/OPEN_ITEMS.md|function|add_internal
 docs/OPEN_ITEMS.md|function|build_addon
+docs/OPEN_ITEMS.md|function|check_realtime_update_push
+docs/OPEN_ITEMS.md|function|check_section_titles
+docs/OPEN_ITEMS.md|function|check_settings
+docs/OPEN_ITEMS.md|function|client_duration_to_window
+docs/OPEN_ITEMS.md|function|discover_plugins
+docs/OPEN_ITEMS.md|function|future_recordings_for_series
+docs/OPEN_ITEMS.md|function|get_id
+docs/OPEN_ITEMS.md|function|run_action
+docs/OPEN_ITEMS.md|possessive|Not expected to risk killing a real, actively-watched session, including a paused one|docs/TIMESHIFT.md
+docs/OPEN_ITEMS.md|possessive|Scoped to times only|docs/RECORDINGS.md
+docs/OPEN_ITEMS.md|possessive|wrong EPG copy|docs/RECORDINGS.md
+docs/OPEN_ITEMS.md|setting|dvr_settings
+docs/OPEN_ITEMS.md|setting|system_settings
 docs/RECORDINGS.md|function|AnnounceReminder
 docs/RECORDINGS.md|function|CallRecordingMenuHook
 docs/RECORDINGS.md|function|CloseFile
+docs/RECORDINGS.md|function|Deserialize
 docs/RECORDINGS.md|function|FetchInProgressPlaylistSnapshot
 docs/RECORDINGS.md|function|FetchInProgressRecordingSeekableSnapshot
 docs/RECORDINGS.md|function|GetDuration
 docs/RECORDINGS.md|function|GetFFMpegOptionsFromInput
 docs/RECORDINGS.md|function|GetInProgressRecordingStreamUrl
+docs/RECORDINGS.md|function|InitializeDefinitionsFromXml
+docs/RECORDINGS.md|function|IsApiKeyValidFor
 docs/RECORDINGS.md|function|IsVisible
 docs/RECORDINGS.md|function|OnPlayBackError
 docs/RECORDINGS.md|function|OpenWithCURL
@@ -29,14 +68,18 @@ docs/RECORDINGS.md|function|SetMarginEnd
 docs/RECORDINGS.md|function|SetMarginStart
 docs/RECORDINGS.md|function|SetPlaylist
 docs/RECORDINGS.md|function|SetPlaylistProvider
-docs/RECORDINGS.md|function|Show
-docs/RECORDINGS.md|function|StartPlayback
+docs/RECORDINGS.md|function|authenticate_header
 docs/RECORDINGS.md|function|getsockname
+docs/RECORDINGS.md|function|perform_update
+docs/RECORDINGS.md|function|recordings_queryset_for_user
 docs/RECORDINGS.md|function|select_cur_seq_no
 docs/RECORDINGS.md|function|sendfile
 docs/RECORDINGS.md|function|stof
+docs/RECORDINGS.md|function|updateRecording
 docs/RECORDINGS.md|setting|enable_inprogress_playback
+docs/RECORDINGS.md|setting|m_client
 docs/RECURRING_RULES.md|function|FindDvrSettingsRow
+docs/RECURRING_RULES.md|function|GetTimezoneBias
 docs/RECURRING_RULES.md|setting|system_settings
 docs/TIMESHIFT.md|function|CallChannelMenuHook
 docs/TIMESHIFT.md|function|CheckDependencies
@@ -48,10 +91,9 @@ docs/TIMESHIFT.md|function|InstallFromZip
 docs/TIMESHIFT.md|function|IsPVRChannel
 docs/TIMESHIFT.md|function|OpenPVRStream
 docs/TIMESHIFT.md|function|SeekTimeRelative
-docs/TIMESHIFT.md|function|StartPlayback
 docs/TIMESHIFT.md|function|UpdatePlayState
 docs/TIMESHIFT.md|function|UpdateTimeshiftProgressData
-docs/TIMESHIFT.md|function|terminate
+docs/TIMESHIFT.md|function|WaitForTimeshiftPlaylistReady
 docs/TIMESHIFT.md|setting|enable_live_timeshift
 docs/TIMESHIFT.md|setting|timeshift_buffer
 docs/TROUBLESHOOTING.md|function|FindChannelAndBlockIndex
@@ -59,7 +101,6 @@ docs/TROUBLESHOOTING.md|function|GetDuration
 docs/TROUBLESHOOTING.md|function|GoToNow
 docs/TROUBLESHOOTING.md|function|OnMessage
 docs/TROUBLESHOOTING.md|function|SetInvalid
-docs/TROUBLESHOOTING.md|function|UpdateEntries
 docs/TROUBLESHOOTING.md|function|UpdateEntry
 docs/TROUBLESHOOTING.md|function|UpdateItems
 docs/TROUBLESHOOTING.md|function|_add_and_verify_timer

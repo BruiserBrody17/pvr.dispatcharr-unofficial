@@ -3,3 +3,5 @@
 # own server process already provides). Pinned to match CI's own version
 # (see .github/workflows/build.yml's unit-tests-python job).
 pytest==9.1.1
+# pytest's own dependencies (pluggy, iniconfig, packaging, Pygments) are deliberately NOT pinned here: the CI runner's image has some of them installed by the OS package manager, and pinning a different version
+# fails the install ("Cannot uninstall packaging 24.0 ...", 2026-10-05).

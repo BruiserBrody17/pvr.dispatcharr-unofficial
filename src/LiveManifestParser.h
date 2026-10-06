@@ -39,4 +39,13 @@ struct LiveManifestSegmentEntry
 std::vector<LiveManifestSegmentEntry> ParseNewLiveManifestSegments(const nlohmann::json& segmentsArray,
                                                                    int64_t lastKnownSequence);
 
+// The lowest `sequence` the plugin's current manifest still lists, or -1 if
+// it lists none with a usable one. get_live_manifest answers with the buffer's
+// current visible window, so this moves forward as the rolling buffer rolls
+// segments off -- which this addon's own append-only address space never
+// otherwise learns about (docs/OPEN_ITEMS.md, "Live-timeshift address space
+// never drops rolled-off segments"). Unlike ParseNewLiveManifestSegments(),
+// looks at every entry, including ones already merged.
+int64_t OldestLiveManifestSequence(const nlohmann::json& segmentsArray);
+
 } // namespace dispatcharr

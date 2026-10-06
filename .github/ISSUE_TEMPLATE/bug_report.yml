@@ -5,8 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report this. There's no automated
-        test suite for this project, so the detail below is what
+        Thanks for taking the time to report this. The automated tests
+        cannot reach a real Dispatcharr or Kodi, so the detail below is what
         actually lets a report get investigated and fixed rather than
         stalling for lack of information -- please fill in as much as
         you genuinely have.
