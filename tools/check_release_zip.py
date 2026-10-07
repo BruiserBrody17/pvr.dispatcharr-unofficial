@@ -24,6 +24,7 @@ platform cannot be left out of a release by forgetting a step.
 usage: check_release_zip.py [--blocklist FILE] [--require-blocklist] [--expect-release VERSION] <zip> [<zip> ...]
 """
 
+import fnmatch
 import os
 import re
 import struct
@@ -32,14 +33,16 @@ import zipfile
 
 PREFIX = "addon-pvr.dispatcharr-unofficial-"
 
-# What a release must carry (`{v}` is the version), as the names the build harnesses and the CI workflow produce.
+# What a release must carry (`{v}` is the version; a name may be a glob), as the names the build harnesses and the CI
+# workflow produce. CoreELEC's own packaging appends a package revision to the version (`0.12.0.1`, confirmed 2026-10-07
+# building the real release), so that one name is a pattern.
 RELEASE_ASSETS = (
     PREFIX + "{v}-windows-x86_64.zip",
     PREFIX + "{v}-linux.zip",
     PREFIX + "{v}-osx-arm64.zip",
     PREFIX + "{v}-android-aarch64.zip",
     PREFIX + "{v}-android-armv7.zip",
-    "pvr.dispatcharr-unofficial-{v}.zip",  # the CoreELEC package
+    "pvr.dispatcharr-unofficial-{v}.[0-9]*.zip",  # the CoreELEC package, with CoreELEC's own revision suffix
     "timeshift_buffer.zip",
     "recording_edl.zip",
 )
@@ -211,10 +214,17 @@ def check_zip(path, blocklist_terms):
 def check_release_set(paths, version):
     """Problems with the set of zips as a release's assets (missing or unexpected files)."""
     names = [os.path.basename(p) for p in paths]
-    expected = [pattern.format(v=version) for pattern in RELEASE_ASSETS]
-    problems = ["release asset missing: %s" % name for name in expected if name not in names]
-    problems += ["unexpected release asset: %s" % name for name in names if name not in expected]
-    problems += ["release asset given twice: %s" % name for name in sorted(set(names)) if names.count(name) > 1]
+    patterns = [pattern.format(v=version) for pattern in RELEASE_ASSETS]
+    problems = []
+    for pattern in patterns:
+        matches = [n for n in names if fnmatch.fnmatchcase(n, pattern)]
+        if not matches:
+            problems.append("release asset missing: %s" % pattern)
+        elif len(matches) > 1:
+            problems.append("release asset given twice: %s (%s)" % (pattern, ", ".join(matches)))
+    problems += [
+        "unexpected release asset: %s" % n for n in names if not any(fnmatch.fnmatchcase(n, pat) for pat in patterns)
+    ]
     return problems
 
 

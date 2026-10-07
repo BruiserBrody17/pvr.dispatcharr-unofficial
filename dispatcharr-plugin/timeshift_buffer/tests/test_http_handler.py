@@ -275,7 +275,7 @@ def test_a_heartbeat_failure_does_not_fail_the_response(served, monkeypatch):
     status, _, body = _request(served, "GET", _url())
     assert status == 200
     assert body == _SEGMENT
-    assert any("heartbeat-on-fetch failed" in line for line in served.logger.lines)
+    assert _wait_until(lambda: any("heartbeat-on-fetch failed" in line for line in served.logger.lines))
 
 
 # ---------------------------------------------------------------------
@@ -288,6 +288,19 @@ def test_a_heartbeat_failure_does_not_fail_the_response(served, monkeypatch):
 
 import socket  # noqa: E402
 import time  # noqa: E402
+
+
+def _wait_until(predicate, seconds=5):
+    """True once `predicate()` holds. The server closes a refused connection before it logs the refusal (and its
+    handler threads finish after the client has its response), so a test that reads the log or a counter right after
+    its own socket call is racing that thread: this failed once on CI (2026-10-07, the first run of the release tag)
+    though the same commit had passed a run earlier."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
 
 
 def _closed_within(sock, seconds):
@@ -410,7 +423,7 @@ def test_connections_beyond_the_cap_are_closed_at_once_and_slots_come_back(serve
             assert _closed_within(third, 2), "a connection past the cap was not closed"
         finally:
             third.close()
-        assert any("refused 1 connection(s)" in line for line in served.logger.lines)
+        assert _wait_until(lambda: any("refused 1 connection(s)" in line for line in served.logger.lines))
 
         # Closing a held connection frees its slot (the handler thread sees EOF and finishes).
         held.pop().close()
@@ -469,7 +482,7 @@ def test_one_client_cannot_hold_more_than_its_share_of_the_slots(served, monkeyp
             assert _closed_within(extra, 2), "a connection past the per-client share was not closed"
         finally:
             extra.close()
-        assert any("this client already has 3 open" in line for line in served.logger.lines)
+        assert _wait_until(lambda: any("this client already has 3 open" in line for line in served.logger.lines))
         # The refusal gave back the total slot it never used: 7 remain, so closing one held
         # connection lets this client in again.
         assert server._connection_slots._value == 10 - 3
@@ -502,9 +515,9 @@ def test_refusals_are_logged_at_most_once_per_interval(served, monkeypatch):
             extra = socket.create_connection(("127.0.0.1", server.server_port), timeout=5)
             _closed_within(extra, 1)
             extra.close()
+        assert _wait_until(lambda: server._refusals_since_log == 7)
         lines = [line for line in served.logger.lines if "refused" in line]
         assert len(lines) == 1
-        assert server._refusals_since_log == 7
     finally:
         first.close()
         _stop(server, thread)

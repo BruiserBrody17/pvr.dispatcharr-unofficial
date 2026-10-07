@@ -176,24 +176,45 @@ def test_not_a_zip_fails(tmp_path):
     assert any("cannot be read" in p for p in gate.check_zip(str(path), []))
 
 
+def _concrete(version):
+    """The RELEASE_ASSETS patterns as real file names (CoreELEC's revision suffix filled in)."""
+    return [p.format(v=version).replace("[0-9]*", "1") for p in gate.RELEASE_ASSETS]
+
+
 def test_the_release_set_must_be_exactly_the_assets():
     version = "9.9.9"
-    full = [pattern.format(v=version) for pattern in gate.RELEASE_ASSETS]
+    full = _concrete(version)
     assert gate.check_release_set(["/x/" + n for n in full], version) == []
-    for missing in full:
-        rest = [n for n in full if n != missing]
-        assert any(missing in p for p in gate.check_release_set(rest, version))
+    for index, missing in enumerate(full):
+        rest = full[:index] + full[index + 1 :]
+        assert any("missing" in p for p in gate.check_release_set(rest, version)), missing
     assert any("unexpected" in p for p in gate.check_release_set(full + ["stray.zip"], version))
     assert any("twice" in p for p in gate.check_release_set(full + [full[0]], version))
     # an old release's zip is not this release's
     assert gate.check_release_set([n.replace(version, "9.9.8") for n in full], version)
 
 
+def test_the_coreelec_zip_is_matched_with_its_revision_suffix_and_only_that():
+    version = "0.12.0"
+    others = [n for n in _concrete(version) if not n.startswith("pvr.dispatcharr-unofficial-")]
+    for good in ("pvr.dispatcharr-unofficial-0.12.0.1.zip", "pvr.dispatcharr-unofficial-0.12.0.12.zip"):
+        assert gate.check_release_set(others + [good], version) == []
+    for bad in (
+        "pvr.dispatcharr-unofficial-0.12.0.zip",
+        "pvr.dispatcharr-unofficial-0.12.1.1.zip",
+        "pvr.dispatcharr-unofficial-0.12.0.x.zip",
+    ):
+        assert gate.check_release_set(others + [bad], version), bad
+    # two CoreELEC zips (an old revision left in the directory) is an error, not a pick-one
+    both = others + ["pvr.dispatcharr-unofficial-0.12.0.1.zip", "pvr.dispatcharr-unofficial-0.12.0.2.zip"]
+    assert any("twice" in p for p in gate.check_release_set(both, version))
+
+
 def test_every_platform_ships_with_every_release():
     names = " ".join(gate.RELEASE_ASSETS)
     for platform in ("windows", "linux", "osx", "android-aarch64", "android-armv7", "timeshift_buffer"):
         assert platform in names
-    assert "recording_edl" in names and "pvr.dispatcharr-unofficial-{v}.zip" in gate.RELEASE_ASSETS
+    assert "recording_edl" in names and "pvr.dispatcharr-unofficial-{v}.[0-9]*.zip" in gate.RELEASE_ASSETS
 
 
 def test_the_blocklist_file_is_read_without_comments_and_blanks(tmp_path):

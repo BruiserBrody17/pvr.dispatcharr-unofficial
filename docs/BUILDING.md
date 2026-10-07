@@ -528,7 +528,7 @@ called out inline so a future rebuild doesn't have to rediscover them.
    the zip to the GitHub Release by hand so CoreELEC users have something
    to download instead of having to build it themselves:
    ```bash
-   gh release upload <tag> target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr-unofficial/pvr.dispatcharr-unofficial-<version>.zip
+   gh release upload <tag> target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr-unofficial/pvr.dispatcharr-unofficial-<version>.<revision>.zip
    ```
 
 For later releases, only steps 1-2 and the `cp`/build in steps 3-4 need
@@ -847,7 +847,7 @@ privacy gate passes on all of them together.**
 | `timeshift_buffer.zip`, `recording_edl.zip` | CI (`package-dispatcharr-plugins`) |
 | `addon-pvr.dispatcharr-unofficial-<v>-osx-arm64.zip` | by hand on the Mac ("Linux / macOS" above) |
 | `addon-pvr.dispatcharr-unofficial-<v>-android-aarch64.zip`, `...-android-armv7.zip` | by hand ("Android" above) |
-| `pvr.dispatcharr-unofficial-<v>.zip` (the CoreELEC package) | by hand ("CoreELEC" below) |
+| `pvr.dispatcharr-unofficial-<v>.1.zip` (the CoreELEC package; the `.1` is CoreELEC's own revision suffix) | by hand ("CoreELEC" below) |
 
 Cutting a release, in order:
 
