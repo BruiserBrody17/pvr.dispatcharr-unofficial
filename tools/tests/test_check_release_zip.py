@@ -226,7 +226,7 @@ def test_main_exit_codes(tmp_path, capsys, monkeypatch):
 def test_distinct_paths_sharing_a_prefix_are_each_reported(tmp_path):
     # the duplicate suppression once keyed on the match plus eight characters, which hid every path after the first
     # that began alike (found when the first real Windows gate run reported one of two upstream paths)
-    data = b"C:\\code\\a\\x\x00C:\\code\\b\\y\x00C:\\code\\c\\z"
+    data = b"C:\\code\\kodi-deps\\one\x00C:\\code\\kodi-deps\\two\x00C:\\code\\kodi-deps\\three"
     path = _zip(tmp_path / "a.zip", {"addon/lib.dll": data})
     assert len(gate.check_zip(path, [])) == 3
 
