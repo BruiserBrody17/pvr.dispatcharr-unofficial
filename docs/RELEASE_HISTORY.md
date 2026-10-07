@@ -44,8 +44,9 @@ order they were created, not sorted by version.
 | `0.10.1` | `609c7abdae` | 2026-09-15 | Bump addon version to 0.10.1 |
 | `0.11.0` | `c7abc388a0` | 2026-09-16 | Bump addon version to 0.11.0 |
 
-## Where the unsquashed hardening-audit history lives
+## The unsquashed hardening-audit history
 
 The 473 commits of the project-wide hardening audit branch were squash-merged into `Omega` as one commit
-(`9f59a13`), so they are not ancestors of `Omega`. The per-finding record of what those commits changed is
-`docs/OPEN_ITEMS.md`'s Fixed entries, and the tag history cleared on 2026-10-06 is the table above.
+(`9f59a13`), so they are not ancestors of `Omega`.
+ The per-finding record of what those commits
+changed is `docs/OPEN_ITEMS.md`'s Fixed entries, and the tag history cleared on 2026-10-06 is the table above.

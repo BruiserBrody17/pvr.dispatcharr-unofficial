@@ -93,7 +93,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # --break-system-packages: needed on a CI runner (its minimal Ubuntu image enforces PEP 668's
+      # --break-system-packages: needed on a CI runner
+      # (its minimal Ubuntu image enforces PEP 668's
       # "externally-managed-environment" restriction; GitHub's own hosted
       # ubuntu-latest doesn't, but the flag is a no-op there either way --
       # confirmed live, 2026-09-23, setting up the CI).
@@ -105,7 +106,7 @@ jobs:
       # is absent, and the stock runner images are not known to ship it, so without this the guard
       # could silently never run (found by the 2026-10-04 second hardening sweep). REQUIRE_FFMPEG makes
       # the test fail instead of skip if the install ever stops working. `sudo` only where it exists:
-      # the CI runner's container runs as root without it.
+      # the runner's container runs as root without it.
       - name: Install ffmpeg
         run: |
           SUDO=""
@@ -333,10 +334,9 @@ jobs:
       # A plain git clone against the fully-qualified github.com URL,
       # rather than actions/checkout's repository: shorthand -- that
       # shorthand resolves against whichever server is actually running
-      # the job (github.com on GitHub), and Kodi's real
-      # source only ever lives on github.com regardless of which host is
-      # running this workflow. Confirmed live, 2026-09-23: this step
-      # failed to resolve on the CI runner before this fix.
+      # the job, and Kodi's real source only ever lives on github.com
+      # regardless of which host is running this workflow. Confirmed
+      # live, 2026-09-23: this step failed to resolve on a CI runner before this fix.
       - name: Check out Kodi (for the binary-addons build harness)
         run: |
           git init -q kodi-source
