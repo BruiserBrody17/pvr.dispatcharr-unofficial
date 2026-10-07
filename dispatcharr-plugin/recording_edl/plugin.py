@@ -816,7 +816,7 @@ def _delete_orphaned_dvr_hls_dirs(logger):
 
 class Plugin:
     name = "Recording EDL"
-    version = "0.2.2"
+    version = "0.2.3"
     description = (
         "Exposes a completed recording's comskip .edl (commercial break "
         "markers) over the plugin run/ API, for clients with no direct "
@@ -824,7 +824,7 @@ class Plugin:
     )
     author = "BruiserBrody17"
     help_url = (
-        "https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/tree/master/dispatcharr-plugin/recording_edl"
+        "https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/tree/Omega/dispatcharr-plugin/recording_edl"
     )
 
     # See timeshift_buffer/plugin.py's own comment on this same pattern:

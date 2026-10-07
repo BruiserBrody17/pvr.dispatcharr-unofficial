@@ -3094,14 +3094,14 @@ def _ensure_reaper_running(settings_dict, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "0.8.12"
+    version = "0.8.13"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."
     )
     author = "BruiserBrody17"
     help_url = (
-        "https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/tree/master/dispatcharr-plugin/timeshift_buffer"
+        "https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/tree/Omega/dispatcharr-plugin/timeshift_buffer"
     )
 
     # The single source of truth for fields/actions -- confirmed live that

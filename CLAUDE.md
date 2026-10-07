@@ -1349,7 +1349,7 @@ against the same fault: 47 probes of the one segment in 30 s, playback to the re
 `ClampSeekToTail()` (same day, the other open item from those checks): a seek past the tail target lands on it, or on the current position when the reader
 is already past it, so a forward seek at the tail never moves backward (live: 262,144 to 1,310,720 bytes back before, 0 in ten of ten after).
 `tools/tests/test_dependency_pins.py` (added 2026-10-02, closing three `docs/OPEN_ITEMS.md` entries on mutable pins): fails if any workflow `uses:` is
-not `@<commit SHA>` with a `# vX.Y.Z` comment (Dependabot's `github-actions` ecosystem updates both together), any FetchContent `GIT_TAG` is not a commit SHA, or the Windows job's
+not `@<commit SHA>` with a `# vX.Y.Z` comment (moved together by hand now; Dependabot is not used), any FetchContent `GIT_TAG` is not a commit SHA, or the Windows job's
 SHA256-pinned prebuilt archives (curl/OpenSSL/zlib, downloaded and hash-checked before being handed to Kodi's `add_internal()` as a local file) differ from `docs/BUILDING.md`'s copy.
 `timeshift_buffer` 0.6.8 serializes `_ensure_http_server_running()`/`_ensure_reaper_running()` under locks (tested with eight simultaneous first calls, and that the tests fail without the locks).
 `RecurringRuleEdit` is `ComputeRecurringRuleEditPatch()`, `RecurringRuleEditPatch` and `ComputeEndDateForOpenEndedRuleEdit()` (added 2026-10-02, fixing
@@ -2747,6 +2747,13 @@ test the CoreELEC package, and runs no addon against a real Dispatcharr or Kodi
   notes with a dated addendum inlining the actual fix (per the bullet
   above), not just a pointer -- and don't leave the original notes'
   now-false "neither plugin changed" claim standing uncorrected.
+- **Publishing a release's assets, as of 2026-10-06.** A release's page, notes and zips are made by hand. After the tag's CI run is green:
+  fetch the CI-built zips (the Windows addon zip and both plugin zips) from that run, run the release-asset
+  checks in the data-hardening bullet above (`strings` for `/home/`, `/Users/` and `C:\` paths, the zip entry
+  timestamps), create the release with `gh release create <tag> --title <tag> --notes-file <notes> <zips...>`
+  (the notes inline the bundled plugins' changelog entries, per the bullet above) and attach the hand-built
+  CoreELEC and macOS zips with `gh release upload <tag> <zip>`. The pre-push privacy hook does not see
+  release assets.
 - **The CoreELEC package isn't part of CI** and won't be (see
   `docs/BUILDING.md`'s "GitHub Actions job ... rejected" note --
   CoreELEC's build harness assumes persistent, self-hosted infrastructure

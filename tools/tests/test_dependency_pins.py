@@ -5,8 +5,7 @@ are mutable tags" / "Prebuilt Windows dependency archives have no integrity
 check", all closed 2026-10-02):
 
 - every `uses:` in .github/workflows is `@<40-hex commit SHA>` (a trailing
-  `# vX.Y.Z` comment says which release it is; Dependabot's github-actions
-  ecosystem keeps both current);
+  `# vX.Y.Z` comment says which release it is; both are moved together by hand);
 - every FetchContent `GIT_TAG` in the two CMakeLists.txt is a 40-hex commit SHA;
 - the Kodi tree the build jobs compile against is a full commit SHA (`KODI_COMMIT`), and no job clones it by branch
   (docs/OPEN_ITEMS.md, "Kodi is cloned from a moving branch in the release builds", closed 2026-10-06);

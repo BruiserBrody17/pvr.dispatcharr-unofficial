@@ -813,6 +813,11 @@ is unaffected. Revisit if a real user reports this specifically.
 
 ## Distribution (Windows/macOS, once built)
 
+Release zips are published on the GitHub release page by hand (`gh release create <tag> --title <tag>
+--notes-file <notes> <zips...>`, then `gh release upload <tag> <zip>` for the hand-built CoreELEC and macOS
+zips). `CLAUDE.md`'s "Publishing a release's assets" bullet has the checks to run
+on every zip first.
+
 Kodi installs binary addons either as a manual zip, or from a self-hosted
 repository (a small `repository.xml`-style addon whose own zip contains an
 `addons.xml` index pointing at your built zips, served over `https://` or

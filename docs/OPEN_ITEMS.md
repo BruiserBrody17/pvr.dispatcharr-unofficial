@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**6 open, 262 closed.**
+**5 open, 263 closed.**
 
 | Section | Entries |
 |---|---|
@@ -12,11 +12,11 @@
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
-| Open: Release, CI and manual testing | 2 |
+| Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 4 |
 | Open: Tooling (tools/) | 0 |
-| Closed: Fixed | 231 |
+| Closed: Fixed | 232 |
 | Closed: Closed without a change (refuted, explained or harmless) | 23 |
 | Closed: Project history and test infrastructure | 8 |
 
@@ -31,10 +31,6 @@
 ### Design decision needed
 
 ### Release, CI and manual testing
-
-#### Links to the public GitHub repo still name the master branch
-
-**Opened 2026-10-05, when the main branch was renamed from `master` to `Omega`.** Four links point at `.../tree/master/...` or `.../blob/master/...` on GitHub: `help_url` in both plugins' `plugin.json` and `plugin.py` (`timeshift_buffer`, `recording_edl`) and the SECURITY.md link in `.github/ISSUE_TEMPLATE/bug_report.yml`. They keep working while the GitHub repo's default branch is `master`. Once it is `Omega`, change all four, which is a code change in each plugin (so a version bump and CHANGELOG entry for each), and check `docs/BUILDING.md`'s and `README.md`'s clone instructions. **Added 2026-10-06 (sixteenth sweep):** more places name the GitHub repo and change with it: `PKG_SITE` and the `PKG_URL` tag archive in `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk` (every tag was deleted that day, so the archive URL names no tag until the next release; its checksum is still the all-zeros placeholder), the repository link in `addon.xml.in`, the releases links in `README.md` and both plugins' READMEs, and the link in `SECURITY.md`.
 
 #### Release upload shares jobs with pull-request builds
 
@@ -65,6 +61,10 @@
 ## Closed
 
 ### Fixed
+
+#### Links to the public GitHub repo still name the master branch
+
+**Fixed 2026-10-06 (opened 2026-10-05, when the main branch was renamed from `master` to `Omega`).** Four links pointed at `.../tree/master/...` or `.../blob/master/...` on GitHub: `help_url` in both plugins' `plugin.json` and `plugin.py` and the SECURITY.md link in `.github/ISSUE_TEMPLATE/bug_report.yml`. They now name `Omega`, so the public repo is right from its first day (`timeshift_buffer` 0.8.13 and `recording_edl` 0.2.3, one CHANGELOG entry each). The other places that name the GitHub repo (`PKG_SITE` and the `PKG_URL` tag archive in `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk`, the repository link in `addon.xml.in`, the releases links in the READMEs, `SECURITY.md`) name it by its address and stay right as long as the repo keeps its name; the archive URL names no tag until the next release, and its checksum is still the all-zeros placeholder. `.github/dependabot.yml` is deleted (the pins are moved by hand, `tools/tests/test_dependency_pins.py` still checks they are SHAs), and the docs now say how a release's zips reach the GitHub release page by hand (`CLAUDE.md`'s "Publishing a release's assets" bullet, `docs/BUILDING.md`'s Distribution section).
 
 #### Review of the sixteenth sweep's own changes: an end-offset regression, an override cleared every summer, and smaller findings
 

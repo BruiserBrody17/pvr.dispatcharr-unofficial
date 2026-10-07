@@ -101,6 +101,16 @@ This list is the user-visible part; the reasoning for each is in `docs/OPEN_ITEM
   locale.
 - **Packaging**: the add-on no longer declares an icon that was never shipped.
 
+## `timeshift_buffer` [0.8.13] - 2026-10-06
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- The "help" link on the Plugins page points at the project's `Omega` branch (it named `master`, which the
+  project no longer has).
+
 ## `timeshift_buffer` [0.8.12] - 2026-10-06
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
@@ -204,6 +214,15 @@ Dispatcharr restart for every worker to pick it up.
 - **Releasing a channel's start lock is now one atomic step** (where Redis allows
   scripts), so a lock that expired and was taken by the next caller can no longer be
   released by the previous one.
+
+## `recording_edl` [0.2.3] - 2026-10-06
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr.**
+
+### Fixed
+
+- The "help" link on the Plugins page points at the project's `Omega` branch (it named `master`, which the
+  project no longer has).
 
 ## `recording_edl` [0.2.2] - 2026-10-04
 
