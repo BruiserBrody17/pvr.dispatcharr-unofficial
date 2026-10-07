@@ -725,6 +725,22 @@ unzip -q <the-built>/addon-pvr.dispatcharr-unofficial-<version>-android-aarch64.
 TZ=UTC zip -X -r ../addon-pvr.dispatcharr-unofficial-<version>-android-aarch64.zip pvr.dispatcharr-unofficial
 ```
 
+**Stripping is not enough: two statically linked dependencies still carry the build machine's paths.** nghttp2's
+assertion messages name their source files, and OpenSSL records its configure line, compiler and install
+directories (found 2026-10-07 in the first stripped zips: both libraries come from Kodi's own `-debug`
+dependency tree under the builder's home directory, and they are string data, not debug information).
+Rebuilding that tree under a neutral path takes hours, so after stripping, overwrite the home-directory prefix
+byte for byte with a same-length neutral one (`/build////...`; same size, same program, the text is only an error
+message or a directory a device does not have):
+
+```bash
+python3 tools/scrub_zip_paths.py --prefix "$HOME" <both android zips>
+```
+
+The release gate (below) is what proves it worked; confirmed live that the scrubbed library is still an `AArch64`
+shared object with the addon's entry points exported. The macOS zip needed none of this (its dylib links the
+system's own libraries and passed the gate as built).
+
 Confirmed live: the `0.11.0` release (the first Android release) shipped
 both ABIs' `.so` unstripped, with the build machine's local paths
 embedded, and the published assets were still the unstripped builds when
@@ -839,7 +855,8 @@ Cutting a release, in order:
 2. Build the hand-built assets from that tag's source, not from a working tree: export it (`git archive <tag>`
    into a clean directory) and point the build's addon definition at the export, so a local edit can never
    ride along. Strip the Android libraries (above). Collect all eight zips in one directory.
-3. Normalize every hand-built zip, which removes the build machine's timezone from its entry timestamps:
+3. Scrub the Android zips (`tools/scrub_zip_paths.py`, "Android" above), then normalize every hand-built zip,
+   which removes the build machine's timezone from its entry timestamps:
    `python3 tools/normalize_zip.py "$(git log -1 --format=%ct <tag>)" <zip>...`.
 4. Run the gate once over all of them, with the private blocklist (not in this repository; the script looks for
    `--blocklist FILE`, then `$PRIVACY_BLOCKLIST`, then `~/.privacy-blocklist.txt`):
