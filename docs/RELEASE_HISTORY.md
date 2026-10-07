@@ -34,18 +34,18 @@ order they were created, not sorted by version.
 | `1.0.6` | `5525801fd7` | 2026-09-07 | Fix 1.0.5 regression: unbounded heartbeat call could stall live playback permanently |
 | `1.0.7` | `216f97ff49` | 2026-09-07 | Fix manifest-cache instance identity for real this time: pid recycles, access_token doesn't |
 | `1.0.8` | `1fbe030f9f` | 2026-09-07 | Project-wide C++ review: three defensive fixes, none reproduced live |
-| `0.9.0` | `22704a36ac` | 2026-09-07 | Step back to 0.x versioning and add code formatting tooling |
-| `0.9.1` | `79400cb7a3` | 2026-09-08 | Bump addon to 0.9.1 |
-| `0.9.2` | `804e210d5c` | 2026-09-09 | Bump addon to 0.9.2 |
-| `0.9.3` | `d7251f3cd8` | 2026-09-10 | Bump addon to 0.9.3 |
-| `0.9.4` | `46d6382766` | 2026-09-11 | Bump addon to 0.9.4 |
-| `0.10.0` | `b43ae51746` | 2026-09-12 | Bump addon to 0.10.0 |
-| `0.10.1` | `609c7abdae` | 2026-09-15 | Bump addon version to 0.10.1 |
-| `0.11.0` | `c7abc388a0` | 2026-09-16 | Bump addon version to 0.11.0 |
+| `0.9.0` | `fdd932bd77` | 2026-09-07 | Step back to 0.x versioning and add code formatting tooling |
+| `0.9.1` | `b474135b0c` | 2026-09-08 | Bump addon to 0.9.1 |
+| `0.9.2` | `8804409b38` | 2026-09-09 | Bump addon to 0.9.2 |
+| `0.9.3` | `8606068a30` | 2026-09-10 | Bump addon to 0.9.3 |
+| `0.9.4` | `898d9069c5` | 2026-09-11 | Bump addon to 0.9.4 |
+| `0.10.0` | `a620f4ce08` | 2026-09-12 | Bump addon to 0.10.0 |
+| `0.10.1` | `c15ce2ead9` | 2026-09-15 | Bump addon version to 0.10.1 |
+| `0.11.0` | `b6a9a63043` | 2026-09-16 | Bump addon version to 0.11.0 |
 
 ## The unsquashed hardening-audit history
 
 The 473 commits of the project-wide hardening audit branch were squash-merged into `Omega` as one commit
-(`9f59a13`), so they are not ancestors of `Omega`.
+(`b191b01`), so they are not ancestors of `Omega`.
  The per-finding record of what those commits
 changed is `docs/OPEN_ITEMS.md`'s Fixed entries, and the tag history cleared on 2026-10-06 is the table above.
