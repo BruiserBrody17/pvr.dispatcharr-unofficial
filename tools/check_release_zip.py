@@ -45,14 +45,16 @@ RELEASE_ASSETS = (
 )
 
 # Patterns that say a path of the build machine reached the zip. Matched against the bytes decoded as latin-1 (one
-# character per byte) and as UTF-16LE at both alignments.
+# character per byte) and as UTF-16LE at both alignments. The drive-path pattern wants a non-alphanumeric before the
+# letter and real path characters after the backslash, because a bare `x:\` turns up by chance in machine code
+# (seen 2026-10-07 in the stripped-or-not Android libraries) and a gate that cries wolf gets edited around.
 FORBIDDEN_PATTERNS = (
     ("a /home/ path", r"/home/"),
     ("a /Users/ path", r"/Users/"),
     ("a /root/ path", r"/root/"),
     ("a /var/folders/ path", r"/var/folders/"),
     ("a CI runner work directory", r"/actions-runner|/__w/|/runner/work|/runners?/_work"),
-    ("a Windows drive path", r"[A-Za-z]:\\"),
+    ("a Windows drive path", r"(?<![A-Za-z0-9])[A-Za-z]:\\[A-Za-z0-9_$. \-]{2,}"),
     ("a Windows user directory", r"\\Users\\"),
 )
 

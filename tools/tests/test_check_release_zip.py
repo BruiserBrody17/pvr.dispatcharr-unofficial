@@ -82,6 +82,20 @@ def test_a_build_machine_path_fails(tmp_path, text):
     assert problems, text
 
 
+@pytest.mark.parametrize(
+    "noise",
+    [
+        b"9%.@9.......S:\\@9..A.T..*1",  # seen in a real Android library: a drive-shaped pair of bytes in code
+        b"Wj...u..K_.nq:\\_Wc4.. j",  # a letter before the drive letter: part of a word
+        b"x:\\",  # nothing after the backslash
+        b"a1:\\b",  # one character is not a path
+    ],
+)
+def test_drive_shaped_noise_in_machine_code_is_not_a_path(tmp_path, noise):
+    path = _zip(tmp_path / "a.zip", {"addon/lib.so": b"\x7fgarbage" + noise + b"\x00"})
+    assert gate.check_zip(path, []) == []
+
+
 @pytest.mark.parametrize("shift", [0, 1])
 def test_a_utf16_path_fails_at_either_alignment(tmp_path, shift):
     wide = "C:\\Users\\someone\\x.pdb".encode("utf-16-le")
