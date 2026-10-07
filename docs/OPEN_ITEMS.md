@@ -4,35 +4,35 @@
 
 ## Status at a glance
 
-**6 open, 268 closed.**
+**6 open, 270 closed.**
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
+| Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 0 |
+| Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 4 |
 | Open: Tooling (tools/) | 0 |
 | Closed: Fixed | 237 |
-| Closed: Closed without a change (refuted, explained or harmless) | 23 |
+| Closed: Closed without a change (refuted, explained or harmless) | 25 |
 | Closed: Project history and test infrastructure | 8 |
 
 ## Open
 
 ### Needs a live check
 
-#### Two long-lived Android Kodi profiles kept channel groups the server no longer has
-
-**Found 2026-10-07 running the published 0.12.0 Android zips; not yet explained.** On both Android phones the smoke harness's group-membership check failed: Kodi listed a number of channel groups, two of them (call them Group A and Group B, both event-style groups) with no member channels. The server (Dispatcharr 0.32.0) has no group of either exact name that has channels (it has a differently suffixed sibling of Group A with channels, and nothing like Group B at all; it returns only the groups that have channels, which is what the addon should return), the fresh Mac profile and the N2+ showed a similar number of groups all with members, and the addon filters empty groups (`FilterChannelGroupsWithChannels()`), so the two look like groups Kodi created from September's lineup and never deleted when the server stopped offering them. What is not known is whether Kodi should have removed them (its own PVR group update is expected to drop a group a client no longer returns) and what, if anything, this addon must do for that to happen. To settle it: on one phone, note the two groups, restart Kodi with the addon enabled and look again; then clear the PVR data for the addon (Settings, PVR, Clear data) on a spare profile and see whether the groups return; and read the real Kodi source for the group-deletion rule before deciding. Until then the harness check can fail on a long-lived profile for a reason that is not an addon regression.
-
 ### Fix known, not yet done
 
 ### Architectural / concurrency
 
 ### Design decision needed
+
+#### Closing a live timeshift stream waits for the reader's live-edge wait (4 to 6 seconds measured)
+
+**Found 2026-10-07 in the logs of the 0.12.0 device runs; not a regression and not specific to Dispatcharr 0.32.0.** From Kodi's `CloseFile` to the addon's `CloseLiveStream` took 4.0 to 5.9 seconds on all three devices (the N2+: 5.2 s; the 32-bit phone: 5.9 s; the 64-bit phone: 4.0 s). In each case the reader thread was parked in `ReadLiveTimeshiftStream()`'s catch-up-to-tail wait ("catch-up-to-tail loop used 16/25 attempts, 4.201s (budget 6.2s)" is logged inside the window), and Kodi's main thread waits for its demux thread before it closes the stream. A `Player.Open` for the next channel sent in that window is dropped by Kodi (the harness's second live check saw the closing player and then reported `canseek=false`), and a user zapping channels feels the same delay. The wait cannot be interrupted from the addon today: Kodi calls `CloseLiveStream` only after the reading thread has returned, so there is no signal to raise. What would change it is a shorter wait at the live edge (the wait exists because a zero-byte read ended playback after about five seconds when nothing was buffered ahead, `docs/OPEN_ITEMS.md`'s "A brief server outage ended playback for good"), or returning short reads that let Kodi's own loop notice the close sooner; both trade responsiveness against stalls and need a live comparison, which is why this is a decision and not a fix. Measured by pairing the `CloseFile` and `ClosePVRStream` lines in each device's `kodi.log`.
 
 ### Release, CI and manual testing
 
@@ -6672,6 +6672,14 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 **Fixed 2026-10-06 (the last known gap).** The scope the entry set when it was parked was followed: the real event sequence was captured first (a passive listener on the lab's realtime socket, then an EPG source and an M3U account refreshed on demand, the same thing their scheduler does every three hours), `docs/EPG.md`'s new section records both, `ClassifyRefreshEvent()` (`RefreshEvents.h`) is the pure decision, and the reactions reuse existing machinery. A finished EPG refresh (`parsing_programs`, progress 100, status success; the earlier `parsing_channels` success is a step, not the end) schedules one guide fetch 330 s later through `m_epgRefetchDueAt`, past Dispatcharr's own 300 s cache of the exported guide, with several sources coalesced into the pending fetch; a finished M3U refresh whose channel auto-sync created, updated or deleted a channel (the counts are in the same final event) ages the channel list to just-stale and wakes the background thread. A refresh that changed nothing, a failed one and every progress event cost nothing. The "cost to watch" in the entry (a guide fetch is large) is bounded by construction: at most one fetch per 330 s window. Unit tests use the real event shapes with the numbers replaced (every mutant of the classifier and the schedule fails one), and the glue harness gained a minimal WebSocket in its fake server and `refresh_events` (it fails when the wiring is removed). `docs/MANUAL_TESTING.md` has the check a person runs. **Confirmed live the same day** (a real Kodi on the Linux test VM, realtime updates on, through a plain TCP forwarder so the WebSocket passes): an EPG refresh of the lab's XMLTV source finished on the server, the addon logged it at once, and the guide was downloaded again 392 s after the event (the 330 s schedule plus the background thread's one-minute check while a fetch is pending), against the 4-hour window it replaces; an M3U refresh was logged and the channel list was fetched 11 s later, finding a lineup change and resyncing Kodi.
 
 ### Closed without a change (refuted, explained or harmless)
+
+#### Dispatcharr 0.32.0 compatibility check: nothing to change
+
+**Closed 2026-10-07.** The upstream diff of `v0.31.0..v0.32.0` was read against every endpoint and field the addon and its plugins use, and the pieces most at risk were run live against a 0.32.0 server (the in-progress recording event playlist and its finish, catch-up seeking with `inputstream.ffmpegdirect`, the real-time push, timers and recurring rules, live timeshift, and both plugins). Nothing needed changing; the details, with what was and was not exercised, are in `docs/API_NOTES.md`'s "Dispatcharr 0.32.0 (2026-10-07)", and `tests/test_m3u8_segment_parser.cpp` now pins the new playlist shape. Two things were seen that are not 0.32.0 issues and are written up where they belong: the live-close delay (above, under Design decision needed) and the harness traps in `docs/MANUAL_TESTING.md`.
+
+#### Two Android Kodi profiles listed channel groups the server no longer had
+
+**Closed 2026-10-07; an earlier version of this entry (under "Needs a live check", same day) guessed Kodi kept deleted groups forever, and was wrong.** The smoke harness's group-membership check flagged two groups with no member channels on both phones. The server had no channel in either (one name did not exist on it at all), and the groups were gone from the 64-bit phone after its next restart; the check then flagged a different event group (named as a test) that had had channels when the addon last fetched them and none by the time the server was queried, because this server's event groups come and go as events start and end (many channels fewer at the second query, an hour after the first). So the addon was returning what the server had when it asked, Kodi dropped groups at its next sync, and the check is accurate but cannot tell a group that emptied between two refreshes from a regression: when it fails, query the server for that group's channels before suspecting `FilterChannelGroupsWithChannels()` (the fresh Mac profile and the N2+ listed no empty group at all).
 
 #### Pinning pytest's own dependencies was tried and reverted
 

@@ -70,6 +70,48 @@ current Dispatcharr for a non-admin account -- worth a live check
 against a real non-admin, profile-assigned account before relying on
 either claim as still fully accurate.
 
+## Dispatcharr 0.32.0 (2026-10-07)
+
+Checked by reading the upstream diff of `v0.31.0..v0.32.0` against every endpoint and field this addon and its two plugins
+use, then live against a 0.32.0 server (a real recording, a real client on a 64-bit phone, the 32-bit N2+ and a second phone).
+**Nothing the addon relies on changed incompatibly.** What changed, and what was confirmed:
+
+- **In-progress recording playlist:** the DVR muxer now runs with `-hls_playlist_type event` (still `-hls_list_size 0`,
+  `omit_endlist`, `append_list`, `independent_segments`), so the playlist carries `#EXT-X-VERSION:6`,
+  `#EXT-X-PLAYLIST-TYPE:EVENT`, `#EXT-X-INDEPENDENT-SEGMENTS` and an `#EXT-X-DISCONTINUITY` ahead of the first segment (and
+  after a provider splice), durations to six decimals, absolute segment URLs, and `Cache-Control: no-cache` on the response. The
+  server still adds `#EXT-X-ENDLIST` itself when it finalizes, the `dvr:hls_viewer:{id}` key (20 s) still holds the HLS directory,
+  and the stored statuses are unchanged (`scheduled`, `recording`, `completed`, `stopped`, `interrupted`; a finished recording
+  also gains `remux_success` in its `custom_properties`). The addon already ignored every tag it did not need, so no code changed;
+  `tests/test_m3u8_segment_parser.cpp` pins the captured shape. Live: a 9-minute recording played in real time through its whole
+  length on the phone and the stream ended by itself at the real end (the only audio-sync lines were at the final teardown), with
+  the server finishing `completed`, remuxed, file present.
+- **`recording_end`:** now fires after post-processing with `outcome` (`success`, `failed`, `cancelled`), `status`,
+  `remux_success` and `interrupted_reason`; the old `interrupted` boolean is gone. This is a Connect/system event; the
+  websocket `updates` types the addon follows (`recording_started`, `recording_ended`, `recording_stopped`,
+  `recording_extended`, `recording_updated`, `recording_cancelled`, `recordings_refreshed`) are the same set in both versions, and the
+  real-time push was confirmed live (a recording created outside Kodi appeared with no restart).
+- **Channels:** `is_radio` and `effective_is_radio` are new on the channel (and a stream filter `is_radio`, a channel filter
+  `only_radio`); nothing was removed or renamed, `streams` is still a list of ids, and the list is still unpaginated for the
+  addon's request (a full-size lineup, `next` null). The addon does not read the radio flag yet, so radio channels still reach Kodi
+  as TV; mapping it to Kodi's radio type is a possible feature, not a compatibility issue. Sorting, search and filtering now use the
+  override-aware values (what the addon already reads as `effective_*`).
+- **Catch-up:** `POST /api/catchup/sessions/` is untouched; the server-side `Range: bytes=0-` restart and scrub-offset fixes are
+  in the proxy path. Live on the phone with `inputstream.ffmpegdirect` seeking on: a 2-minute forward seek landed in 36 s, a 90-second
+  back seek in 40 s and a 5-minute forward seek in 22 s, each about 20 to 25 s short of its target (the imprecision
+  `docs/CATCHUP.md` already records), none stuck and none restarting at the original position. `utc` is accepted as an alias for
+  `start` and the 301 session redirect is now client-cacheable; neither is used by the addon.
+- **Settings and accounts:** `GET /api/core/version/`, the settings rows, `GET /api/accounts/users/me/` (still `api_key` and
+  `custom_properties` with `dvr_access` and `catchup_enabled`), token and API-key endpoints are unchanged. New and unused:
+  `POST /api/accounts/auth/proxy-login/` (reverse proxy header auth, off unless `DISPATCHARR_TRUSTED_PROXIES` names the proxy).
+  Locked stream and output profiles can no longer be edited through the API.
+- **Plugins:** `RedisClient.get_client()` gained optional arguments (`max_retry_interval`, `disable_persistence`) and is cached;
+  called with none, as `timeshift_buffer` does, it behaves as before. Live: `timeshift_buffer` 0.8.13 and `recording_edl` 0.2.3 run
+  on 0.32.0, `list_buffers` answers, and server-side live timeshift played, seeked and paused on three devices.
+- **Not used by the addon:** the M3U and XC output changes (radio flag, catch-up tags, `catchup-timezone`), richer live-proxy events,
+  the stream-profile renames, Redis TLS and `REDIS_URL` handling, and the logging changes. The XMLTV export (`/output/epg`) has no
+  diff.
+
 ## Channel profiles: a real curated-lineup feature, unused by this addon
 
 Dispatcharr supports named, curated channel subsets --

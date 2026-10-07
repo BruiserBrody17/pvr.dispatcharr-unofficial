@@ -100,15 +100,19 @@ Not substituted for by a virtual GPU or a laptop.
   the addon entry points exported, and 290 bytes different from the unscrubbed build, all inside the replaced
   home-directory prefix.
   *64-bit:* the harness passed 14 of 17 with 2 skips (nothing was recording) and 1 failure that is not the addon (the
-  stale Kodi groups below): live timeshift seek, catch-up, recorded playback and seek, and creating and deleting a
+  group check, explained in `docs/OPEN_ITEMS.md`): live timeshift seek, catch-up, recorded playback and seek, and creating and deleting a
   one-off timer and a recurring rule all passed on a real arm64 device.
+  A second run on the 64-bit phone with a 9-minute recording in progress on the server passed 16 of 18 (one skip, one
+  group-check failure, both explained): the in-progress recording playback and seek, catch-up, both timer kinds and the
+  real-time push all passed, and that recording was then played in real time to its real end, where the stream stopped by
+  itself (see `docs/API_NOTES.md`'s "Dispatcharr 0.32.0" for what changed on the server).
   *32-bit:* after a clean start with a working network the harness passed 11, with its timer checks skipped by the
   guide-id trap below, and live timeshift was driven by hand: `canseek` true within a few seconds, seeks back and
   forward through the addon's seek path (the log shows both directions, clamped at the live edge), pause and
   resume, 239 segment fetches, and no `Packet corrupt`, audio-sync, fatal or addon error lines. 32-bit ARM timers
   are covered by the N2+ run above.
   Still not done anywhere: audio passthrough, a long soak, and HEVC.
-- **Three traps the 2026-10-07 device runs hit, none of them the addon:**
+- **Traps the 2026-10-07 device runs hit, none of them the addon:**
   1. **Kodi's own "Play recording" / "Switch to channel" prompt** (a `DialogConfirm`) appears when a channel's
      current programme has a recording, and being modal it makes `Player.Open` hang and stalls the JSON-RPC calls
      that need Kodi's main thread (`XBMC.GetInfoBooleans` still answers, which is how to see it:

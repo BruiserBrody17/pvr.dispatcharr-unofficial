@@ -1,5 +1,6 @@
 #include "M3u8SegmentParser.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 using namespace dispatcharr;
@@ -325,4 +326,90 @@ TEST_CASE("a segment URI with no EXTINF of its own does not inherit the previous
   REQUIRE(entries.size() == 2);
   CHECK(entries[0].durationSec == 6.006);
   CHECK(entries[1].durationSec == 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// The playlist Dispatcharr 0.32.0 writes for a recording in progress
+// ---------------------------------------------------------------------------
+
+namespace
+{
+// The shape of a real recording's playlist on a 0.32.0 server, with the host, id and durations replaced: its muxer now runs with
+// -hls_playlist_type event, so the playlist carries EXT-X-PLAYLIST-TYPE:EVENT, EXT-X-INDEPENDENT-SEGMENTS and an
+// EXT-X-DISCONTINUITY ahead of the first segment, durations to six decimals, and absolute segment URLs. The
+// response also gained Cache-Control: no-cache. Nothing about the list changed otherwise: it was already
+// append-only (-hls_list_size 0, omit_endlist), and the server adds the end-of-list tag itself when it finalizes.
+const std::string kEventPlaylistPrefix =
+    "#EXTM3U\n"
+    "#EXT-X-VERSION:6\n"
+    "#EXT-X-TARGETDURATION:7\n"
+    "#EXT-X-MEDIA-SEQUENCE:0\n"
+    "#EXT-X-PLAYLIST-TYPE:EVENT\n"
+    "#EXT-X-INDEPENDENT-SEGMENTS\n"
+    "#EXT-X-DISCONTINUITY\n"
+    "#EXTINF:6.250000,\n"
+    "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00000.ts\n"
+    "#EXTINF:3.500000,\n"
+    "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00001.ts\n"
+    "#EXTINF:5.125000,\n"
+    "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00002.ts\n";
+} // namespace
+
+TEST_CASE("ParseNewM3u8SegmentEntries reads a 0.32.0 event playlist: its extra tags are skipped, nothing else is",
+          "[M3u8SegmentParser]")
+{
+  const std::vector<M3u8SegmentEntry> entries = ParseNewM3u8SegmentEntries(kEventPlaylistPrefix, kBaseDir, 0);
+
+  REQUIRE(entries.size() == 3);
+  CHECK(entries[0].url == "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00000.ts");
+  CHECK(entries[0].durationSec == Catch::Approx(6.25));
+  CHECK(entries[1].durationSec == Catch::Approx(3.5));
+  CHECK(entries[2].url == "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00002.ts");
+  CHECK(entries[2].durationSec == Catch::Approx(5.125));
+}
+
+TEST_CASE("A growing 0.32.0 event playlist only ever yields the new segments, with a mid-stream discontinuity",
+          "[M3u8SegmentParser]")
+{
+  // The next poll: two more segments, the second after an EXT-X-DISCONTINUITY (a provider splice), media sequence
+  // still 0 because an event playlist never drops its head.
+  const std::string grown = kEventPlaylistPrefix +
+                            "#EXTINF:2.750000,\n"
+                            "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00003.ts\n"
+                            "#EXT-X-DISCONTINUITY\n"
+                            "#EXTINF:4.500000,\n"
+                            "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00004.ts\n";
+
+  const std::vector<M3u8SegmentEntry> fresh = ParseNewM3u8SegmentEntries(grown, kBaseDir, 3);
+
+  REQUIRE(fresh.size() == 2);
+  CHECK(fresh[0].url == "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00003.ts");
+  CHECK(fresh[0].durationSec == Catch::Approx(2.75));
+  CHECK(fresh[1].url == "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00004.ts");
+  CHECK(fresh[1].durationSec == Catch::Approx(4.5));
+  // A discontinuity between two segments never makes the second one inherit the first one's duration.
+  CHECK(ParseNewM3u8SegmentEntries(grown, kBaseDir, 5).empty());
+}
+
+TEST_CASE("A 0.32.0 event playlist is only finished once the server has appended its end-of-list tag",
+          "[M3u8SegmentParser]")
+{
+  CHECK_FALSE(M3u8HasEndList(kEventPlaylistPrefix));
+  CHECK(M3u8HasEndList(kEventPlaylistPrefix + "#EXT-X-ENDLIST\n"));
+  // the playlist type line mentions neither "ENDLIST" nor anything the end-of-list check could mistake for it
+  CHECK_FALSE(M3u8HasEndList("#EXT-X-PLAYLIST-TYPE:EVENT\n"));
+}
+
+TEST_CASE("RebaseRecordingSegmentUrl moves a 0.32.0 playlist's absolute segment URLs to the configured address",
+          "[M3u8SegmentParser]")
+{
+  // 0.32.0 also stopped baking the container's listen port into absolute URLs when the Host header had none, so a
+  // playlist may now name the public address without a port; either way the configured address wins.
+  const std::string prefix = "/api/channels/recordings/7/hls/";
+  CHECK(RebaseRecordingSegmentUrl("http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00000.ts",
+                                  "https://tv.example.com",
+                                  prefix) == "https://tv.example.com/api/channels/recordings/7/hls/seg_00000.ts");
+  CHECK(RebaseRecordingSegmentUrl("http://tv.example.com/api/channels/recordings/7/hls/seg_00000.ts",
+                                  "https://tv.example.com",
+                                  prefix) == "https://tv.example.com/api/channels/recordings/7/hls/seg_00000.ts");
 }

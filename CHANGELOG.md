@@ -10,6 +10,14 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased] -- addon
+
+### Changed
+
+- Checked against Dispatcharr `0.32.0`: no addon change was needed. In-progress recording playback (Dispatcharr now
+  writes those as event playlists), catch-up, timers and recurring rules, the real-time recording push and live
+  timeshift all work against it, on a 64-bit Android phone and on the other devices tested.
+
 ## [0.12.0] - 2026-10-07
 
 Addon changes since `0.11.0`. This release also bundles `timeshift_buffer` `0.8.13` and `recording_edl` `0.2.3`
