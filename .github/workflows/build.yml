@@ -738,9 +738,12 @@ jobs:
             "$($zip.Name): $count entries stamped $($stamp.ToString('u'))"
           }
 
-      # The same privacy gate as the other legs (tools/check_release_zip.py). It needs Python, which this runner may
-      # not have: that is a warning here, not a failure, because the release procedure runs the gate on this zip
-      # anyway before anything is published (docs/BUILDING.md, "Release assets").
+      # The same privacy gate as the other legs (tools/check_release_zip.py). It needs a real Python: this runner's
+      # `python` and `python3` are Windows' Microsoft Store stubs, which print an error and exit non-zero, so the
+      # probe below runs each candidate with --version and takes the first that works (the `py` launcher that the
+      # python.org installer puts in C:\Windows). A runner with no Python fails the job rather than skipping the
+      # gate, so the check cannot silently stop running; the release procedure runs the gate on this zip as well
+      # (docs/BUILDING.md, "Release assets").
       - name: Release zip privacy gate
         shell: pwsh
         run: |
@@ -753,8 +756,7 @@ jobs:
             }
           }
           if (-not $py) {
-            Write-Host "::warning::No working Python on this runner; the release procedure runs tools/check_release_zip.py on this zip instead."
-            exit 0
+            throw "No working Python on this runner (the python and python3 on PATH are Microsoft Store stubs); install Python 3 for all users so the release zip privacy gate can run"
           }
           $zips = @(Get-ChildItem dist/*.zip | ForEach-Object { $_.FullName })
           & $py addons/pvr.dispatcharr-unofficial/tools/check_release_zip.py @zips
