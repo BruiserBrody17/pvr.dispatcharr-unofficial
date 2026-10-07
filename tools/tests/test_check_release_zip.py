@@ -117,7 +117,11 @@ def test_a_blocklist_term_in_an_entry_name_fails(tmp_path):
 
 def test_the_known_upstream_strings_are_allowed_only_in_their_own_members(tmp_path):
     kodi_path = b"C:\\code\\kodi-deps\\Build\\x64"
-    ok = _zip(tmp_path / "ok.zip", {"addon/libcurl.dll": kodi_path, "addon/zlib.dll": kodi_path.lower()})
+    kodi_package = b'ENGINESDIR: "C:\\code\\kodi-deps\\package\\x64\\openssl\\lib\\engines-1_1"'
+    ok = _zip(
+        tmp_path / "ok.zip",
+        {"addon/libcurl.dll": kodi_path + b"\x00" + kodi_package, "addon/zlib.dll": kodi_path.lower()},
+    )
     assert gate.check_zip(ok, []) == []
     # the same text in the addon's own binary is not excused
     bad = _zip(tmp_path / "bad.zip", {"addon/pvr.dispatcharr-unofficial.dll": kodi_path})
@@ -217,3 +221,17 @@ def test_main_exit_codes(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("PRIVACY_BLOCKLIST", str(blocklist))
     assert gate.main(["prog", "--require-blocklist", clean]) == 0
     assert "clean" in capsys.readouterr().out
+
+
+def test_distinct_paths_sharing_a_prefix_are_each_reported(tmp_path):
+    # the duplicate suppression once keyed on the match plus eight characters, which hid every path after the first
+    # that began alike (found when the first real Windows gate run reported one of two upstream paths)
+    data = b"C:\\code\\a\\x\x00C:\\code\\b\\y\x00C:\\code\\c\\z"
+    path = _zip(tmp_path / "a.zip", {"addon/lib.dll": data})
+    assert len(gate.check_zip(path, [])) == 3
+
+
+def test_a_kodi_dependency_path_outside_its_two_trees_is_not_excused(tmp_path):
+    other = b"C:\\code\\kodi-deps\\secret\\x64"
+    path = _zip(tmp_path / "a.zip", {"addon/libcurl.dll": other})
+    assert gate.check_zip(path, [])

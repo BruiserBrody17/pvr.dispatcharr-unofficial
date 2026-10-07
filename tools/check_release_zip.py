@@ -68,9 +68,11 @@ ALLOWED_PATH_STRINGS = (
     ),
     (
         r"(^|/)(libcurl|zlib)\.dll$",
-        r"[Cc]:\\code\\kodi-deps\\[Bb]uild\\x64",
-        "the build path of Kodi's own dependency build, baked into the prebuilt DLLs fetched from Kodi's mirror "
-        "(confirmed 2026-10-07 in the 0.12.0 Windows zip): identical in every copy of them, not this project's machine",
+        r"[Cc]:\\code\\kodi-deps\\(?:[Bb]uild|package)\\x64",
+        "the build and install paths of Kodi's own dependency build (its `Build\\x64` and `package\\x64` trees), baked "
+        "into the prebuilt DLLs fetched from Kodi's mirror (confirmed 2026-10-07 in the 0.12.0 Windows zip, OpenSSL's "
+        "engines directory and the sources curl, nghttp2 and zlib were built from): identical in every copy of them, "
+        "not this project's machine",
     ),
 )
 
@@ -118,7 +120,7 @@ def scan_member(name, data, blocklist_terms):
             for match in regex.finditer(text):
                 if any(a.match(text, match.start()) for a in allowed):
                     continue
-                key = (label, text[match.start() : match.end() + 8])
+                key = (label, text[match.start() : match.end() + 60])
                 if key in seen:
                     continue
                 seen.add(key)
