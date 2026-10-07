@@ -94,7 +94,7 @@ jobs:
           persist-credentials: false
 
       # --break-system-packages: needed on a CI runner
-      # (its minimal Ubuntu image enforces PEP 668's
+      # (the runner's minimal Ubuntu image enforces PEP 668's
       # "externally-managed-environment" restriction; GitHub's own hosted
       # ubuntu-latest doesn't, but the flag is a no-op there either way --
       # confirmed live, 2026-09-23, setting up the CI).
@@ -332,11 +332,7 @@ jobs:
           persist-credentials: false
 
       # A plain git clone against the fully-qualified github.com URL,
-      # rather than actions/checkout's repository: shorthand -- that
-      # shorthand resolves against whichever server is actually running
-      # the job, and Kodi's real source only ever lives on github.com
-      # regardless of which host is running this workflow. Confirmed
-      # live, 2026-09-23: this step failed to resolve on a CI runner before this fix.
+      # rather than actions/checkout's repository: shorthand, so the clone does not depend on which server runs the job; Kodi's real source only ever lives on github.com.
       - name: Check out Kodi (for the binary-addons build harness)
         run: |
           git init -q kodi-source
@@ -402,6 +398,17 @@ jobs:
           # all, with nothing here to say why. Matches the Windows leg's
           # own explicit `throw` for the same failure mode below.
           test -n "$(find dist -name '*.zip' -print -quit)"
+
+      # CPack's zip stores each entry's time twice, as the build machine's local clock and as UTC, so the
+      # difference is the machine's timezone, readable by anyone who downloads the release: found 2026-10-07 on
+      # this leg's zip (CI), after the Windows leg and the plugin zips had been fixed and this one
+      # missed. Rewritten with every entry stamped with the commit's own time in UTC and no extra fields
+      # (tools/normalize_zip.py, tested), then checked.
+      - name: Normalize zip timestamps
+        run: |
+          python3 addons/pvr.dispatcharr-unofficial/tools/normalize_zip.py \
+            "$(git -c safe.directory='*' -C addons/pvr.dispatcharr-unofficial log -1 --format=%ct)" dist/*.zip
+          python3 addons/pvr.dispatcharr-unofficial/tools/normalize_zip.py --check dist/*.zip
 
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -469,6 +476,9 @@ jobs:
               echo "$entries" | grep -qx "${plugin}/${required}" || { echo "::error::${plugin}.zip lacks ${required}"; exit 1; }
             done
           done
+          # and no entry carries the build machine's timezone (the extended-timestamp field `zip -X` drops)
+          cd ..
+          python3 tools/normalize_zip.py --check dist/*.zip
 
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -648,7 +658,7 @@ jobs:
       - name: Build addon (CMake, MSVC)
         shell: pwsh
         run: |
-          # The job runs that runs jobs directly on its machine on a machine that keeps its temp directory between runs, and CPack leaves its zip
+          # The job runs directly on a machine that keeps its temp directory between runs, and CPack leaves its zip
           # there (see "Collect built zip"): clear what an earlier build left, or the collect step below could pick a
           # zip of an older version (a name sort puts 0.11.0 before 0.12.0).
           Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharr-unofficial-*.zip' -Recurse -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
@@ -696,7 +706,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           # The checkout lives under addons/ (see the checkout step's `path`), not at
-          # the workspace root this step runs in; safe.directory because a directly-on-the-host runner's checkout can be owned by a different account than the job's.
+          # the workspace root this step runs in; safe.directory because a directly-on-the-host
+          # runner's checkout can be owned by a different account than the job's.
           $commitTime = git -c safe.directory='*' -C addons/pvr.dispatcharr-unofficial log -1 --format=%ct
           if (-not $commitTime) { throw "Could not read the commit time from git" }
           $stamp = [DateTimeOffset]::FromUnixTimeSeconds([long]$commitTime)

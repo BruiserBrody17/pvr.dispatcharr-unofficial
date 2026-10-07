@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**5 open, 263 closed.**
+**5 open, 264 closed.**
 
 | Section | Entries |
 |---|---|
@@ -16,7 +16,7 @@
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 4 |
 | Open: Tooling (tools/) | 0 |
-| Closed: Fixed | 232 |
+| Closed: Fixed | 233 |
 | Closed: Closed without a change (refuted, explained or harmless) | 23 |
 | Closed: Project history and test infrastructure | 8 |
 
@@ -61,6 +61,10 @@
 ## Closed
 
 ### Fixed
+
+#### The pre-release sweep of 0.12.0: the Linux release zip carried the build machine's timezone
+
+**Fixed 2026-10-07 (the pre-release data-hardening sweep for 0.12.0; confirmed by reading the CI-built zip's entries).** The Linux leg of CI (`build-unix`) uploaded CPack's zip as it came: every entry stored its time twice, as the build machine's local clock and as UTC (the "UT" extended-timestamp field, 20 of them in the zip), so anyone downloading the release could read the runner's UTC offset off the difference. The Windows leg had its PowerShell rewrite (2026-10-03) and the plugin zips `TZ=UTC zip -X`, and this leg was missed; it would have gone out with the first tag. `tools/normalize_zip.py` (tested in `tools/tests/test_normalize_zip.py`: against a zip built the way CI built it, in several zones; permissions, order and contents survive; the result does not depend on the zone) rewrites a zip with every entry stamped with the commit's time in UTC and no extra fields, and `--check` fails when any entry still carries the field. The Linux leg runs both, the plugin job runs `--check`, and `docs/BUILDING.md` / `CLAUDE.md` now say a hand-built zip (macOS, CoreELEC, Android) takes the same two commands before upload. The pre-release sweep also tidied wording in the workflow's comments and a few documents (the README no longer says the workflow attaches release zips: they are published by hand).
 
 #### Links to the public GitHub repo still name the master branch
 
@@ -6383,8 +6387,8 @@ Measured with a throwaway probe (never committed) on the Linux client, the serve
 
 #### macOS build and smoke test of the hardening branch is stale
 
-**The last macOS build was of `00058fc`; nothing from the `timeshift_buffer` 0.6.7/0.6.8 batch's C++ counterpart (redirect policy, bounded response sink, SHA-1 handshake check, the
-unprobeable-segment and tail-seek fixes) has been built or run on macOS, 2026-10-02.** The Mac used for manual builds (see `docs/BUILDING.md`) was unreachable when this was attempted. Everything else was exercised on 2026-10-02: CI ran the workflow on the branch for the first time (lint, Python and C++ unit tests, the sanitized C++ tests, the Linux build, plugin packaging and the Windows build all green on `351f6f2`), and the CI-built Windows DLL
+**The last macOS build predates this work; nothing from the `timeshift_buffer` 0.6.7/0.6.8 batch's C++ counterpart (redirect policy, bounded response sink, SHA-1 handshake check, the
+unprobeable-segment and tail-seek fixes) has been built or run on macOS, 2026-10-02.** The Mac used for manual builds (see `docs/BUILDING.md`) was unreachable when this was attempted. Everything else was exercised on 2026-10-02: CI ran the workflow on the branch for the first time (lint, Python and C++ unit tests, the sanitized C++ tests, the Linux build, plugin packaging and the Windows build all green), and the CI-built Windows DLL
 ran in the Windows Kodi against the real instance: the smoke harness passed 17 of 18 (the live-timeshift seek check skipped, server-side timeshift not ready on that profile), including the
 realtime push, which exercises the new `Sec-WebSocket-Accept` check. To close: build the branch tip on the Mac per `docs/BUILDING.md` and run it in a macOS Kodi if one is available.
 

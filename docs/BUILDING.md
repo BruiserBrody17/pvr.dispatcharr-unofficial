@@ -100,8 +100,11 @@ machine stays running as a CI daemon full-time, which is not worth it. Build mac
 it's for a real tagged release, attach the zip to the Release by hand the
 same way CoreELEC's own release checklist does:
 ```bash
+python3 tools/normalize_zip.py "$(git log -1 --format=%ct)" dist/addon-pvr.dispatcharr-unofficial-<version>-osx-*.zip
+python3 tools/normalize_zip.py --check dist/addon-pvr.dispatcharr-unofficial-<version>-osx-*.zip
 gh release upload <tag> dist/addon-pvr.dispatcharr-unofficial-<version>-osx-*.zip
 ```
+(the first two commands strip the build machine's timezone from the zip, see step 5 of the Windows section)
 (the exact zip filename depends on the Mac's own architecture -- `find
 tools/depends/target/binary-addons -name 'addon-pvr.dispatcharr-unofficial-*.zip'`
 from within the `kodi-source` checkout, per step 5 above, to confirm the
@@ -307,7 +310,12 @@ Windows build machine, not just a CI-specific patch.
    every entry stamped with the commit time in UTC and no extended fields,
    same bytes otherwise. A hand-built zip for a release needs the same
    treatment before upload; the step's PowerShell runs as-is on any machine
-   with `pwsh` and `git`.
+   with `pwsh` and `git`. The Linux leg and every hand-built zip (macOS,
+   CoreELEC, Android) take `tools/normalize_zip.py` instead, which needs only
+   Python 3: `python3 tools/normalize_zip.py "$(git log -1 --format=%ct)" <zip>`,
+   then `python3 tools/normalize_zip.py --check <zip>` (CI's Linux leg and the
+   plugin zips run both; the Linux leg's zip shipped unnormalized until the
+   pre-release sweep of 0.12.0 found it).
 
 ## CoreELEC on an ODROID N2+ (Amlogic S922X)
 

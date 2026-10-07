@@ -2656,7 +2656,9 @@ test the CoreELEC package, and runs no addon against a real Dispatcharr or Kodi
   build host's directory layout. Publish stripped builds. Check every zip's
   entry timestamps too: a zip that stores both a local-clock and a UTC time
   per entry reveals the build machine's timezone (CI normalizes the Windows
-  zip, see `docs/BUILDING.md`; a hand-built zip needs the same before upload).
+  zip in PowerShell and the Linux zip with `tools/normalize_zip.py`, and the plugin
+  zips are built with `TZ=UTC zip -X`; a hand-built zip needs `normalize_zip.py` and
+  its `--check` before upload, see `docs/BUILDING.md`).
 - **Batch fixes into releases -- don't tag/release per individual fix.**
   Early on this project tagged and released (including the full manual
   CoreELEC build-and-upload dance) after nearly every single bug fix,

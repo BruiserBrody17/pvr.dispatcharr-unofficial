@@ -46,6 +46,5 @@ order they were created, not sorted by version.
 ## The unsquashed hardening-audit history
 
 The 473 commits of the project-wide hardening audit branch were squash-merged into `Omega` as one commit
-(`b191b01`), so they are not ancestors of `Omega`.
- The per-finding record of what those commits
+(`b191b01`), so they are not ancestors of `Omega`. The per-finding record of what those commits
 changed is `docs/OPEN_ITEMS.md`'s Fixed entries, and the tag history cleared on 2026-10-06 is the table above.
