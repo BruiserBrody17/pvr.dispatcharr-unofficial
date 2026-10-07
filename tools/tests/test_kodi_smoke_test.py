@@ -362,3 +362,98 @@ def test_time_to_seconds_combines_kodis_player_time_fields():
 
 def test_time_to_seconds_is_zero_for_a_stopped_player_time():
     assert kodi_smoke_test._time_to_seconds({"hours": 0, "minutes": 0, "seconds": 0, "milliseconds": 0}) == 0
+
+
+class _ScriptedRpc:
+    """A JsonRpcClient stand-in: `answers` maps a method to a value, an exception to raise, or a list of them
+    consumed in order (the last one repeats)."""
+
+    def __init__(self, answers):
+        self.answers = answers
+        self.calls = []
+
+    def call(self, method, params=None, timeout=None):
+        self.calls.append((method, params))
+        answer = self.answers[method]
+        if isinstance(answer, list):
+            answer = answer.pop(0) if len(answer) > 1 else answer[0]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+def test_has_modal_dialog_reads_the_info_boolean_and_never_sends_input():
+    rpc = _ScriptedRpc({"XBMC.GetInfoBooleans": {"System.HasActiveModalDialog": True}})
+    assert kodi_smoke_test._has_modal_dialog(rpc) is True
+    rpc = _ScriptedRpc({"XBMC.GetInfoBooleans": {"System.HasActiveModalDialog": False}})
+    assert kodi_smoke_test._has_modal_dialog(rpc) is False
+    assert all(not method.startswith("Input.") for method, _ in rpc.calls)
+
+
+def test_has_modal_dialog_is_false_when_kodi_cannot_answer():
+    rpc = _ScriptedRpc({"XBMC.GetInfoBooleans": kodi_smoke_test.JsonRpcError("timed out")})
+    assert kodi_smoke_test._has_modal_dialog(rpc) is False
+
+
+def test_open_live_channel_succeeds_without_checking_for_a_prompt():
+    rpc = _ScriptedRpc({"Player.Open": "OK"})
+    kodi_smoke_test._open_live_channel(rpc, 7)
+    assert [m for m, _ in rpc.calls] == ["Player.Open"]
+
+
+def test_open_live_channel_skips_when_a_modal_prompt_is_why_it_timed_out():
+    rpc = _ScriptedRpc(
+        {
+            "Player.Open": kodi_smoke_test.JsonRpcError("Player.Open: timed out waiting for a response"),
+            "XBMC.GetInfoBooleans": {"System.HasActiveModalDialog": True},
+            "GUI.GetProperties": {"currentwindow": {"label": "Yes / No dialog", "id": 10100}},
+        }
+    )
+    with pytest.raises(kodi_smoke_test.SkipCheck) as info:
+        kodi_smoke_test._open_live_channel(rpc, 7)
+    message = str(info.value)
+    assert "Yes / No dialog" in message and "channel 7" in message and "--channel-id" in message
+    assert all(not method.startswith("Input.") for method, _ in rpc.calls)
+
+
+def test_open_live_channel_still_fails_when_it_timed_out_with_no_prompt():
+    rpc = _ScriptedRpc(
+        {
+            "Player.Open": kodi_smoke_test.JsonRpcError("Player.Open: timed out waiting for a response"),
+            "XBMC.GetInfoBooleans": {"System.HasActiveModalDialog": False},
+        }
+    )
+    with pytest.raises(kodi_smoke_test.JsonRpcError):
+        kodi_smoke_test._open_live_channel(rpc, 7)
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+def test_wait_for_canseek_returns_as_soon_as_it_turns_true():
+    clock = _Clock()
+    rpc = _ScriptedRpc({"Player.GetProperties": [{"canseek": False}, {"canseek": False}, {"canseek": True}]})
+    assert kodi_smoke_test._wait_for_canseek(rpc, 1, timeout=30, interval=1, sleep=clock.sleep, clock=clock) is True
+    assert len(rpc.calls) == 3 and clock.now == 2
+
+
+def test_wait_for_canseek_gives_up_after_the_timeout_and_polls_only_that_long():
+    clock = _Clock()
+    rpc = _ScriptedRpc({"Player.GetProperties": {"canseek": False}})
+    assert kodi_smoke_test._wait_for_canseek(rpc, 1, timeout=10, interval=2, sleep=clock.sleep, clock=clock) is False
+    assert clock.now == 10 and len(rpc.calls) == 6
+
+
+def test_wait_for_canseek_asks_for_the_right_player():
+    clock = _Clock()
+    rpc = _ScriptedRpc({"Player.GetProperties": {"canseek": True}})
+    kodi_smoke_test._wait_for_canseek(rpc, 3, sleep=clock.sleep, clock=clock)
+    assert rpc.calls[0] == ("Player.GetProperties", {"playerid": 3, "properties": ["canseek"]})

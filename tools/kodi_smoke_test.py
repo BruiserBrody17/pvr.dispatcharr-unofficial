@@ -89,6 +89,11 @@ PVR_MANAGER_READY_TIMEOUT_SECONDS = 15
 PVR_MANAGER_READY_POLL_INTERVAL_SECONDS = 1
 PLAYER_OPEN_TIMEOUT_SECONDS = 30
 LIVE_TIMESHIFT_BUFFER_WARMUP_SECONDS = 5
+# A real ODROID N2+ took longer than the warmup above to report canseek=true on a fresh buffer (and the check then
+# skipped itself on both of two runs, 2026-10-07, while a hand-driven session on the same device saw it true within
+# seconds), so canseek is polled for up to this long before concluding timeshift isn't available.
+LIVE_TIMESHIFT_CANSEEK_TIMEOUT_SECONDS = 30
+LIVE_TIMESHIFT_CANSEEK_POLL_INTERVAL_SECONDS = 1
 LIVE_TIMESHIFT_SEEK_BACK_SECONDS = 20
 LIVE_TIMESHIFT_SEEK_TIMEOUT_SECONDS = 30
 REALTIME_UPDATE_TEST_LEAD_MINUTES = 2
@@ -313,6 +318,52 @@ def _describe_current_window(rpc: JsonRpcClient) -> str:
         return f"{window.get('label', '?')} (id {window.get('id', '?')})"
     except JsonRpcError as exc:
         return f"<could not check: {exc}>"
+
+
+def _has_modal_dialog(rpc: JsonRpcClient) -> bool:
+    """Read-only: whether Kodi is showing a modal dialog right now. A modal prompt blocks the JSON-RPC calls that need
+    Kodi's main thread (Player.Open times out; the webserver itself keeps answering), and this call is one that
+    still gets through. Never sends input -- see _dismiss_resume_dialog_if_stuck()'s account of why."""
+    try:
+        result = rpc.call("XBMC.GetInfoBooleans", {"booleans": ["System.HasActiveModalDialog"]})
+        return bool(result.get("System.HasActiveModalDialog"))
+    except JsonRpcError:
+        return False
+
+
+def _open_live_channel(rpc: JsonRpcClient, channel_id: int):
+    """Player.Open on a live channel. A timeout while Kodi shows a modal prompt is a skip, not a failure: Kodi asks
+    "Play recording" / "Switch to channel" when a channel's current programme has a recording (seen 2026-10-07 on a
+    real N2+ and a Mac, for a programme a series rule had recorded), and answering it would mean sending input,
+    which this script deliberately never does. A timeout with no prompt up is a real failure and is re-raised."""
+    try:
+        rpc.call("Player.Open", {"item": {"channelid": channel_id}}, timeout=PLAYER_OPEN_TIMEOUT_SECONDS)
+    except JsonRpcError:
+        if _has_modal_dialog(rpc):
+            raise SkipCheck(
+                f"Kodi is showing a modal prompt ({_describe_current_window(rpc)}) instead of opening channel "
+                f"{channel_id}, most likely 'Play recording / Switch to channel' because its current programme "
+                "has a recording; dismiss it on the device or pick another channel with --channel-id"
+            ) from None
+        raise
+
+
+def _wait_for_canseek(
+    rpc: JsonRpcClient,
+    playerid: int,
+    timeout: float = LIVE_TIMESHIFT_CANSEEK_TIMEOUT_SECONDS,
+    interval: float = LIVE_TIMESHIFT_CANSEEK_POLL_INTERVAL_SECONDS,
+    sleep=time.sleep,
+    clock=time.monotonic,
+) -> bool:
+    """Polls Player.GetProperties until canseek is true or `timeout` passes; returns the last answer."""
+    deadline = clock() + timeout
+    while True:
+        if rpc.call("Player.GetProperties", {"playerid": playerid, "properties": ["canseek"]})["canseek"]:
+            return True
+        if clock() >= deadline:
+            return False
+        sleep(interval)
 
 
 def _dismiss_resume_dialog_if_stuck(rpc: JsonRpcClient):
@@ -540,7 +591,7 @@ def check_live_playback(rpc: JsonRpcClient, channel_id: int):
         raise SkipCheck(f"channel {channel_id} has an active recording in progress right now -- retry later")
 
     try:
-        rpc.call("Player.Open", {"item": {"channelid": channel_id}}, timeout=PLAYER_OPEN_TIMEOUT_SECONDS)
+        _open_live_channel(rpc, channel_id)
         player = _wait_for_active_player(rpc)
         assert player is not None, "playback never started (Player.GetActivePlayers stayed empty)"
         props = rpc.call("Player.GetProperties", {"playerid": player["playerid"], "properties": ["speed", "canseek"]})
@@ -597,16 +648,18 @@ def check_live_timeshift_seek(rpc: JsonRpcClient, channel_id: int):
         raise SkipCheck(f"channel {channel_id} has an active recording in progress right now -- retry later")
 
     try:
-        rpc.call("Player.Open", {"item": {"channelid": channel_id}}, timeout=PLAYER_OPEN_TIMEOUT_SECONDS)
+        _open_live_channel(rpc, channel_id)
         player = _wait_for_active_player(rpc)
         assert player is not None, "playback never started (Player.GetActivePlayers stayed empty)"
         playerid = player["playerid"]
         # Let the rolling buffer actually accumulate some real history
         # before attempting to seek backward into it at all.
         time.sleep(LIVE_TIMESHIFT_BUFFER_WARMUP_SECONDS)
-        props = rpc.call("Player.GetProperties", {"playerid": playerid, "properties": ["canseek"]})
-        if not props["canseek"]:
-            raise SkipCheck("live stream reports canseek=false -- server-side timeshift isn't ready/available")
+        if not _wait_for_canseek(rpc, playerid):
+            raise SkipCheck(
+                f"live stream still reports canseek=false after {LIVE_TIMESHIFT_CANSEEK_TIMEOUT_SECONDS}s -- "
+                "server-side timeshift isn't ready/available"
+            )
 
         rpc.call(
             "Player.Seek",

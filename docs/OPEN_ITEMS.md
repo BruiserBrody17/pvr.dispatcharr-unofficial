@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**5 open, 266 closed.**
+**5 open, 267 closed.**
 
 | Section | Entries |
 |---|---|
@@ -16,7 +16,7 @@
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 4 |
 | Open: Tooling (tools/) | 0 |
-| Closed: Fixed | 235 |
+| Closed: Fixed | 236 |
 | Closed: Closed without a change (refuted, explained or harmless) | 23 |
 | Closed: Project history and test infrastructure | 8 |
 
@@ -61,6 +61,10 @@
 ## Closed
 
 ### Fixed
+
+#### The smoke harness skipped its live timeshift check on a slow device and failed on Kodi's own prompt
+
+**Fixed 2026-10-07 (found by running the published 0.12.0 zips on a real ODROID N2+ and a Mac; confirmed by the harness runs and by a hand-driven session on the N2+).** Two shortcomings of `tools/kodi_smoke_test.py`, neither an addon fault. (1) The live timeshift seek check waited a fixed five seconds, read `canseek` once and skipped when it was false: on the N2+ it skipped on both of two runs, while a hand-driven session saw `canseek` true a few seconds after the open (and the addon's own log showed the timeshift stream open), so that platform's timeshift went unchecked by the harness. It now polls for up to 30 seconds. (2) A channel whose current programme has a recording makes Kodi show its own "Play recording" / "Switch to channel" prompt, a modal dialog that stalls `Player.Open` (30 s timeout, then the live playback check failed on the Mac run). The live checks now ask the read-only `System.HasActiveModalDialog` and skip with an explanation, still sending no input of any kind (a blind keystroke once reached Kodi's power menu, which is why the harness's resume-dialog helper sends none). Tested with a scripted fake RPC client, including that nothing it sends is ever an `Input.*` call; six deliberate mutations caught. `docs/MANUAL_TESTING.md` records the device results and the three traps (the prompt, per-profile channel ids, a Kodi parked on its Login screen).
 
 #### A timeshift_buffer file-server test read a log line before the server wrote it
 

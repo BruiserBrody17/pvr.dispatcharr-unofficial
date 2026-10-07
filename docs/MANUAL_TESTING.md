@@ -76,6 +76,37 @@ Not substituted for by a virtual GPU or a laptop.
   server-side timeshift uses the Amlogic hardware decoder (`CAMLCodec::OpenDecoder` 1920x1080 in the
   log) with no `Packet corrupt` or audio-sync errors over seeks and a pause. Still for a person on
   that hardware: audio passthrough, a long soak, and HEVC.
+- **The released 0.12.0 zips on a real N2+ and a Mac (2026-10-07).** Tested as published (the zips downloaded back
+  from the release, so the bytes the release page serves), not from a build tree.
+  *CoreELEC, N2+ (CoreELEC 21.3 Omega):* the CoreELEC package (`pvr.dispatcharr-unofficial-0.12.0.1.zip`) installed
+  over the `0.11.0` already there with its settings in place (the upgrade-in-place item in section 5, on this
+  platform); Kodi listed `v0.12.0.1`, no `No platform for add-on` line, the blank `<platform>` tag as expected.
+  The smoke harness passed 15 of 15 attempted (2 skipped, below) against the real instance, timers created and
+  deleted included; a live channel played through server-side timeshift with the Amlogic hardware decoder
+  (`CAMLCodec::OpenDecoder` 1920x1080 H.264), the addon logged seeks moving the stream position back and forward
+  with a clamp at the tail, and a pause stopped frame output (about 14 frames in 6 s against about 100 per second
+  playing) and resumed to full rate. No `Packet corrupt`, `large audio sync error` or `marking stream fatal` lines.
+  *macOS, Apple silicon, Kodi 21.3, in a throwaway profile (`HOME` pointed elsewhere, deleted afterwards):* the
+  macOS zip's two symlinks survived normalization and extraction, the addon loaded and enabled, and a fresh first
+  run adopted the account's existing API key, synced the time zone from the server and detected the account as
+  admin. The harness passed 16 of 17 (the one failure is the prompt below, which the harness now skips); live
+  timeshift seek, catch-up, recorded and in-progress recording playback and the timer create/delete all passed,
+  with no packet, audio-sync, fatal or addon error lines in the whole log.
+  Still not done on either: audio passthrough, a long soak, HEVC, and the Android zips (no Android device was
+  available for this run).
+- **Three traps the 2026-10-07 device runs hit, none of them the addon:**
+  1. **Kodi's own "Play recording" / "Switch to channel" prompt** (a `DialogConfirm`) appears when a channel's
+     current programme has a recording, and being modal it makes `Player.Open` hang and stalls the JSON-RPC calls
+     that need Kodi's main thread (`XBMC.GetInfoBooleans` still answers, which is how to see it:
+     `System.HasActiveModalDialog`). The harness's `isrecording` guard does not catch every case. The harness now
+     skips such a check with that explanation instead of failing it; never dismiss the prompt with synthetic input
+     from a script (the harness's own resume-dialog helper explains why), do it on the device or pick another
+     channel.
+  2. **Channel ids belong to a Kodi profile.** `--channel-id` taken from one device is meaningless in a fresh
+     profile (`Invalid params` from `PVR.GetBroadcasts`); look the channel up in the profile under test.
+  3. **A Kodi that starts on its profile Login screen has no PVR manager yet** (`PVR.GetProperties` answers `-32100`
+     and `System.CurrentWindow` is `Login screen`), so a restart looks like a broken addon: load a profile
+     (`Profiles.LoadProfile`) and the client is up in about ten seconds with no addon toggle.
 
 ## 3. Long-running conditions
 
