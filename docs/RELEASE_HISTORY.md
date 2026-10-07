@@ -10,9 +10,8 @@ cleanup, see `docs/OPEN_ITEMS.md`), and the tags were moved onto the rewritten c
 Dates are the commit dates in UTC.
 
 Not preserved: the release assets (each release carried two files; the Windows and plugin
-zips can be rebuilt by CI from the commit, the hand-built zips cannot) and the release notes
-posted on the public GitHub repository, which this cleanup did not touch. The per-version
-changes themselves are in `CHANGELOG.md`.
+zips can be rebuilt by CI from the commit, the hand-built zips cannot) and the release notes.
+The per-version changes themselves are in `CHANGELOG.md`.
 
 The version numbers went `0.2.0`, `0.3.0`, `0.4.0`, then `1.0.0-beta.1` to `1.0.8`, then back to
 `0.9.0` to `0.11.0` (see `CLAUDE.md`'s note on pre-1.0 versioning), so these are listed in the

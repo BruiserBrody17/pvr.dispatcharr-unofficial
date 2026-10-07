@@ -2615,7 +2615,8 @@ test the CoreELEC package, and runs no addon against a real Dispatcharr or Kodi
   later Kodi release (Piers, Kodi 22) changes the PVR API enough that the addon needs separate
   per-Kodi versions, branch `Piers` off `Omega` at that point and keep `Omega` as the
   maintenance branch for Kodi 21, rather than renaming again. Older text in `docs/` and in this
-  file that says `master` describes the branch as it was then and is left as written. The links to the public GitHub repo that still say `master` are tracked in `docs/OPEN_ITEMS.md`'s "Links to the
+  file that says `master` describes the branch as it was then and is left as written. The links to
+  the public GitHub repo that still say `master` are tracked in `docs/OPEN_ITEMS.md`'s "Links to the
   public GitHub repo still name the master branch" entry.
 - **Every external contributor's PR gets a real manual review before
   merging, as of 2026-09-11 -- never auto-merged on green CI alone.**
