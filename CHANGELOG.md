@@ -10,10 +10,12 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased] -- addon
+## [0.12.0] - 2026-10-07
 
-Addon changes since `0.11.0`, not yet in a release. Bundled plugin changes have their own entries below.
-This list is the user-visible part; the reasoning for each is in `docs/OPEN_ITEMS.md`'s Fixed entries.
+Addon changes since `0.11.0`. This release also bundles `timeshift_buffer` `0.8.13` and `recording_edl` `0.2.3`
+(their own entries are below, from `0.6.3` and `0.2.1` on): **redeploy both plugins to Dispatcharr and restart
+Dispatcharr** so every worker runs them. This list is the user-visible part; the reasoning for each change is in
+`docs/OPEN_ITEMS.md`'s Fixed entries.
 
 ### Fixed
 
