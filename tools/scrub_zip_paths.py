@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""Overwrites the build machine's directory prefix inside every member of a zip, byte for byte, same length.
+"""Removes the build machine's directory prefix from every member of a zip, without changing any length or offset.
 
 Some libraries a hand-built zip links statically carry the paths of the machine that built *them*, which stripping
-cannot remove because they are string data, not debug information: nghttp2's `assert()` messages name their source
-files, and OpenSSL records its configure line and its install directories (confirmed 2026-10-07 in the Android
+cannot remove because they are string data, not debug information: nghttp2's assertion messages name their source
+files, and OpenSSL records its configure line, compiler and install directories (confirmed 2026-10-07 in the Android
 zips, built against Kodi's own dependency tree under the builder's home directory). Rebuilding that tree under a
-neutral path takes hours, so after the link, each occurrence of the given prefix is replaced by `/build` followed by
-slashes up to the same length (`/home/someone` becomes `/build//////`). Same length keeps every offset and size
-intact, so the binary is the same program; the text is only ever an error message or a directory a device does not
-have. `tools/check_release_zip.py` then verifies the result, which is the point: this is a tidy-up, the gate decides.
+neutral path takes hours, so after the link:
+
+- in a binary member (one containing NUL bytes), each C string that contains the prefix is replaced whole by `/build`
+  and NUL padding to the same size, so what remains is neither the path nor the build tree's layout (the first
+  version overwrote only the prefix and left `/build//////android-build/kodi-source-arm/...` behind, which still
+  described the builder's directory layout);
+- in a text member, each occurrence of the prefix is replaced by `/build` padded with slashes to the same length.
+
+Same size either way, so every offset stays valid and the binary is the same program: the text is only ever an error
+message, a configure line or a directory a device does not have. A binary string that is not plain text, or is
+absurdly long, is a refusal, never a guess: this must not blank code. `tools/check_release_zip.py` then verifies the
+result, which is the point: this is a tidy-up, the gate decides.
 
 The prefix is a private value (a home directory), so it is an argument and never stored in the repository.
 
@@ -37,8 +45,43 @@ def check_prefix(prefix: str) -> bytes:
     return raw
 
 
+MAX_BLANKED_STRING = 16384  # the longest C string this will blank (OpenSSL's configure line is a couple of KB)
+MIN_PRINTABLE_FRACTION = 0.95
+
+
+def _blank_c_strings(data: bytes, prefixes: list) -> tuple:
+    """(new bytes, count): every NUL-delimited string containing a prefix becomes `/build` + NULs, same size."""
+    out = bytearray(data)
+    count = 0
+    for prefix in sorted(prefixes, key=len, reverse=True):
+        start = 0
+        while True:
+            at = out.find(prefix, start)
+            if at < 0:
+                break
+            begin = out.rfind(b"\x00", 0, at) + 1
+            end = out.find(b"\x00", at)
+            if end < 0:
+                end = len(out)
+            span = out[begin:end]
+            if len(span) > MAX_BLANKED_STRING:
+                raise ValueError("a string containing the prefix is %d bytes long; refusing to blank it" % len(span))
+            printable = sum(1 for b in span if b in (9, 10, 13) or 32 <= b < 127)
+            if printable < MIN_PRINTABLE_FRACTION * len(span):
+                raise ValueError(
+                    "the bytes around an occurrence of the prefix are not plain text; refusing to blank them"
+                )
+            out[begin:end] = (b"/build" + bytes(len(span)))[: len(span)] if len(span) >= 6 else bytes(len(span))
+            count += 1
+            start = end
+    return bytes(out), count
+
+
 def scrub_bytes(data: bytes, prefixes: list) -> tuple:
-    """(new bytes, count). Longer prefixes go first, so one that contains another is not half-replaced."""
+    """(new bytes, count). A binary member (any NUL byte) has each string containing a prefix blanked whole; a text
+    member has the prefix itself overwritten (longer prefixes first, so one containing another is not half-replaced)."""
+    if b"\x00" in data:
+        return _blank_c_strings(data, prefixes)
     count = 0
     for prefix in sorted(prefixes, key=len, reverse=True):
         found = data.count(prefix)

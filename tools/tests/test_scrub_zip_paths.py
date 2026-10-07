@@ -44,14 +44,62 @@ def test_the_replacement_has_the_same_length_and_is_a_valid_path():
         assert set(out[len(b"/build") :]) <= {ord("/")}
 
 
-def test_every_occurrence_goes_and_nothing_else_changes():
-    data = b"\x00head" + _HOME + b"/android-build/x.c\x00" + b"middle" + _HOME + b"/ssl\x00tail"
+def test_a_text_member_has_the_prefix_overwritten_in_place():
+    data = b"head " + _HOME + b"/android-build/x.c middle " + _HOME + b"/ssl tail"
     out, count = scrub.scrub_bytes(data, [_HOME])
     assert count == 2
     assert len(out) == len(data)
     assert _HOME not in out
-    assert out.startswith(b"\x00head/build") and out.endswith(b"/ssl\x00tail")
+    assert out.startswith(b"head /build") and out.endswith(b"/ssl tail")
     assert b"/android-build/x.c" in out and b"middle" in out
+
+
+def test_a_binary_member_has_each_whole_string_blanked_and_everything_else_kept():
+    code = bytes(range(1, 40)) * 3 + b"\x00\xff\x01"
+    data = (
+        b"\x00head\x00"
+        + b'OPENSSLDIR: "'
+        + _HOME
+        + b'/android-build/xbmc-depends/ssl"\x00'
+        + b"keep this string\x00"
+        + _HOME
+        + b"/android-build/kodi-source/lib/nghttp2_hd.c\x00"
+        + code
+        + b"tail\x00"
+    )
+    out, count = scrub.scrub_bytes(data, [_HOME])
+    assert count == 2
+    assert len(out) == len(data)
+    assert _HOME not in out and b"android-build" not in out and b"nghttp2" not in out
+    assert b"keep this string" in out and out.endswith(code + b"tail\x00")
+    # each blanked string is "/build" then NUL padding, nothing of the original layout left
+    assert out.count(b"/build\x00\x00") == 2
+
+
+def test_two_occurrences_in_one_string_are_one_blanking():
+    data = b"\x00cflags: -I" + _HOME + b"/a -isystem " + _HOME + b"/b\x00after\x00"
+    out, count = scrub.scrub_bytes(data, [_HOME])
+    assert count == 1 and len(out) == len(data) and out.endswith(b"after\x00")
+    assert _HOME not in out
+
+
+def test_a_string_that_is_not_plain_text_is_refused_rather_than_blanked():
+    machine_code = bytes([0x80, 0x81, 0x90, 0xA0] * 20)
+    data = b"\x00" + machine_code + _HOME + machine_code + b"\x00"
+    with pytest.raises(ValueError, match="not plain text"):
+        scrub.scrub_bytes(data, [_HOME])
+
+
+def test_an_absurdly_long_string_is_refused():
+    data = b"\x00" + b"a" * (scrub.MAX_BLANKED_STRING + 10) + _HOME + b"\x00"
+    with pytest.raises(ValueError, match="refusing to blank"):
+        scrub.scrub_bytes(data, [_HOME])
+
+
+def test_a_string_ending_the_data_without_a_nul_is_still_bounded():
+    data = b"\x00ok\x00path " + _HOME + b"/x"
+    out, count = scrub.scrub_bytes(data, [_HOME])
+    assert count == 1 and len(out) == len(data) and out.startswith(b"\x00ok\x00/build")
 
 
 def test_no_occurrence_is_a_no_op():

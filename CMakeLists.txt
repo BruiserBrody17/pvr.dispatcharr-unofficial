@@ -1,4 +1,18 @@
 cmake_minimum_required(VERSION 3.15)
+
+# The oldest macOS this library may be loaded on, matching Kodi's own minimum (tools/depends/configure.ac in the Kodi
+# tree: 11.0 for arm64, 10.14 for x86_64). It has to be set before project(). Left unset, the compiler defaults to
+# the build machine's own OS, and the first 0.12.0 macOS zip carried a minimum equal to its build machine's version
+# (found 2026-10-07 in its Mach-O build record): it would not load on any older macOS, and the number also told
+# whoever read it which OS the build machine ran.
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+  if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14" CACHE STRING "Minimum macOS version" FORCE)
+  else()
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
+  endif()
+endif()
+
 project(pvr.dispatcharr-unofficial)
 
 # ---------------------------------------------------------------------------

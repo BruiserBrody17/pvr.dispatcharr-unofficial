@@ -7,7 +7,7 @@ using namespace dispatcharr;
 namespace
 {
 // The shapes below are the real events of a live refresh (an XMLTV source and an M3U account,
-// refreshed on demand), with the numbers and names replaced.
+// refreshed on demand), with every number, time and name replaced by small synthetic ones.
 const std::string kEpgDownloading =
     R"({"type": "update", "data": {"progress": 95, "type": "epg_refresh", "source": 5, "action": "downloading", "speed": 1000.5, "elapsed_time": 1.0, "time_remaining": 0, "downloaded": "1.00 MB"}})";
 const std::string kEpgChannelsParsing =

@@ -2453,10 +2453,11 @@ text and as UTF-16 at both alignments, a blocklist term, an extra field, a zip c
 a debug file, an unstripped ELF built byte by byte, the release-set check, the allowlist being scoped to its
 own members, and fail-closed without a blocklist) and by 16 deliberate mutations of the script, all caught;
 it fails the real `0.11.0` Android zip that shipped the build machine's paths. `tools/scrub_zip_paths.py` (same
-day) overwrites a build machine's directory prefix inside a zip's members with a same-length neutral one -- the
+day) blanks the build machine's directory prefix inside a zip's members (each binary string containing it becomes `/build`
+plus NULs, same size; a text member has the prefix overwritten) -- the
 Android libraries statically link nghttp2 and OpenSSL, which carry their own build paths as string data that
-stripping cannot remove -- and is tested for length, offsets, modes and members preserved and (nine mutations
-caught) for a prefix too short or relative being refused; the gate, not the scrub, is what decides. `tools/check_doc_refs.py` itself -- the
+stripping cannot remove -- and is tested for length, offsets, modes and members preserved and (eighteen mutations
+caught) for a prefix too short or relative, a string that is not plain text and an absurdly long one all being refused; the gate, not the scrub, is what decides. `tools/check_doc_refs.py` itself -- the
 doc-citation checker described below -- has its own full test suite,
 since it's real parsing/matching logic wired into CI, not just a
 one-off script. Covers the module's own text-normalization and

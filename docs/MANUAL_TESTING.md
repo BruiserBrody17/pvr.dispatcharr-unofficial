@@ -92,13 +92,13 @@ Not substituted for by a virtual GPU or a laptop.
   admin. The harness passed 16 of 17 (the one failure is the prompt below, which the harness now skips); live
   timeshift seek, catch-up, recorded and in-progress recording playback and the timer create/delete all passed,
   with no packet, audio-sync, fatal or addon error lines in the whole log.
-  *Android (2026-10-07, the published Android zips, Dispatcharr 0.32.0):* a 32-bit ARM phone (armeabi-v7a) and a 64-bit ARM phone (arm64-v8a), both with Kodi 21.3 and a `0.10.1` addon already
-  installed, both dedicated test devices. The zip's `libpvr.dispatcharr-unofficial.so` was extracted over the old
+  *Android (2026-10-07, the published Android zips, Dispatcharr 0.32.0):* a 32-bit ARM Android device
+  (armeabi-v7a) and a 64-bit one (arm64-v8a), both running Kodi 21.3 with a `0.10.1` addon already
+  installed. The zip's `libpvr.dispatcharr-unofficial.so` was extracted over the old
   addon (`adb push`, Kodi stopped), so this is also an upgrade across several releases with the old settings in
   place: both loaded it, kept their settings and had PVR up. Before running anything, the published libraries were
   checked offline: right ELF class and machine, linked only against `libc++_shared.so`, `libm`, `libdl` and `libc`,
-  the addon entry points exported, and 290 bytes different from the unscrubbed build, all inside the replaced
-  home-directory prefix.
+  the addon entry points exported, and differing from the unscrubbed build only inside the blanked build-path strings.
   *64-bit:* the harness passed 14 of 17 with 2 skips (nothing was recording) and 1 failure that is not the addon (the
   group check, explained in `docs/OPEN_ITEMS.md`): live timeshift seek, catch-up, recorded playback and seek, and creating and deleting a
   one-off timer and a recurring rule all passed on a real arm64 device.

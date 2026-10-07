@@ -729,15 +729,15 @@ TZ=UTC zip -X -r ../addon-pvr.dispatcharr-unofficial-<version>-android-aarch64.z
 assertion messages name their source files, and OpenSSL records its configure line, compiler and install
 directories (found 2026-10-07 in the first stripped zips: both libraries come from Kodi's own `-debug`
 dependency tree under the builder's home directory, and they are string data, not debug information).
-Rebuilding that tree under a neutral path takes hours, so after stripping, overwrite the home-directory prefix
-byte for byte with a same-length neutral one (`/build////...`; same size, same program, the text is only an error
-message or a directory a device does not have):
+Rebuilding that tree under a neutral path takes hours, so after stripping, blank every string in the library that
+contains the home-directory prefix (each becomes `/build` plus NUL padding, same size, same program: the text is only an
+error message, a configure line or a directory a device does not have; the tool refuses a string that is not plain text):
 
 ```bash
 python3 tools/scrub_zip_paths.py --prefix "$HOME" <both android zips>
 ```
 
-The release gate (below) is what proves it worked; confirmed live that the scrubbed library is still an `AArch64`
+The release gate (below) is what proves it worked; confirmed live that the scrubbed library is still a valid
 shared object with the addon's entry points exported. The macOS zip needed none of this (its dylib links the
 system's own libraries and passed the gate as built).
 
