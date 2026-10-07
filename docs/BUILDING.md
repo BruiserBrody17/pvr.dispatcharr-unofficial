@@ -97,18 +97,11 @@ just a different underlying constraint.** A runner only picks up a queued job on
 Registering a persistent runner on an intermittently-online
 device means either jobs queue indefinitely whenever it's offline, or the
 machine stays running as a CI daemon full-time, which is not worth it. Build macOS manually per the steps above instead, whenever the hardware is available, and if
-it's for a real tagged release, attach the zip to the Release by hand the
-same way CoreELEC's own release checklist does:
-```bash
-python3 tools/normalize_zip.py "$(git log -1 --format=%ct)" dist/addon-pvr.dispatcharr-unofficial-<version>-osx-*.zip
-python3 tools/normalize_zip.py --check dist/addon-pvr.dispatcharr-unofficial-<version>-osx-*.zip
-gh release upload <tag> dist/addon-pvr.dispatcharr-unofficial-<version>-osx-*.zip
-```
-(the first two commands strip the build machine's timezone from the zip, see step 5 of the Windows section)
-(the exact zip filename depends on the Mac's own architecture -- `find
-tools/depends/target/binary-addons -name 'addon-pvr.dispatcharr-unofficial-*.zip'`
-from within the `kodi-source` checkout, per step 5 above, to confirm the
-real name before uploading).
+it's for a real tagged release, every release carries a macOS zip: build it from the tag's source,
+then normalize and gate it with every other asset as "Release assets" below describes (the exact zip
+filename depends on the Mac's own architecture -- `find tools/depends/target/binary-addons -name
+'addon-pvr.dispatcharr-unofficial-*.zip'` from within the `kodi-source` checkout, per step 5 above, to
+confirm the real name; a release expects `-osx-arm64`).
 
 **Confirmed live on a real Linux install (0.4.0):** the steps
 above work as documented -- gcc 14/cmake 3.31 from the distro's own repos
@@ -719,19 +712,26 @@ already produces stripped output, this one builds against the
 `-debug`-suffixed dependency trees "Android's missing addon-dependency
 wiring" above requires, so the addon's own `.so` comes out with full
 debug info -- including the local build machine's absolute paths -- still
-attached:
+attached. The zip has to be unpacked, stripped with the NDK's own tool for
+that ABI (the host's `strip` does not know ARM), and packed again (the
+release gate, below, then normalizes and checks it):
 
 ```bash
-find . -name "libpvr.dispatcharr-unofficial.so" -exec strip {} \;
+NDK_BIN=~/android-build/sdk/ndk/21.4.7075529/toolchains/llvm/prebuilt/linux-x86_64/bin
+# aarch64: $NDK_BIN/aarch64-linux-android-strip   armv7: $NDK_BIN/arm-linux-androideabi-strip
+rm -rf /tmp/android-zip && mkdir /tmp/android-zip && cd /tmp/android-zip
+unzip -q <the-built>/addon-pvr.dispatcharr-unofficial-<version>-android-aarch64.zip
+"$NDK_BIN/aarch64-linux-android-strip" --strip-unneeded pvr.dispatcharr-unofficial/libpvr.dispatcharr-unofficial.so
+TZ=UTC zip -X -r ../addon-pvr.dispatcharr-unofficial-<version>-android-aarch64.zip pvr.dispatcharr-unofficial
 ```
 
 Confirmed live: the `0.11.0` release (the first Android release) shipped
 both ABIs' `.so` unstripped, with the build machine's local paths
 embedded, and the published assets were still the unstripped builds when
 re-checked on 2026-10-03 (an earlier note here claiming they had been
-corrected was wrong). Stripped builds go up with the next release; run
-`strings` over every asset before uploading, per `CLAUDE.md`'s release
-sweep.
+corrected was wrong). That is why `tools/check_release_zip.py` now fails
+any release zip whose ELF library still has `.debug_*` or `.symtab`
+sections, or any member that still contains a build-machine path.
 
 ### 5. Install Kodi and side-load the addon on a real device
 
@@ -819,12 +819,48 @@ Not pursued further -- root-causing past this point would need Kodi-core
 thread-dump-level debugging, disproportionate given normal functionality
 is unaffected. Revisit if a real user reports this specifically.
 
-## Distribution (Windows/macOS, once built)
+## Release assets
 
-Release zips are published on the GitHub release page by hand (`gh release create <tag> --title <tag>
---notes-file <notes> <zips...>`, then `gh release upload <tag> <zip>` for the hand-built CoreELEC and macOS
-zips). `CLAUDE.md`'s "Publishing a release's assets" bullet has the checks to run
-on every zip first.
+**Every release ships the same eight zips, built from the tag's own commit, and none is published before the
+privacy gate passes on all of them together.**
+
+| Asset | Built by |
+| --- | --- |
+| `addon-pvr.dispatcharr-unofficial-<v>-windows-x86_64.zip` | CI (`build-windows`) |
+| `addon-pvr.dispatcharr-unofficial-<v>-linux.zip` | CI (`build-unix`) |
+| `timeshift_buffer.zip`, `recording_edl.zip` | CI (`package-dispatcharr-plugins`) |
+| `addon-pvr.dispatcharr-unofficial-<v>-osx-arm64.zip` | by hand on the Mac ("Linux / macOS" above) |
+| `addon-pvr.dispatcharr-unofficial-<v>-android-aarch64.zip`, `...-android-armv7.zip` | by hand ("Android" above) |
+| `pvr.dispatcharr-unofficial-<v>.zip` (the CoreELEC package) | by hand ("CoreELEC" below) |
+
+Cutting a release, in order:
+
+1. Tag the commit and push the tag; wait for CI on it to pass, and download its three artifacts.
+2. Build the hand-built assets from that tag's source, not from a working tree: export it (`git archive <tag>`
+   into a clean directory) and point the build's addon definition at the export, so a local edit can never
+   ride along. Strip the Android libraries (above). Collect all eight zips in one directory.
+3. Normalize every hand-built zip, which removes the build machine's timezone from its entry timestamps:
+   `python3 tools/normalize_zip.py "$(git log -1 --format=%ct <tag>)" <zip>...`.
+4. Run the gate once over all of them, with the private blocklist (not in this repository; the script looks for
+   `--blocklist FILE`, then `$PRIVACY_BLOCKLIST`, then `~/.privacy-blocklist.txt`):
+   ```bash
+   python3 tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>
+   ```
+   It fails on a build-machine path (`/home/`, `/Users/`, `C:\`, a CI runner's work directory) or a blocklist
+   term anywhere in a member (as text and as UTF-16), any extra field in the zip (timezone, uid/gid), a zip
+   comment, an unsafe entry name, a debug or log file, an ELF library that is not stripped, and a release that is
+   missing an asset or carries an unexpected one. The handful of upstream strings it has to allow (the Windows
+   zip's two prebuilt DLLs carry Kodi's own dependency-build path) are listed in the script with the reason each
+   is safe. CI runs the pattern half of the same gate on every zip it builds; only a local run has the
+   blocklist. Fix the cause and rebuild, never edit the gate to make
+   a zip pass.
+5. Only then publish: `gh release create <tag> --title <tag> --notes-file <notes> <the eight zips>`. The release page and its notes are made by hand; `CLAUDE.md`'s "Publishing a
+   release's assets" bullet has the notes rules.
+
+A zip that is rebuilt for any reason goes through steps 3 and 4 again; the gate checks the zip that will be
+uploaded, not an earlier copy.
+
+## Distribution (Windows/macOS, once built)
 
 Kodi installs binary addons either as a manual zip, or from a self-hosted
 repository (a small `repository.xml`-style addon whose own zip contains an

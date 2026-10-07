@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**5 open, 264 closed.**
+**5 open, 265 closed.**
 
 | Section | Entries |
 |---|---|
@@ -16,7 +16,7 @@
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 4 |
 | Open: Tooling (tools/) | 0 |
-| Closed: Fixed | 233 |
+| Closed: Fixed | 234 |
 | Closed: Closed without a change (refuted, explained or harmless) | 23 |
 | Closed: Project history and test infrastructure | 8 |
 
@@ -61,6 +61,10 @@
 ## Closed
 
 ### Fixed
+
+#### The hand-built release zips had no mechanical privacy gate
+
+**Fixed 2026-10-07 (found while cutting 0.12.0, when macOS and Android were asked to ship with every release; confirmed by running the new gate on the real `0.11.0` Android zip, which it fails).** The privacy rules for a release zip (no build-machine path in any binary, no timezone in the entry timestamps, stripped libraries) lived as a manual step in `CLAUDE.md`: run `strings`, look. That is how the `0.11.0` Android libraries shipped unstripped with the build machine's paths, how the Linux zip shipped with its local clock until the 0.12.0 sweep, and it left the hand-built platforms (macOS, Android, CoreELEC) with a weaker check than the CI-built ones. `tools/check_release_zip.py` is now the one gate, run over every zip whoever built it: build-machine paths (`/home/`, `/Users/`, `/root/`, `/var/folders/`, a CI runner's work directory, a `C:\` path, a `\Users\` path) in any member as text and as UTF-16 at both alignments, every term of the private blocklist (never in the repository; `--require-blocklist` fails closed without one), any extra field in the zip (the timezone field and the uid/gid field), a zip comment, unsafe entry names, debug and log members (`.pdb`, `.dSYM`, `.debug`, `.map`, `.log`), ELF libraries still carrying `.debug_*` or `.symtab`, and, with `--expect-release`, a set that is not exactly the release's eight assets (so a platform cannot be left out by forgetting a step). It allows only the strings it has to: the Windows zip's prebuilt curl and zlib DLLs carry Kodi's own dependency-build path (`C:\code\kodi-deps\Build\x64`, found by running the gate on the real 0.12.0 CI zips; identical in every copy of those DLLs), scoped to those two members so the same text in the addon's own binary still fails. CI runs the pattern half on the Linux, plugin and Windows zips (the Windows step warns instead of failing on a runner with no Python, because the release procedure runs the gate on that zip anyway). Tested with synthetic zips for every rule, an ELF built byte by byte, and 16 deliberate mutations of the script, all caught. `docs/BUILDING.md`'s "Release assets" is the procedure and `CLAUDE.md` says every release ships all eight zips.
 
 #### The pre-release sweep of 0.12.0: the Linux release zip carried the build machine's timezone
 

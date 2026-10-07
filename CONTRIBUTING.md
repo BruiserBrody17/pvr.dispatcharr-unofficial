@@ -48,7 +48,7 @@ handled here.
   zips, and runs the unit test suites (`unit-tests`, plus its AddressSanitizer/UBSan and ThreadSanitizer
   variants, for C++; `unit-tests-python` for the plugins) and the glue harness (`glue-harness`: the real client
   code against a fake Dispatcharr) -- it doesn't build or test the
-  CoreELEC package or macOS (both built by hand instead, see
+  CoreELEC package, macOS or Android (built by hand instead, see
   [docs/BUILDING.md](docs/BUILDING.md)), and runs nothing against a real
   Dispatcharr or Kodi. Green CI means "it compiles, lints, and
   doesn't regress the tested pieces," not "it works."

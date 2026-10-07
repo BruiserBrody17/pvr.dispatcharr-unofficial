@@ -17,6 +17,10 @@ Addon changes since `0.11.0`. This release also bundles `timeshift_buffer` `0.8.
 Dispatcharr** so every worker runs them. This list is the user-visible part; the reasoning for each change is in
 `docs/OPEN_ITEMS.md`'s Fixed entries.
 
+**Release downloads**: every release now carries a zip for each platform: Windows, Linux, macOS (Apple silicon),
+Android (64-bit and 32-bit ARM) and CoreELEC, plus the two Dispatcharr plugins. Each one is checked before it is
+published for build-machine paths, leftover debug information and timestamps that reveal where it was built.
+
 ### Fixed
 
 - **Faster updates from Dispatcharr** (with "Enable real-time recording/timer updates" on): when Dispatcharr

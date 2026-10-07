@@ -123,9 +123,9 @@ See [docs/BUILDING.md](docs/BUILDING.md). This addon builds through
 Kodi's own binary-addon build harness, which needs a matching Kodi source
 checkout -- it can't be compiled standalone.
 `.github/workflows/build.yml` is the workflow that builds the Windows and Linux
-zips; the release zips are published by hand (see [docs/BUILDING.md](docs/BUILDING.md)). macOS builds manually
-instead (see [docs/BUILDING.md](docs/BUILDING.md)), the same as the
-CoreELEC package.
+zips; the release zips are published by hand (see [docs/BUILDING.md](docs/BUILDING.md)). macOS, Android and the
+CoreELEC package are built by hand for each release too, and every release zip passes one privacy check before
+it is published.
 
 ## More detail
 

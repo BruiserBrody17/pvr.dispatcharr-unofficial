@@ -2447,7 +2447,12 @@ the recording's final file. New tests fail on the previous versions (13 for `tim
 `recording_edl`).
 
 **`tools/`** (`tools/tests/`, pytest, same `unit-tests-python`/`lint` CI
-jobs as the two plugins): `tools/check_doc_refs.py` itself -- the
+jobs as the two plugins): `tools/check_release_zip.py` (added 2026-10-07), the privacy gate every
+release zip passes whoever built it, is tested against synthetic zips for each rule (a build-machine path as
+text and as UTF-16 at both alignments, a blocklist term, an extra field, a zip comment, an unsafe entry name,
+a debug file, an unstripped ELF built byte by byte, the release-set check, the allowlist being scoped to its
+own members, and fail-closed without a blocklist) and by 16 deliberate mutations of the script, all caught;
+it fails the real `0.11.0` Android zip that shipped the build machine's paths. `tools/check_doc_refs.py` itself -- the
 doc-citation checker described below -- has its own full test suite,
 since it's real parsing/matching logic wired into CI, not just a
 one-off script. Covers the module's own text-normalization and
@@ -2657,8 +2662,10 @@ test the CoreELEC package, and runs no addon against a real Dispatcharr or Kodi
   entry timestamps too: a zip that stores both a local-clock and a UTC time
   per entry reveals the build machine's timezone (CI normalizes the Windows
   zip in PowerShell and the Linux zip with `tools/normalize_zip.py`, and the plugin
-  zips are built with `TZ=UTC zip -X`; a hand-built zip needs `normalize_zip.py` and
-  its `--check` before upload, see `docs/BUILDING.md`).
+  zips are built with `TZ=UTC zip -X`; a hand-built zip needs `normalize_zip.py` before
+  upload, see `docs/BUILDING.md`). These asset checks are one script,
+  `tools/check_release_zip.py`, run over every release zip (see "Publishing a release's
+  assets" below); do the `strings` look by hand only to investigate a failure.
 - **Batch fixes into releases -- don't tag/release per individual fix.**
   Early on this project tagged and released (including the full manual
   CoreELEC build-and-upload dance) after nearly every single bug fix,
@@ -2749,13 +2756,17 @@ test the CoreELEC package, and runs no addon against a real Dispatcharr or Kodi
   notes with a dated addendum inlining the actual fix (per the bullet
   above), not just a pointer -- and don't leave the original notes'
   now-false "neither plugin changed" claim standing uncorrected.
-- **Publishing a release's assets, as of 2026-10-06.** A release's page, notes and zips are made by hand. After the tag's CI run is green:
-  fetch the CI-built zips (the Windows addon zip and both plugin zips) from that run, run the release-asset
-  checks in the data-hardening bullet above (`strings` for `/home/`, `/Users/` and `C:\` paths, the zip entry
-  timestamps), create the release with `gh release create <tag> --title <tag> --notes-file <notes> <zips...>`
-  (the notes inline the bundled plugins' changelog entries, per the bullet above) and attach the hand-built
-  CoreELEC and macOS zips with `gh release upload <tag> <zip>`. The pre-push privacy hook does not see
-  release assets.
+- **Publishing a release's assets, as of 2026-10-06; every platform, one gate, as of 2026-10-07.** A release's page, notes and zips are made by hand. **Every release ships all eight zips -- Windows, Linux, macOS, both Android ABIs, CoreELEC and
+  the two plugins -- and no platform is left out or held to a weaker check:** after the tag's CI run is green,
+  fetch its three artifacts, build the hand-built ones (macOS, Android, CoreELEC) from the tag's own source,
+  normalize them, and run `python3 tools/check_release_zip.py --require-blocklist --expect-release <version>
+  <all eight zips>` once over the lot. That one script is the data-hardening bullet's asset checks (build-machine
+  paths in any binary, UTF-16 included, the private blocklist, zip timestamps and extra fields, unstripped
+  libraries, debug files) and the check that the set is complete; CI runs its pattern half on every zip it
+  builds. Only after it passes, `gh release create <tag> --title <tag> --notes-file <notes> <zips...>` (the
+  notes inline the bundled plugins' changelog entries, per the bullet above). The steps are in
+  `docs/BUILDING.md`'s "Release assets"; a failing gate is fixed at its cause and the zip rebuilt, never
+  by editing the gate. The pre-push privacy hook does not see release assets.
 - **The CoreELEC package isn't part of CI** and won't be (see
   `docs/BUILDING.md`'s "GitHub Actions job ... rejected" note --
   CoreELEC's build harness assumes persistent, self-hosted infrastructure

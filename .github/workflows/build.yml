@@ -410,6 +410,12 @@ jobs:
             "$(git -c safe.directory='*' -C addons/pvr.dispatcharr-unofficial log -1 --format=%ct)" dist/*.zip
           python3 addons/pvr.dispatcharr-unofficial/tools/normalize_zip.py --check dist/*.zip
 
+      # The privacy gate every release zip passes (tools/check_release_zip.py, tested): no build-machine path
+      # or unstripped library in any member, no extra fields, no debug files. CI has no private blocklist, so this
+      # is the pattern half; a release is cut with the blocklist as well (docs/BUILDING.md, "Release assets").
+      - name: Release zip privacy gate
+        run: python3 addons/pvr.dispatcharr-unofficial/tools/check_release_zip.py dist/*.zip
+
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -479,6 +485,7 @@ jobs:
           # and no entry carries the build machine's timezone (the extended-timestamp field `zip -X` drops)
           cd ..
           python3 tools/normalize_zip.py --check dist/*.zip
+          python3 tools/check_release_zip.py dist/*.zip
 
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -730,6 +737,28 @@ jobs:
             Move-Item -Force $tmp $zip.FullName
             "$($zip.Name): $count entries stamped $($stamp.ToString('u'))"
           }
+
+      # The same privacy gate as the other legs (tools/check_release_zip.py). It needs Python, which this runner may
+      # not have: that is a warning here, not a failure, because the release procedure runs the gate on this zip
+      # anyway before anything is published (docs/BUILDING.md, "Release assets").
+      - name: Release zip privacy gate
+        shell: pwsh
+        run: |
+          $py = $null
+          foreach ($name in 'python', 'python3', 'py') {
+            $cmd = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($cmd) {
+              & $cmd.Source --version *> $null
+              if ($LASTEXITCODE -eq 0) { $py = $cmd.Source; break }
+            }
+          }
+          if (-not $py) {
+            Write-Host "::warning::No working Python on this runner; the release procedure runs tools/check_release_zip.py on this zip instead."
+            exit 0
+          }
+          $zips = @(Get-ChildItem dist/*.zip | ForEach-Object { $_.FullName })
+          & $py addons/pvr.dispatcharr-unofficial/tools/check_release_zip.py @zips
+          if ($LASTEXITCODE -ne 0) { throw "the release zip privacy gate failed" }
 
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
