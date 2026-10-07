@@ -1094,6 +1094,21 @@ def _windows_overlap(candidate_start: str, candidate_end: str, existing_windows:
     return any(candidate_start < end and start < candidate_end for start, end in existing_windows)
 
 
+def _with_database_ids(broadcasts: list[dict], channel_id: int) -> list[dict]:
+    """Keeps only guide entries Kodi has given a database id (the "broadcastid" a timer is created from). Kodi
+    assigns it when it writes a guide entry to its own EPG database, which on a freshly started Kodi comes minutes
+    after the guide is readable (about 5 minutes on a modern phone, over 10 on an older 32-bit one with a very
+    large channel list, 2026-10-07), so an entry without one is "not ready yet", not a fault, and reading the key
+    anyway crashed the check with an unexplained KeyError."""
+    ready = [b for b in broadcasts if b.get("broadcastid", -1) > 0]
+    if not ready:
+        raise SkipCheck(
+            f"Kodi has not assigned database ids to channel {channel_id}'s guide entries yet (it does so some "
+            "minutes after a start, longer on a slow device); retry once the guide has settled"
+        )
+    return ready
+
+
 def _pick_conflict_free_broadcast(future: list[dict], existing_windows: list[tuple[str, str]]) -> dict | None:
     """Pure selection core of _add_and_verify_timer's own broadcast pick --
     returns None, never a possibly-conflicting fallback, when every
@@ -1221,6 +1236,7 @@ def _add_and_verify_timer(rpc: JsonRpcClient, channel_id: int, timerrule: bool) 
     future = sorted((b for b in broadcasts if b["starttime"] > now), key=lambda b: b["starttime"])
     if not future:
         raise SkipCheck(f"no future EPG entries on channel {channel_id} to create a test timer from")
+    future = _with_database_ids(future, channel_id)
     broadcast = _pick_conflict_free_broadcast(future, existing_windows)
     if broadcast is None:
         raise SkipCheck(

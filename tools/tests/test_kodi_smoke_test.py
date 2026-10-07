@@ -457,3 +457,39 @@ def test_wait_for_canseek_asks_for_the_right_player():
     rpc = _ScriptedRpc({"Player.GetProperties": {"canseek": True}})
     kodi_smoke_test._wait_for_canseek(rpc, 3, sleep=clock.sleep, clock=clock)
     assert rpc.calls[0] == ("Player.GetProperties", {"playerid": 3, "properties": ["canseek"]})
+
+
+def test_with_database_ids_keeps_only_entries_kodi_has_numbered():
+    entries = [
+        {"title": "a"},
+        {"title": "b", "broadcastid": 7},
+        {"title": "c", "broadcastid": 0},
+        {"title": "d", "broadcastid": 9},
+    ]
+    assert [e["title"] for e in kodi_smoke_test._with_database_ids(entries, 5)] == ["b", "d"]
+
+
+def test_with_database_ids_skips_with_an_explanation_when_none_are_numbered_yet():
+    with pytest.raises(kodi_smoke_test.SkipCheck) as info:
+        kodi_smoke_test._with_database_ids([{"title": "a"}, {"title": "b", "broadcastid": -1}], 5)
+    assert "channel 5" in str(info.value) and "retry" in str(info.value)
+
+
+def test_with_database_ids_skips_for_an_empty_list_too():
+    with pytest.raises(kodi_smoke_test.SkipCheck):
+        kodi_smoke_test._with_database_ids([], 5)
+
+
+@pytest.mark.parametrize("timerrule", [False, True])
+def test_the_timer_checks_skip_instead_of_crashing_when_kodi_has_not_numbered_the_guide_yet(timerrule):
+    rpc = _ScriptedRpc(
+        {
+            "PVR.GetTimers": {"timers": []},
+            "PVR.GetBroadcasts": {
+                "broadcasts": [{"title": "a", "starttime": "2999-01-01 00:00:00", "endtime": "2999-01-01 01:00:00"}]
+            },
+        }
+    )
+    with pytest.raises(kodi_smoke_test.SkipCheck, match="database ids"):
+        kodi_smoke_test._add_and_verify_timer(rpc, 5, timerrule=timerrule)
+    assert "PVR.AddTimer" not in [method for method, _ in rpc.calls]

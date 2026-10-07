@@ -92,8 +92,22 @@ Not substituted for by a virtual GPU or a laptop.
   admin. The harness passed 16 of 17 (the one failure is the prompt below, which the harness now skips); live
   timeshift seek, catch-up, recorded and in-progress recording playback and the timer create/delete all passed,
   with no packet, audio-sync, fatal or addon error lines in the whole log.
-  Still not done on either: audio passthrough, a long soak, HEVC, and the Android zips (no Android device was
-  available for this run).
+  *Android (2026-10-07, the published Android zips, Dispatcharr 0.32.0):* a 32-bit ARM phone (armeabi-v7a) and a 64-bit ARM phone (arm64-v8a), both with Kodi 21.3 and a `0.10.1` addon already
+  installed, both dedicated test devices. The zip's `libpvr.dispatcharr-unofficial.so` was extracted over the old
+  addon (`adb push`, Kodi stopped), so this is also an upgrade across several releases with the old settings in
+  place: both loaded it, kept their settings and had PVR up. Before running anything, the published libraries were
+  checked offline: right ELF class and machine, linked only against `libc++_shared.so`, `libm`, `libdl` and `libc`,
+  the addon entry points exported, and 290 bytes different from the unscrubbed build, all inside the replaced
+  home-directory prefix.
+  *64-bit:* the harness passed 14 of 17 with 2 skips (nothing was recording) and 1 failure that is not the addon (the
+  stale Kodi groups below): live timeshift seek, catch-up, recorded playback and seek, and creating and deleting a
+  one-off timer and a recurring rule all passed on a real arm64 device.
+  *32-bit:* after a clean start with a working network the harness passed 11, with its timer checks skipped by the
+  guide-id trap below, and live timeshift was driven by hand: `canseek` true within a few seconds, seeks back and
+  forward through the addon's seek path (the log shows both directions, clamped at the live edge), pause and
+  resume, 239 segment fetches, and no `Packet corrupt`, audio-sync, fatal or addon error lines. 32-bit ARM timers
+  are covered by the N2+ run above.
+  Still not done anywhere: audio passthrough, a long soak, and HEVC.
 - **Three traps the 2026-10-07 device runs hit, none of them the addon:**
   1. **Kodi's own "Play recording" / "Switch to channel" prompt** (a `DialogConfirm`) appears when a channel's
      current programme has a recording, and being modal it makes `Player.Open` hang and stalls the JSON-RPC calls
@@ -104,7 +118,16 @@ Not substituted for by a virtual GPU or a laptop.
      channel.
   2. **Channel ids belong to a Kodi profile.** `--channel-id` taken from one device is meaningless in a fresh
      profile (`Invalid params` from `PVR.GetBroadcasts`); look the channel up in the profile under test.
-  3. **A Kodi that starts on its profile Login screen has no PVR manager yet** (`PVR.GetProperties` answers `-32100`
+  3. **Kodi's guide ids arrive minutes after a start** (found on the Android runs): a timer is created from a
+     guide entry's `broadcastid`, which Kodi assigns when it writes the entry to its own EPG database. On a freshly
+     started Kodi the guide is readable long before that: about 5 minutes on the 64-bit phone, over 10 on the
+     32-bit one with a very large channel list (the same slowness `docs/BUILDING.md`'s Android section describes).
+     The harness now skips its timer checks with that explanation instead of crashing; wait and rerun.
+  4. **Wireless debugging needs pairing once per computer** (`adb pair <ip>:<pairing port>`, then `adb connect` on
+     the connect port); a connect port that is open but refuses is that, not a network fault. And a device on a
+     network that cannot reach Dispatcharr shows as `Timeout was reached` for every startup read; the addon
+     recovers on its own once the path opens, but the first harness run after it is not representative: restart Kodi.
+  5. **A Kodi that starts on its profile Login screen has no PVR manager yet** (`PVR.GetProperties` answers `-32100`
      and `System.CurrentWindow` is `Login screen`), so a restart looks like a broken addon: load a profile
      (`Profiles.LoadProfile`) and the client is up in about ten seconds with no addon toggle.
 

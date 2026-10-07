@@ -4,11 +4,11 @@
 
 ## Status at a glance
 
-**5 open, 267 closed.**
+**6 open, 268 closed.**
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 0 |
+| Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
@@ -16,13 +16,17 @@
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 4 |
 | Open: Tooling (tools/) | 0 |
-| Closed: Fixed | 236 |
+| Closed: Fixed | 237 |
 | Closed: Closed without a change (refuted, explained or harmless) | 23 |
 | Closed: Project history and test infrastructure | 8 |
 
 ## Open
 
 ### Needs a live check
+
+#### Two long-lived Android Kodi profiles kept channel groups the server no longer has
+
+**Found 2026-10-07 running the published 0.12.0 Android zips; not yet explained.** On both Android phones the smoke harness's group-membership check failed: Kodi listed a number of channel groups, two of them (call them Group A and Group B, both event-style groups) with no member channels. The server (Dispatcharr 0.32.0) has no group of either exact name that has channels (it has a differently suffixed sibling of Group A with channels, and nothing like Group B at all; it returns only the groups that have channels, which is what the addon should return), the fresh Mac profile and the N2+ showed a similar number of groups all with members, and the addon filters empty groups (`FilterChannelGroupsWithChannels()`), so the two look like groups Kodi created from September's lineup and never deleted when the server stopped offering them. What is not known is whether Kodi should have removed them (its own PVR group update is expected to drop a group a client no longer returns) and what, if anything, this addon must do for that to happen. To settle it: on one phone, note the two groups, restart Kodi with the addon enabled and look again; then clear the PVR data for the addon (Settings, PVR, Clear data) on a spare profile and see whether the groups return; and read the real Kodi source for the group-deletion rule before deciding. Until then the harness check can fail on a long-lived profile for a reason that is not an addon regression.
 
 ### Fix known, not yet done
 
@@ -61,6 +65,10 @@
 ## Closed
 
 ### Fixed
+
+#### The timer checks crashed with a KeyError while Kodi had not numbered the guide yet
+
+**Fixed 2026-10-07 (found running the published Android zips on a 32-bit and a 64-bit phone; the 32-bit one still had no guide ids after 10 minutes of polling).** The one-off timer and recurring-rule checks read each guide entry's `broadcastid`, which Kodi only assigns once it has written the entry to its own EPG database; on a freshly started Kodi that is minutes after the guide is readable (about 5 on the 64-bit phone), and the check died with an unexplained `KeyError`. They now keep only numbered entries and skip with an explanation when there are none. Tested through the real check with a scripted RPC client (it also asserts no timer is attempted), and mutation-checked: removing the filter, counting id 0 as numbered, never skipping and not wiring the helper in are all caught.
 
 #### The smoke harness skipped its live timeshift check on a slow device and failed on Kodi's own prompt
 
