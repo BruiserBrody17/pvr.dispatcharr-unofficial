@@ -33,6 +33,31 @@ env:
   KODI_COMMIT: f8815ee40f49a700c047982d752be4b2a61420e2
 
 jobs:
+  # Whether the compile-and-package jobs below (build-unix, build-windows, glue-harness) have anything to do: a push
+  # that touches only docs, packaging or tools no build step runs skips them (package-dispatcharr-plugins has its own, narrower
+  # answer), and lint and every unit-test job still run
+  # (tools/ci_build_needed.py holds the path list and its tests; a tag, a manual run or anything unclear builds).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      plugins: ${{ steps.decide.outputs.plugins }}
+    steps:
+      - name: Check out repo (full history, to diff against the previous head)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: python3 tools/ci_build_needed.py "$EVENT" "$REF" "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
+
   # Enforces CLAUDE.md's "run clang-format/ruff format before committing"
   # convention -- previously undocumented-as-checked anywhere, so drift
   # could accumulate silently. Pinned tool versions (rather than
@@ -282,6 +307,8 @@ jobs:
   # Only the dev-kit headers of the pinned Kodi commit are fetched (a sparse, blob-filtered fetch of a few MB), not the
   # tree the build jobs compile. The TSan variant, the plugin integration run and the longer fault matrices stay by hand.
   glue-harness:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -321,6 +348,8 @@ jobs:
   # by hand instead -- see docs/BUILDING.md's "Linux / macOS (x86_64)"
   # section, same release-time checklist CoreELEC already has.
   build-unix:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     permissions:
       contents: write # uploads release assets via softprops/action-gh-release below
     runs-on: ubuntu-latest
@@ -442,6 +471,8 @@ jobs:
   # against a real Dispatcharr instance that a mismatch here 404s every
   # call with "Plugin not found" (see each plugin's own README).
   package-dispatcharr-plugins:
+    needs: changes
+    if: needs.changes.outputs.plugins == 'true'
     permissions:
       contents: write # uploads release assets via softprops/action-gh-release below
     runs-on: ubuntu-latest
@@ -505,7 +536,8 @@ jobs:
   # event context does not carry the head repository the job is skipped for every pull request, which
   # fails closed (a skipped required check is visible, a compromised release builder is not).
   build-windows:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: write # uploads release assets via softprops/action-gh-release below
     runs-on: windows-latest

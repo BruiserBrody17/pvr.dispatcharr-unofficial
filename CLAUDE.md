@@ -2511,6 +2511,9 @@ Flatpak, CoreELEC on an ODROID N2+), driven via Kodi's JSON-RPC webserver.
 Windows and Linux (macOS is built by hand, see `docs/BUILDING.md`) and packages the two plugins -- it does not build or
 test the CoreELEC package, and runs no addon against a real Dispatcharr or Kodi
 (its `glue-harness` job drives the real client code against a fake Dispatcharr).
+The compile-and-package jobs (`build-unix`, `build-windows`, `glue-harness`; `package-dispatcharr-plugins` on its own, narrower list: the plugin directories, the workflow and the two zip tools) are skipped on a push that touches only docs,
+packaging or tools no build step runs (`tools/ci_build_needed.py`, tested; a tag, a manual run or anything unclear builds
+everything); lint and every unit-test job run on every push, since the cross-file checks catch a docs-only commit that was not.
 
 ## Conventions specific to this repo
 
