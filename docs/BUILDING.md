@@ -878,11 +878,30 @@ Cutting a release, in order:
    is safe. CI runs the pattern half of the same gate on every zip it builds; only a local run has the
    blocklist. Fix the cause and rebuild, never edit the gate to make
    a zip pass.
-5. Only then publish: `gh release create <tag> --title <tag> --notes-file <notes> <the eight zips>`. The release page and its notes are made by hand; `CLAUDE.md`'s "Publishing a
-   release's assets" bullet has the notes rules.
+5. Only then publish: `gh release create <tag> --title <tag> --notes-file <notes> <the eight zips>`. The release page and its notes are made by hand; the notes rules are below.
 
 A zip that is rebuilt for any reason goes through steps 3 and 4 again; the gate checks the zip that will be
 uploaded, not an earlier copy.
+
+**Release notes.** When the tag bundles a plugin version that did not move for this release, the notes inline that plugin's
+own Added/Fixed bullets from `CHANGELOG.md` in the release body itself, not a pointer to the file (a separate page, off the
+release page). `CHANGELOG.md` keeps each piece's entry separate; only the posted notes duplicate, and a posted note is a
+frozen snapshot, so the copies cannot drift.
+
+**A plugin-only fix after its addon release shipped.** Plugins have no tags of their own; their zips ride on whichever
+addon tag exists, so a fix merged after the release leaves the published zip stale (a header-injection fix in
+`timeshift_buffer` 0.6.2 missed 0.9.4 by hours and the vulnerable 0.6.1 shipped until it was noticed). Do not wait for the
+next release, above all for anything security-relevant: rebuild just that plugin's zip from `Omega` the way
+`package-dispatcharr-plugins` does, from `dispatcharr-plugin/`:
+
+```bash
+TZ=UTC zip -X -r "../dist/${plugin}.zip" "$plugin" -x "$plugin/tests/*" -x "*/__pycache__/*"
+```
+
+(`TZ=UTC` and `-X` matter: a bare `zip` stores the local and the UTC time of every entry, which publishes the build
+machine's timezone.) Run the gate on it, `gh release upload <tag> <zip> --clobber` onto the existing release (no new tag,
+no new addon build), then add a dated addendum to the release notes inlining the fix and correct any now-false "neither
+plugin changed" sentence.
 
 ## Distribution (Windows/macOS, once built)
 

@@ -72,15 +72,16 @@ def test_the_workflow_also_checks_the_zips_after_building_them():
     assert "contains a tests/ entry" in text
 
 
-def test_claude_md_quotes_the_workflows_exclusions_for_a_hand_built_zip():
+def test_building_md_quotes_the_workflows_exclusions_for_a_hand_built_zip():
     # The documented manual rebuild of a plugin zip for an already-published release is the one path
-    # the workflow's own contents check does not guard, so the exact command is quoted there.
+    # the workflow's own contents check does not guard, so the exact command is quoted in docs/BUILDING.md
+    # (it was in CLAUDE.md until 2026-10-08, which now only points there).
     command = _zip_command()
     exclusions = re.findall(r'-x "[^"]+"', command)
     assert exclusions, "the workflow's zip command no longer has -x exclusions"
-    claude_md = (WORKFLOW.parents[2] / "CLAUDE.md").read_text(encoding="utf-8")
+    building_md = (WORKFLOW.parents[2] / "docs" / "BUILDING.md").read_text(encoding="utf-8")
     for exclusion in exclusions:
-        assert exclusion in claude_md
+        assert exclusion in building_md
 
 
 def test_the_zip_publishes_no_local_time_and_no_timestamp_extra_field_whatever_the_build_machines_zone(tmp_path):

@@ -75,7 +75,7 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   grown to about 200 KB because each fix appended its own story (audit pass, date, how it was confirmed). It says what to do
   and where things are; the "why, with dates and incidents" belongs in `docs/` (module history in `docs/TEST_COVERAGE.md`,
   fixes in `docs/OPEN_ITEMS.md`). A change that needs more than a sentence or two here is probably a docs entry plus a
-  pointer. `tools/tests/test_claude_md_size.py` fails above 60 KB.
+  pointer. `tools/tests/test_claude_md_size.py` fails above 30 KB.
 - **Docs split by audience**: `README.md` and each plugin's own `README.md`
   are concise and user-facing -- install/configure/use only. `docs/*.md`
   holds the "why" (investigations, root causes, API behavior confirmed
@@ -139,47 +139,15 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   workarounds for specific bugs -- not a restatement of the code. Match
   that style; don't add narrative comments describing what a block of
   code obviously does.
-- **Pre-1.0 (`0.x`) versioning on purpose, as of 2026-09-07** -- this
-  project briefly reached `1.0.x` (addon) but stepped back down to `0.x`
-  across all three pieces once it became clear that signaled more
-  stability than actually existed: single-user, still turning up real
-  playback bugs in testing, and depending on Dispatcharr itself, which is
-  still pre-1.0 (`0.30.0` as of this writing) and can still make breaking
-  changes of its own. Per SemVer's own convention, `0.x` means "anything
-  may still change" -- an honest signal here. Move to `1.0.0` later based
-  on *this project's own* track record (real testing beyond one person,
-  no more of the kind of playback-breaking bugs still turning up as of
-  this writing) -- not gated on Dispatcharr's own version number reaching
-  `1.0.0`. Dispatcharr staying pre-1.0 is one reason this felt premature
-  right now, not a literal dependency: Dispatcharr could stay `0.x` for
-  years while being perfectly API-stable, or hit `1.0.0` while this addon
-  still has open bugs -- either way, judge this project on its own merits.
-- **Branch for anything nontrivial, as of 2026-09-07.** The dividing
-  line is functional/behavioral risk, not line count or file count --
-  a trivial, low-risk fix (including a doc-only wording/correction pass
-  spanning multiple paragraphs or files, as long as it changes no code
-  behavior) can still go straight to `Omega`, same as this project has
-  done so far. Anything that changes real behavior -- a real bug
-  investigation, a new feature, a risky refactor -- gets its own
-  short-lived branch, merged back to `Omega` once verified, then
-  deleted. This is deliberately not full GitFlow (no perpetual `develop`/
-  `release` branches) -- there's only one person working on this repo
-  right now, so there's no multi-contributor coordination problem to
-  solve; the only goal is keeping `Omega` in a known-good state and
-  having a diff to review before a change becomes permanent, given the
-  unit test suite is narrow (see "Building and testing" above) and won't
-  catch a half-finished change to the addon's actual PVR/HTTP logic.
-  A branch that lives for a while (a real feature, not a quick fix)
-  drifts out of sync with `Omega` as unrelated work merges in around
-  it -- periodically run `git merge Omega` into it along the way rather
-  than letting the gap grow for weeks and facing one large reconciliation
-  at the end. This matters more here than on a project with real test
-  coverage: a dependency whose *signature* changed underneath the branch
-  fails loudly (won't compile) the moment Omega's changes are merged
-  in, but a dependency whose *behavior* changed without its signature
-  changing won't -- nothing will flag it except actually re-testing the
-  branch after syncing, since the unit test suite doesn't cover this kind
-  of behavioral drift either.
+- **Pre-1.0 (`0.x`) versioning on purpose, as of 2026-09-07.** The project reached `1.0.x` once and stepped back: single-user,
+  still turning up real playback bugs, and dependent on Dispatcharr, itself pre-1.0. `0.x` means "anything may still
+  change". Move to `1.0.0` on this project's own track record (testing beyond one person, no more playback-breaking bugs),
+  not when Dispatcharr's version does.
+- **Branch for anything nontrivial, as of 2026-09-07.** The dividing line is behavioural risk, not size: a trivial,
+  low-risk fix (including a docs-only pass) goes straight to `Omega`; a bug investigation, feature or risky refactor gets a
+  short-lived branch, merged once verified, then deleted. Not GitFlow: one maintainer, and the point is a known-good `Omega`
+  and a diff to review. A branch that lives a while gets `git merge Omega` along the way; a dependency whose *behaviour*
+  changed without its signature fails nothing at compile time, so re-test after syncing.
 - **The main branch is named after the Kodi release it targets, as of 2026-10-05: `Omega`
   (Kodi 21), not `master`.** Kodi's own addons (e.g. `pvr.hts`) name branches after the Kodi
   release they build against (`Matrix`, `Nexus`, `Omega`, `Piers`...), so this follows the same
@@ -207,39 +175,6 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   bullet exists to keep that a stated, deliberate policy rather than an
   accident of current permissions, so it doesn't quietly erode later
   (e.g. if another collaborator ever gets write access).
-- **Run a data-hardening sweep before cutting any tag/release, as of
-  2026-09-25.** A tag/release is the moment this project's history
-  actually becomes something a stranger might clone, browse, or
-  download an asset from -- so it's the right gate to check before,
-  not an arbitrary calendar cadence. Before
-  tagging: run a hardening audit (an Opus subagent sweep across code,
-  docs, full git history, and every hosting-side surface -- release
-  assets, activity feed, issues/PRs -- checking known categories and a
-  general sensitive-term sweep) and resolve any real
-  finding via a `git-filter-repo` history rewrite (never a plain
-  commit) before the tag goes out, not after. A local pre-push check
-  (`.git/hooks/pre-push`) also guards ordinary commits against a list
-  of disallowed terms -- it's a backstop, not a
-  substitute for the pre-release sweep, which is what catches anything
-  genuinely new. Binary release assets need the same gate as text: run
-  `strings` over every built library (Android, macOS, CoreELEC, Windows) and
-  look for `/home/`, `/Users/` and `C:\` paths before uploading -- the
-  hand-built Android libraries once shipped unstripped debug builds that embedded the
-  build host's directory layout. Publish stripped builds. Check every zip's
-  entry timestamps too: a zip that stores both a local-clock and a UTC time
-  per entry reveals the build machine's timezone (CI normalizes the Windows
-  zip in PowerShell and the Linux zip with `tools/normalize_zip.py`, and the plugin
-  zips are built with `TZ=UTC zip -X`; a hand-built zip needs `normalize_zip.py` before
-  upload, see `docs/BUILDING.md`). These asset checks are one script,
-  `tools/check_release_zip.py`, run over every release zip (see "Publishing a release's
-  assets" below); do the `strings` look by hand only to investigate a failure.
-- **Batch fixes into releases -- don't tag/release per individual fix.**
-  Early on this project tagged and released (including the full manual
-  CoreELEC build-and-upload dance) after nearly every single bug fix,
-  which was far more release overhead than the project's single-user,
-  actively-testing phase warrants. Commit fixes to `Omega` as they land;
-  only cut an actual tag/release when a meaningful batch has accumulated
-  or a real test pass is about to happen against a batch of changes.
 - **Merge branches with squash-merge, as of 2026-09-07** -- when a
   nontrivial branch (see above) is done, squash it into one commit on
   `Omega` rather than preserving every individual commit from the
@@ -256,84 +191,29 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   (`#if defined(_WIN32)`) blocks, and neither config imposes an
   unrelated style; both were derived from the codebase's own existing
   conventions rather than a generic preset.
-- **Three independent version numbers, decoupled since 1.0.1** -- the
-  addon and each of the two companion plugins version separately. Bump
-  only the piece whose own files actually changed in a given release;
-  don't bump a plugin just because the addon released, or vice versa
-  (pre-1.0 releases moved all three together on purpose, to signal "the
-  1.0-era plugins" -- that was a deliberate one-time exception, not the
-  ongoing policy). Whichever piece(s) you *are* bumping, all of that
-  piece's own version locations still need to move together -- it's easy
-  to miss one:
+- **Three independent version numbers, decoupled since 1.0.1**: the addon and each plugin version separately. Bump only the
+  piece whose files changed, and move all of that piece's version locations together:
   - Addon: `pvr.dispatcharr-unofficial/addon.xml.in` (`<addon version="...">`) and
-    `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk` (`PKG_VERSION`,
-    with `PKG_SHA256` reset to the all-zeros placeholder until the tag
-    exists and the real checksum can be computed) move together -- CoreELEC
-    packages the addon binary, not either plugin, so this pair only moves
-    when the addon's version does, regardless of what the plugins are doing.
-  - Each plugin's `plugin.json` **and** its own `plugin.py`'s `Plugin`
-    class `version` attribute move together -- `plugin.json` is only used
-    for Dispatcharr's not-yet-trusted import preview; the hardcoded class
-    attribute in `plugin.py` is what Dispatcharr actually runs once
-    trusted. Bumping only `plugin.json` is a real, easy-to-miss mistake.
-  A git tag/GitHub Release is still addon-version-scoped (that's what
-  triggers CI); both plugins' zips get attached to it regardless of
-  whether their own version moved, since `package-dispatcharr-plugins`
-  zips whatever's currently committed either way. `CHANGELOG.md` should
-  say explicitly which piece(s) moved in a given entry rather than
-  implying all three share one number.
-- **A GitHub Release's notes must inline any bundled plugin's own
-  changelog entry, not just point at it, as of 2026-09-10.** When a tag
-  bundles an already-published plugin version that didn't move for *this*
-  release (the addon's own `CHANGELOG.md` entry says as much, e.g. "this
-  release also bundles the already-published `timeshift_buffer` `0.6.1`
-  fix"), the release notes need that plugin's actual Added/Fixed/etc.
-  bullets reproduced in the release body itself -- not just a sentence
-  pointing the reader at `CHANGELOG.md` (a separate file, off the release
-  page entirely) or even at "its own entry below" (still real navigation
-  friction if it's actually in a different scope). `CHANGELOG.md` itself
-  can keep each piece's entry separate (that's still correct, per the
-  bullet above) -- this only applies to the release notes actually posted
-  to the GitHub Release, since duplicating content within `CHANGELOG.md`
-  itself risks the two copies drifting apart on a later edit, while a
-  past release's notes are already a frozen, one-time snapshot with no
-  such risk.
-- **A plugin-only fix that lands after its addon release already
-  shipped needs that release's zip updated, not left stale until the
-  next one, as of 2026-09-11.** Plugins don't get their own tags --
-  their zips only ever get attached to whichever addon-version-scoped
-  tag happens to exist when `package-dispatcharr-plugins` runs. A real
-  case: the `client_ip` header-injection fix (`timeshift_buffer`
-  `0.6.2`) merged the same day as `0.9.4`'s own tag/CI run, but hours
-  after it -- so `0.9.4`'s already-published `timeshift_buffer.zip`
-  kept shipping the vulnerable `0.6.1` code until this was caught.
-  Given the "batch fixes, don't release per fix" convention above, the
-  next real addon release could be a while -- don't wait, especially
-  for anything security-relevant. Rebuild just that plugin's zip from
-  current `Omega` (same structure
-  `package-dispatcharr-plugins`'s own step produces: the plugin's own
-  directory as the zip's top-level entry; from `dispatcharr-plugin/`:
-  `TZ=UTC zip -X -r "../dist/${plugin}.zip" "$plugin" -x "$plugin/tests/*" -x "*/__pycache__/*"`,
-  the exact command in the step, which a hand-built zip is not otherwise checked
-  against; the `TZ=UTC` and `-X` matter, since a bare `zip` stores the local time and the
-  UTC time of every entry, which publishes the build machine's timezone) and `gh release upload
-  <tag> <zip> --clobber` onto the existing release -- no new tag, no
-  new addon build, this is a plugin-only exception to the
-  don't-release-per-fix rule above. Then update that release's own
-  notes with a dated addendum inlining the actual fix (per the bullet
-  above), not just a pointer -- and don't leave the original notes'
-  now-false "neither plugin changed" claim standing uncorrected.
-- **Publishing a release's assets, as of 2026-10-06; every platform, one gate, as of 2026-10-07.** A release's page, notes and zips are made by hand. **Every release ships all eight zips -- Windows, Linux, macOS, both Android ABIs, CoreELEC and
-  the two plugins -- and no platform is left out or held to a weaker check:** after the tag's CI run is green,
-  fetch its three artifacts, build the hand-built ones (macOS, Android, CoreELEC) from the tag's own source,
-  normalize them, and run `python3 tools/check_release_zip.py --require-blocklist --expect-release <version>
-  <all eight zips>` once over the lot. That one script is the data-hardening bullet's asset checks (build-machine
-  paths in any binary, UTF-16 included, the private blocklist, zip timestamps and extra fields, unstripped
-  libraries, debug files) and the check that the set is complete; CI runs its pattern half on every zip it
-  builds. Only after it passes, `gh release create <tag> --title <tag> --notes-file <notes> <zips...>` (the
-  notes inline the bundled plugins' changelog entries, per the bullet above). The steps are in
-  `docs/BUILDING.md`'s "Release assets"; a failing gate is fixed at its cause and the zip rebuilt, never
-  by editing the gate. The pre-push privacy hook does not see release assets.
+    `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk` (`PKG_VERSION`, with `PKG_SHA256` reset to the all-zeros
+    placeholder until the tag exists and the real checksum can be computed). CoreELEC packages the addon only, so this
+    pair moves only with the addon's version.
+  - Each plugin: `plugin.json` **and** the `Plugin` class `version` attribute in its `plugin.py`. `plugin.json` is only the
+    not-yet-trusted import preview; the class attribute is what Dispatcharr runs. Bumping only `plugin.json` is the
+    easy mistake.
+
+  A tag/release is addon-version-scoped (it triggers CI) and carries both plugin zips whether or not their version moved.
+  `CHANGELOG.md` says which piece(s) moved in an entry.
+- **Releasing, as of 2026-10-07 (every platform, one gate).** A tag is the moment history becomes something a stranger can
+  clone, so before tagging run a data-hardening audit (an Opus subagent sweep over code, docs, full history and every
+  hosting-side surface: release assets, issues/PRs) and resolve any real finding with a `git-filter-repo` rewrite, never a
+  plain commit. The local pre-push and commit hooks are a backstop, not a substitute, and they do not see release assets.
+  Batch fixes into releases; do not tag per fix. **Every release ships all eight zips** (Windows, Linux, macOS, both
+  Android ABIs, CoreELEC, the two plugins), built from the tag's own source, and none is published until
+  `python3 tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>` passes over the lot
+  (build-machine paths in any binary, the private blocklist, zip timestamps and extra fields, unstripped libraries, debug
+  files, a complete set). A failing gate is fixed at its cause and the zip rebuilt, never by editing the gate. The release
+  notes inline any bundled plugin's own changelog entry. A plugin-only fix after a release shipped gets that release's zip
+  replaced, not left stale. Steps, commands and the rationale: `docs/BUILDING.md`'s "Release assets".
 - **The CoreELEC package isn't part of CI** and won't be (see
   `docs/BUILDING.md`'s "GitHub Actions job ... rejected" note --
   CoreELEC's build harness assumes persistent, self-hosted infrastructure

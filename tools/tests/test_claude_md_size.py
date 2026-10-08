@@ -3,7 +3,7 @@
 from pathlib import Path
 
 CLAUDE_MD = Path(__file__).resolve().parents[2] / "CLAUDE.md"
-LIMIT_BYTES = 60_000
+LIMIT_BYTES = 30_000
 
 
 def test_claude_md_stays_small_enough_to_load_every_session():
