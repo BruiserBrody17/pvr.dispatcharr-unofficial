@@ -177,8 +177,8 @@ def test_not_a_zip_fails(tmp_path):
 
 
 def _concrete(version):
-    """The RELEASE_ASSETS patterns as real file names (CoreELEC's revision suffix filled in)."""
-    return [p.format(v=version).replace("[0-9]*", "1") for p in gate.RELEASE_ASSETS]
+    """The RELEASE_ASSETS patterns as real file names."""
+    return [p.format(v=version) for p in gate.RELEASE_ASSETS]
 
 
 def test_the_release_set_must_be_exactly_the_assets():
@@ -194,27 +194,34 @@ def test_the_release_set_must_be_exactly_the_assets():
     assert gate.check_release_set([n.replace(version, "9.9.8") for n in full], version)
 
 
-def test_the_coreelec_zip_is_matched_with_its_revision_suffix_and_only_that():
+def test_the_coreelec_zip_is_named_like_the_other_platforms_and_the_harness_name_is_refused():
     version = "0.12.0"
-    others = [n for n in _concrete(version) if not n.startswith("pvr.dispatcharr-unofficial-")]
-    for good in ("pvr.dispatcharr-unofficial-0.12.0.1.zip", "pvr.dispatcharr-unofficial-0.12.0.12.zip"):
-        assert gate.check_release_set(others + [good], version) == []
+    others = [n for n in _concrete(version) if "coreelec" not in n]
+    assert (
+        gate.check_release_set(others + ["addon-pvr.dispatcharr-unofficial-0.12.0-coreelec-armv7.zip"], version) == []
+    )
+    # CoreELEC's own file name (with its revision suffix) must be renamed before the release, not shipped as built
     for bad in (
-        "pvr.dispatcharr-unofficial-0.12.0.zip",
-        "pvr.dispatcharr-unofficial-0.12.1.1.zip",
-        "pvr.dispatcharr-unofficial-0.12.0.x.zip",
+        "pvr.dispatcharr-unofficial-0.12.0.1.zip",
+        "addon-pvr.dispatcharr-unofficial-0.12.1-coreelec-armv7.zip",
+        "addon-pvr.dispatcharr-unofficial-0.12.0-coreelec-aarch64.zip",
     ):
-        assert gate.check_release_set(others + [bad], version), bad
-    # two CoreELEC zips (an old revision left in the directory) is an error, not a pick-one
-    both = others + ["pvr.dispatcharr-unofficial-0.12.0.1.zip", "pvr.dispatcharr-unofficial-0.12.0.2.zip"]
-    assert any("twice" in p for p in gate.check_release_set(both, version))
+        assert any("missing" in p for p in gate.check_release_set(others + [bad], version)), bad
 
 
 def test_every_platform_ships_with_every_release():
     names = " ".join(gate.RELEASE_ASSETS)
-    for platform in ("windows", "linux", "osx", "android-aarch64", "android-armv7", "timeshift_buffer"):
+    for platform in (
+        "windows",
+        "linux",
+        "osx",
+        "android-aarch64",
+        "android-armv7",
+        "coreelec-armv7",
+        "timeshift_buffer",
+    ):
         assert platform in names
-    assert "recording_edl" in names and "pvr.dispatcharr-unofficial-{v}.[0-9]*.zip" in gate.RELEASE_ASSETS
+    assert "recording_edl" in names
 
 
 def test_the_blocklist_file_is_read_without_comments_and_blanks(tmp_path):

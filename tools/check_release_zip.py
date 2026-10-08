@@ -34,15 +34,16 @@ import zipfile
 PREFIX = "addon-pvr.dispatcharr-unofficial-"
 
 # What a release must carry (`{v}` is the version; a name may be a glob), as the names the build harnesses and the CI
-# workflow produce. CoreELEC's own packaging appends a package revision to the version (`0.12.0.1`, confirmed 2026-10-07
-# building the real release), so that one name is a pattern.
+# workflow produce. CoreELEC's own packaging names its zip `pvr.dispatcharr-unofficial-<v>.<revision>.zip` (`0.12.0.1`,
+# confirmed 2026-10-07 building the real release); it is renamed to the same scheme as the others when collected, since
+# the file name is not what Kodi installs by (the zip's own addon.xml is).
 RELEASE_ASSETS = (
     PREFIX + "{v}-windows-x86_64.zip",
     PREFIX + "{v}-linux.zip",
     PREFIX + "{v}-osx-arm64.zip",
     PREFIX + "{v}-android-aarch64.zip",
     PREFIX + "{v}-android-armv7.zip",
-    "pvr.dispatcharr-unofficial-{v}.[0-9]*.zip",  # the CoreELEC package, with CoreELEC's own revision suffix
+    PREFIX + "{v}-coreelec-armv7.zip",  # the CoreELEC package (32-bit userland on Amlogic-ng, as CoreELEC builds it)
     "timeshift_buffer.zip",
     "recording_edl.zip",
 )

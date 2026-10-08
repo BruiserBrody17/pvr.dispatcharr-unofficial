@@ -526,9 +526,12 @@ called out inline so a future rebuild doesn't have to rediscover them.
 6. This build isn't automated in CI (see the "GitHub Actions job ...
    rejected" note above) -- if this is a real tagged release, also attach
    the zip to the GitHub Release by hand so CoreELEC users have something
-   to download instead of having to build it themselves:
+   to download instead of having to build it themselves. Rename it first, to the scheme the other platforms use
+   (the file name is not what Kodi installs by; the zip's own `addon.xml` is, and keeps CoreELEC's `<version>.<revision>`):
    ```bash
-   gh release upload <tag> target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr-unofficial/pvr.dispatcharr-unofficial-<version>.<revision>.zip
+   cp target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr-unofficial/pvr.dispatcharr-unofficial-<version>.<revision>.zip \
+      addon-pvr.dispatcharr-unofficial-<version>-coreelec-armv7.zip
+   gh release upload <tag> addon-pvr.dispatcharr-unofficial-<version>-coreelec-armv7.zip
    ```
 
 For later releases, only steps 1-2 and the `cp`/build in steps 3-4 need
@@ -851,7 +854,7 @@ privacy gate passes on all of them together.**
 | `timeshift_buffer.zip`, `recording_edl.zip` | CI (`package-dispatcharr-plugins`) |
 | `addon-pvr.dispatcharr-unofficial-<v>-osx-arm64.zip` | by hand on the Mac ("Linux / macOS" above) |
 | `addon-pvr.dispatcharr-unofficial-<v>-android-aarch64.zip`, `...-android-armv7.zip` | by hand ("Android" above) |
-| `pvr.dispatcharr-unofficial-<v>.1.zip` (the CoreELEC package; the `.1` is CoreELEC's own revision suffix) | by hand ("CoreELEC" below) |
+| `addon-pvr.dispatcharr-unofficial-<v>-coreelec-armv7.zip` (the CoreELEC package, renamed from CoreELEC's `pvr.dispatcharr-unofficial-<v>.1.zip`; the `.1` is its own revision suffix and stays inside the zip's `addon.xml`) | by hand ("CoreELEC" below) |
 
 Cutting a release, in order:
 
