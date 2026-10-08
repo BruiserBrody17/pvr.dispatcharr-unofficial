@@ -530,8 +530,8 @@ jobs:
         with:
           files: dist/*.zip
 
-  # Not run for a pull request from a fork: on a CI runner that runs jobs directly on its machine, a pull request's own CMakeLists.txt and build steps would run directly on the
-  # machine that later builds the release DLL zip. A pull request from a branch of this repository, a
+  # Not run for a pull request from a fork: on a CI runner that runs jobs directly on its machine, a pull
+  # request's own CMakeLists.txt and build steps would run directly on the machine that later builds the release DLL zip. A pull request from a branch of this repository, a
   # push, a tag and a manual dispatch all still run it. Added by the eleventh hardening sweep; if the
   # event context does not carry the head repository the job is skipped for every pull request, which
   # fails closed (a skipped required check is visible, a compromised release builder is not).

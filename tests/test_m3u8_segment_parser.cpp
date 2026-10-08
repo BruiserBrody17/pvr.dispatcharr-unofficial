@@ -334,25 +334,24 @@ TEST_CASE("a segment URI with no EXTINF of its own does not inherit the previous
 
 namespace
 {
-// The shape of a real recording's playlist on a 0.32.0 server, with the host, id and durations replaced: its muxer now runs with
-// -hls_playlist_type event, so the playlist carries EXT-X-PLAYLIST-TYPE:EVENT, EXT-X-INDEPENDENT-SEGMENTS and an
-// EXT-X-DISCONTINUITY ahead of the first segment, durations to six decimals, and absolute segment URLs. The
-// response also gained Cache-Control: no-cache. Nothing about the list changed otherwise: it was already
-// append-only (-hls_list_size 0, omit_endlist), and the server adds the end-of-list tag itself when it finalizes.
-const std::string kEventPlaylistPrefix =
-    "#EXTM3U\n"
-    "#EXT-X-VERSION:6\n"
-    "#EXT-X-TARGETDURATION:7\n"
-    "#EXT-X-MEDIA-SEQUENCE:0\n"
-    "#EXT-X-PLAYLIST-TYPE:EVENT\n"
-    "#EXT-X-INDEPENDENT-SEGMENTS\n"
-    "#EXT-X-DISCONTINUITY\n"
-    "#EXTINF:6.250000,\n"
-    "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00000.ts\n"
-    "#EXTINF:3.500000,\n"
-    "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00001.ts\n"
-    "#EXTINF:5.125000,\n"
-    "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00002.ts\n";
+// The shape of a real recording's playlist on a 0.32.0 server, with the host, id and durations replaced: its muxer now
+// runs with -hls_playlist_type event, so the playlist carries EXT-X-PLAYLIST-TYPE:EVENT, EXT-X-INDEPENDENT-SEGMENTS and
+// an EXT-X-DISCONTINUITY ahead of the first segment, durations to six decimals, and absolute segment URLs. The response
+// also gained Cache-Control: no-cache. Nothing about the list changed otherwise: it was already append-only
+// (-hls_list_size 0, omit_endlist), and the server adds the end-of-list tag itself when it finalizes.
+const std::string kEventPlaylistPrefix = "#EXTM3U\n"
+                                         "#EXT-X-VERSION:6\n"
+                                         "#EXT-X-TARGETDURATION:7\n"
+                                         "#EXT-X-MEDIA-SEQUENCE:0\n"
+                                         "#EXT-X-PLAYLIST-TYPE:EVENT\n"
+                                         "#EXT-X-INDEPENDENT-SEGMENTS\n"
+                                         "#EXT-X-DISCONTINUITY\n"
+                                         "#EXTINF:6.250000,\n"
+                                         "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00000.ts\n"
+                                         "#EXTINF:3.500000,\n"
+                                         "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00001.ts\n"
+                                         "#EXTINF:5.125000,\n"
+                                         "http://dispatcharr.example:9191/api/channels/recordings/7/hls/seg_00002.ts\n";
 } // namespace
 
 TEST_CASE("ParseNewM3u8SegmentEntries reads a 0.32.0 event playlist: its extra tags are skipped, nothing else is",
