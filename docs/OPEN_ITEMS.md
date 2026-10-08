@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**6 open, 271 closed.**
+**6 open, 272 closed.**
 
 | Section | Entries |
 |---|---|
@@ -16,7 +16,7 @@
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 4 |
 | Open: Tooling (tools/) | 0 |
-| Closed: Fixed | 237 |
+| Closed: Fixed | 239 |
 | Closed: Closed without a change (refuted, explained or harmless) | 25 |
 | Closed: Project history and test infrastructure | 8 |
 
@@ -65,6 +65,10 @@
 ## Closed
 
 ### Fixed
+
+#### CI ran the whole build for pushes that touch only docs, packaging or unrelated tools
+
+**Fixed 2026-10-07.** `build.yml` has no `paths:` filter (GitHub's would apply to the whole workflow, and lint and the tests must run on every push: the cross-file checks under `tools/tests` are what catch a "docs only" commit that was not), so a commit that changed only `docs/`, the CoreELEC `package.mk` or a tool no build step runs still ran the Linux and Windows builds and the glue harness, and the Windows leg is the slowest. A small `changes` job now diffs the push (or pull request) against its base with `tools/ci_build_needed.py` and `build-unix`, `build-windows` and `glue-harness` need its answer. It builds when anything under `src/`, `tests/`, `pvr.dispatcharr-unofficial/`, `dispatcharr-plugin/` or `.github/workflows/` changed, or the top-level `CMakeLists.txt`, or `tools/normalize_zip.py` / `check_release_zip.py` (the two tools the zip steps call); a tag, a manual run, a base it cannot see (a force-push, a new branch) and a failing `git diff` all build. `package-dispatcharr-plugins` follows a second, narrower answer from the same script (`plugins`: `dispatcharr-plugin/`, the workflow and the two zip tools only; added the same day), since its zips depend on nothing else. Tested on 33 cases including every real path class, and dry-run over the repository's own history (the CoreELEC checksum and scrub-tool commit says skip, the gate and source commits say build). Confirmed in CI: the commit that introduced it touches the workflow, so it ran all ten jobs and they passed; the skip was then seen on the next push, which changed only `docs/`: `changes`, lint, every unit-test job and `package-dispatcharr-plugins` ran and passed, and `build-unix`, `build-windows` and `glue-harness` were skipped.
 
 #### The Android library scrub broke the HTTP request line
 
@@ -4761,8 +4765,10 @@ tradeoff.
 
 **Fixed (2026-10-02).** Every `uses:` in `.github/workflows/build.yml` is now `@<commit SHA> # vX.Y.Z`: `actions/checkout` `3d3c42e5...` (v7.0.1),
 `actions/upload-artifact` `043fb46d...` (v7.0.1), `softprops/action-gh-release` `efb35369...` (v3.0.3, which is what `v3` resolved to). The ongoing-maintenance
-cost the entry weighed is already covered: `.github/dependabot.yml` has the `github-actions` ecosystem on a weekly schedule, and it updates SHA pins and their
-version comments together. `tools/tests/test_dependency_pins.py` fails if a workflow action is ever pinned to a tag again, or a pinned one loses its version comment.
+cost the entry weighed was first covered by a `.github/dependabot.yml` (the `github-actions` ecosystem, weekly, updating SHA pins and their version comments
+together); that file was removed again on 2026-10-07 and Dependabot is not used, so the pins are moved by hand and nothing announces a newer release or a
+security fix (Dependabot alerts are also off on the GitHub repository). `tools/tests/test_dependency_pins.py` fails if a workflow action is ever pinned to a tag
+again, or a pinned one loses its version comment.
 
 #### FetchContent GIT_TAG pins are mutable tags
 
