@@ -81,6 +81,12 @@ docs/RECORDINGS.md|setting|m_client
 docs/RECURRING_RULES.md|function|FindDvrSettingsRow
 docs/RECURRING_RULES.md|function|GetTimezoneBias
 docs/RECURRING_RULES.md|setting|system_settings
+docs/TEST_COVERAGE.md|function|FindLatestPendingTitleForChannel
+docs/TEST_COVERAGE.md|function|GetTimezoneBias
+docs/TEST_COVERAGE.md|function|IsApiKeyValidFor
+docs/TEST_COVERAGE.md|function|_time_to_seconds
+docs/TEST_COVERAGE.md|function|add_internal
+docs/TEST_COVERAGE.md|setting|dvr_settings
 docs/TIMESHIFT.md|function|CallChannelMenuHook
 docs/TIMESHIFT.md|function|CheckDependencies
 docs/TIMESHIFT.md|function|ClosePVRStream
