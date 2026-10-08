@@ -7,16 +7,16 @@ files, and OpenSSL records its configure line, compiler and install directories 
 zips, built against Kodi's own dependency tree under the builder's home directory). Rebuilding that tree under a
 neutral path takes hours, so after the link:
 
-- in a binary member (one containing NUL bytes), each C string that contains the prefix is replaced whole by `/build`
-  and NUL padding to the same size, so what remains is neither the path nor the build tree's layout (the first
-  version overwrote only the prefix and left `/build//////android-build/kodi-source-arm/...` behind, which still
-  described the builder's directory layout);
+- in a binary member (one containing NUL bytes), each string that contains the prefix (the run of printable bytes
+  around it) is replaced whole by `/build` and NUL padding to the same size, so what remains is neither the path nor
+  the build tree's layout (the first version overwrote only the prefix and left
+  `/build//////android-build/kodi-source-arm/...` behind, which still described the builder's directory layout);
 - in a text member, each occurrence of the prefix is replaced by `/build` padded with slashes to the same length.
 
 Same size either way, so every offset stays valid and the binary is the same program: the text is only ever an error
-message, a configure line or a directory a device does not have. A binary string that is not plain text, or is
-absurdly long, is a refusal, never a guess: this must not blank code. `tools/check_release_zip.py` then verifies the
-result, which is the point: this is a tidy-up, the gate decides.
+message, a configure line or a directory a device does not have. A string that is absurdly long is a refusal,
+never a guess, and the bytes next to a string are never touched: this must not blank code.
+`tools/check_release_zip.py` then verifies the result, which is the point: this is a tidy-up, the gate decides.
 
 The prefix is a private value (a home directory), so it is an argument and never stored in the repository.
 
@@ -45,12 +45,26 @@ def check_prefix(prefix: str) -> bytes:
     return raw
 
 
-MAX_BLANKED_STRING = 16384  # the longest C string this will blank (OpenSSL's configure line is a couple of KB)
-MIN_PRINTABLE_FRACTION = 0.95
+MAX_BLANKED_STRING = 16384  # the longest string this will blank (OpenSSL's configure line is a couple of KB)
+
+
+def _is_text_byte(b: int) -> bool:
+    return 32 <= b < 127
 
 
 def _blank_c_strings(data: bytes, prefixes: list) -> tuple:
-    """(new bytes, count): every NUL-delimited string containing a prefix becomes `/build` + NULs, same size."""
+    """(new bytes, count): the string around each prefix becomes `/build` + NULs, same size, up to its last `/`.
+
+    The last `/` and what follows it stay, because the linker merges string tails: libcurl's `"1.1"` HTTP version
+    literal was the tail of an OpenSSL `.../engines-1.1` path, so blanking the whole path sent every request as
+    `GET / HTTP/` and nginx answered 400 (found 2026-10-07 on a real phone). No directory component is ever the
+    tail of another literal that way; a file or last component can be.
+
+    A string is the run of printable ASCII bytes around the occurrence, not the NUL-to-NUL stretch: in a static
+    library's rodata a path can sit directly after table bytes with no NUL between them (found 2026-10-07 in
+    nghttp2's tables), and the neighbouring binary bytes must stay exactly as they are. A run longer than
+    MAX_BLANKED_STRING is a refusal, never a guess.
+    """
     out = bytearray(data)
     count = 0
     for prefix in sorted(prefixes, key=len, reverse=True):
@@ -59,19 +73,18 @@ def _blank_c_strings(data: bytes, prefixes: list) -> tuple:
             at = out.find(prefix, start)
             if at < 0:
                 break
-            begin = out.rfind(b"\x00", 0, at) + 1
-            end = out.find(b"\x00", at)
-            if end < 0:
-                end = len(out)
-            span = out[begin:end]
-            if len(span) > MAX_BLANKED_STRING:
-                raise ValueError("a string containing the prefix is %d bytes long; refusing to blank it" % len(span))
-            printable = sum(1 for b in span if b in (9, 10, 13) or 32 <= b < 127)
-            if printable < MIN_PRINTABLE_FRACTION * len(span):
-                raise ValueError(
-                    "the bytes around an occurrence of the prefix are not plain text; refusing to blank them"
-                )
-            out[begin:end] = (b"/build" + bytes(len(span)))[: len(span)] if len(span) >= 6 else bytes(len(span))
+            begin = at
+            while begin > 0 and _is_text_byte(out[begin - 1]):
+                begin -= 1
+            end = at + len(prefix)
+            while end < len(out) and _is_text_byte(out[end]):
+                end += 1
+            length = end - begin
+            if length > MAX_BLANKED_STRING:
+                raise ValueError("a string containing the prefix is %d bytes long; refusing to blank it" % length)
+            keep_from = out.rfind(b"/", begin, end)
+            blank = keep_from - begin if keep_from > begin else 0
+            out[begin : begin + blank] = (b"/build" + bytes(blank))[:blank] if blank >= 6 else bytes(blank)
             count += 1
             start = end
     return bytes(out), count

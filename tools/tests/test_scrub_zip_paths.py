@@ -54,7 +54,7 @@ def test_a_text_member_has_the_prefix_overwritten_in_place():
     assert b"/android-build/x.c" in out and b"middle" in out
 
 
-def test_a_binary_member_has_each_whole_string_blanked_and_everything_else_kept():
+def test_a_binary_member_has_each_directory_part_blanked_and_everything_else_kept():
     code = bytes(range(1, 40)) * 3 + b"\x00\xff\x01"
     data = (
         b"\x00head\x00"
@@ -70,10 +70,24 @@ def test_a_binary_member_has_each_whole_string_blanked_and_everything_else_kept(
     out, count = scrub.scrub_bytes(data, [_HOME])
     assert count == 2
     assert len(out) == len(data)
-    assert _HOME not in out and b"android-build" not in out and b"nghttp2" not in out
+    assert _HOME not in out and b"android-build" not in out and b"kodi-source" not in out
     assert b"keep this string" in out and out.endswith(code + b"tail\x00")
-    # each blanked string is "/build" then NUL padding, nothing of the original layout left
+    # each blanked directory part is "/build" then NUL padding, nothing of the original layout left; the last
+    # component stays (see test_the_last_component_stays_for_a_literal_the_linker_merged_into_its_tail)
     assert out.count(b"/build\x00\x00") == 2
+    assert b'/ssl"' in out and b"/nghttp2_hd.c\x00" in out
+
+
+def test_the_last_component_stays_for_a_literal_the_linker_merged_into_its_tail():
+    # libcurl's "1.1" HTTP version literal was the tail of an OpenSSL ".../engines-1.1" path; blanking the whole path
+    # made every request "GET / HTTP/" and nginx answered 400 (found on a real phone, 2026-10-07)
+    path = _HOME + b'/android-build/xbmc-depends/lib/engines-1.1"'
+    data = b"\x00ENGINESDIR: " + b'"' + path + b"\x00 HTTP/%s\r\n\x00"
+    tail_at = data.index(b"1.1")
+    out, count = scrub.scrub_bytes(data, [_HOME])
+    assert count == 1 and len(out) == len(data)
+    assert out[tail_at : tail_at + 4] == b'1.1"'
+    assert _HOME not in out and b"xbmc-depends" not in out and b"android-build" not in out
 
 
 def test_two_occurrences_in_one_string_are_one_blanking():
@@ -83,11 +97,26 @@ def test_two_occurrences_in_one_string_are_one_blanking():
     assert _HOME not in out
 
 
-def test_a_string_that_is_not_plain_text_is_refused_rather_than_blanked():
-    machine_code = bytes([0x80, 0x81, 0x90, 0xA0] * 20)
-    data = b"\x00" + machine_code + _HOME + machine_code + b"\x00"
-    with pytest.raises(ValueError, match="not plain text"):
-        scrub.scrub_bytes(data, [_HOME])
+def test_binary_bytes_next_to_a_string_are_left_exactly_as_they_are():
+    # nghttp2's static tables put a path right after table bytes with no NUL between them
+    table = bytes([0x0D, 0x02, 0xBF, 0x01, 0x0D, 0x02, 0xDF, 0x01])
+    after = bytes([0x01, 0x02, 0x0C, 0x06])
+    data = b"\x00" + table + _HOME + b"/android-build/kodi-source/lib/nghttp2_hd.c" + after + b"\x00tail\x00"
+    out, count = scrub.scrub_bytes(data, [_HOME])
+    assert count == 1 and len(out) == len(data)
+    assert out.startswith(b"\x00" + table + b"/build\x00")
+    assert out.endswith(b"\x00" * 10 + after + b"\x00tail\x00") or after + b"\x00tail\x00" in out
+    assert out[1 : 1 + len(table)] == table
+    assert out.index(after) > out.index(b"/build")
+    assert _HOME not in out and b"kodi-source" not in out
+
+
+def test_a_table_byte_that_looks_like_text_is_only_taken_if_it_touches_the_string():
+    # 0x41 ("A") directly before the prefix is part of the printable run, so it goes with the string; a non-printable
+    # byte before it ends the run
+    data = b"\x00\x01A" + _HOME + b"/x\x00"
+    out, count = scrub.scrub_bytes(data, [_HOME])
+    assert count == 1 and out[:2] == b"\x00\x01" and out[2:8] == b"/build"
 
 
 def test_an_absurdly_long_string_is_refused():

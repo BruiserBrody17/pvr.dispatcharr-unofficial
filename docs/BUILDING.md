@@ -730,8 +730,12 @@ assertion messages name their source files, and OpenSSL records its configure li
 directories (found 2026-10-07 in the first stripped zips: both libraries come from Kodi's own `-debug`
 dependency tree under the builder's home directory, and they are string data, not debug information).
 Rebuilding that tree under a neutral path takes hours, so after stripping, blank every string in the library that
-contains the home-directory prefix (each becomes `/build` plus NUL padding, same size, same program: the text is only an
-error message, a configure line or a directory a device does not have; the tool refuses a string that is not plain text):
+contains the home-directory prefix (everything up to the string's last `/` becomes `/build` plus NUL padding, same size, same
+program: the text is only an error message, a configure line or a directory a device does not have; the tool refuses a string
+that is not plain text). The last path component stays on purpose: the linker merges string tails, and libcurl's `"1.1"`
+HTTP-version literal was the end of an OpenSSL `.../engines-1.1` path, so blanking that path whole sent every request as
+`GET /... HTTP/` and nginx answered 400 (found 2026-10-07 on a real phone; an earlier whole-string version of this tool
+shipped in no release). Always run the addon on a device against a real server after scrubbing:
 
 ```bash
 python3 tools/scrub_zip_paths.py --prefix "$HOME" <both android zips>

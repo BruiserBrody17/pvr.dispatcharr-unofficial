@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**6 open, 270 closed.**
+**6 open, 271 closed.**
 
 | Section | Entries |
 |---|---|
@@ -65,6 +65,10 @@
 ## Closed
 
 ### Fixed
+
+#### The Android library scrub broke the HTTP request line
+
+**Fixed 2026-10-07, before any release carried it; found by installing the rescrubbed zips on a real arm64 phone and reproduced with a listener on the device.** The second version of `tools/scrub_zip_paths.py` blanked the whole printable run around every build-home prefix. The linker merges string tails, and two of those runs ended in `engines-1.1`, which is also libcurl's `"1.1"` HTTP-version literal: the addon sent `GET /api/core/version/ HTTP/` (no version) and the server's nginx answered `400 Bad Request` to every request, so the phone loaded nothing from Dispatcharr (the previous-scrub zip failed the same way; plain requests from a desktop client and the phone's own curl were fine, dropping only the `Host` header reproduced a 400, and a raw capture on the phone showed the truncated request line). The tool now blanks each run only up to its last `/` and keeps the final component, which is where a merged tail can be (`engines-1.1`, `cert.pem`); the rest of the build path is still gone and the gate still passes. Tests: the 1.1 case with a shared tail, a mutation keeping the old whole-run behaviour fails two. Re-verified on both phones with the rebuilt zips: arm64 12 of 15 (live timeshift seek passed on the rerun, one earlier skip was `canseek` not yet true), armv7 10 of 15 with the same group-check failure. Lesson recorded in `docs/BUILDING.md`: run the scrubbed library against a real server before shipping it.
 
 #### The timer checks crashed with a KeyError while Kodi had not numbered the guide yet
 
