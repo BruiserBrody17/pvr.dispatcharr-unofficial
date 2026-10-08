@@ -1,5 +1,5 @@
 """Cross-file check that third-party code this project pulls in is pinned to an
-immutable reference, not a tag its publisher can repoint (docs/OPEN_ITEMS.md,
+immutable reference, not a tag its publisher can repoint (docs/CLOSED_ITEMS.md,
 "CI release-upload actions pinned to mutable tags" / "FetchContent GIT_TAG pins
 are mutable tags" / "Prebuilt Windows dependency archives have no integrity
 check", all closed 2026-10-02):

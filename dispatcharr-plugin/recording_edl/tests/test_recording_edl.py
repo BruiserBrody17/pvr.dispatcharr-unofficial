@@ -11,7 +11,7 @@ Recording.objects.filter()/CoreSettings query inside
 _classify_dvr_hls_dir/_dvr_sidecar_scan_roots) stays untested here, same
 boundary this project's C++ addon test suite draws at the Kodi SDK:
 verification of that layer is still manual/live-instance territory (see
-docs/OPEN_ITEMS.md's "No automated test suite exists" entry).
+docs/CLOSED_ITEMS.md's "No automated test suite exists" entry).
 _classify_dvr_hls_dir's own classification decision logic is pulled out
 into _classify_hls_dir_info(), which takes the already-resolved
 recording_exists/custom_properties instead of querying Django itself,

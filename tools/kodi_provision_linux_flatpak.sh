@@ -15,7 +15,7 @@
 # smoke-test pass.
 #
 # Deliberately NOT part of CI, same manual/live-hardware territory as
-# everything else in docs/OPEN_ITEMS.md's "No automated test suite exists"
+# everything else in docs/CLOSED_ITEMS.md's "No automated test suite exists"
 # entry -- this provisions a real VM you're about to smoke-test against.
 #
 # Kodi must be fully stopped while this runs: Kodi flushes its in-memory

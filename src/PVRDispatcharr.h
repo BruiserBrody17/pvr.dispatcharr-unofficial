@@ -686,7 +686,7 @@ private:
   // and since Kodi stops that thread before it destroys this instance, a
   // guide download stalled on an unresponsive server held a Kodi exit for
   // the whole guide timeout (4x `timeout`, 120 s by default): the abort flag
-  // the destructor sets was never reached (reproduced live, docs/OPEN_ITEMS.md,
+  // the destructor sets was never reached (reproduced live, docs/CLOSED_ITEMS.md,
   // "Kodi's own threads waited on the guide fetch, and two transfers
   // could not be aborted at shutdown"). The channels fetch is still made on Kodi's threads
   // (GetChannels() has to answer synchronously); it is bounded by `timeout`.

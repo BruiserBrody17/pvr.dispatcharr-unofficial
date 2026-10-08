@@ -6,7 +6,7 @@ was lost: each of these commits is still on `Omega`. This table records which co
 named, so a version can still be found without digging through the history of `addon.xml.in`.
 
 The commit hashes are the current ones. The history was rewritten on 2026-09-29 (a trailer
-cleanup, see `docs/OPEN_ITEMS.md`), and the tags were moved onto the rewritten commits then.
+cleanup, see `docs/CLOSED_ITEMS.md`), and the tags were moved onto the rewritten commits then.
 Dates are the commit dates in UTC.
 
 Not preserved: the release assets (each release carried two files; the Windows and plugin
@@ -47,4 +47,4 @@ order they were created, not sorted by version.
 
 The 473 commits of the project-wide hardening audit branch were squash-merged into `Omega` as one commit
 (`49ccdc0`), so they are not ancestors of `Omega`. The per-finding record of what those commits
-changed is `docs/OPEN_ITEMS.md`'s Fixed entries, and the tag history cleared on 2026-10-06 is the table above.
+changed is `docs/CLOSED_ITEMS.md`'s Fixed entries, and the tag history cleared on 2026-10-06 is the table above.

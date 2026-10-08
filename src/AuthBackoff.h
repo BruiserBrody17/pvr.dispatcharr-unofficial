@@ -18,7 +18,7 @@ namespace dispatcharr
 // periodic channel/EPG/recording refresh and every realtime-update
 // WebSocket reconnect cycle re-POSTed to /api/accounts/token/
 // indefinitely, a real reported way to trip Dispatcharr's own login
-// rate-limiter (docs/OPEN_ITEMS.md's "Auth retry loop never gives up or backs off" entry).
+// rate-limiter (docs/CLOSED_ITEMS.md's "Auth retry loop never gives up or backs off" entry).
 //
 // consecutiveFailures <= 0 (no failure yet, or the most recent attempt
 // succeeded) returns 0 -- retry immediately. Otherwise doubles from
@@ -101,7 +101,7 @@ bool WasSessionHealthy(std::chrono::steady_clock::duration sessionDuration);
 // validation error class DRF maps to 400, 401 for SimpleJWT's own wrong-
 // credentials AuthenticationFailed, and 429 from its own
 // LoginRateThrottle -- the exact rate-limiter this whole backoff exists
-// to avoid tripping (docs/OPEN_ITEMS.md's "Auth retry loop never gives up or backs off" entry), so a
+// to avoid tripping (docs/CLOSED_ITEMS.md's "Auth retry loop never gives up or backs off" entry), so a
 // 429 is if anything a stronger signal to back off, not a reason to
 // treat it as transient.
 inline bool ShouldCountTowardLoginBackoff(long httpCode)

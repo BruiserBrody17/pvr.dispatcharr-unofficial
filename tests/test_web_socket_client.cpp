@@ -1,6 +1,6 @@
 // WebSocketClient against a tiny local server, for what only real sockets can show: how long
 // ReceiveTextMessage() can be kept busy by a peer that floods control frames or drips a frame
-// in a byte at a time (docs/OPEN_ITEMS.md, "Lower-severity WebSocketClient.cpp gaps"). POSIX only.
+// in a byte at a time (docs/CLOSED_ITEMS.md, "Lower-severity WebSocketClient.cpp gaps"). POSIX only.
 
 #include "WebSocketClient.h"
 

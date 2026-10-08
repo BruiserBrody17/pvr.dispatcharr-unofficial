@@ -37,7 +37,7 @@ std::vector<uint8_t> BuildMaskedControlFrame(uint8_t opcode, const std::vector<u
 // itself never breaks either, so only a misbehaving peer or proxy can hit this; the
 // caller treats a violation as a protocol error and reconnects. It also keeps the pong
 // the client builds in answer to a ping within BuildMaskedControlFrame()'s 16-bit
-// length encoding (docs/OPEN_ITEMS.md, "Lower-severity WebSocketClient.cpp gaps").
+// length encoding (docs/CLOSED_ITEMS.md, "Lower-severity WebSocketClient.cpp gaps").
 bool IsValidServerFrame(uint8_t opcode, bool fin, bool masked, uint64_t payloadLength);
 
 struct WebSocketFrameHeader

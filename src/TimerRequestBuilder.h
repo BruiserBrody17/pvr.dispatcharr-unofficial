@@ -116,7 +116,7 @@ int ChannelToSendOnOneTimeEdit(int kodiChannelUid, int currentChannelId);
 // that validation to reject a genuinely-past start_time outright.
 //
 // includeEpgProgramWindow (added 2026-09-29, fixing a real, confirmed,
-// live-verified bug -- see docs/OPEN_ITEMS.md's "One-time recordings from
+// live-verified bug -- see docs/CLOSED_ITEMS.md's "One-time recordings from
 // Kodi miss Dispatcharr's pre/post padding" entry): when true, adds `custom_properties: {"program":
 // {"start_time", "end_time"}}` -- title/id deliberately omitted so
 // Dispatcharr's own later auto-enrichment still runs (confirmed live,

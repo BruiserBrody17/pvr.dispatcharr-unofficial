@@ -133,7 +133,7 @@ bool ShouldOfferCatchup(bool channelCatchupEnabled, bool catchupEnabledGlobally,
 // Without it the export only ever lists current and upcoming programmes, so catch-up
 // worked only for whatever Kodi happened to have cached before a programme aired: a
 // fresh install, a guide reset, or catch-up newly enabled on a channel had nothing
-// to play (docs/OPEN_ITEMS.md, "Guide fetch never includes already-aired
+// to play (docs/CLOSED_ITEMS.md, "Guide fetch never includes already-aired
 // programmes"). Measured against a real instance: prev_days=1 costs about a quarter
 // more guide traffic (about 25% larger, 30 s against 24 s) and 3, 7 and 30 are
 // byte-identical -- the guide source holds only about two days of history -- so the

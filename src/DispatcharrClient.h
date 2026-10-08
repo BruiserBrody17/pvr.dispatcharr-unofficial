@@ -1255,7 +1255,7 @@ private:
   // ever calls ObtainApiKey()).
   std::mutex m_apiKeyRecoveryMutex;
   // Two mutexes, so that a thread that only needs the current token is never held up behind a login or refresh
-  // (docs/OPEN_ITEMS.md, "m_authMutex held across a network round trip"; it was one recursive mutex held across
+  // (docs/CLOSED_ITEMS.md, "m_authMutex held across a network round trip"; it was one recursive mutex held across
   // the whole HTTP call, so the live read's manifest refresh, a heartbeat or the realtime thread could wait a
   // full request timeout for another thread's login):
   //   - m_authStateMutex guards the token fields and the login-failure state below. Held only for short reads
@@ -1539,7 +1539,7 @@ private:
   };
   LiveTimeshiftStreamState m_liveTimeshiftStream;
 
-  // Locking for the live-timeshift state above (docs/OPEN_ITEMS.md, "No locking around live-timeshift /
+  // Locking for the live-timeshift state above (docs/CLOSED_ITEMS.md, "No locking around live-timeshift /
   // in-progress stream state"). Kodi may call GetStreamTimes()/the length getters (which refresh the manifest)
   // on a different thread from Read/Seek/Open/Close, so:
   //   - m_liveStateMutex guards every field of m_liveTimeshiftStream and m_liveSession. It is held only for
@@ -1576,7 +1576,7 @@ private:
   // `coldStart` (OpenLiveTimeshiftStream()'s own wait for the first segment) uses the configured request timeout
   // instead of the short bound steady-state refreshes get: Open is allowed to take a full timeout, and with the
   // short bound an API that merely answers slowly (6 s per request) could never start a stream -- live check,
-  // docs/OPEN_ITEMS.md's "The unresponsive-server timeout changes".
+  // docs/CLOSED_ITEMS.md's "The unresponsive-server timeout changes".
   bool RefreshLiveManifest(bool force, std::string& error, bool* fatalOut = nullptr, bool coldStart = false);
 
   // Shared give-up-or-retry handling for ReadLiveTimeshiftStream()'s

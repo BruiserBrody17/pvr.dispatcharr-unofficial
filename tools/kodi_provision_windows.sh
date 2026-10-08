@@ -21,7 +21,7 @@
 # unchanged either way: it only speaks Kodi's own JSON-RPC API.
 #
 # Deliberately NOT part of CI, same manual/live-hardware territory as
-# everything else in docs/OPEN_ITEMS.md's "No automated test suite exists"
+# everything else in docs/CLOSED_ITEMS.md's "No automated test suite exists"
 # entry -- this provisions a real VM you're about to smoke-test against.
 #
 # Requires OpenSSH Server enabled on the Windows VM (an optional Windows

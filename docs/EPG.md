@@ -215,7 +215,7 @@ per-channel `TriggerEpgUpdate()` pass above fills Kodi in). Before this, a Kodi
 thread that found the guide stale either fetched it itself or waited on the
 fetch in progress, and Kodi stops its PVR manager and EPG threads before it
 destroys the addon instance, so a stalled guide download held a Kodi exit for
-the whole guide timeout -- reproduced live, see `docs/OPEN_ITEMS.md`'s "Kodi's
+the whole guide timeout -- reproduced live, see `docs/CLOSED_ITEMS.md`'s "Kodi's
 own threads waited on the guide fetch, and two transfers could not be aborted at
 shutdown". The channels fetch is still made on Kodi's threads (`GetChannels()`
 must answer synchronously), bounded by `timeout`.
@@ -306,7 +306,7 @@ for it, rather than blanking the display.
 
 **A manual renumber inside the server's guide cache (fixed 2026-10-02, confirmed live).** Dispatcharr keeps its generated XMLTV in a 300-second chunk cache that a manual channel-number edit does not invalidate, so even with the ordering above right, the guide fetched straight after a detected renumbering could still be keyed by the *old* numbers (a fetch 70 s after a renumber still listed the
 old one; one a few minutes later listed the new one). `EnsureChannelsLoaded()`'s renumbering branch now also sets `m_epgRefetchDueAt` to the detection time plus `kGuideRefetchAfterRenumber` (330 s), `EnsureEpgLoaded()` treats the guide as due then, and the background loop polls at the one-minute interval rather than ten while one is pending. One extra guide download per renumbering. Chosen over
-cross-checking each channel's name against the XMLTV `<display-name>`, which would also have caught the duplicate-number case but needs a parse the addon does not have and a look at how reliable that field is. Details and the live run: `docs/OPEN_ITEMS.md`, "Guide cache serves pre-rename channel numbers after a manual renumber".
+cross-checking each channel's name against the XMLTV `<display-name>`, which would also have caught the duplicate-number case but needs a parse the addon does not have and a look at how reliable that field is. Details and the live run: `docs/CLOSED_ITEMS.md`, "Guide cache serves pre-rename channel numbers after a manual renumber".
 
 ## Broadcast IDs could collide across a channel's own EPG entries
 
@@ -549,9 +549,9 @@ Dispatcharr went down and up, and the reconnect logged the refresh.
 
 `EnsureEpgLoaded()` forces a channel refresh just before its XMLTV fetch so a server-side renumbering is not committed against old channel numbers. When that forced refresh did not happen -- it failed, or its own failure backoff is running -- the guide fetch used to go ahead anyway and commit the new guide against the stale channel list, the mismatch the force exists to prevent. It now treats the guide attempt as failed too and retries both together on the ordinary retry interval, not counting toward the durable-failure backoff (that tracks the guide endpoint rejecting the addon). Cost, accepted: while channels keep failing the guide is as stale as they are. Not exercised live (it needs a channel fetch that fails while the guide fetch would succeed).
 
-Measured for the still-open catch-up question (`docs/OPEN_ITEMS.md`, "Guide fetch never includes already-aired programmes"): against the real instance `prev_days=0` takes 24 s and `prev_days=1` (about 25% larger) 30 s, with 3, 7 and 30 the same size as 1 -- the source only holds about two days of history.
+Measured for the still-open catch-up question (`docs/CLOSED_ITEMS.md`, "Guide fetch never includes already-aired programmes"): against the real instance `prev_days=0` takes 24 s and `prev_days=1` (about 25% larger) 30 s, with 3, 7 and 30 the same size as 1 -- the source only holds about two days of history.
 
-**The guide fetch now asks for already-aired programmes when catch-up is in use (2026-10-02).** `GetXmlTvGuide()` sends `?prev_days=N` with N from `ComputeGuidePrevDays()` (`EpgTagUtil.h`): the longest catch-up window among channels that offer it, capped at Dispatcharr's own 30, and no parameter when none does. Confirmed live that the request carries it and the returned past programmes reach Kodi; the measured cost is the ~25% extra guide traffic above. Closes `docs/OPEN_ITEMS.md`'s "Guide fetch never includes already-aired programmes".
+**The guide fetch now asks for already-aired programmes when catch-up is in use (2026-10-02).** `GetXmlTvGuide()` sends `?prev_days=N` with N from `ComputeGuidePrevDays()` (`EpgTagUtil.h`): the longest catch-up window among channels that offer it, capped at Dispatcharr's own 30, and no parameter when none does. Confirmed live that the request carries it and the returned past programmes reach Kodi; the measured cost is the ~25% extra guide traffic above. Closes `docs/CLOSED_ITEMS.md`'s "Guide fetch never includes already-aired programmes".
 
 ## A finished refresh on the server triggers a fetch, instead of waiting out the polling window (2026-10-06)
 

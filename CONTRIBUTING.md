@@ -68,7 +68,8 @@ handled here.
   [README.md](README.md) instead.
 - `docs/OPEN_ITEMS.md` -- the running punch-list of known gaps and
   in-progress investigations. Worth checking before starting something
-  substantial, in case it's already tracked (or already ruled out).
+  substantial, in case it's already tracked; `docs/CLOSED_ITEMS.md` holds
+  what was fixed or ruled out, and why.
 
 ## Writing your change
 

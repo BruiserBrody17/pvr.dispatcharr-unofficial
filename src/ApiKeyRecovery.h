@@ -105,7 +105,7 @@ GeneratedKeyReconcileAction ReconcileGeneratedApiKey(const std::string& generate
                                                      const ServerApiKeyLookup& verification);
 
 // The two decisions behind keeping Kodi's stored `api_key` setting in step with the key this addon is really
-// using, when Kodi's settings dialog swallowed the addon's own write (docs/OPEN_ITEMS.md, "SetSetting*()
+// using, when Kodi's settings dialog swallowed the addon's own write (docs/CLOSED_ITEMS.md, "SetSetting*()
 // swallowed while the settings dialog is open"). While the addon's own settings dialog is open, Kodi routes
 // SetSetting*() into the dialog's pending value instead of storing it, so a cancelled dialog leaves the OLD key
 // stored while this addon already runs on the new one -- and the next settings save re-delivers that old key,

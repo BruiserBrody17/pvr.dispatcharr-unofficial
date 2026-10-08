@@ -17,7 +17,7 @@ namespace dispatcharr
 // second Kodi in that window was silently reverted by an edit as narrow as an
 // enable/disable toggle, and every edit also made the server drop and regenerate
 // every future occurrence whether or not anything it depends on had changed
-// (docs/OPEN_ITEMS.md, "Recurring-rule edits send back Kodi's possibly-stale cached
+// (docs/CLOSED_ITEMS.md, "Recurring-rule edits send back Kodi's possibly-stale cached
 // fields"). Now only what the user actually changed is sent, and a save that
 // changed nothing sends nothing.
 struct RecurringRuleFields

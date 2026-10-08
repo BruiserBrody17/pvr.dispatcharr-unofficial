@@ -1259,7 +1259,7 @@ void PVRDispatcharr::StartRecordingRefreshThread()
                              // Held only while waiting, never across the refresh work below: that work makes
                              // network calls that can take a full request timeout each, and the destructor
                              // and the settings thread both need this mutex briefly to set a flag and wake
-                             // this thread (docs/OPEN_ITEMS.md, "Kodi shutdown / NEED_RESTART teardown can block
+                             // this thread (docs/CLOSED_ITEMS.md, "Kodi shutdown / NEED_RESTART teardown can block
                              // for minutes" and "notify_all() without holding the condition variable's mutex").
                              std::unique_lock<std::mutex> lock(m_recordingRefreshMutex);
                              // Real, confirmed bug found via a project-wide review (a 44th-pass
@@ -2393,7 +2393,7 @@ bool PVRDispatcharr::EnsureEpgLoaded()
     // is still running. Fetching the guide anyway would commit XMLTV keyed by
     // Dispatcharr's *current* channel numbers against a channel list that may
     // still hold the old ones: the very mismatch this force exists to prevent,
-    // reached a different way (docs/OPEN_ITEMS.md, "Residual gaps in the forced
+    // reached a different way (docs/CLOSED_ITEMS.md, "Residual gaps in the forced
     // channel refresh before the EPG fetch", (a)). So treat this guide attempt as
     // failed too, and let both retry together on the ordinary retry interval. The
     // cost, accepted: while channels keep failing, the guide stays as stale as
@@ -3015,7 +3015,7 @@ bool PVRDispatcharr::OpenLiveStream(const kodi::addon::PVRChannel& channel)
   // second, independent read of an atomic that a settings save can flip between
   // Kodi's two separate callbacks, and when it did, an open that Kodi had already
   // committed to failed because the two reads disagreed, for no benefit -- the
-  // plugin call below is the real gate and fails clearly on its own (docs/OPEN_ITEMS.md,
+  // plugin call below is the real gate and fails clearly on its own (docs/CLOSED_ITEMS.md,
   // "OpenLiveStream() torn atomic read across Kodi callbacks").
 
   std::string channelUuid;
@@ -3707,7 +3707,7 @@ void PVRDispatcharr::PersistApiKeyIfChanged(const std::string& keyBefore)
   }
   kodi::addon::SetSettingString("api_key", keyAfter);
   // Read back: while this addon's settings dialog is open Kodi keeps the write in the dialog's pending value
-  // instead of storing it (docs/OPEN_ITEMS.md, "SetSetting*() swallowed while the settings dialog is open").
+  // instead of storing it (docs/CLOSED_ITEMS.md, "SetSetting*() swallowed while the settings dialog is open").
   // Remembering what is still stored lets the key Kodi re-delivers after a cancelled dialog be told from a
   // user's edit, and lets ReassertApiKeySetting() write it again once the dialog is gone.
   {

@@ -17,7 +17,7 @@ namespace dispatcharr
 // one made in Dispatcharr's own web UI with a deliberate end date, which was
 // silently extended again and again -- and, unable to tell them apart, refused to
 // extend any rule that had already expired, so a rule of its own that lapsed
-// because no Kodi ran for a few weeks stayed dead (docs/OPEN_ITEMS.md, "Can't tell
+// because no Kodi ran for a few weeks stayed dead (docs/CLOSED_ITEMS.md, "Can't tell
 // addon-managed rolling rules from user-created ones" and "Rolling recurring rules
 // die if no Kodi runs for ~15-30 days").
 //

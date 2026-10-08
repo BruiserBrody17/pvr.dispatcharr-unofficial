@@ -548,7 +548,7 @@ void DispatcharrClient::InvalidateAccessToken()
 bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOverride)
 {
   // Fast path: a still-valid cached token needs only the short state lock, so a thread that has a token is
-  // never held up behind another thread's login or refresh (docs/OPEN_ITEMS.md, "m_authMutex held across a
+  // never held up behind another thread's login or refresh (docs/CLOSED_ITEMS.md, "m_authMutex held across a
   // network round trip": ReadLiveTimeshiftStream()'s refresh used to wait out a whole login this way).
   {
     std::lock_guard<std::mutex> stateLock(m_authStateMutex);
@@ -834,7 +834,7 @@ bool DispatcharrClient::GetXmlTvGuide(std::string& xmlOut, std::string& error, l
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &xmlSink);
   // The standard options first -- including the transfer-progress callback that lets
   // AbortInFlightRequests() end this transfer at once (added 2026-10-03, see
-  // docs/OPEN_ITEMS.md's "Kodi's own threads waited on the guide fetch, and two
+  // docs/CLOSED_ITEMS.md's "Kodi's own threads waited on the guide fetch, and two
   // transfers could not be aborted at shutdown"): this is the largest single transfer the addon makes and it runs
   // on the background thread at every start, so a Kodi exit during a slow or stalled guide
   // download used to wait out the whole timeout below. Then the longer guide-sized
@@ -4368,7 +4368,7 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   // A segment fetch that fails (the server unreachable, a gateway error) is retried inside this one call, for up
   // to the budget, rather than handed back to Kodi as a zero-byte read: Kodi ends the stream after a few of
   // those in quick succession when it has nothing buffered, which turned a brief outage into a dead stream
-  // (docs/OPEN_ITEMS.md, "A brief server outage ended playback for good"). A blocked read is just buffering to
+  // (docs/CLOSED_ITEMS.md, "A brief server outage ended playback for good"). A blocked read is just buffering to
   // the viewer, and the give-up rule in HandleLiveTimeshiftSegmentFetchFailure() still ends a stream that stays
   // dead.
   constexpr std::chrono::milliseconds kOutageReadBudget{25000};
@@ -4670,7 +4670,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
   // Through ApplyStandardCurlOptions(), like the in-progress recording's own segment fetch,
   // so AbortInFlightRequests() can end a fetch stuck on an unresponsive server --
   // CloseLiveTimeshiftStream() waits on the curl mutex this fetch holds (added 2026-10-03,
-  // docs/OPEN_ITEMS.md's "Kodi's own threads waited on the guide fetch, and two
+  // docs/CLOSED_ITEMS.md's "Kodi's own threads waited on the guide fetch, and two
   // transfers could not be aborted at shutdown").
   ApplyStandardCurlOptions(curl, GetCurlShare());
 

@@ -321,7 +321,7 @@ inline bool ShouldAttemptGuideFetch(std::chrono::steady_clock::time_point epgLoa
 // cache is deliberately invalidated (an edit, a delete, a detected channel renumbering); a
 // fetch that was already running when that happened holds pre-change data, and committing
 // it as fresh would silently undo the invalidation for a whole refresh interval
-// (docs/OPEN_ITEMS.md, "Cache-invalidation triggers can be overwritten by an in-flight fetch").
+// (docs/CLOSED_ITEMS.md, "Cache-invalidation triggers can be overwritten by an in-flight fetch").
 inline bool IsFetchStillCurrent(uint64_t generationAtStart, uint64_t generationNow)
 {
   return generationAtStart == generationNow;

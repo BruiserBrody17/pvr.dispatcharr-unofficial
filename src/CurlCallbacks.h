@@ -71,7 +71,7 @@ size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata);
 // larger than anything real -- or never stopped -- ran this addon out of
 // memory, and the std::bad_alloc is thrown inside a plain C callback libcurl
 // is calling, which is very likely to end in std::terminate() rather than a
-// catchable error (docs/OPEN_ITEMS.md, "WriteCallback has no upper bound").
+// catchable error (docs/CLOSED_ITEMS.md, "WriteCallback has no upper bound").
 // Past `limit` this stops accepting data and returns 0, which libcurl turns
 // into a failed transfer (CURLE_WRITE_ERROR); `exceeded` tells the caller
 // *why* it failed so the error can say so.

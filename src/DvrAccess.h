@@ -17,7 +17,7 @@ namespace dispatcharr
 // Why the addon needs it: every create / update / delete / stop / extend /
 // rename the DVR actions make requires "manage" (IsAdminOrDVRManager), so on a
 // view-only account Kodi offered Record, Delete, Rename and Stop that could only
-// ever fail with a generic error (docs/OPEN_ITEMS.md, "View-only account is offered
+// ever fail with a generic error (docs/CLOSED_ITEMS.md, "View-only account is offered
 // Record/Delete/Rename/Stop"). With the level known, GetCapabilities() stops
 // advertising them.
 enum class DvrAccess

@@ -3,7 +3,7 @@
 pvr.dispatcharr-unofficial end to end against a real Dispatcharr backend.
 
 This is deliberately NOT part of CI and never will be (see
-docs/OPEN_ITEMS.md's "No automated test suite exists" entry): it needs a
+docs/CLOSED_ITEMS.md's "No automated test suite exists" entry): it needs a
 live Kodi instance actually talking to a live Dispatcharr server, the same
 manual/live-hardware territory as every other real bug this project has
 found. What it replaces is ad hoc one-off JSON-RPC calls typed by hand

@@ -19,7 +19,7 @@ debug logging** on in the addon's settings before any of it, and keep
 
 Platforms: the lab runs of 2026-10-02 were on Linux; macOS got the smoke harness, a
 timeshift session with seeks and an in-progress recording playback on the same day
-(`docs/OPEN_ITEMS.md`, "macOS build and smoke test of the hardening branch is stale").
+(`docs/CLOSED_ITEMS.md`, "macOS build and smoke test of the hardening branch is stale").
 To run Kodi on a machine whose own profile must not be touched, start it with a different
 `HOME` (on macOS: `open -n --env HOME=<dir> -a Kodi.app`), enable the JSON-RPC webserver in
 that profile's `guisettings.xml`, put the built addon in its `addons` folder and enable it
@@ -56,7 +56,7 @@ Not substituted for by a virtual GPU or a laptop.
   software decode noise in the log.
 - Audio passthrough (AC3/DTS bitstreaming to a real receiver).
 - CoreELEC specifically: install the package, confirm the addon loads at all
-  (`docs/OPEN_ITEMS.md`, "CoreELEC-built addon.xml has an empty <platform> tag").
+  (`docs/CLOSED_ITEMS.md`, "CoreELEC-built addon.xml has an empty <platform> tag").
   For that item, with a zip built from an untagged branch (below): copy it to the N2+,
   Settings -> Add-ons -> Install from zip file, then Add-ons -> My add-ons -> PVR clients.
   Pass: the addon installs without an "incompatible"/"unsupported platform" message, can be
@@ -100,7 +100,7 @@ Not substituted for by a virtual GPU or a laptop.
   checked offline: right ELF class and machine, linked only against `libc++_shared.so`, `libm`, `libdl` and `libc`,
   the addon entry points exported, and differing from the unscrubbed build only inside the blanked build-path strings.
   *64-bit:* the harness passed 14 of 17 with 2 skips (nothing was recording) and 1 failure that is not the addon (the
-  group check, explained in `docs/OPEN_ITEMS.md`): live timeshift seek, catch-up, recorded playback and seek, and creating and deleting a
+  group check, explained in `docs/CLOSED_ITEMS.md`): live timeshift seek, catch-up, recorded playback and seek, and creating and deleting a
   one-off timer and a recurring rule all passed on a real arm64 device.
   A second run on the 64-bit phone with a 9-minute recording in progress on the server passed 16 of 18 (one skip, one
   group-check failure, both explained): the in-progress recording playback and seek, catch-up, both timer kinds and the
@@ -173,7 +173,7 @@ platform, or by pulling the network cable.
 | Live timeshift, connections hang for 20 s | UI never blocks; playback resumes | UI fine, playback resumed |
 | Completed recording, refused for 12 s | Playback resumes | Survives. **Before the fix it ended** after about 8 s |
 | In-progress recording, refused for 12 s | Playback resumes | Survives |
-| Server down when Kodi starts | Channels and guide kept; recovers within about a minute of the server returning | Confirmed 2026-09-30, `docs/OPEN_ITEMS.md` |
+| Server down when Kodi starts | Channels and guide kept; recovers within about a minute of the server returning | Confirmed 2026-09-30, `docs/CLOSED_ITEMS.md` |
 
 Not done: a provider-side concurrent-stream limit hit on purpose, and a full
 disk during a recording (both need the real conditions).
@@ -203,4 +203,4 @@ disk during a recording (both need the real conditions).
   active for other viewers", then none left once Kodi stopped); two real Kodi
   installs at once is the part to repeat by hand.
 - Two installs sharing one account: neither should end up with a revoked key
-  (`docs/OPEN_ITEMS.md`, the two API-key entries).
+  (`docs/CLOSED_ITEMS.md`, the two API-key entries).

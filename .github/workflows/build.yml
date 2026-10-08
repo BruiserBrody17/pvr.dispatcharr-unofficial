@@ -253,7 +253,7 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build-tests-sanitized --output-on-failure
 
-  # The same suite under ThreadSanitizer (added 2026-10-06; docs/OPEN_ITEMS.md, "ThreadSanitizer had never been run on
+  # The same suite under ThreadSanitizer (added 2026-10-06; docs/CLOSED_ITEMS.md, "ThreadSanitizer had never been run on
   # the C++ suite"). The one threaded fixture is WebSocketClient's local-server test, so this guards that class and
   # whatever threading the pure helpers grow; the real DispatcharrClient/PVRDispatcharr glue is covered by the by-hand
   # harness in tests/glue/ instead. Built without PIE and retried while TSan's runtime refuses the address-space
@@ -301,7 +301,7 @@ jobs:
           echo "ThreadSanitizer never started in 40 attempts"
           exit 1
 
-  # The by-hand harness of tests/glue/ as a job (docs/OPEN_ITEMS.md, "The glue harness now runs in CI"): the real
+  # The by-hand harness of tests/glue/ as a job (docs/CLOSED_ITEMS.md, "The glue harness now runs in CI"): the real
   # DispatcharrClient.cpp and PVRDispatcharr.cpp compiled against Kodi's dev-kit headers with the Kodi runtime stubbed,
   # driven against a fake Dispatcharr under ASan + UBSan (tests/glue/ci.sh lists the scenarios, about three minutes).
   # Only the dev-kit headers of the pinned Kodi commit are fetched (a sparse, blob-filtered fetch of a few MB), not the
@@ -653,7 +653,7 @@ jobs:
         # cover a compromise of the legitimate mirror itself, which is what
         # the SHA256 check below (added 2026-10-02) is for.
         #
-        # SHA256-pinned (added 2026-10-02, closing docs/OPEN_ITEMS.md's "Prebuilt
+        # SHA256-pinned (added 2026-10-02, closing docs/CLOSED_ITEMS.md's "Prebuilt
         # Windows dependency archives have no integrity check"): each archive is
         # downloaded here, checked against the hash below, and only then handed to
         # Kodi's add_internal() as a local path -- so the file that was verified is

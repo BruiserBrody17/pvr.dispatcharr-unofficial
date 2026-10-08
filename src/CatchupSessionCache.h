@@ -11,7 +11,7 @@ namespace dispatcharr
 
 // Whether a just-cached catch-up session's own playbackUrl can be reused
 // for this request instead of creating (and immediately discarding) a
-// second, redundant Dispatcharr catch-up session -- see docs/OPEN_ITEMS.md's
+// second, redundant Dispatcharr catch-up session -- see docs/CLOSED_ITEMS.md's
 // "Every catch-up play creates two Dispatcharr sessions" entry for
 // the real, live-confirmed cost this exists to avoid: a single catch-up
 // play calls DispatcharrClient::CreateCatchupSession() twice in a row with

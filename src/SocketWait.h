@@ -17,7 +17,7 @@ namespace dispatcharr
 // long-running Kodi process that already holds that many descriptors -- and which
 // FD_SET(-1) hit just the same when curl reported no active socket
 // (CURL_SOCKET_BAD). POSIX now uses poll(), which has no such limit, and an invalid
-// socket is refused up front (docs/OPEN_ITEMS.md, "Lower-severity WebSocketClient.cpp
+// socket is refused up front (docs/CLOSED_ITEMS.md, "Lower-severity WebSocketClient.cpp
 // gaps"). Windows keeps select(): its fd_set counts sockets rather than indexing by
 // value, so a single socket always fits.
 int WaitForSocketReady(curl_socket_t sockfd, bool forWrite, std::chrono::milliseconds remaining);

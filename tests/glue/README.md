@@ -12,7 +12,7 @@ The scenarios in `ci.sh` (every stream path and the PVR surface, about three min
 the `glue-harness` job, which fetches only the dev-kit headers of the pinned Kodi commit. The rest stays by hand: the
 TSan variant, `ip_chaos`, the plugin integration run and the longer fault matrices. The harness is not part of the
 Catch2 build. It is also for running after touching the stream paths, the auth code or the shared curl handles, and
-by hardening sweeps. It found the shared-connection-cache libcurl crash (`docs/OPEN_ITEMS.md`, "Concurrent requests
+by hardening sweeps. It found the shared-connection-cache libcurl crash (`docs/CLOSED_ITEMS.md`, "Concurrent requests
 could crash libcurl...") and the blackhole, probe-storm and retry-storm findings of the fourteenth sweep.
 
 ## Build and run

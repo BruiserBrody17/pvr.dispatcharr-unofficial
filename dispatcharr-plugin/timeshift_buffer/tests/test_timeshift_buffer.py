@@ -9,7 +9,7 @@ Covers only logic with no Redis/Django/real-HTTP-socket dependency --
 the real Redis client (_redis()), the actual HTTP server, and real
 ffmpeg subprocess management stay untested here, same boundary this
 project draws elsewhere (see recording_edl's own tests and
-docs/OPEN_ITEMS.md's "No automated test suite exists" entry). Functions
+docs/CLOSED_ITEMS.md's "No automated test suite exists" entry). Functions
 that only had a Redis/Django dependency in *part* of their logic
 (_find_orphaned_channel_dirs/_scrub_orphaned_dirs, _stream_attribution_headers)
 are still tested by monkeypatching just that one call, or by only
@@ -3572,7 +3572,7 @@ def test_run_get_live_manifest_reports_fatal_without_tearing_down_when_the_buffe
 
 # ---------------------------------------------------------------------
 # _update_buffer_state / _cas_buffer_state -- atomic read-modify-write of
-# a buffer's state (docs/OPEN_ITEMS.md: "Redis viewer/heartbeat writes are
+# a buffer's state (docs/CLOSED_ITEMS.md: "Redis viewer/heartbeat writes are
 # unguarded read-modify-write"), against a fake Redis whose eval() has the
 # real script's semantics and which can be made to lose races on demand.
 # ---------------------------------------------------------------------
@@ -3942,7 +3942,7 @@ def test_reaper_asks_the_teardown_to_recheck_the_heartbeat(monkeypatch):
 
 # ---------------------------------------------------------------------
 # _stop_orphaned_threads -- listener/reaper threads an earlier import of
-# the module left running (docs/OPEN_ITEMS.md: "Plugin reload leaks
+# the module left running (docs/CLOSED_ITEMS.md: "Plugin reload leaks
 # timeshift_buffer's listener and reaper per worker")
 # ---------------------------------------------------------------------
 
@@ -4144,7 +4144,7 @@ def test_a_reloaded_copy_of_the_module_stops_the_previous_copys_real_listener(tm
 
 
 # ---------------------------------------------------------------------------
-# Startup checks are serialized (docs/OPEN_ITEMS.md, "HTTP-server and reaper startup checks are unlocked")
+# Startup checks are serialized (docs/CLOSED_ITEMS.md, "HTTP-server and reaper startup checks are unlocked")
 # ---------------------------------------------------------------------------
 
 
@@ -4257,7 +4257,7 @@ def test_concurrent_first_calls_start_exactly_one_reaper(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# A recycled pid is not our ffmpeg (docs/OPEN_ITEMS.md, "timeshift_buffer trusts a Redis-stored pid")
+# A recycled pid is not our ffmpeg (docs/CLOSED_ITEMS.md, "timeshift_buffer trusts a Redis-stored pid")
 # ---------------------------------------------------------------------------
 
 # Field 22 is the start time: after ") " come state (3), ppid (4) ... so it is the 20th token.

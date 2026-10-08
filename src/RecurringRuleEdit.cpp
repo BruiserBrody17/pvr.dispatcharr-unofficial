@@ -16,7 +16,7 @@ bool SameCalendarDay(time_t a, time_t b)
 // so two values 86400 apart are one value. The edited side can arrive
 // unwrapped from a zone shift (a 22:00 rule in a zone behind UTC as -7200)
 // while the server reports 79200 -- compared raw, an unchanged rule was sent
-// on every edit (docs/OPEN_ITEMS.md, "Unchanged recurring-rule times were
+// on every edit (docs/CLOSED_ITEMS.md, "Unchanged recurring-rule times were
 // re-sent on every edit for a rule near UTC midnight").
 bool SameTimeOfDay(int a, int b)
 {

@@ -1779,7 +1779,7 @@ def _proc_start_ticks(pid) -> int | None:
     """When this pid's process started, or None if it is gone or /proc is unreadable. A pid
     number can be handed to a different process once ours has exited (a restart resets the
     process table while Redis, in a multi-container deployment, keeps the buffer's state;
-    plain pid wraparound under churn does it too -- docs/OPEN_ITEMS.md, "timeshift_buffer
+    plain pid wraparound under churn does it too -- docs/CLOSED_ITEMS.md, "timeshift_buffer
     trusts a Redis-stored pid"), but the pair (pid, start time) is never reused."""
     stat_text = _read_proc_pid_stat(pid)
     if stat_text is None:

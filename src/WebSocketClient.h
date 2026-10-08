@@ -103,7 +103,7 @@ private:
   // `deadline` is an absolute point in time rather than a per-call number of seconds:
   // a per-call budget restarts on every chunk received, so a peer trickling bytes in
   // just under it could keep a loop calling this running far past what the caller meant
-  // (docs/OPEN_ITEMS.md, "Lower-severity WebSocketClient.cpp gaps").
+  // (docs/CLOSED_ITEMS.md, "Lower-severity WebSocketClient.cpp gaps").
   int FillBuffer(std::chrono::steady_clock::time_point deadline, std::string& error);
   // Consumes exactly `len` bytes from the buffered/received stream into
   // `out`, calling FillBuffer() as needed. Same return convention as

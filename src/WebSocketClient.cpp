@@ -418,7 +418,7 @@ int WebSocketClient::ReceiveTextMessage(std::string& message, int timeoutSeconds
   // One deadline for this whole call, not a fresh timeoutSeconds per read: the wait for a
   // frame to begin runs against it, and so does the loop itself -- a peer feeding a steady
   // stream of ping/pong/binary frames never leaves this loop otherwise, and the realtime
-  // thread that calls this has to come back up to notice a stop request (docs/OPEN_ITEMS.md,
+  // thread that calls this has to come back up to notice a stop request (docs/CLOSED_ITEMS.md,
   // "Lower-severity WebSocketClient.cpp gaps"). Giving up between frames is safe for the same
   // reason a header timeout is: the read position is at a frame boundary.
   const auto callDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeoutSeconds);

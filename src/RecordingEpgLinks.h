@@ -19,7 +19,7 @@ namespace dispatcharr
 // cached guide, and that cache only ever holds current and upcoming programmes: an
 // ended one drops out at the next XMLTV refresh (Dispatcharr's `/output/epg` export
 // never includes it). So a link that was right while the programme was still in
-// the guide silently vanished at the next refresh or restart (docs/OPEN_ITEMS.md,
+// the guide silently vanished at the next refresh or restart (docs/CLOSED_ITEMS.md,
 // "GetRecordings() EPG link doesn't survive EPG cache rotation").
 //
 // The matched programme's start time is all that is needed to recompute the id, so

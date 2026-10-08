@@ -2303,7 +2303,7 @@ Live, against the real instance with 0.8.0: 14 consecutive segments from a real 
 here rather than closed out, per the live-testing session's own
 recommendation: it's the *same symptom* that started this whole
 investigation, just not currently fatal, and "harmless so far" isn't
-the same as "understood." Tracked in `docs/OPEN_ITEMS.md`'s "Non-fatal
+the same as "understood." Tracked in `docs/CLOSED_ITEMS.md`'s "Non-fatal
 Packet corrupt on server-side live timeshift" entry.
 
 ### The "cosmetic" Packet corrupt noise stopped being cosmetic once -- first observed real failure
@@ -2337,7 +2337,7 @@ This is the first observed occurrence, not yet a reliable repro -- one
 data point, on one channel, after one channel switch. Deliberately not
 chased further immediately (a formatting/version-renumber PR was the
 actual focus of that testing round); tracked here and in
-`docs/OPEN_ITEMS.md`'s "Non-fatal Packet corrupt on server-side live
+`docs/CLOSED_ITEMS.md`'s "Non-fatal Packet corrupt on server-side live
 timeshift" entry as a real, needs-fixing signal
 now rather than a purely theoretical "revisit if it stops being
 cosmetic" trigger. Next step, whenever this gets picked back up: try to
@@ -3346,7 +3346,7 @@ injected through the plugin's own heartbeat against the real Redis, all lost on 
 
 ## Serialized startup of the file server and reaper (0.6.8)
 
-*2026-10-02. Closes `docs/OPEN_ITEMS.md`'s "HTTP-server and reaper startup checks are unlocked"; unit-tested only.*
+*2026-10-02. Closes `docs/CLOSED_ITEMS.md`'s "HTTP-server and reaper startup checks are unlocked"; unit-tested only.*
 
 Every `run()` calls `_ensure_http_server_running()` and `_ensure_reaper_running()` first, and the workers are gevent-patched, so several requests can be
 inside them together on the first calls after a worker starts. Both were check-then-create with nothing serializing them. For the file server that meant two
@@ -3356,13 +3356,13 @@ for the reaper, the second thread's stop event overwrote the first's, so the fir
 
 ## A recycled pid is not our ffmpeg (0.6.9)
 
-*2026-10-02. Closes `docs/OPEN_ITEMS.md`'s "timeshift_buffer trusts a Redis-stored pid".*
+*2026-10-02. Closes `docs/CLOSED_ITEMS.md`'s "timeshift_buffer trusts a Redis-stored pid".*
 
 `_stop_ffmpeg()` and `_is_process_alive()` acted on whatever pid the buffer's Redis state held. Once the ffmpeg it names has exited, that number can belong to an unrelated process -- a restart resets the process table while a separately-run Redis keeps the state, or the pid wraps under heavy buffer churn -- and then a stop would SIGTERM, and after two seconds SIGKILL, someone else's process group, while a liveness check would call a dead buffer alive. `_start_ffmpeg()` now records the process's start time (`/proc/<pid>/stat` field 22, in clock ticks since boot, read after the last `)` because the command name may contain spaces and parentheses) as `pid_start_ticks`; the pair (pid, start time) is never reused. A mismatch makes `_stop_ffmpeg()` log and not signal, and `_is_process_alive()` return false without reaping. State with no recorded value (an older plugin version, or no readable `/proc`) is trusted as before, and a pid with no `/proc` entry at all is not a mismatch, so the existing already-gone handling still applies. Checked against a real process on a Linux kernel as well as with unit tests.
 
 ## A dead ffmpeg no longer takes the rewind window with it (0.7.0)
 
-*2026-10-02. Closes `docs/OPEN_ITEMS.md`'s "Dead-buffer detection destroys a paused/rewound viewer's rewind window".*
+*2026-10-02. Closes `docs/CLOSED_ITEMS.md`'s "Dead-buffer detection destroys a paused/rewound viewer's rewind window".*
 
 When the buffer's ffmpeg exits mid-session -- an upstream drop, a provider limit; it runs with no reconnect -- the playlist and every listed segment stay on disk and stay valid; only growth stops. `_get_live_manifest()` used to treat that as fatal: it raised `BufferFailedError`, and the `get_live_manifest` handler answered `fatal: true` and tore the buffer down on the spot (`rmtree` plus the Redis state). A client that is paused polls that action, so the first poll after ffmpeg died wiped the buffered window of a viewer paused or rewound well behind live, who had plenty of valid content left to play. Dead is not exhausted. Now the frozen manifest is returned with `ended: true` and the buffer is left to the normal teardown paths (`stop_buffer`, the idle reaper once nobody is polling). Only a buffer that never produced a playlist at all still fails fast.
 

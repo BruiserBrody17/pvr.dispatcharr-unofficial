@@ -101,7 +101,7 @@ inline LiveSeekResolution ResolveLiveSeekTarget(int64_t requested, int64_t curre
 // the reader has consumed everything that was ever going to exist. A reader still
 // behind the tail is not affected, which is the point: a viewer paused or rewound
 // well behind live keeps their buffered window after ffmpeg dies, instead of the
-// whole buffer being torn down at the first poll (docs/OPEN_ITEMS.md, "Dead-buffer
+// whole buffer being torn down at the first poll (docs/CLOSED_ITEMS.md, "Dead-buffer
 // detection destroys a paused/rewound viewer's rewind window").
 inline bool IsAtEndedTail(bool ended, int64_t position, int64_t totalBytes)
 {

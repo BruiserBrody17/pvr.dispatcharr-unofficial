@@ -51,7 +51,7 @@ std::vector<M3u8SegmentEntry> ParseNewM3u8SegmentEntries(const std::string& play
 // `X-Forwarded-*` header -- a stock `proxy_set_header Host $host` -- it falls
 // back to the port it listens on itself, so the playlist names an internal address
 // the client cannot reach (confirmed against a real 0.31.0 instance with those
-// headers simulated, docs/OPEN_ITEMS.md, "Dispatcharr 0.31.0 bug fixes ..."). The
+// headers simulated, docs/CLOSED_ITEMS.md, "Dispatcharr 0.31.0 bug fixes ..."). The
 // playlist itself is fetched from the configured address, so only the segments
 // failed. `segmentUrl` is rebased onto `baseUrl` (`scheme://host:port`, no trailing
 // slash) when it is absolute and its path begins with `requiredPathPrefix` -- the

@@ -162,7 +162,7 @@ def title_matches_headings(normalized_title: str, headings) -> bool:
     citing "Concurrent viewers" against a real "## Concurrent viewers (a
     real, live-confirmed bug)" heading).
 
-    Tightened 2026-10-02 (docs/OPEN_ITEMS.md, "check_doc_refs: heading-match
+    Tightened 2026-10-02 (docs/CLOSED_ITEMS.md, "check_doc_refs: heading-match
     check may be too loose"): the check used to also accept the OTHER
     direction -- a real heading that is a substring of the citation -- so a
     short, generic heading (a few characters) satisfied a citation of a

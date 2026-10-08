@@ -27,9 +27,10 @@ is the shorter, more direct version of what's below.
 - `docs/` -- engineering history: root causes, live-confirmed API
   behavior, things tried and reverted. Not user-facing.
 - `docs/OPEN_ITEMS.md` -- the project's running punch-list; add new open
-  items there rather than losing track of them in conversation, under its
-  "Open" heading in whichever category fits, and move an item to "Closed"
-  (don't delete it) once it's resolved.
+  items there rather than losing track of them in conversation, in whichever
+  category fits, and move an item to `docs/CLOSED_ITEMS.md` (don't delete
+  it) once it's resolved, with a note of how it was confirmed. An older
+  citation of `OPEN_ITEMS.md` for a resolved item means its entry there.
 
 ## Building and testing
 
@@ -74,7 +75,7 @@ everything); lint and every unit-test job run on every push, since the cross-fil
 - **Keep this file short; history goes in `docs/`.** `CLAUDE.md` is loaded in full at the start of every session, and it had
   grown to about 200 KB because each fix appended its own story (audit pass, date, how it was confirmed). It says what to do
   and where things are; the "why, with dates and incidents" belongs in `docs/` (module history in `docs/TEST_COVERAGE.md`,
-  fixes in `docs/OPEN_ITEMS.md`). A change that needs more than a sentence or two here is probably a docs entry plus a
+  fixes in `docs/CLOSED_ITEMS.md`). A change that needs more than a sentence or two here is probably a docs entry plus a
   pointer. `tools/tests/test_claude_md_size.py` fails above 30 KB.
 - **Docs split by audience**: `README.md` and each plugin's own `README.md`
   are concise and user-facing -- install/configure/use only. `docs/*.md`
@@ -96,7 +97,7 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   pattern already used throughout `src/` and `dispatcharr-plugin/` when the
   new logic is buried inside a larger, mixed-purity function. This is what
   keeps the multi-pass catch-up work documented in
-  `docs/OPEN_ITEMS.md`'s "No automated test suite exists" entry from
+  `docs/CLOSED_ITEMS.md`'s "No automated test suite exists" entry from
   needing to repeat: new code should arrive already covered rather than
   accumulating into another backlog to sweep later. Nothing changes for
   the untested side of the boundary -- forcing a "unit test" that mocks
@@ -156,7 +157,7 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   per-Kodi versions, branch `Piers` off `Omega` at that point and keep `Omega` as the
   maintenance branch for Kodi 21, rather than renaming again. Older text in `docs/` and in this
   file that says `master` describes the branch as it was then and is left as written. The links to
-  the public GitHub repo that still say `master` are tracked in `docs/OPEN_ITEMS.md`'s "Links to the
+  the public GitHub repo that still say `master` are tracked in `docs/CLOSED_ITEMS.md`'s "Links to the
   public GitHub repo still name the master branch" entry.
 - **Every external contributor's PR gets a real manual review before
   merging, as of 2026-09-11 -- never auto-merged on green CI alone.**

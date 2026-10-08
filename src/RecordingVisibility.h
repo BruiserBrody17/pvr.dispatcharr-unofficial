@@ -293,7 +293,7 @@ bool IsAlreadyFinishedRecording(bool lookupOk, bool isInProgress, bool isUpcomin
 // left open: a server lookup that *failed*.
 //
 // With a failed lookup nothing says whether the recording is running, finished or
-// not yet started, and both guesses were wrong in a real way (docs/OPEN_ITEMS.md,
+// not yet started, and both guesses were wrong in a real way (docs/CLOSED_ITEMS.md,
 // "DeleteTimer(): failed-but-not-confirmed-gone lookup"): Delete on a recording
 // that is actually in progress destroys its file, and Stop on one that has not
 // started leaves a permanent terminal-status row with no file

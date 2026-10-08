@@ -24,7 +24,7 @@ UrlOrigin ParseUrlOrigin(const std::string& url);
 // `fromUrl` to `toUrl`. True only when the target is the same host and not a
 // downgrade from https to http.
 //
-// Why this exists (docs/OPEN_ITEMS.md, "X-API-Key could follow a cross-host or
+// Why this exists (docs/CLOSED_ITEMS.md, "X-API-Key could follow a cross-host or
 // downgrading redirect"): libcurl's own FOLLOWLOCATION only withholds the
 // Authorization header on a cross-host redirect, and only since 7.58. A custom
 // header like X-API-Key is sent wherever the redirect points, a 307/308 re-sends
@@ -45,7 +45,7 @@ bool IsSafeRedirectTarget(const std::string& fromUrl, const std::string& toUrl);
 // sent for a URL taken from a server-supplied playlist: only to the configured
 // server itself. Stricter than IsSafeRedirectTarget() on purpose -- a playlist has
 // no business naming another port, let alone another host, and the key must never
-// be steered to one (docs/OPEN_ITEMS.md, "The API key was attached to a segment URL
+// be steered to one (docs/CLOSED_ITEMS.md, "The API key was attached to a segment URL
 // on any host"). False when either URL is not a valid absolute http(s) URL.
 bool IsSameOrigin(const std::string& urlA, const std::string& urlB);
 
