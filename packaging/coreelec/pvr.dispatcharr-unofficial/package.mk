@@ -14,7 +14,7 @@
 
 PKG_NAME="pvr.dispatcharr-unofficial"
 PKG_VERSION="0.12.0"
-PKG_SHA256="f86d0b8ef068bfda93bfe335fb0995e48ccb40bcc6bd56096d46bfdf0a8469f1"
+PKG_SHA256="11da15f47f1fdf6494df8fbee5e6be1ed7444b5546ec8b156aa25482ca308116"
 PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL-2.0-or-later"
