@@ -2073,7 +2073,7 @@ in `timeshift_buffer` 0.8.7, a monotonic SIGTERM grace, `_is_redis_response_erro
 permission error is a `ResponseError` subclass) and an `OverflowError` guard in
 `_int_setting()`. `tools/check_doc_refs.py` gained a fourth check, the `docs/X.md's "Title"`
 form, over the docs and the source comments, and six dangling citations in `src/` were fixed.
-The cross-worker wall-clock heartbeat ages are a recorded known gap, not changed.
+The cross-worker wall-clock heartbeat ages were a recorded known gap here (closed for the reaper in `timeshift_buffer` 0.8.14, below).
 A ninth sweep (the six ninth-sweep entries in `docs/OPEN_ITEMS.md`) resolved each side of a recurring-rule
 edit on its own in `ResolveRecurringRuleTimesOnEdit()`, made the padding retry choose what to send under
 the client's settings mutex (`DispatcharrClient::SetDvrOffsetMinutesChosen()`, `PendingPaddingEdits()`;
@@ -2474,6 +2474,17 @@ own end-to-end behavior against a real Kodi/Dispatcharr instance stays
 exactly as untested as before -- this is the same boundary as every
 other Kodi/Dispatcharr-touching code in this project, not a new
 exception to it.
+
+`timeshift_buffer` 0.8.14 (2026-10-09) closed the host-clock-step gap in the reaper: `_IdleTracker` ages each heartbeat
+value on a monotonic clock from when it last changed (`_stale_viewers()`, `_drop_stale_viewers()`), and the reaper
+no longer subtracts two stamps. The tests drive real `_reaper_loop()` ticks against a fake monotonic clock
+(a test driver): a forward step with an unchanged stamp keeps the buffer, a backward step still reaps an idle one, stamps
+that run backwards while the viewer is watching keep it, the first sighting is age zero, the strict `>` boundary, a viewer
+pruned while another keeps the buffer alive, a prune write-back that spares a viewer that registered or heartbeated in the
+gap, leadership loss clearing what was seen, a vanished buffer being seen afresh, and the teardown's last look comparing
+values instead of reading a clock. Mutation-checked: putting the old subtraction back fails five of them. Not covered:
+`stop_buffer`'s own viewer prune still compares stamps (it runs in a request worker with no memory between calls), and
+nothing runs the reaper thread against a real stepped clock.
 
 See `docs/CLOSED_ITEMS.md`'s "No automated test suite exists" entry for
 the full reasoning and what's still open on both sides. Verification of

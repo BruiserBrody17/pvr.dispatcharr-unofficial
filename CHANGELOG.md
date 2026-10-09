@@ -115,6 +115,24 @@ published for build-machine paths, leftover debug information and timestamps tha
   locale.
 - **Packaging**: the add-on no longer declares an icon that was never shipped.
 
+## `timeshift_buffer` [0.8.14] - 2026-10-09
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **A change of the host's clock no longer makes the idle reaper stop buffers that are being watched.** The
+  reaper decided a buffer was idle by subtracting its last heartbeat's time from the current time, both read
+  from the host's clock. When that clock was stepped by more than the idle timeout (a manual change, a VM
+  resume, a clock correction), every buffer looked idle at once: viewers were dropped, buffers stopped and
+  playback ended; a step backwards had the opposite effect, keeping a really idle buffer, and the provider
+  slot it holds, until the clock caught up. The reaper now times each heartbeat on its own steady clock,
+  from when it last changed, so neither a step nor a suspend matters. A buffer is reaped after it has had no
+  heartbeat for the idle timeout plus up to one reaper interval (15 seconds), and a reaper that has just
+  started gives each buffer one idle timeout before it judges it. (Closing the last viewer with
+  `stop_buffer` still compares the stored times when it drops other viewers that have gone silent.)
+
 ## `timeshift_buffer` [0.8.13] - 2026-10-06
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a

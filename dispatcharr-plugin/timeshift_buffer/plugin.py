@@ -429,14 +429,14 @@ def _release_start_buffer_lock(channel_uuid: str, token: str) -> None:
 def _shared_now() -> float:
     """Seconds since the epoch on the one clock every Dispatcharr worker shares: Redis's own TIME.
 
-    The heartbeat ages, the stopping marker and the reaper's idle checks are written by one worker and compared by
-    another, possibly on another host, and their wall clocks differ by that host's skew; Redis answers for all of them
-    (found by the 2026-10-04 eighth hardening sweep, left as a known gap; docs/OPEN_ITEMS.md). This does NOT protect
-    against the host's own clock being stepped: Redis TIME is the Redis host's wall clock, and containers on one host
-    share it (the usual deployment, and the all-in-one image runs Redis in the same container), so a manual change or a
-    VM resume moves it as far as time.time(), and the reaper's `now - last_heartbeat` misfires the same way
-    (docs/OPEN_ITEMS.md, known gaps; 0.8.11's changelog said otherwise). Falls back to this process's wall clock when
-    Redis cannot say (not reachable, or a stand-in without TIME), which is what these timestamps always were.
+    The heartbeat stamps and the stopping marker are written by one worker and compared by another, possibly on
+    another host, and their wall clocks differ by that host's skew; Redis answers for all of them (found by the
+    2026-10-04 eighth hardening sweep). This does NOT protect against the host's own clock being stepped: Redis TIME is
+    the Redis host's wall clock, and containers on one host share it (the usual deployment, and the all-in-one image
+    runs Redis in the same container), so a manual change or a VM resume moves it as far as time.time(). The reaper's
+    idle checks therefore do not subtract these stamps any more: they age a heartbeat on the reaper's own monotonic
+    clock (`_IdleTracker`, 0.8.14). Falls back to this process's wall clock when Redis cannot say (not reachable, or a
+    stand-in without TIME), which is what these timestamps always were.
     Timestamps that are only compared with this process's own filesystem (a directory's mtime, the owner file) stay on
     time.time()."""
     try:
@@ -1318,7 +1318,7 @@ def _int_setting(
     parsed 0 or negative number is not a parse failure `int()` would
     catch on its own) -- e.g. `segment_seconds=0` divides by zero in
     `_compute_segment_counts()`, and `idle_timeout_seconds=0` makes the
-    reaper's own per-tick `_prune_stale_viewers()` treat every viewer as
+    reaper's own per-tick `_stale_viewers()` treat every viewer as
     stale immediately, tearing down every buffer on every reaper tick.
 
     `maximum` caps the same way, added 2026-09-26 (a 21st-pass audit,
@@ -2701,6 +2701,9 @@ def _prune_stale_viewers(state, idle_timeout, now=None):
     idle_timeout, in place on state["viewers"]/state["viewer_heartbeats"].
     Returns True if anything was actually pruned.
 
+    Used by stop_buffer, which runs in a request worker with no memory between calls, so it can only subtract two
+    stamps; the reaper uses _IdleTracker instead (a host clock step misfires THIS comparison, see docs/OPEN_ITEMS.md).
+
     Needed because last_heartbeat (refreshed by ANY successful file fetch,
     see _touch_heartbeat) is buffer-wide, not per-viewer: if one viewer
     crashes hard enough to never call stop_buffer, its viewer_id otherwise
@@ -2725,6 +2728,78 @@ def _prune_stale_viewers(state, idle_timeout, now=None):
     state["viewers"] = fresh
     state["viewer_heartbeats"] = {v: heartbeats[v] for v in fresh if v in heartbeats}
     return True
+
+
+class _IdleTracker:
+    """Ages heartbeats on this process's monotonic clock instead of subtracting two wall-clock stamps (0.8.14).
+
+    The reaper used to decide "idle" as `shared_now - last_heartbeat`. Both numbers come from the host's wall clock
+    (Redis TIME is that clock when Redis shares the host, the usual deployment), so a step of more than
+    `idle_timeout_seconds` between a heartbeat and the next tick (a manual change, a VM resume, a clock correction)
+    made every watched buffer look idle at once: the viewers were pruned, the buffers stopped and the addon reported
+    them gone; a step backwards made a really idle buffer look young until the clock caught up. Here the reaper
+    remembers, per key, the heartbeat VALUE it last saw and when (monotonic) that value last changed; the age is the
+    time since the change. A value that changes at all counts as a heartbeat, in either direction, so the stamp's
+    meaning no longer matters, only that it moved. The first sighting of a key is age 0, so a reaper that has just
+    started (or just won the election) gives every buffer one full `idle_timeout_seconds` to prove it is alive before
+    reaping it; the cost is that a buffer abandoned while no reaper was watching lives that much longer. The clock
+    is injectable for the tests."""
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._seen = {}  # key -> (last value seen, monotonic time that value was first seen)
+
+    def age(self, key, value) -> float:
+        """Seconds since `value` was first seen for `key` (0.0 for a new key or a changed value)."""
+        now = self._clock()
+        previous = self._seen.get(key)
+        if previous is None or previous[0] != value:
+            self._seen[key] = (value, now)
+            return 0.0
+        return now - previous[1]
+
+    def retain(self, keys) -> None:
+        """Forgets every key not in `keys` (a buffer or viewer that is gone must not be remembered)."""
+        keep = set(keys)
+        for key in [k for k in self._seen if k not in keep]:
+            del self._seen[key]
+
+    def clear(self) -> None:
+        self._seen.clear()
+
+
+def _drop_stale_viewers(state, stale):
+    """Removes from `state` (in place) each viewer in `stale` ({viewer_id: heartbeat value the reaper saw}) whose
+    heartbeat in `state` is STILL that value, and returns True when it removed any. Run against a copy re-read just
+    before writing back: a viewer that heartbeated since the reaper looked has a different value and is kept, and one
+    that registered in the gap is not in `stale` at all."""
+    heartbeats = state.get("viewer_heartbeats", {})
+    gone = [v for v, seen in stale.items() if v in state.get("viewers", []) and heartbeats.get(v) == seen]
+    if not gone:
+        return False
+    state["viewers"] = [v for v in state["viewers"] if v not in gone]
+    state["viewer_heartbeats"] = {v: hb for v, hb in heartbeats.items() if v not in gone}
+    return True
+
+
+def _stale_viewers(state, uuid, idle_timeout, tracker):
+    """{viewer_id: last heartbeat value} for each viewer of `state` whose own heartbeat has not changed for longer
+    than `idle_timeout` seconds on the tracker's clock. Needed because last_heartbeat (refreshed by ANY successful file
+    fetch, see _touch_heartbeat) is buffer-wide, not per-viewer: a viewer that crashes hard enough never to call
+    stop_buffer would otherwise stay in state["viewers"] forever, kept "alive" by other viewers' fetches, and block
+    stop_buffer's reference count from reaching zero once the real viewers stop. A viewer with no recorded heartbeat
+    (state from before the field existed, or a start_buffer that raced this instant) is treated as fresh and is not
+    tracked, so an upgrade does not mass-prune viewers that have not reported in yet. Records every viewer it looked
+    at in `tracker` and returns them with the stale ones."""
+    stale = {}
+    heartbeats = state.get("viewer_heartbeats", {})
+    for viewer in state.get("viewers", []):
+        value = heartbeats.get(viewer)
+        if value is None:
+            continue
+        if tracker.age(("viewer", uuid, viewer), value) > idle_timeout:
+            stale[viewer] = value
+    return stale
 
 
 def _resolve_viewer_id(params: dict):
@@ -2887,10 +2962,13 @@ def _cap_ffmpeg_log(channel_dir, max_bytes: int = _FFMPEG_LOG_MAX_BYTES, keep_by
         return False
 
 
-def _reaper_loop(settings_getter, logger, stop_event: threading.Event):
+def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_tracker=None):
     my_token = f"{os.getpid()}:{time.time()}"
     last_error_logged_at = None
     suppressed_errors = 0
+    # Idle ages are measured here, on this process's monotonic clock, from when each heartbeat value last CHANGED (see
+    # _IdleTracker); the stamps are never subtracted from a wall clock. Only the elected reaper keeps it up to date.
+    tracker = idle_tracker if idle_tracker is not None else _IdleTracker()
 
     while not stop_event.is_set():
         try:
@@ -2909,24 +2987,34 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event):
                     got_leadership = True
                     client.expire(_REDIS_LEADER_KEY, _REDIS_LEADER_TTL)
 
+            if not got_leadership:
+                # A reaper that regains leadership later starts from a clean slate rather than from what it saw in an
+                # earlier term (a buffer would otherwise be judged by a value remembered long ago).
+                tracker.clear()
             if got_leadership:
                 settings_dict = settings_getter()
                 idle_timeout = _int_setting(settings_dict, "idle_timeout_seconds", 30, minimum=1)
-                now = _shared_now()
                 reaper_storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
+                seen_keys = set()
                 for state in _iter_buffer_states():
+                    uuid = state.get("channel_uuid")
+                    if not uuid:
+                        continue  # nothing to track or reap by; the scrub deals with such a leftover
+                    seen_keys.add(("buffer", uuid))
+                    seen_keys.update(
+                        ("viewer", uuid, v) for v in state.get("viewers", []) if v in state.get("viewer_heartbeats", {})
+                    )
                     # a state whose uuid is not usable as a path is the scrub's business, not this trim's. The buffer's
                     # own storage path, not the current setting: after a change of the setting a running buffer's log
                     # stays where it was started (the state keeps it for exactly that reason, see
                     # _remove_channel_files()).
                     with contextlib.suppress(ValueError, KeyError):
-                        _cap_ffmpeg_log(
-                            _channel_dir(state.get("storage_path") or reaper_storage_path, state["channel_uuid"])
-                        )
-                    if _prune_stale_viewers(state, idle_timeout, now):
+                        _cap_ffmpeg_log(_channel_dir(state.get("storage_path") or reaper_storage_path, uuid))
+                    stale = _stale_viewers(state, uuid, idle_timeout, tracker)
+                    if stale:
                         logger.info(
                             "timeshift_buffer: pruned stale viewer(s) for channel %s (no heartbeat for %ds)",
-                            state["channel_uuid"],
+                            uuid,
                             idle_timeout,
                         )
                         # Re-run the prune against a copy re-read right
@@ -2936,29 +3024,29 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event):
                         # comment describes: a concurrent start_buffer
                         # registering a new viewer in this gap would
                         # otherwise have its registration silently
-                        # overwritten by this stale write-back.
+                        # overwritten by this stale write-back. A viewer
+                        # whose heartbeat moved since is kept.
                         _update_buffer_state(
-                            state["channel_uuid"],
-                            lambda fresh_state, idle=idle_timeout, at=now: (
-                                _prune_stale_viewers(fresh_state, idle, at),
-                                fresh_state,
-                            )[1],
+                            uuid,
+                            lambda fresh_state, gone=stale: (_drop_stale_viewers(fresh_state, gone), fresh_state)[1],
                         )
-                    if now - state.get("last_heartbeat", 0) > idle_timeout:
+                    last_heartbeat = state.get("last_heartbeat", 0)
+                    buffer_age = tracker.age(("buffer", uuid), last_heartbeat)
+                    if buffer_age > idle_timeout:
                         logger.info(
                             "timeshift_buffer: reaping idle buffer for channel %s (no heartbeat for %ds)",
-                            state["channel_uuid"],
-                            int(now - state.get("last_heartbeat", 0)),
+                            uuid,
+                            int(buffer_age),
                         )
                         # Re-checked against the freshest state, atomically with the
                         # stopping marker: a heartbeat that landed since this tick read
-                        # `state` means someone is watching after all.
+                        # `state` (its value moved) means someone is watching after all.
                         _teardown_buffer(
                             state,
                             logger,
-                            abort_if=lambda fresh, idle=idle_timeout: _shared_now() - fresh.get("last_heartbeat", 0)
-                            <= idle,
+                            abort_if=lambda fresh, seen=last_heartbeat: fresh.get("last_heartbeat", 0) != seen,
                         )
+                tracker.retain(seen_keys)
 
                 # Reconciles storage_path against Redis directly, catching
                 # the class of leak the loop above structurally can't (see
@@ -3094,7 +3182,7 @@ def _ensure_reaper_running(settings_dict, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "0.8.13"
+    version = "0.8.14"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."

@@ -3107,6 +3107,63 @@ class _OneShotStopEvent:
         self._done = True
 
 
+class _FakeMonotonic:
+    """The reaper's monotonic clock in the tests: moves only when a test (or a ticking stop event) moves it."""
+
+    def __init__(self, start=100_000.0):
+        self.now = start
+
+    def __call__(self):
+        return self.now
+
+
+class _TickingStopEvent:
+    """Runs `ticks` real reaper ticks; each wait() between them moves the fake monotonic clock on by `step`
+    seconds (the real loop waits 15 s)."""
+
+    def __init__(self, clock, ticks, step=15.0, on_wait=None):
+        self._clock, self._left, self._step, self._on_wait = clock, ticks, step, on_wait
+        self._waits = 0
+
+    def is_set(self):
+        return self._left <= 0
+
+    def wait(self, _timeout):
+        self._left -= 1
+        self._waits += 1
+        self._clock.now += self._step
+        if self._on_wait is not None:
+            self._on_wait(self._waits)
+
+
+def _drive_reaper(monkeypatch, states_for_tick, ticks, *, idle=30, step=15.0, client=None, on_wait=None, tracker=None):
+    """Runs `ticks` real _reaper_loop ticks, `step` monotonic seconds apart. `states_for_tick(i)` gives the buffer
+    states tick `i` (0-based) reads. Returns (teardown calls as (state, kwargs), the tracker, the clock)."""
+    client = client if client is not None else _FakeReaperRedisClient()
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+    monkeypatch.setattr(timeshift_buffer_plugin.time, "time", lambda: 1000.0)
+    calls = {"tick": -1}
+
+    def iter_states():
+        calls["tick"] += 1
+        return states_for_tick(calls["tick"])
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", iter_states)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_cap_ffmpeg_log", lambda channel_dir: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: [])
+    teardowns = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger, **kw: teardowns.append((dict(s), kw))
+    )
+    clock = _FakeMonotonic()
+    tracker = tracker if tracker is not None else timeshift_buffer_plugin._IdleTracker(clock=clock)
+    settings_getter = lambda: {"idle_timeout_seconds": idle, "storage_path": "/data/timeshift"}  # noqa: E731
+    timeshift_buffer_plugin._reaper_loop(
+        settings_getter, _FakeLogger(), _TickingStopEvent(tracker._clock, ticks, step, on_wait), idle_tracker=tracker
+    )
+    return teardowns, tracker, tracker._clock
+
+
 class _FakeReaperRedisClient:
     def __init__(self, leader_value=None):
         self.store = {}
@@ -3217,68 +3274,6 @@ def test_reaper_loop_skips_work_when_not_leader(monkeypatch):
     timeshift_buffer_plugin._reaper_loop(lambda: {}, _FakeLogger(), _OneShotStopEvent())
 
     assert iter_calls == []
-
-
-def test_reaper_loop_reaps_an_idle_buffer_on_fresh_leadership(monkeypatch):
-    client = _FakeReaperRedisClient()  # no existing leader -- this tick acquires it fresh
-    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
-    monkeypatch.setattr(timeshift_buffer_plugin.time, "time", lambda: 1000.0)
-
-    state = {"channel_uuid": "abc", "last_heartbeat": 0}
-    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: [state])
-    monkeypatch.setattr(timeshift_buffer_plugin, "_prune_stale_viewers", lambda *a, **k: False)
-    teardown_calls = []
-    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger, **kw: teardown_calls.append(s))
-    scrub_calls = []
-    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: scrub_calls.append(a) or [])
-
-    settings_getter = lambda: {"idle_timeout_seconds": 30, "storage_path": "/data/timeshift"}  # noqa: E731
-    timeshift_buffer_plugin._reaper_loop(settings_getter, _FakeLogger(), _OneShotStopEvent())
-
-    assert teardown_calls == [state]
-    assert scrub_calls  # the storage-path reconciliation still runs this tick
-
-
-def test_reaper_loop_prune_write_back_uses_a_freshly_read_copy(monkeypatch):
-    """Regression test for the same class of race _apply_heartbeat's own
-    docstring describes, applied to the reaper's own prune write-back: a
-    concurrent start_buffer registering a new viewer between
-    _iter_buffer_states()'s own read and this write-back must survive,
-    not get silently dropped by writing back the loop's own now-stale
-    pre-registration copy."""
-    client = _FakeReaperRedisClient()
-    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
-    monkeypatch.setattr(timeshift_buffer_plugin.time, "time", lambda: 1000.0)
-
-    stale_state = {
-        "channel_uuid": "abc",
-        "last_heartbeat": 1000.0,
-        "viewers": ["a"],
-        "viewer_heartbeats": {"a": 900.0},  # stale enough to be pruned (idle_timeout=30)
-    }
-    # Simulates a concurrent start_buffer that registered viewer "b" in
-    # Redis after _iter_buffer_states() already handed the reaper its
-    # own (now-stale) copy above.
-    fresh_store = {
-        "abc": {
-            "channel_uuid": "abc",
-            "last_heartbeat": 1000.0,
-            "viewers": ["a", "b"],
-            "viewer_heartbeats": {"a": 900.0, "b": 1000.0},
-        }
-    }
-    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: [stale_state])
-    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(fresh_store[uuid]))
-    saved = {}
-    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: saved.update({uuid: s}))
-    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: [])
-
-    settings_getter = lambda: {"idle_timeout_seconds": 30, "storage_path": "/data/timeshift"}  # noqa: E731
-    timeshift_buffer_plugin._reaper_loop(settings_getter, _FakeLogger(), _OneShotStopEvent())
-
-    # "a" is stale (900s old, > 30s timeout) and gets pruned; "b" (fresh,
-    # registered concurrently) must survive.
-    assert saved["abc"]["viewers"] == ["b"]
 
 
 def test_reaper_loop_renews_ttl_when_already_leader(monkeypatch):
@@ -3916,28 +3911,260 @@ def test_run_heartbeat_reports_a_missing_buffer_without_writing(monkeypatch, tmp
     assert result == {"status": "error", "message": "no buffer running for this channel"}
 
 
-def test_reaper_asks_the_teardown_to_recheck_the_heartbeat(monkeypatch):
+# ---------------------------------------------------------------------
+# The reaper ages heartbeats on its own monotonic clock (0.8.14): a host clock step cannot make a watched buffer look
+# idle, and a really idle one is still reaped after a step backwards. _drive_reaper() runs real ticks against a fake
+# monotonic clock; the stamps in the states are whatever the test says they are, because only whether they CHANGE
+# matters.
+# ---------------------------------------------------------------------
+
+
+def test_idle_tracker_a_new_key_or_a_changed_value_is_age_zero_and_an_unchanged_one_ages():
+    clock = _FakeMonotonic(50.0)
+    tracker = timeshift_buffer_plugin._IdleTracker(clock=clock)
+    assert tracker.age("k", 7.0) == 0.0
+    clock.now += 12.5
+    assert tracker.age("k", 7.0) == pytest.approx(12.5)
+    clock.now += 10
+    assert tracker.age("k", 7.0) == pytest.approx(22.5)
+    assert tracker.age("k", 8.0) == 0.0  # the value moved: a heartbeat
+    clock.now += 3
+    assert tracker.age("k", 8.0) == pytest.approx(3.0)
+
+
+def test_idle_tracker_a_value_that_moves_backwards_still_counts_as_a_heartbeat():
+    clock = _FakeMonotonic()
+    tracker = timeshift_buffer_plugin._IdleTracker(clock=clock)
+    tracker.age("k", 5000.0)
+    clock.now += 40
+    assert tracker.age("k", 100.0) == 0.0  # a stamp from a clock that was stepped back
+
+
+def test_idle_tracker_keys_are_independent_and_retain_and_clear_forget():
+    clock = _FakeMonotonic()
+    tracker = timeshift_buffer_plugin._IdleTracker(clock=clock)
+    tracker.age("a", 1)
+    clock.now += 20
+    tracker.age("b", 1)
+    clock.now += 5
+    assert tracker.age("a", 1) == pytest.approx(25)
+    assert tracker.age("b", 1) == pytest.approx(5)
+    tracker.retain({"b"})
+    assert tracker.age("a", 1) == 0.0  # forgotten, so seen afresh
+    assert tracker.age("b", 1) == pytest.approx(5)
+    tracker.clear()
+    assert tracker.age("b", 1) == 0.0
+
+
+def test_the_reaper_never_reaps_on_its_first_sight_of_a_buffer_however_old_the_stamp(monkeypatch):
+    teardowns, _tracker, _clock = _drive_reaper(
+        monkeypatch, lambda i: [{"channel_uuid": "abc", "last_heartbeat": 0}], ticks=1
+    )
+    assert teardowns == []
+
+
+def test_the_reaper_reaps_a_buffer_whose_heartbeat_has_not_changed_for_longer_than_the_idle_timeout(monkeypatch):
+    state = {"channel_uuid": "abc", "last_heartbeat": 500.0}
+    teardowns, _tracker, _clock = _drive_reaper(monkeypatch, lambda i: [dict(state)], ticks=4, step=15.0)
+    # ticks at 0, 15, 30, 45 s: ages 0, 15, 30 (exactly the timeout: kept), 45 (reaped)
+    assert len(teardowns) == 1 and teardowns[0][0]["channel_uuid"] == "abc"
+
+
+def test_reaper_loop_keeps_a_buffer_whose_heartbeat_is_exactly_the_idle_timeout_old(monkeypatch):
+    state = {"channel_uuid": "abc", "last_heartbeat": 500.0}
+    kept, _t, _c = _drive_reaper(monkeypatch, lambda i: [dict(state)], ticks=3, step=15.0)  # ages 0, 15, 30
+    assert kept == []
+    reaped, _t, _c = _drive_reaper(monkeypatch, lambda i: [dict(state)], ticks=3, step=15.5)  # ages 0, 15.5, 31
+    assert len(reaped) == 1
+
+
+def test_reaper_loop_scrubs_each_tick_even_while_it_keeps_every_buffer(monkeypatch):
+    scrubbed = []
     client = _FakeReaperRedisClient()
     monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
     monkeypatch.setattr(timeshift_buffer_plugin.time, "time", lambda: 1000.0)
-    state = {"channel_uuid": "abc", "last_heartbeat": 0}
-    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: [state])
-    monkeypatch.setattr(timeshift_buffer_plugin, "_prune_stale_viewers", lambda *a, **k: False)
-    captured = {}
-    monkeypatch.setattr(
-        timeshift_buffer_plugin,
-        "_teardown_buffer",
-        lambda s, logger, abort_if=None: captured.setdefault("abort_if", abort_if),
-    )
-    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: [])
-
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: [])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: scrubbed.append(a) or [])
+    clock = _FakeMonotonic()
     timeshift_buffer_plugin._reaper_loop(
-        lambda: {"idle_timeout_seconds": 30, "storage_path": "/x"}, _FakeLogger(), _OneShotStopEvent()
+        lambda: {"idle_timeout_seconds": 30, "storage_path": "/data/timeshift"},
+        _FakeLogger(),
+        _TickingStopEvent(clock, 3),
+        idle_tracker=timeshift_buffer_plugin._IdleTracker(clock=clock),
     )
+    assert len(scrubbed) == 3
 
-    # A heartbeat 10s ago (now=1000) is inside the 30s idle window: keep the buffer.
-    assert captured["abort_if"]({"last_heartbeat": 990}) is True
-    assert captured["abort_if"]({"last_heartbeat": 100}) is False
+
+def test_a_wall_clock_step_forward_does_not_reap_a_buffer_whose_viewer_is_about_to_heartbeat(monkeypatch):
+    """The regression the open item described: the viewer's last heartbeat is seconds old on the monotonic clock, then
+    the host clock (and Redis TIME with it) steps an hour forward before the next heartbeat lands. Subtracting the two
+    stamps read the heartbeat as an hour old and stopped the buffer under a viewer that was still watching."""
+    state = {
+        "channel_uuid": _UUID,
+        "last_heartbeat": 9_990.0,
+        "viewers": ["a"],
+        "viewer_heartbeats": {"a": 9_990.0},
+    }
+    clock_state = {"redis": 10_000.0}
+
+    class _SteppedRedis(_TimedFakeRedis):
+        def time(self):
+            return (int(clock_state["redis"]), 0)
+
+    client = _SteppedRedis(10_000.0)
+
+    def step(waits):
+        clock_state["redis"] += 3600 + 15  # the step, on top of the 15 s that really passed
+
+    teardowns, _t, _c = _drive_reaper(monkeypatch, lambda i: [dict(state)], ticks=2, client=client, on_wait=step)
+    assert teardowns == []  # 15 s on the reaper's clock, whatever the wall clock says
+
+
+def test_a_wall_clock_step_backwards_does_not_hide_a_buffer_that_really_is_idle(monkeypatch):
+    """With subtraction, a heartbeat stamped in the future (the clock went back) made `now - last_heartbeat` negative
+    and the idle buffer was kept until the clock caught up: hours, holding a provider slot."""
+    state = {"channel_uuid": _UUID, "last_heartbeat": 50_000.0}  # stamped before the clock went back to ~100
+    clock_state = {"redis": 100.0}
+    client = type("C", (_TimedFakeRedis,), {"time": lambda self: (int(clock_state["redis"]), 0)})(100.0)
+    teardowns, _t, _c = _drive_reaper(monkeypatch, lambda i: [dict(state)], ticks=4, client=client)
+    assert len(teardowns) == 1
+
+
+def test_a_watched_buffer_whose_stamps_run_backwards_after_a_step_is_kept(monkeypatch):
+    stamps = [5_000.0, 100.0, 115.0, 130.0, 145.0, 160.0]  # the clock went back after the first tick
+    teardowns, _t, _c = _drive_reaper(
+        monkeypatch, lambda i: [{"channel_uuid": _UUID, "last_heartbeat": stamps[i]}], ticks=6
+    )
+    assert teardowns == []
+
+
+def test_the_reaper_prunes_a_viewer_whose_own_heartbeat_stopped_while_the_buffer_stays_alive(monkeypatch):
+    store = {
+        "abc": {
+            "channel_uuid": "abc",
+            "last_heartbeat": 1000.0,
+            "viewers": ["a", "b"],
+            "viewer_heartbeats": {"a": 900.0, "b": 1000.0},
+        }
+    }
+
+    def states(i):
+        # the buffer keeps being fetched by "b" (its stamps move); "a" went silent
+        state = {
+            "channel_uuid": "abc",
+            "last_heartbeat": 1000.0 + i,
+            "viewers": ["a", "b"],
+            "viewer_heartbeats": {"a": 900.0, "b": 1000.0 + i},
+        }
+        store["abc"] = {
+            **state,
+            "viewers": list(store["abc"]["viewers"]),
+            "viewer_heartbeats": dict(state["viewer_heartbeats"]),
+        }
+        return [state]
+
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(store[uuid]))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: saved.update({uuid: s}))
+    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=4, step=15.0)
+    assert teardowns == []
+    assert saved["abc"]["viewers"] == ["b"]  # "a" pruned once its stamp had not moved for longer than 30 s
+
+
+def test_reaper_loop_prune_write_back_uses_a_freshly_read_copy(monkeypatch):
+    """The same race _apply_heartbeat's docstring describes, for the reaper's prune write-back: a viewer that
+    registered after _iter_buffer_states() read must survive, and so must one whose heartbeat moved in the gap."""
+
+    def states(i):
+        return [
+            {
+                "channel_uuid": "abc",
+                "last_heartbeat": 1000.0 + i,
+                "viewers": ["a", "c"],
+                "viewer_heartbeats": {"a": 900.0, "c": 950.0},  # both silent
+            }
+        ]
+
+    # By the time the reaper writes back, "b" has registered and "c" has heartbeated (its stamp moved).
+    fresh_store = {
+        "abc": {
+            "channel_uuid": "abc",
+            "last_heartbeat": 1050.0,
+            "viewers": ["a", "b", "c"],
+            "viewer_heartbeats": {"a": 900.0, "b": 1050.0, "c": 1049.0},
+        }
+    }
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(fresh_store[uuid]))
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: saved.update({uuid: s}))
+    _drive_reaper(monkeypatch, states, ticks=4, step=15.0)
+    assert saved["abc"]["viewers"] == ["b", "c"]  # only "a", still at the stamp the reaper saw, was dropped
+
+
+def test_drop_stale_viewers_only_removes_a_viewer_whose_stamp_is_still_the_one_that_was_seen():
+    state = {"viewers": ["a", "b", "c"], "viewer_heartbeats": {"a": 1.0, "b": 2.0, "c": 3.0}}
+    assert timeshift_buffer_plugin._drop_stale_viewers(state, {"a": 1.0, "b": 99.0, "z": 5.0}) is True
+    assert state["viewers"] == ["b", "c"]
+    assert state["viewer_heartbeats"] == {"b": 2.0, "c": 3.0}
+    assert timeshift_buffer_plugin._drop_stale_viewers(state, {"b": 99.0}) is False  # moved since: kept
+    assert timeshift_buffer_plugin._drop_stale_viewers({}, {"a": 1.0}) is False
+
+
+def test_stale_viewers_treats_a_viewer_with_no_recorded_heartbeat_as_fresh_and_untracked():
+    clock = _FakeMonotonic()
+    tracker = timeshift_buffer_plugin._IdleTracker(clock=clock)
+    state = {"viewers": ["new", "old"], "viewer_heartbeats": {"old": 5.0}}
+    assert timeshift_buffer_plugin._stale_viewers(state, "abc", 30, tracker) == {}
+    clock.now += 100
+    assert timeshift_buffer_plugin._stale_viewers(state, "abc", 30, tracker) == {"old": 5.0}
+
+
+def test_the_teardown_recheck_aborts_when_the_heartbeat_value_has_moved_and_ignores_any_clock(monkeypatch):
+    state = {"channel_uuid": "abc", "last_heartbeat": 500.0}
+    teardowns, _t, _c = _drive_reaper(monkeypatch, lambda i: [dict(state)], ticks=4)
+    abort_if = teardowns[0][1]["abort_if"]
+    monkeypatch.setattr(timeshift_buffer_plugin.time, "time", lambda: 9e9)  # no wall clock is consulted
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: _TimedFakeRedis(1.0))
+    assert abort_if({"last_heartbeat": 501.0}) is True  # a heartbeat landed since: someone is watching
+    assert abort_if({"last_heartbeat": 3.0}) is True  # even a stamp from a clock stepped back
+    assert abort_if({"last_heartbeat": 500.0}) is False  # unchanged: still idle
+    assert abort_if({}) is True  # the stamp vanished from the state: not what the reaper judged
+
+
+def test_a_reaper_that_loses_leadership_forgets_what_it_saw(monkeypatch):
+    """After a term as a follower it must not judge a buffer by a value it remembers from long ago: it starts the
+    buffer's age again from the first sight in its next term."""
+    state = {"channel_uuid": "abc", "last_heartbeat": 500.0}
+    client = _FakeReaperRedisClient()
+    other = f"someone-else:{1000.0}"
+
+    def on_wait(waits):
+        key = timeshift_buffer_plugin._REDIS_LEADER_KEY
+        if waits == 2:  # between tick 2 and tick 3 another worker takes the lease
+            client.store[key] = other
+        if waits == 4:  # and it is free again before tick 5
+            client.store.pop(key, None)
+
+    teardowns, _t, _c = _drive_reaper(
+        monkeypatch, lambda i: [dict(state)], ticks=6, step=14.0, client=client, on_wait=on_wait
+    )
+    # Ticks 1-2 as leader (ages 0, 14), 3-4 as follower (cleared), 5-6 as leader again (ages 0, 14): never > 30.
+    assert teardowns == []
+
+
+def test_a_buffer_that_disappears_and_returns_is_seen_afresh(monkeypatch):
+    state = {"channel_uuid": "abc", "last_heartbeat": 500.0}
+
+    def states(i):
+        return [] if i in (2, 3) else [dict(state)]
+
+    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=6, step=14.0)
+    assert teardowns == []  # tick 5 starts its age again at 0; without retain() it would be 56 s old
+
+
+def test_the_reaper_skips_a_state_that_has_no_channel_uuid(monkeypatch):
+    teardowns, _t, _c = _drive_reaper(monkeypatch, lambda i: [{"last_heartbeat": 0}], ticks=5)
+    assert teardowns == []
 
 
 # ---------------------------------------------------------------------
@@ -5270,25 +5497,6 @@ def test_is_zombie_proc_stat_only_for_state_z(state, zombie):
 # ---------------------------------------------------------------------
 
 
-def test_reaper_loop_keeps_a_buffer_whose_heartbeat_is_exactly_the_idle_timeout_old(monkeypatch):
-    def reaped(heartbeat_age):
-        client = _FakeReaperRedisClient()
-        monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
-        monkeypatch.setattr(timeshift_buffer_plugin.time, "time", lambda: 1000.0)
-        state = {"channel_uuid": "abc", "last_heartbeat": 1000.0 - heartbeat_age}
-        monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: [state])
-        monkeypatch.setattr(timeshift_buffer_plugin, "_prune_stale_viewers", lambda *a, **k: False)
-        calls = []
-        monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger, **kw: calls.append(s))
-        monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: [])
-        settings_getter = lambda: {"idle_timeout_seconds": 30, "storage_path": "/data/timeshift"}  # noqa: E731
-        timeshift_buffer_plugin._reaper_loop(settings_getter, _FakeLogger(), _OneShotStopEvent())
-        return bool(calls)
-
-    assert reaped(30.0) is False  # exactly the timeout: still within it
-    assert reaped(30.5) is True
-
-
 def test_an_untracked_teardown_leaves_a_buffer_restarted_with_the_same_pid_alone(monkeypatch):
     # A restarted buffer can be handed a recycled pid: only pid AND started_at together identify the
     # instance, so the same pid with a different start time is a NEW buffer that owns the directory.
@@ -5819,26 +6027,6 @@ def test_prune_stale_viewers_without_an_explicit_now_uses_the_shared_clock(monke
     state = {"viewers": ["a"], "viewer_heartbeats": {"a": 990.0}, "last_heartbeat": 990.0}
     assert timeshift_buffer_plugin._prune_stale_viewers(state, 30) is False
     assert state["viewers"] == ["a"]
-
-
-def test_the_reapers_last_look_before_a_teardown_reads_the_shared_clock(monkeypatch):
-    """The abort_if the reaper hands _teardown_buffer re-checks the freshest heartbeat just before tearing down: a
-    stepped host clock must not make a heartbeat that landed seconds ago on the shared clock look an hour old."""
-    client = _TimedFakeRedis(10_000.0)
-    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
-    state = {"channel_uuid": _UUID, "last_heartbeat": 0}  # idle on the shared clock, so the reaper goes to tear it down
-    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: [state])
-    monkeypatch.setattr(timeshift_buffer_plugin, "_prune_stale_viewers", lambda *a, **k: False)
-    monkeypatch.setattr(timeshift_buffer_plugin, "_cap_ffmpeg_log", lambda channel_dir: None)
-    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: [])
-    captured = {}
-    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger, **kw: captured.update(kw))
-    timeshift_buffer_plugin._reaper_loop(
-        lambda: {"idle_timeout_seconds": 30, "storage_path": "/data/timeshift"}, _FakeLogger(), _OneShotStopEvent()
-    )
-    monkeypatch.setattr(timeshift_buffer_plugin.time, "time", lambda: 10_000.0 + 3600)  # the host clock steps now
-    assert captured["abort_if"]({"last_heartbeat": 9_995.0}) is True  # a heartbeat 5 s ago: someone is watching
-    assert captured["abort_if"]({"last_heartbeat": 9_000.0}) is False  # 1000 s ago: still idle
 
 
 def _use_shared_clock(monkeypatch, shared_now, host_now=3.0):

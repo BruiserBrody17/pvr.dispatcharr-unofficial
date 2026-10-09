@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**5 open, 274 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)).
+**5 open, 275 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)).
 
 | Section | Entries |
 |---|---|
@@ -16,7 +16,7 @@
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 4 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 240 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 241 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 25 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -52,8 +52,8 @@
 
 **Opened 2026-10-06 by the sixteenth hardening sweep (recorded before only inside a closed entry).** `WebSocketClient`'s sends (`SendAll()`) wait on the peer's receive window, and the stop check added with the 2026-10-04 sweep is made between waits of 500 ms; a stop that arrives while a send is blocked on a full send buffer (a peer that has stopped reading) is believed to end within one slice but no test fills a send buffer to prove it. The local-server fixture could do it with a peer that never reads. Deferred: a pong or close frame is under 140 bytes, so the buffer would need to be full already.
 
-#### A host clock step still misfires the reaper's idle checks (0.8.11 only fixed cross-host skew)
+#### `stop_buffer` still drops other viewers by comparing two stamps, so a host clock step can end a buffer under a viewer
 
-**Opened 2026-10-06 by the sixteenth hardening sweep, from reading.** `_shared_now()` (0.8.11) reads Redis's own `TIME`, which fixes timestamps written by a worker on one host and compared by another whose clock differs. It does not protect against the host's own clock being stepped (a manual change, a VM resume): Redis `TIME` is the Redis host's wall clock, containers on one host share it (the usual deployment; the all-in-one image runs Redis in the same container), so it moves exactly as far as `time.time()`, and the reaper's `now - last_heartbeat` compares misfire the way they did before. 0.8.11's changelog and docstring said otherwise and were corrected. A real fix makes the elected reaper measure age on its own monotonic clock: remember, per buffer and viewer, when it last saw the heartbeat value change, and reap on that age. Deferred: it is a redesign of the reaper's bookkeeping for a rare event (a clock stepped by more than `idle_timeout_seconds`, which makes viewers look idle, so buffers are stopped and the addon reports them gone), and a viewer's next start recovers.
+**Opened 2026-10-09 when the reaper half of the old "host clock step" item was fixed (`timeshift_buffer` 0.8.14).** `stop_buffer`'s `drop_viewer` runs `_prune_stale_viewers()` in the request worker that handles the stop: it removes the stopping viewer and also every other viewer whose last heartbeat is more than `idle_timeout_seconds` older than the shared clock. The reaper no longer does that (it ages heartbeats on a monotonic clock, `_IdleTracker`), but a request worker has no memory between calls, so it can only subtract stamps. If the host clock stepped forward by more than the timeout shortly before one viewer stops, the other viewers' stamps look stale, they are dropped, the list is empty and the buffer is torn down under viewers that are still watching; their next fetch fails and Kodi starts a new buffer. It needs a step bigger than the timeout and a stop in the window before the next heartbeats land. A fix would stop pruning there and leave stale viewers to the reaper (which can now do it safely), at the cost of a crashed viewer's phantom entry surviving until the reaper's next tick (15 seconds) when the last real viewer stops: the buffer then stops one tick later instead of at once. Deferred: rare, self-healing, and the change alters `stop_buffer`'s documented immediate teardown.
 
 ### Tooling (tools/)
