@@ -144,6 +144,11 @@ test coverage. This is a
 single-maintainer project,
 so review may take a while; that's not a signal your PR was rejected.
 
+An accepted change is applied as a single squash commit that credits you as
+co-author. Your PR will then be closed with a link to that commit rather than
+shown as "merged", and your original commits won't appear in the history; that
+is how every change lands here, not a judgement on yours.
+
 ## Reporting a security issue
 
 Don't open a public issue for a security report -- see

@@ -176,6 +176,8 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   bullet exists to keep that a stated, deliberate policy rather than an
   accident of current permissions, so it doesn't quietly erode later
   (e.g. if another collaborator ever gets write access).
+  An accepted PR is applied as one squash commit that credits the contributor (`Co-Authored-By:` or `--author`), and the
+  PR is closed with a link to it; see CONTRIBUTING.md, "What happens after you open a PR".
 - **Merge branches with squash-merge, as of 2026-09-07** -- when a
   nontrivial branch (see above) is done, squash it into one commit on
   `Omega` rather than preserving every individual commit from the
