@@ -858,7 +858,10 @@ privacy gate passes on all of them together.**
 
 Cutting a release, in order:
 
-1. Tag the commit and push the tag; wait for CI on it to pass, and download its three artifacts.
+1. Tag the commit and push the tag; wait for CI on it to pass, and download its three artifacts. CI builds and
+   checks those three but never publishes or attaches anything to a release (its upload step was removed
+   2026-10-09, after it overwrote gated assets with CI-built ones and because the blocklist half of the gate
+   cannot run there), so pushing a tag is safe; every asset reaches a release only through step 5.
 2. Build the hand-built assets from that tag's source, not from a working tree: export it (`git archive <tag>`
    into a clean directory) and point the build's addon definition at the export, so a local edit can never
    ride along. Strip the Android libraries (above). Collect all eight zips in one directory.

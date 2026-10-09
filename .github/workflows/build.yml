@@ -5,23 +5,19 @@ on:
     branches: [Omega]
     # No "v" prefix: matches this project's own tagging convention
     # (0.4.0, 1.0.0-beta.1, ...), confirmed against actual tag pushes --
-    # "v*" here previously matched none of them, so the tag trigger below
-    # (and the release-asset upload it gates) had never actually fired for
-    # a real release.
+    # "v*" here previously matched none of them. A tag builds everything
+    # (tools/ci_build_needed.py) as a last check; it publishes nothing.
     tags: ["[0-9]*.[0-9]*.[0-9]*"]
   pull_request:
   workflow_dispatch:
 
 permissions:
-  # Read at the workflow level, scoped up to write only on the three jobs
-  # that actually run softprops/action-gh-release (build-unix,
-  # package-dispatcharr-plugins, build-windows) -- fixed 2026-09-27, a
-  # 58th-pass audit, fixing a real, confirmed over-broad grant found via
-  # a project-wide review, not itself independently reproduced: this was
-  # previously contents: write for every job, including lint/unit-tests/
-  # unit-tests-python, which run on every PR (including from an external,
-  # not-yet-reviewed contributor, per CLAUDE.md's own PR-review
-  # convention) and never touch a release at all.
+  # Read-only for every job, and CI never publishes: a release is cut by hand
+  # after one gate over all eight zips (tools/check_release_zip.py with the
+  # private blocklist, which CI does not have; docs/BUILDING.md, "Release
+  # assets"). A step here that attached zips to a release once overwrote
+  # gated assets with CI-built ones, and needed contents: write on jobs that
+  # also build pull-request code, so it was removed (2026-10-09).
   contents: read
 
 env:
@@ -68,23 +64,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # persist-credentials: false on every actions/checkout in this whole
-      # workflow (added 2026-09-27, a 59th-pass audit, fixing a real,
-      # confirmed gap found via a project-wide review, not itself
-      # independently reproduced): the default (true) writes this job's
-      # own GITHUB_TOKEN into the checked-out repo's own .git/config,
-      # where any code later run *within that checkout* (a compromised or
-      # malicious build-tool dependency, for instance) could read and use
-      # it -- most consequential on the three release-upload jobs, whose
-      # own token now has real contents:write scope (see this same
-      # pass's own permissions-scoping fix above). Nothing in this
-      # workflow ever needs to `git push`/`git commit` from within a
-      # checked-out repo -- the release-upload jobs use
-      # softprops/action-gh-release's own GitHub API call, authenticated
-      # via its own token input (defaulting to the Actions runtime's own
-      # GITHUB_TOKEN, provided to every step independently of any
-      # checkout), not from a checkout's stored git credential -- so
-      # disabling this has no functional cost
-      # anywhere in this file.
+      # workflow (added 2026-09-27, a 59th-pass audit): the default (true)
+      # writes the job's GITHUB_TOKEN into the checked-out repo's .git/config,
+      # where any code later run within that checkout (a compromised or
+      # malicious build-tool dependency, for instance) could read it. Nothing
+      # in this workflow ever needs to `git push`/`git commit` from a
+      # checkout, so disabling it has no functional cost. (The token is
+      # read-only for every job now; see the permissions block above.)
       - name: Check out repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -351,8 +337,6 @@ jobs:
   build-unix:
     needs: changes
     if: needs.changes.outputs.build == 'true'
-    permissions:
-      contents: write # uploads release assets via softprops/action-gh-release below
     runs-on: ubuntu-latest
     steps:
       - name: Check out addon source
@@ -420,13 +404,11 @@ jobs:
           # -- fixed for a real, confirmed gap found via a project-wide
           # review (a 25th-pass audit), not itself independently reproduced:
           # `find -exec cp` succeeds even when nothing matched, and
-          # upload-artifact/action-gh-release below both default to
-          # tolerating zero matched files (if-no-files-found: warn,
-          # fail_on_unmatched_files: false) -- so a harness change that
-          # silently stops producing this zip would give green CI and (on a
-          # tag) a published release with no Linux/macOS zip attached at
-          # all, with nothing here to say why. Matches the Windows leg's
-          # own explicit `throw` for the same failure mode below.
+          # upload-artifact below defaults to tolerating zero matched files
+          # (if-no-files-found: warn) -- so a harness change that silently
+          # stops producing this zip would give green CI with no zip at all
+          # and nothing here to say why. Matches the Windows leg's own
+          # explicit `throw` for the same failure mode below.
           test -n "$(find dist -name '*.zip' -print -quit)"
 
       # CPack's zip stores each entry's time twice, as the build machine's local clock and as UTC, so the
@@ -452,15 +434,6 @@ jobs:
           name: pvr.dispatcharr-unofficial-ubuntu-latest
           path: dist/*.zip
 
-      # Actions artifacts (above) aren't reachable from a Release page and
-      # expire after ~90 days -- a real user installing this addon needs an
-      # actual downloadable zip attached to the release itself. Only on a
-      # tag push (a real version, not every commit to Omega/a PR).
-      - name: Attach zip to the GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: dist/*.zip
 
   # The two companion Dispatcharr plugins (dispatcharr-plugin/*) are plain
   # Python, installed directly on a Dispatcharr instance, not through Kodi
@@ -474,8 +447,6 @@ jobs:
   package-dispatcharr-plugins:
     needs: changes
     if: needs.changes.outputs.plugins == 'true'
-    permissions:
-      contents: write # uploads release assets via softprops/action-gh-release below
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
@@ -525,11 +496,6 @@ jobs:
           name: dispatcharr-plugins
           path: dist/*.zip
 
-      - name: Attach zips to the GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: dist/*.zip
 
   # Not run for a pull request from a fork: on a CI runner that runs jobs directly on its machine, a pull
   # request's own CMakeLists.txt and build steps would run directly on the machine that later builds the release DLL zip. A pull request from a branch of this repository, a
@@ -539,8 +505,6 @@ jobs:
   build-windows:
     needs: changes
     if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    permissions:
-      contents: write # uploads release assets via softprops/action-gh-release below
     runs-on: windows-latest
     steps:
       # Needed before any git clone happens on this runner, including the
@@ -802,8 +766,3 @@ jobs:
           name: pvr.dispatcharr-unofficial-windows
           path: dist/*.zip
 
-      - name: Attach zip to the GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: dist/*.zip

@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**6 open, 273 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)).
+**5 open, 274 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)).
 
 | Section | Entries |
 |---|---|
@@ -12,11 +12,11 @@
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 1 |
-| Open: Release, CI and manual testing | 1 |
+| Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 4 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 239 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 240 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 25 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -35,10 +35,6 @@
 **Found 2026-10-07 in the logs of the 0.12.0 device runs; not a regression and not specific to Dispatcharr 0.32.0.** From Kodi's `CloseFile` to the addon's `CloseLiveStream` took 4.0 to 5.9 seconds on all three devices (the N2+: 5.2 s; the 32-bit phone: 5.9 s; the 64-bit phone: 4.0 s). In each case the reader thread was parked in `ReadLiveTimeshiftStream()`'s catch-up-to-tail wait ("catch-up-to-tail loop used 16/25 attempts, 4.201s (budget 6.2s)" is logged inside the window), and Kodi's main thread waits for its demux thread before it closes the stream. A `Player.Open` for the next channel sent in that window is dropped by Kodi (the harness's second live check saw the closing player and then reported `canseek=false`), and a user zapping channels feels the same delay. The wait cannot be interrupted from the addon today: Kodi calls `CloseLiveStream` only after the reading thread has returned, so there is no signal to raise. What would change it is a shorter wait at the live edge (the wait exists because a zero-byte read ended playback after about five seconds when nothing was buffered ahead, `docs/CLOSED_ITEMS.md`'s "A brief server outage ended playback for good"), or returning short reads that let Kodi's own loop notice the close sooner; both trade responsiveness against stalls and need a live comparison, which is why this is a decision and not a fix. Measured by pairing the `CloseFile` and `ClosePVRStream` lines in each device's `kodi.log`.
 
 ### Release, CI and manual testing
-
-#### Release upload shares jobs with pull-request builds
-
-**Split out 2026-10-06 from the closed entry on the moving Kodi branch.** The jobs that hold `contents: write` for the release upload (`build-unix`, `package-dispatcharr-plugins`, `build-windows`) also compile pull-request code from same-repo branches, so a branch's build step runs with a token that can write releases. Fork pull requests are already excluded from the Windows job and run with a read-only token elsewhere, and only the maintainer can push same-repo branches, so the exposure is small. The fix is a tag-only release job that `needs:` the build jobs and downloads their artifacts, with `contents: write` only there. Not done: it moves every release asset through artifact upload and download (the workflow already uploads with the current artifact action on this runner; downloading in a later job has not been tried here), and a release can only be exercised by cutting a tag, so it should be done together with the next release rather than blind. **Added 2026-10-06 (sixteenth sweep):** the same job should `needs:` every test job (`lint`, the unit-test jobs, `glue-harness`): today the three upload jobs have no `needs:`, so a tag whose tests fail still publishes its assets, and the three jobs create the same release at once (a `softprops/action-gh-release` race).
 
 ### Upstream (Dispatcharr) or documentation accuracy
 

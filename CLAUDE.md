@@ -202,7 +202,7 @@ everything); lint and every unit-test job run on every push, since the cross-fil
     not-yet-trusted import preview; the class attribute is what Dispatcharr runs. Bumping only `plugin.json` is the
     easy mistake.
 
-  A tag/release is addon-version-scoped (it triggers CI) and carries both plugin zips whether or not their version moved.
+  A tag/release is addon-version-scoped (it triggers CI, which builds and publishes nothing) and carries both plugin zips whether or not their version moved.
   `CHANGELOG.md` says which piece(s) moved in an entry.
 - **Releasing, as of 2026-10-07 (every platform, one gate).** A tag is the moment history becomes something a stranger can
   clone, so before tagging run a data-hardening audit (an Opus subagent sweep over code, docs, full history and every
