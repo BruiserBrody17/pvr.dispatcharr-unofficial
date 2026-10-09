@@ -340,7 +340,8 @@ jobs:
   # Linux only -- macOS is deliberately NOT part of CI, the same reasoning
   # as the CoreELEC package (see docs/BUILDING.md's own "GitHub Actions
   # job ... rejected" note there): a CI runner
-  # needs to be online to pick up a queued job, and macOS hardware is not available as always-on infrastructure -- confirmed live, 2026-09-28, after standing
+  # needs to be online to pick up a queued job, and macOS hardware is not
+  # available as always-on infrastructure -- confirmed live, 2026-09-28, after standing
   # up a Windows runner successfully first (build-windows
   # below): a Windows CI runner was practical, but the
   # same approach doesn't fit hardware that isn't always
@@ -566,8 +567,9 @@ jobs:
 
       # Same fix as build-unix's own "Check out Kodi" step -- see its
       # comment for why actions/checkout's repository: shorthand doesn't
-      # work when this workflow runs on a CI runner. Confirmed live on Windows too, 2026-09-28, once a Windows runner was actually stood up (registered with the windows-latest label) -- unlike macOS (see
-      # build-unix's own comment above), a Windows runner was practical here, so this leg IS real CI, not manual.
+      # work when this workflow runs on a CI runner. Confirmed live on Windows too, 2026-09-28, once a Windows runner was actually stood up (registered with the windows-latest
+      # label) -- unlike macOS (see build-unix's own comment above), a Windows runner
+      # was practical here, so this leg IS real CI, not manual.
       - name: Check out Kodi
         shell: pwsh
         run: |

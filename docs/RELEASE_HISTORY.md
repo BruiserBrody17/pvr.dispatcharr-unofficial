@@ -19,31 +19,31 @@ order they were created, not sorted by version.
 | Tag | Commit | Date | Commit subject |
 | --- | --- | --- | --- |
 | `v0.2.0` | `a0dcd5d655` | 2026-09-02 | Bump version to 0.2.0 |
-| `0.3.0` | `3336bb84cc` | 2026-09-03 | Bump version to 0.3.0 |
-| `0.4.0` | `17473bbbfe` | 2026-09-04 | Bump version to 0.4.0 |
-| `1.0.0-beta.1` | `42811abbb7` | 2026-09-04 | Bump version to 1.0.0-beta.1 |
-| `1.0.0-beta.2` | `d5ee5000ce` | 2026-09-04 | Bump version to 1.0.0-beta.2 |
-| `1.0.0-beta.3` | `499da48b11` | 2026-09-04 | Bump version to 1.0.0-beta.3 |
-| `1.0.0` | `101aa6e26c` | 2026-09-05 | Rename CHANGELOG's Unreleased section to 1.0.0 ahead of the tag |
-| `1.0.1` | `91e6b1dc9b` | 2026-09-06 | Bump addon to 1.0.1 and decouple plugin versioning going forward |
-| `1.0.2` | `e3aed73811` | 2026-09-06 | Bump addon to 1.0.2 |
-| `1.0.3` | `b933ce5a82` | 2026-09-06 | Bump addon to 1.0.3 |
-| `1.0.4` | `3e0314865b` | 2026-09-06 | Bump addon to 1.0.4 |
-| `1.0.5` | `ffa883bfa5` | 2026-09-07 | Harden and speed up the server-side timeshift buffer; bump to 1.0.5 |
-| `1.0.6` | `8d3ed9ea5d` | 2026-09-07 | Fix 1.0.5 regression: unbounded heartbeat call could stall live playback permanently |
-| `1.0.7` | `ba1d780c8d` | 2026-09-07 | Fix manifest-cache instance identity for real this time: pid recycles, access_token doesn't |
-| `1.0.8` | `428d2651ce` | 2026-09-07 | Project-wide C++ review: three defensive fixes, none reproduced live |
-| `0.9.0` | `fea7308e27` | 2026-09-07 | Step back to 0.x versioning and add code formatting tooling |
-| `0.9.1` | `47c46c6b5e` | 2026-09-08 | Bump addon to 0.9.1 |
-| `0.9.2` | `d232a77c21` | 2026-09-09 | Bump addon to 0.9.2 |
-| `0.9.3` | `4d05ed061f` | 2026-09-10 | Bump addon to 0.9.3 |
-| `0.9.4` | `41bf4dc1a1` | 2026-09-11 | Bump addon to 0.9.4 |
-| `0.10.0` | `a1ae479cbf` | 2026-09-12 | Bump addon to 0.10.0 |
-| `0.10.1` | `5284f6654c` | 2026-09-15 | Bump addon version to 0.10.1 |
-| `0.11.0` | `cd1c1786a1` | 2026-09-16 | Bump addon version to 0.11.0 |
+| `0.3.0` | `60e6156918` | 2026-09-03 | Bump version to 0.3.0 |
+| `0.4.0` | `5052683f8c` | 2026-09-04 | Bump version to 0.4.0 |
+| `1.0.0-beta.1` | `fb2408efa9` | 2026-09-04 | Bump version to 1.0.0-beta.1 |
+| `1.0.0-beta.2` | `a01244f71a` | 2026-09-04 | Bump version to 1.0.0-beta.2 |
+| `1.0.0-beta.3` | `d73c66c7a1` | 2026-09-04 | Bump version to 1.0.0-beta.3 |
+| `1.0.0` | `8ca51db6c2` | 2026-09-05 | Rename CHANGELOG's Unreleased section to 1.0.0 ahead of the tag |
+| `1.0.1` | `86bac41772` | 2026-09-06 | Bump addon to 1.0.1 and decouple plugin versioning going forward |
+| `1.0.2` | `935c7612ef` | 2026-09-06 | Bump addon to 1.0.2 |
+| `1.0.3` | `feb3f1fe67` | 2026-09-06 | Bump addon to 1.0.3 |
+| `1.0.4` | `9853b52bd9` | 2026-09-06 | Bump addon to 1.0.4 |
+| `1.0.5` | `d697b45b8b` | 2026-09-07 | Harden and speed up the server-side timeshift buffer; bump to 1.0.5 |
+| `1.0.6` | `41fceed1c5` | 2026-09-07 | Fix 1.0.5 regression: unbounded heartbeat call could stall live playback permanently |
+| `1.0.7` | `24cc289be7` | 2026-09-07 | Fix manifest-cache instance identity for real this time: pid recycles, access_token doesn't |
+| `1.0.8` | `02ccae7c13` | 2026-09-07 | Project-wide C++ review: three defensive fixes, none reproduced live |
+| `0.9.0` | `069c3e13b9` | 2026-09-07 | Step back to 0.x versioning and add code formatting tooling |
+| `0.9.1` | `05574a5600` | 2026-09-08 | Bump addon to 0.9.1 |
+| `0.9.2` | `d0db490d3c` | 2026-09-09 | Bump addon to 0.9.2 |
+| `0.9.3` | `8833e28368` | 2026-09-10 | Bump addon to 0.9.3 |
+| `0.9.4` | `7c2129daf8` | 2026-09-11 | Bump addon to 0.9.4 |
+| `0.10.0` | `306377418a` | 2026-09-12 | Bump addon to 0.10.0 |
+| `0.10.1` | `79a6c9d67f` | 2026-09-15 | Bump addon version to 0.10.1 |
+| `0.11.0` | `c6ae43c36b` | 2026-09-16 | Bump addon version to 0.11.0 |
 
 ## The unsquashed hardening-audit history
 
 The 473 commits of the project-wide hardening audit branch were squash-merged into `Omega` as one commit
-(`75bdaf4`), so they are not ancestors of `Omega`. The per-finding record of what those commits
+(`cb69998`), so they are not ancestors of `Omega`. The per-finding record of what those commits
 changed is `docs/CLOSED_ITEMS.md`'s Fixed entries, and the tag history cleared on 2026-10-06 is the table above.
