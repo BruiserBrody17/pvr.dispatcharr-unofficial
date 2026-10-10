@@ -46,7 +46,7 @@ code stays manual/live-tested.
 
 - **C++** (`tests/`, Catch2; one `test_<module>.cpp` per pure-logic module in `src/`): a standalone CMake project, separate
   from the addon's own `CMakeLists.txt` (which only configures through Kodi's build harness; see `tests/CMakeLists.txt`).
-  CI runs it as `unit-tests`, `unit-tests-sanitized` (ASan/UBSan) and `unit-tests-tsan`. `tests/glue/` compiles the real
+  CI runs it as `unit-tests`, `unit-tests-32bit` (built with `-m32`), `unit-tests-sanitized` (ASan/UBSan) and `unit-tests-tsan`. `tests/glue/` compiles the real
   `DispatcharrClient.cpp`/`PVRDispatcharr.cpp` against Kodi's dev-kit headers, a stub Kodi runtime and a fake Dispatcharr
   (CI's `glue-harness`; run it by hand after touching the stream, auth or shared-curl paths, see its README).
   `WebSocketClient` has tests against a local server.

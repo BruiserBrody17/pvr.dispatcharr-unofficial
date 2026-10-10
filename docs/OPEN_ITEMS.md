@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**4 open, 276 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)).
+**3 open, 277 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)).
 
 | Section | Entries |
 |---|---|
@@ -14,9 +14,9 @@
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
-| Open: Known gaps, deliberately deferred | 3 |
+| Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 242 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 243 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 25 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -43,10 +43,6 @@
 #### Order-sensitive response decisions still inline in `DispatcharrClient`
 
 **Opened 2026-10-06 by the sixteenth hardening sweep; two of the six chains extracted 2026-10-09.** The recording read and the live segment fetch moved into `ClassifyRecordingReadResponse()`/`ClassifyLiveSegmentResponse()`, and now `PerformWithSafeRedirects()`'s order (no Location, then an unsafe target, then the hop limit: `DecideRedirectStep()`) and `EnsureAuthenticated()`'s gate order (valid token, login backoff, transient cooldown, all before any refresh or login: `DecideAuthGate()`) are pure, table-tested functions. The same kind of chain remains, untested as a whole, in the in-progress segment fetch (`ReadInProgressRecordingStream()`), the recording open probe (`OpenRecordingStream()`: 401 retry, failure, an in-progress HLS redirect, a `CURLE_FILESIZE_EXCEEDED` read as success) and the segment span arithmetic shared by three read paths (a helper for it would need a guard for a non-positive available count). Each is a small enum-returning extraction like the others. Deferred: none has a known bug, and each extraction touches a hot, lock-sensitive path (the glue harness in CI covers the behaviour; a live check is still wanted after).
-
-#### Nothing on a 64-bit build checks that the date parsers use the saturating time conversion
-
-**Opened 2026-10-06 by the sixteenth hardening sweep (recorded before only inside closed entries).** `SaturatingTimeGm()` makes a date from 2038 on read correctly on a 32-bit `time_t`, and the tests that cover it run on the build host, where `time_t` is 64 bits and a plain `timegm()` would give the same answers: nothing fails if a parser goes back to the plain call. Closing it needs a 32-bit build in CI (the Linux runner can compile with `-m32` where the multilib packages exist) or a test seam that substitutes a narrow `time_t`. Deferred as low value: the only parsers affected are the ones a recurring rule's end date and an XMLTV time go through, and a regression would show on the Android and 32-bit ARM builds this project does not ship from CI.
 
 #### `stop_buffer` still drops other viewers by comparing two stamps, so a host clock step can end a buffer under a viewer
 

@@ -2495,6 +2495,12 @@ login backoff and the transient cooldown both apply before any refresh or login 
 either order fails them. The in-progress segment fetch, the recording open probe and the segment span arithmetic are still inline
 (`docs/OPEN_ITEMS.md`).
 
+2026-10-09: `tools/tests/test_time_conversion_guard.py` pins where the saturating and the plain UTC conversions may be called (the
+two server-date parsers must saturate, nothing outside `TimeUtil.h` calls the C library's directly, the plain one's uses are
+counted), and CI's `unit-tests-32bit` job runs the whole C++ suite built with `-m32`. Its first run caught
+`FindEpgEntryIndexCoveringRecording()` failing an exact 80% overlap on x87 (a double ratio against 0.8); the check is integer
+arithmetic now (`tests/test_epg_program_match.cpp` already pinned 79%, 80% and 100%).
+
 See `docs/CLOSED_ITEMS.md`'s "No automated test suite exists" entry for
 the full reasoning and what's still open on both sides. Verification of
 everything else stays manual: smoke-testing against a real Dispatcharr
