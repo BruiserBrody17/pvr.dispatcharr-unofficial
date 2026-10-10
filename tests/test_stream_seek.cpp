@@ -118,3 +118,32 @@ TEST_CASE("ResolveSeekPosition SEEK_END against a known zero length is position 
   CHECK(ResolveSeekPosition(-1, SEEK_END, /*current=*/0, /*length=*/0) == -1);
   CHECK(ResolveSeekPosition(0, SEEK_END, /*current=*/0, /*length=*/-1) == -1);
 }
+
+TEST_CASE("ComputeSegmentReadSize takes the smaller of the request and what is left of the segment", "[StreamSeek]")
+{
+  unsigned int size = 99;
+  REQUIRE(ComputeSegmentReadSize(0, 1000, 188, size));
+  CHECK(size == 188);
+  REQUIRE(ComputeSegmentReadSize(900, 1000, 188, size));
+  CHECK(size == 100);
+  // Exactly what is left, and one byte left.
+  REQUIRE(ComputeSegmentReadSize(812, 1000, 188, size));
+  CHECK(size == 188);
+  REQUIRE(ComputeSegmentReadSize(999, 1000, 188, size));
+  CHECK(size == 1);
+  REQUIRE(ComputeSegmentReadSize(0, 1000, 4294967295u, size));
+  CHECK(size == 1000);
+}
+
+TEST_CASE("ComputeSegmentReadSize refuses a read with nothing to take and leaves the output alone", "[StreamSeek]")
+{
+  unsigned int size = 99;
+  CHECK_FALSE(ComputeSegmentReadSize(1000, 1000, 188, size)); // at the end: zero left
+  CHECK_FALSE(ComputeSegmentReadSize(1001, 1000, 188, size)); // past it: a negative count, an enormous unsigned one
+  CHECK_FALSE(ComputeSegmentReadSize(-1, 1000, 188, size));
+  CHECK_FALSE(ComputeSegmentReadSize(0, 0, 188, size));
+  CHECK_FALSE(ComputeSegmentReadSize(0, -5, 188, size));
+  CHECK_FALSE(ComputeSegmentReadSize(10, 1000, 0, size));
+  CHECK_FALSE(ComputeSegmentReadSize(std::numeric_limits<int64_t>::max(), 1000, 188, size));
+  CHECK(size == 99);
+}

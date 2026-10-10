@@ -195,3 +195,76 @@ TEST_CASE("ClassifyRecordingReadResponse looks at a 401 before whether the trans
   CHECK(ClassifyRecordingReadResponse(false, 401, false, 0, 100, -1) == RecordingReadOutcome::kRefreshApiKeyAndRetry);
   CHECK(ClassifyRecordingReadResponse(false, 401, true, 0, 100, -1) == RecordingReadOutcome::kRetryTransient);
 }
+
+TEST_CASE("ClassifyRecordingOpenResponse ends the open on a failed transfer, but reads a cut-short probe as a response",
+          "[RecordingHttpUtil]")
+{
+  const std::string plain = "video/mp4";
+  const std::string file = "http://server/recordings/1.mp4";
+  CHECK(ClassifyRecordingOpenResponse(false, false, 0, false, plain, file) == RecordingOpenOutcome::kTransferFailed);
+  // The transfer failing wins over a status that happens to be there (a 401 included).
+  CHECK(ClassifyRecordingOpenResponse(false, false, 401, false, plain, file) == RecordingOpenOutcome::kTransferFailed);
+  CHECK(ClassifyRecordingOpenResponse(false, false, 206, false, plain, file) == RecordingOpenOutcome::kTransferFailed);
+  // libcurl's size limit fired after the headers: a server that dropped Range, which still has a status to read.
+  CHECK(ClassifyRecordingOpenResponse(false, true, 200, false, plain, file) == RecordingOpenOutcome::kOk);
+  CHECK(ClassifyRecordingOpenResponse(false, true, 403, false, plain, file) == RecordingOpenOutcome::kHttpFailure);
+}
+
+TEST_CASE("ClassifyRecordingOpenResponse refreshes the key once on a 401, then it is a refusal", "[RecordingHttpUtil]")
+{
+  const std::string plain = "video/mp4";
+  const std::string file = "http://server/recordings/1.mp4";
+  CHECK(ClassifyRecordingOpenResponse(true, false, 401, false, plain, file) ==
+        RecordingOpenOutcome::kRefreshApiKeyAndRetry);
+  CHECK(ClassifyRecordingOpenResponse(true, false, 401, true, plain, file) == RecordingOpenOutcome::kHttpFailure);
+  CHECK(ClassifyRecordingOpenResponse(true, true, 401, false, plain, file) ==
+        RecordingOpenOutcome::kRefreshApiKeyAndRetry);
+}
+
+TEST_CASE("ClassifyRecordingOpenResponse looks for an in-progress redirect only in a successful response",
+          "[RecordingHttpUtil]")
+{
+  const std::string hlsType = "application/vnd.apple.mpegurl";
+  const std::string hlsUrl = "http://server/hls/abc/index.m3u8";
+  for (long status : {200L, 206L, 299L})
+    CHECK(ClassifyRecordingOpenResponse(true, false, status, false, hlsType, hlsUrl) ==
+          RecordingOpenOutcome::kInProgressRecording);
+  // The redirect is judged by the type OR the resolved address (see IsInProgressHlsRedirect()).
+  CHECK(ClassifyRecordingOpenResponse(true, false, 200, false, "video/mp4", hlsUrl) ==
+        RecordingOpenOutcome::kInProgressRecording);
+  CHECK(ClassifyRecordingOpenResponse(true, false, 200, false, hlsType, "http://server/f.mp4") ==
+        RecordingOpenOutcome::kInProgressRecording);
+  // A bad status is reported as one, never as an in-progress recording, however the answer looks.
+  for (long status : {0L, 199L, 300L, 302L, 403L, 404L, 500L})
+    CHECK(ClassifyRecordingOpenResponse(true, false, status, false, hlsType, hlsUrl) ==
+          RecordingOpenOutcome::kHttpFailure);
+  CHECK(ClassifyRecordingOpenResponse(true, false, 200, false, "video/mp4", "http://server/f.mp4") ==
+        RecordingOpenOutcome::kOk);
+  CHECK(ClassifyRecordingOpenResponse(true, false, 206, false, "", "") == RecordingOpenOutcome::kOk);
+}
+
+TEST_CASE("ClassifyInProgressSegmentResponse answers a first 401 with a refreshed key, once", "[RecordingHttpUtil]")
+{
+  CHECK(ClassifyInProgressSegmentResponse(true, 401, false) == InProgressSegmentOutcome::kRefreshApiKeyAndRetry);
+  // The 401 is looked at before whether the transfer worked (the order the code had before it was extracted).
+  CHECK(ClassifyInProgressSegmentResponse(false, 401, false) == InProgressSegmentOutcome::kRefreshApiKeyAndRetry);
+  // Already refreshed, or the refresh failed: a refusal that will not clear.
+  CHECK(ClassifyInProgressSegmentResponse(true, 401, true) == InProgressSegmentOutcome::kFailPermanently);
+  CHECK(ClassifyInProgressSegmentResponse(false, 401, true) == InProgressSegmentOutcome::kRetryTransient);
+}
+
+TEST_CASE("ClassifyInProgressSegmentResponse retries what may clear, singles out a 404 and fails the rest",
+          "[RecordingHttpUtil]")
+{
+  CHECK(ClassifyInProgressSegmentResponse(false, 0, false) == InProgressSegmentOutcome::kRetryTransient);
+  CHECK(ClassifyInProgressSegmentResponse(false, 404, false) == InProgressSegmentOutcome::kRetryTransient);
+  for (long status : {500L, 502L, 503L, 504L})
+    CHECK(ClassifyInProgressSegmentResponse(true, status, false) == InProgressSegmentOutcome::kRetryTransient);
+  CHECK(ClassifyInProgressSegmentResponse(true, 404, false) == InProgressSegmentOutcome::kSegmentNotFound);
+  CHECK(ClassifyInProgressSegmentResponse(true, 404, true) == InProgressSegmentOutcome::kSegmentNotFound);
+  // The segment is fetched whole, never as a range: only a plain 200 is a segment.
+  for (long status : {206L, 301L, 400L, 403L, 416L, 501L, 505L})
+    CHECK(ClassifyInProgressSegmentResponse(true, status, false) == InProgressSegmentOutcome::kFailPermanently);
+  CHECK(ClassifyInProgressSegmentResponse(true, 200, false) == InProgressSegmentOutcome::kOk);
+  CHECK(ClassifyInProgressSegmentResponse(true, 200, true) == InProgressSegmentOutcome::kOk);
+}

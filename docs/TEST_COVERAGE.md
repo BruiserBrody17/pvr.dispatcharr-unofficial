@@ -2492,8 +2492,12 @@ client's pong sends until one blocks; the stop must end it within a slice; skipp
 `PerformWithSafeRedirects()` and `EnsureAuthenticated()` with table tests that pin the order of the checks: an unsafe redirect
 target is refused before the hop limit is looked at, a redirect without a Location is handed back even at the limit, and the
 login backoff and the transient cooldown both apply before any refresh or login (the 47th-pass storm). Mutation-checked: swapping
-either order fails them. The in-progress segment fetch, the recording open probe and the segment span arithmetic are still inline
-(`docs/OPEN_ITEMS.md`).
+either order fails them. The last three (the recording open probe, the in-progress segment fetch and the segment span arithmetic) followed on
+2026-10-10: `ClassifyRecordingOpenResponse()` and `ClassifyInProgressSegmentResponse()` in `RecordingHttpUtil.h` and
+`ComputeSegmentReadSize()` in `StreamSeek.h`, with table tests that pin the order (the status before the in-progress
+redirect, a size-limited probe read as a response, the 401 before the transient check, a 404 apart from other statuses) and the
+span's edges (one byte left, none left, past the end, a zero request, an offset near the top of the 64-bit range).
+Mutation-checked for two of the orders, and the glue harness's in-progress and recording scenarios drive the rewired callers.
 
 2026-10-09: `tools/tests/test_time_conversion_guard.py` pins where the saturating and the plain UTC conversions may be called (the
 two server-date parsers must saturate, nothing outside `TimeUtil.h` calls the C library's directly, the plain one's uses are

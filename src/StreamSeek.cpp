@@ -1,5 +1,6 @@
 #include "StreamSeek.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <limits>
 
@@ -44,6 +45,15 @@ bool ComputeReadRangeEnd(int64_t position, unsigned int size, int64_t& rangeEndO
   if (position > std::numeric_limits<int64_t>::max() - static_cast<int64_t>(size))
     return false;
   rangeEndOut = position + static_cast<int64_t>(size) - 1;
+  return true;
+}
+
+bool ComputeSegmentReadSize(int64_t offsetInSegment, int64_t segmentSize, unsigned int requested, unsigned int& sizeOut)
+{
+  if (offsetInSegment < 0 || offsetInSegment >= segmentSize || requested == 0)
+    return false;
+  const int64_t available = segmentSize - offsetInSegment;
+  sizeOut = static_cast<unsigned int>(std::min<int64_t>(requested, available));
   return true;
 }
 

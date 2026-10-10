@@ -157,4 +157,66 @@ inline LiveSegmentOutcome ClassifyLiveSegmentResponse(bool transferOk, long http
   return LiveSegmentOutcome::kOk;
 }
 
+// What the 0-0 probe that opens a completed recording (OpenRecordingStream()) turned out to be, in the order the checks
+// must run. A probe the server cut short for declaring a body bigger than it asked for (libcurl's size limit) is still
+// a response with a status and headers, so it counts as a transfer that worked; any other failed transfer ends the open
+// before a status is looked at. A first 401 is retried once with the account's current key, whatever the headers say;
+// the recovered key is the caller's business, and a refresh that fails is classified again as already refreshed (a
+// plain refusal). Any non-2xx status ends the open (with DescribeRecordingOpenFailure()'s message where there is one),
+// and only a 2xx is then asked whether it is an in-progress recording's HLS redirect, which this reader cannot play. A
+// mutation that checks the redirect before the status, or the size limit after the transfer, changes what a viewer is
+// told.
+enum class RecordingOpenOutcome
+{
+  kTransferFailed,
+  kRefreshApiKeyAndRetry,
+  kHttpFailure,
+  kInProgressRecording,
+  kOk,
+};
+
+inline RecordingOpenOutcome ClassifyRecordingOpenResponse(bool transferOk, bool sizeLimitExceeded, long httpCode,
+                                                          bool apiKeyAlreadyRefreshed, const std::string& contentType,
+                                                          const std::string& resolvedUrl)
+{
+  if (!transferOk && !sizeLimitExceeded)
+    return RecordingOpenOutcome::kTransferFailed;
+  if (httpCode == 401 && !apiKeyAlreadyRefreshed)
+    return RecordingOpenOutcome::kRefreshApiKeyAndRetry;
+  if (httpCode < 200 || httpCode >= 300)
+    return RecordingOpenOutcome::kHttpFailure;
+  if (IsInProgressHlsRedirect(contentType, resolvedUrl))
+    return RecordingOpenOutcome::kInProgressRecording;
+  return RecordingOpenOutcome::kOk;
+}
+
+// The same for one segment body of an in-progress recording (ReadInProgressRecordingStream()): a first 401 is retried
+// with a refreshed key; a failure that may clear (no response, 500/502/503/504) is retried inside the read's budget; a
+// 404 is a segment the playlist listed but the server no longer has, which the caller checks against the recording
+// itself (it may be gone) before treating it as one more failure that will not clear; any other status is such a
+// failure; only a 200 is a segment (the fetch asks for the whole body, never a range). The 401 comes first even when
+// the transfer failed.
+enum class InProgressSegmentOutcome
+{
+  kRefreshApiKeyAndRetry,
+  kRetryTransient,
+  kSegmentNotFound,
+  kFailPermanently,
+  kOk,
+};
+
+inline InProgressSegmentOutcome ClassifyInProgressSegmentResponse(bool transferOk, long httpCode,
+                                                                  bool apiKeyAlreadyRefreshed)
+{
+  if (httpCode == 401 && !apiKeyAlreadyRefreshed)
+    return InProgressSegmentOutcome::kRefreshApiKeyAndRetry;
+  if (IsTransientReadFailure(transferOk, httpCode))
+    return InProgressSegmentOutcome::kRetryTransient;
+  if (httpCode == 404)
+    return InProgressSegmentOutcome::kSegmentNotFound;
+  if (httpCode != 200)
+    return InProgressSegmentOutcome::kFailPermanently;
+  return InProgressSegmentOutcome::kOk;
+}
+
 } // namespace dispatcharr

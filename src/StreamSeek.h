@@ -61,4 +61,13 @@ int64_t ResolveSeekPosition(int64_t position, int whence, int64_t currentPositio
 // See ../tests/test_stream_seek.cpp.
 bool ComputeReadRangeEnd(int64_t position, unsigned int size, int64_t& rangeEndOut);
 
+// How many bytes one read may take from a segment of `segmentSize` bytes when the stream is `offsetInSegment` bytes
+// into it and the caller asked for `requested`: the smaller of the request and what is left of the segment. False,
+// writing nothing, when there is nothing to give: a negative offset, an offset at or past the segment's end (the
+// available count would be zero or negative, and a negative one cast to unsigned is an enormous read) or a zero
+// request. The in-progress recording's cached copy and the live timeshift's ranged fetch both size their read this way.
+// See ../tests/test_stream_seek.cpp.
+bool ComputeSegmentReadSize(int64_t offsetInSegment, int64_t segmentSize, unsigned int requested,
+                            unsigned int& sizeOut);
+
 } // namespace dispatcharr

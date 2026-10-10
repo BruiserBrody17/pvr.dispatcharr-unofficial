@@ -3301,7 +3301,10 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
                 attempt, static_cast<long long>(segByteSize), fetchSec, static_cast<int>(res), httpCode,
                 segUrl.c_str());
 
-      if (httpCode == 401 && attempt == 0)
+      // The order of the checks is dispatcharr::ClassifyInProgressSegmentResponse()'s (RecordingHttpUtil.h, tested).
+      InProgressSegmentOutcome outcome =
+          ClassifyInProgressSegmentResponse(res == CURLE_OK, httpCode, /*apiKeyAlreadyRefreshed=*/attempt > 0);
+      if (outcome == InProgressSegmentOutcome::kRefreshApiKeyAndRetry)
       {
         std::string regenKey, regenError;
         stateLock.unlock();
@@ -3314,9 +3317,10 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
           ++attempt;
           continue;
         }
+        outcome = ClassifyInProgressSegmentResponse(res == CURLE_OK, httpCode, /*apiKeyAlreadyRefreshed=*/true);
       }
 
-      if (IsTransientReadFailure(res == CURLE_OK, httpCode))
+      if (outcome == InProgressSegmentOutcome::kRetryTransient)
       {
         if (res != CURLE_OK)
         {
@@ -3338,7 +3342,8 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
         }
         return -1;
       }
-      if (httpCode != 200)
+      if (outcome == InProgressSegmentOutcome::kSegmentNotFound ||
+          outcome == InProgressSegmentOutcome::kFailPermanently)
       {
         // A segment the playlist listed 404s when the recording it belongs
         // to is gone (deleted, or finished with its HLS directory removed --
@@ -3352,7 +3357,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
         // playlist fetch per retry on top of the segment fetch -- while the
         // gone case, whose refresh fails and so never arms it, is checked
         // on every attempt until it is confirmed.
-        if (httpCode == 404)
+        if (outcome == InProgressSegmentOutcome::kSegmentNotFound)
         {
           std::string refreshError;
           stateLock.unlock();
@@ -3404,11 +3409,10 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
   if (!stillSameStream() || m_inProgressRecordingStream.position != positionAtStart)
     return -1;
   const auto& cached = m_inProgressRecordingStream.cachedSegmentBytes;
-  if (offsetInSegment < 0 || static_cast<size_t>(offsetInSegment) >= cached.size())
+  unsigned int wantSize = 0;
+  if (!ComputeSegmentReadSize(offsetInSegment, static_cast<int64_t>(cached.size()), size, wantSize))
     return 0; // segment turned out smaller than the probed byteSize -- nothing left to give
 
-  int64_t available = static_cast<int64_t>(cached.size()) - offsetInSegment;
-  unsigned int wantSize = static_cast<unsigned int>(std::min<int64_t>(size, available));
   std::memcpy(buffer, cached.data() + offsetInSegment, wantSize);
   m_inProgressRecordingStream.position += static_cast<int64_t>(wantSize);
   ResetPermanentReadFailures(m_inProgressRecordingStream.permanentReadFailures);
@@ -3626,8 +3630,7 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
     // A response cut short for being larger than the probe wants is a response all
     // the same: its status and headers are what this reads. The length stays
     // unknown (-1) because a dropped Range means no Content-Range either.
-    if (res == CURLE_FILESIZE_EXCEEDED)
-      res = CURLE_OK;
+    const bool sizeLimitExceeded = res == CURLE_FILESIZE_EXCEEDED;
     long httpCode = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
     char* effectiveUrl = nullptr;
@@ -3639,20 +3642,24 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
-    if (res != CURLE_OK)
-    {
-      error = std::string("HTTP request failed: ") + curl_easy_strerror(res);
-      return false;
-    }
-
-    if (httpCode == 401 && attempt == 0)
+    // The order of the checks is dispatcharr::ClassifyRecordingOpenResponse()'s (RecordingHttpUtil.h, tested).
+    RecordingOpenOutcome outcome = ClassifyRecordingOpenResponse(
+        res == CURLE_OK, sizeLimitExceeded, httpCode, /*apiKeyAlreadyRefreshed=*/attempt > 0, contentType, resolvedUrl);
+    if (outcome == RecordingOpenOutcome::kRefreshApiKeyAndRetry)
     {
       std::string regenKey, regenError;
       if (ObtainApiKey(regenKey, regenError))
         continue;
+      outcome = ClassifyRecordingOpenResponse(res == CURLE_OK, sizeLimitExceeded, httpCode,
+                                              /*apiKeyAlreadyRefreshed=*/true, contentType, resolvedUrl);
     }
 
-    if (httpCode < 200 || httpCode >= 300)
+    if (outcome == RecordingOpenOutcome::kTransferFailed)
+    {
+      error = std::string("HTTP request failed: ") + curl_easy_strerror(res);
+      return false;
+    }
+    if (outcome == RecordingOpenOutcome::kHttpFailure)
     {
       error = "Dispatcharr returned HTTP " + std::to_string(httpCode) + " opening recording stream";
       const std::string userMessage = DescribeRecordingOpenFailure(httpCode);
@@ -3660,10 +3667,7 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
         kodi::QueueNotification(QUEUE_ERROR, "", userMessage);
       return false;
     }
-    // The classification itself lives in dispatcharr::IsInProgressHlsRedirect()
-    // (RecordingHttpUtil.h) so it's unit-testable standalone -- see that
-    // function's own comment.
-    if (IsInProgressHlsRedirect(contentType, resolvedUrl))
+    if (outcome == RecordingOpenOutcome::kInProgressRecording)
     {
       error = "This recording is still in progress; playback of in-progress "
               "recordings isn't supported yet, only completed ones";
@@ -4651,8 +4655,15 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
   std::string segFilename = seg->filename;
 
   int64_t offsetInSegment = m_liveTimeshiftStream.position - segByteOffset;
-  int64_t available = segByteSize - offsetInSegment;
-  unsigned int wantSize = static_cast<unsigned int>(std::min<int64_t>(size, available));
+  unsigned int wantSize = 0;
+  if (!ComputeSegmentReadSize(offsetInSegment, segByteSize, size, wantSize))
+  {
+    kodi::Log(
+        ADDON_LOG_DEBUG,
+        "pvr.dispatcharr-unofficial: ReadLiveTimeshiftStream: nothing to read at offset %lld of a %lld-byte segment",
+        static_cast<long long>(offsetInSegment), static_cast<long long>(segByteSize));
+    return 0;
+  }
 
   int64_t rangeEnd = offsetInSegment + static_cast<int64_t>(wantSize) - 1;
   std::string range = std::to_string(offsetInSegment) + "-" + std::to_string(rangeEnd);
