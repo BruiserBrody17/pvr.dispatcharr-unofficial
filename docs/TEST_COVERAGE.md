@@ -2486,6 +2486,15 @@ values instead of reading a clock. Mutation-checked: putting the old subtraction
 `stop_buffer`'s own viewer prune still compares stamps (it runs in a request worker with no memory between calls), and
 nothing runs the reaper thread against a real stepped clock.
 
+2026-10-09: `WebSocketClient` gained a test for a stop during a blocked send (a server that floods pings and never reads fills the
+client's pong sends until one blocks; the stop must end it within a slice; skipped on a kernel whose buffers absorb the flood).
+`DecideRedirectStep()` (`RedirectPolicy.h`) and `DecideAuthGate()` (`AuthBackoff.h`) were extracted from
+`PerformWithSafeRedirects()` and `EnsureAuthenticated()` with table tests that pin the order of the checks: an unsafe redirect
+target is refused before the hop limit is looked at, a redirect without a Location is handed back even at the limit, and the
+login backoff and the transient cooldown both apply before any refresh or login (the 47th-pass storm). Mutation-checked: swapping
+either order fails them. The in-progress segment fetch, the recording open probe and the segment span arithmetic are still inline
+(`docs/OPEN_ITEMS.md`).
+
 See `docs/CLOSED_ITEMS.md`'s "No automated test suite exists" entry for
 the full reasoning and what's still open on both sides. Verification of
 everything else stays manual: smoke-testing against a real Dispatcharr
