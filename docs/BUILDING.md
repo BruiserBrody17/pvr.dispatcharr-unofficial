@@ -893,8 +893,11 @@ frozen snapshot, so the copies cannot drift.
 
 **A plugin-only fix after its addon release shipped.** Plugins have no tags of their own; their zips ride on whichever
 addon tag exists, so a fix merged after the release leaves the published zip stale (a header-injection fix in
-`timeshift_buffer` 0.6.2 missed 0.9.4 by hours and the vulnerable 0.6.1 shipped until it was noticed). Do not wait for the
-next release, above all for anything security-relevant: rebuild just that plugin's zip from `Omega` the way
+`timeshift_buffer` 0.6.2 missed 0.9.4 by hours and the vulnerable 0.6.1 shipped until it was noticed). **The standing rule (2026-10-10).** Replace the release's zip when the fix is security-relevant, or is a bug a user of the
+shipped zip would actually hit. Do not replace it for cosmetic changes, docs, internal refactors or fixes for behaviour the
+shipped build cannot reach; those wait for the next addon release, since replacing a gated public asset carries risk of its
+own and one refresh of a bundle of small fixes beats one per fix. The replacement still needs the user's go-ahead, because
+it publishes to the public release. When it applies, do not wait for the next release: rebuild just that plugin's zip from `Omega` the way
 `package-dispatcharr-plugins` does, from `dispatcharr-plugin/`:
 
 ```bash

@@ -216,7 +216,8 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   (build-machine paths in any binary, the private blocklist, zip timestamps and extra fields, unstripped libraries, debug
   files, a complete set). A failing gate is fixed at its cause and the zip rebuilt, never by editing the gate. The release
   notes inline any bundled plugin's own changelog entry. A plugin-only fix after a release shipped gets that release's zip
-  replaced, not left stale. Steps, commands and the rationale: `docs/BUILDING.md`'s "Release assets".
+  replaced when it is security-relevant or a bug a user of the shipped zip would hit; cosmetic, docs-only, refactor and
+  unreachable-on-that-build fixes wait for the next release. Steps, commands and the rationale: `docs/BUILDING.md`'s "Release assets".
 - **The CoreELEC package isn't part of CI** and won't be (see
   `docs/BUILDING.md`'s "GitHub Actions job ... rejected" note --
   CoreELEC's build harness assumes persistent, self-hosted infrastructure
