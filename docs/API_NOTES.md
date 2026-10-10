@@ -94,7 +94,8 @@ use, then live against a 0.32.0 server (a real recording, a real client on a 64-
 - **Channels:** `is_radio` and `effective_is_radio` are new on the channel (and a stream filter `is_radio`, a channel filter
   `only_radio`); nothing was removed or renamed, `streams` is still a list of ids, and the list is still unpaginated for the
   addon's request (a full-size lineup, `next` null). The addon does not read the radio flag yet, so radio channels still reach Kodi
-  as TV; mapping it to Kodi's radio type is a possible feature, not a compatibility issue. Sorting, search and filtering now use the
+  as TV; mapping it to Kodi's radio type is a possible feature, not a compatibility issue (now an open item, "Map Dispatcharr's
+  radio flag to Kodi's radio channel type" in `docs/OPEN_ITEMS.md`, from the 2026-10-10 pvr.hts comparison). Sorting, search and filtering now use the
   override-aware values (what the addon already reads as `effective_*`).
 - **Catch-up:** `POST /api/catchup/sessions/` is untouched; the server-side `Range: bytes=0-` restart and scrub-offset fixes are
   in the proxy path. Live on the phone with `inputstream.ffmpegdirect` seeking on: a 2-minute forward seek landed in 36 s, a 90-second
@@ -191,6 +192,9 @@ the same "confirmed live, not just assumed" standard as this one.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) -- known Kodi-core quirks
   that aren't this addon's bug, multi-client limitations, and what's
   still unconfirmed
+- [PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md) -- what the Tvheadend
+  addon (pvr.hts) does that this one does not, which of it Dispatcharr
+  can back, and what was decided about each (2026-10-10)
 
 ## OS sleep/wake and the real-time-updates WebSocket
 

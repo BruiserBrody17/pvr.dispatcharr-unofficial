@@ -2559,6 +2559,10 @@ against an already-airing broadcast ever needs revisiting.
 
 ## Recording-management feature gaps vs. TVHeadend, checked against Dispatcharr's real API (2026-09-08)
 
+*The whole-addon comparison with the Tvheadend addon's source, done on
+2026-10-10, is `docs/PVR_HTS_COMPARISON.md`; this section is the
+earlier, recording-management-only pass it builds on.*
+
 Prompted by a "what does TVHeadend have that this addon doesn't"
 question. Comparing this addon's declared Kodi `PVRCapabilities`
 (`GetCapabilities()` in `src/PVRDispatcharr.cpp`) against everything
