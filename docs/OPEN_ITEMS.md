@@ -4,27 +4,40 @@
 
 ## Status at a glance
 
-**14 open, 282 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
-2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
+**14 open, 283 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
+two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other was found during the
+radio channel live check.
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 5 |
+| Open: Needs a live check | 2 |
+| Open: Fix known, not yet done | 4 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 247 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 248 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 26 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
 
 ### Needs a live check
+
+#### A short recording whose EDL covers all of it plays to its end at once
+
+**Opened 2026-10-10, found during the radio live check; cause not investigated.** A 35-second recording made through
+the addon was opened from Kodi's recordings list and ended after about two seconds. Kodi's log showed one EDL break
+spanning the whole recording (`Added break [0 - 35.27 s]`, then `Start position set to end of first commercial break`,
+a seek to 33.8 s and EOF), and the recording was marked watched. The addon only relays what the server's comskip data or
+the `recording_edl` plugin returns (`GetRecordingEdl()`), so the first question is what the server returned for that
+recording: a comskip run on a recording this short, or the plugin's mapping. Nothing to do with the radio flag (the
+recording's content was an ordinary TV stream). To close: reproduce with a short recording, read the EDL the server
+returned, and decide whether the fault is the server's data (document it) or whether the addon should ignore a break
+that covers the whole runtime, since playing nothing is never what a user wants from a skip.
 
 #### Fill Kodi's signal-status panel with the active stream's account and profile
 
@@ -83,20 +96,6 @@ always, and consider sending `days` from Kodi's own EPG future-days value (`SetE
 instead of inheriting the account's. Confirm live that the export is byte-identical with and without the explicit
 source parameter on a 0.32.0 server, and that an account with a non-zero `epg_days` still gets the window Kodi asked
 for.
-
-#### Map Dispatcharr's radio flag to Kodi's radio channel type
-
-**Opened 2026-10-10, from the pvr.hts comparison.** Dispatcharr 0.32.0 added `is_radio` and `effective_is_radio` to the
-channel (confirmed in `docs/API_NOTES.md`'s "Dispatcharr 0.32.0 (2026-10-07)" section, which already notes that radio
-channels reach Kodi as TV). The addon declares `SetSupportsRadio(false)` and sets `SetIsRadio(false)` on every channel and
-group in `GetChannels()` and `GetChannelGroups()`. The change: read `effective_is_radio` in the channel parser (with a
-test in `tests/test_channel_parser.cpp`, or wherever the channel JSON is mapped), declare radio support, answer the
-`radio` argument of `GetChannels()`, `GetChannelGroups()` and `GetChannelGroupMembers()` instead of returning everything
-for TV and nothing for radio, and flag the recording's channel type where Kodi asks for it. A group holding both kinds of
-channel needs a decision (Kodi groups are TV or radio, not mixed); the simplest rule is a group appears in each list that
-has at least one member of that kind. Confirm live with a channel flagged radio on a 0.32.0 server, in Kodi's Radio
-section, including playback and the guide; also confirm a server older than 0.32.0 (no field) still lists every channel
-as TV.
 
 #### Report the backend hostname
 

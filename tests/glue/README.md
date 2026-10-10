@@ -53,7 +53,7 @@ false mismatches (identical on builds before and after any change); run it with 
 hang stress. Fault knobs and counters (`api_down`, `api_hang`, `api_delay_ms`, ...) are documented at the top of `fake_dispatcharr.py` (`/__ctl`, `/__stats`).
 
 `pvr_harness` (`pvr_driver.cpp`, `pvr_stub.cpp`) builds a real `CInstancePVRClient` from a hand-made instance
-struct and drives it as Kodi's PVR manager does: `ctor_dtor`, `dtor_busy`, `functional` (EPG on six channels
+struct and drives it as Kodi's PVR manager does: `ctor_dtor`, `dtor_busy`, `functional` (the radio lists, EPG on six channels
 including a 5.1, all four timer types), `surface <ms>` (four threads on lists and EPG, timer add/update/delete
 cycles, stream cycles with a `GetStreamTimes` thread, settings changes including the dialog-open dropped-write
 case, `OnSystemWake`).

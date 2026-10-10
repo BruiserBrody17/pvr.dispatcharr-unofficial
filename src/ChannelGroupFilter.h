@@ -36,6 +36,27 @@ inline std::vector<ChannelGroup> FilterChannelGroupsWithChannels(std::vector<Cha
   return groups;
 }
 
+// A group is listed under TV or Radio by what it holds, since Kodi's groups are one kind or the other and a
+// Dispatcharr group can hold both: it appears in each list for which it has at least one channel. The same group
+// name in both lists is fine, Kodi keeps the two sets apart.
+inline std::vector<ChannelGroup> FilterChannelGroupsByKind(const std::vector<ChannelGroup>& groups,
+                                                           const std::vector<Channel>& channels, bool radio)
+{
+  std::unordered_set<int> groupIdsOfKind;
+  for (const auto& ch : channels)
+  {
+    if (ch.isRadio == radio)
+      groupIdsOfKind.insert(ch.groupId);
+  }
+  std::vector<ChannelGroup> out;
+  for (const auto& g : groups)
+  {
+    if (groupIdsOfKind.count(g.id))
+      out.push_back(g);
+  }
+  return out;
+}
+
 // Which group GetChannelGroupMembers() is being asked about -- the pure
 // lookup core of PVRDispatcharr::GetChannelGroupMembers(), which Kodi
 // identifies only by name. Returns -1 when no group matches.

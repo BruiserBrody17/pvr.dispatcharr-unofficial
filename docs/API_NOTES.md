@@ -93,9 +93,9 @@ use, then live against a 0.32.0 server (a real recording, a real client on a 64-
   real-time push was confirmed live (a recording created outside Kodi appeared with no restart).
 - **Channels:** `is_radio` and `effective_is_radio` are new on the channel (and a stream filter `is_radio`, a channel filter
   `only_radio`); nothing was removed or renamed, `streams` is still a list of ids, and the list is still unpaginated for the
-  addon's request (a full-size lineup, `next` null). The addon does not read the radio flag yet, so radio channels still reach Kodi
-  as TV; mapping it to Kodi's radio type is a possible feature, not a compatibility issue (now an open item, "Map Dispatcharr's
-  radio flag to Kodi's radio channel type" in `docs/OPEN_ITEMS.md`, from the 2026-10-10 pvr.hts comparison). Sorting, search and filtering now use the
+  addon's request (a full-size lineup, `next` null). Before the addon read the radio flag, radio channels reached Kodi
+  as TV; it now maps `effective_is_radio` (else `is_radio`) to Kodi's radio channel type (`docs/CLOSED_ITEMS.md`, "Map
+  Dispatcharr's radio flag to Kodi's radio channel type", from the 2026-10-10 pvr.hts comparison; confirmed live 2026-10-10). Sorting, search and filtering now use the
   override-aware values (what the addon already reads as `effective_*`).
 - **Catch-up:** `POST /api/catchup/sessions/` is untouched; the server-side `Range: bytes=0-` restart and scrub-offset fixes are
   in the proxy path. Live on the phone with `inputstream.ffmpegdirect` seeking on: a 2-minute forward seek landed in 36 s, a 90-second

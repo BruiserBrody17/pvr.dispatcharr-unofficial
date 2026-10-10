@@ -83,6 +83,7 @@ TEST_CASE("HasChannelLineupChanged detects a change to any single channel field"
   CHECK(mutated([](Channel& c) { c.epgDataId = 7; }));
   CHECK(mutated([](Channel& c) { c.catchupEnabled = true; }));
   CHECK(mutated([](Channel& c) { c.catchupDays = 3; }));
+  CHECK(mutated([](Channel& c) { c.isRadio = true; }));
 }
 
 TEST_CASE("HasChannelLineupChanged detects group additions, removals, and renames", "[ChannelLineupChange]")

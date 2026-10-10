@@ -249,6 +249,16 @@
   title edit either: the same would apply to any other single-field
   timer edit (e.g. adjusting a one-time timer's start/end time alone).
 
+## A channel group the addon stops listing stays in Kodi as an empty group
+
+Confirmed live (2026-10-10) and against Kodi's own source: Kodi's group sync (`CPVRChannelGroups::UpdateFromClients()`)
+only adds and updates the groups a client reports; it never removes one the client has stopped reporting. If every channel
+leaves a group (it was emptied or deleted on the Dispatcharr side, or its last channel moved to another group or switched
+between TV and radio), Kodi keeps showing the group, empty, in its TV or Radio group list, even after a restart. The addon
+is no longer listing it: the group lists are built from the groups that still hold a channel of that kind
+(`FilterChannelGroupsByKind()`, and `FilterChannelGroupsWithChannels()` before it). Not the addon's bug, and not fixable
+from it; an empty group can be deleted in Kodi's own group manager.
+
 ## Known limitations with more than one Kodi client
 
 Not bugs in this addon -- inherent to running multiple, fully independent

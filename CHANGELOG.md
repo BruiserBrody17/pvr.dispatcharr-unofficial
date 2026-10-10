@@ -12,6 +12,12 @@ compare against.
 
 ## [Unreleased] -- addon
 
+### Added
+
+- **Radio channels**: a channel Dispatcharr 0.32.0 flags as radio now appears in Kodi's Radio section instead of the TV
+  list, with its own radio channel groups (a group holding both kinds is listed in both), and its recordings are marked
+  as radio. A server older than 0.32.0 sends no flag, so every channel stays TV as before.
+
 ### Changed
 
 - Checked against Dispatcharr `0.32.0`: no addon change was needed. In-progress recording playback (Dispatcharr now

@@ -147,6 +147,9 @@ struct Channel
   // timeshift buffer for every channel -- see docs/API_NOTES.md.
   bool catchupEnabled = false;
   int catchupDays = 0;
+  // Dispatcharr 0.32.0's effective_is_radio (override-aware, else is_radio);
+  // false on a server that predates the field, so every channel stays TV.
+  bool isRadio = false;
 };
 
 struct ChannelGroup

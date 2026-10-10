@@ -448,6 +448,41 @@ int main(int argc, char** argv)
     A()->GetChannels(I(), (PVR_HANDLE)&c, false);
     if (c.channels.empty())
       FAIL("no channels were listed");
+    // Radio: the fake's one radio channel (id 7, group 2, which also holds TV channels) is in the radio list only,
+    // and the group is listed under both kinds with the members split the same way.
+    {
+      PVR_ADDON_CAPABILITIES caps{};
+      A()->GetCapabilities(I(), &caps);
+      if (!caps.bSupportsRadio)
+        FAIL("radio support was not declared");
+      Collected r;
+      A()->GetChannels(I(), (PVR_HANDLE)&r, true);
+      if (r.channels.size() != 1 || r.channels[0].iUniqueId != 7 || !r.channels[0].bIsRadio)
+        FAIL("the radio list holds %zu channels, expected only channel 7", r.channels.size());
+      for (auto& ch : c.channels)
+        if (ch.iUniqueId == 7 || ch.bIsRadio)
+          FAIL("the TV list holds radio channel %u", ch.iUniqueId);
+      for (bool radio : {false, true})
+      {
+        Collected gs;
+        A()->GetChannelGroups(I(), (PVR_HANDLE)&gs, radio);
+        bool found = false;
+        for (auto& gr : gs.groups)
+        {
+          if (gr.bIsRadio != radio)
+            FAIL("a group listed with radio=%d is flagged radio=%d", (int)radio, (int)gr.bIsRadio);
+          Collected mem;
+          A()->GetChannelGroupMembers(I(), (PVR_HANDLE)&mem, &gr);
+          for (auto& m : mem.members)
+            if ((m.iChannelUniqueId == 7) != radio)
+              FAIL("group member %u is in the wrong kind of group (radio=%d)", m.iChannelUniqueId, (int)radio);
+          if (!mem.members.empty())
+            found = true;
+        }
+        if (!found)
+          FAIL("no group with members was listed for radio=%d", (int)radio);
+      }
+    }
     // EPG: first call may answer "not loaded yet" -- retry like Kodi
     for (auto& ch : c.channels)
     {

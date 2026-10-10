@@ -204,3 +204,18 @@ TEST_CASE("ParseChannelJson counts a channel carrying only the older channel_num
   CHECK_FALSE(ParseChannelJson(json{{"id", 5}}).hasChannelNumber);
   CHECK_FALSE(ParseChannelJson(json{{"id", 5}, {"channel_number", nullptr}}).hasChannelNumber);
 }
+
+TEST_CASE("ParseChannelJson reads the radio flag, preferring the override-aware one", "[ChannelParser]")
+{
+  // Dispatcharr 0.32.0 added both fields (docs/API_NOTES.md); effective_is_radio carries a per-channel override.
+  CHECK(ParseChannelJson(json::parse(R"({"id": 1, "is_radio": true})")).isRadio);
+  CHECK(ParseChannelJson(json::parse(R"({"id": 1, "is_radio": false, "effective_is_radio": true})")).isRadio);
+  CHECK_FALSE(ParseChannelJson(json::parse(R"({"id": 1, "is_radio": true, "effective_is_radio": false})")).isRadio);
+}
+
+TEST_CASE("ParseChannelJson treats a channel from a server without the radio flag as TV", "[ChannelParser]")
+{
+  // A server older than 0.32.0 sends neither field, and a null is not radio either.
+  CHECK_FALSE(ParseChannelJson(json::parse(R"({"id": 1})")).isRadio);
+  CHECK_FALSE(ParseChannelJson(json::parse(R"({"id": 1, "is_radio": null, "effective_is_radio": null})")).isRadio);
+}

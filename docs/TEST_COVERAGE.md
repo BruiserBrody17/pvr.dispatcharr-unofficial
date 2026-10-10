@@ -773,6 +773,11 @@ channel group with no member channels left in the just-fetched channel
 list -- Dispatcharr's `/api/channels/groups/` returns every group that
 has ever existed, including ones no longer enabled for any M3U account,
 and "enabled" isn't itself a property of the group to check directly.
+`ChannelGroupFilter` also has `FilterChannelGroupsByKind()` (2026-10-10, radio support): a group is listed under TV or Radio
+by the channels it holds, so a group with both kinds appears in both lists and a server without the radio flag yields an
+empty radio list. `ParseChannelJson()` reads `effective_is_radio` over `is_radio` (false when absent or null), and
+`HasChannelLineupChanged()` treats a flipped flag as a change. The glue harness's `functional` scenario checks the same
+through the real `PVRDispatcharr` (its fake has a radio channel in a mixed group).
 `ChannelRenumbering` is `HaveChannelNumbersChanged()` (added 2026-09-26,
 a 23rd-pass audit, fixing a real, confirmed bug found via a project-wide
 review, confirmed against Dispatcharr's own real current upstream

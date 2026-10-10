@@ -88,6 +88,7 @@ Channel ParseChannelJson(const nlohmann::json& item)
 
   ch.catchupEnabled = FieldOr(item, "is_catchup", false);
   ch.catchupDays = FieldOr(item, "catchup_days", 0);
+  ch.isRadio = FieldOr(item, "effective_is_radio", FieldOr(item, "is_radio", false));
   return ch;
 }
 

@@ -83,6 +83,63 @@ TEST_CASE("FilterChannelGroupsWithChannels counts a group with multiple member c
   CHECK(result[0].id == 1);
 }
 
+namespace
+{
+Channel MakeKindChannel(int groupId, bool radio)
+{
+  Channel ch = MakeChannel(groupId);
+  ch.isRadio = radio;
+  return ch;
+}
+} // namespace
+
+TEST_CASE("FilterChannelGroupsByKind lists a group under the kind of channel it holds", "[ChannelGroupFilter]")
+{
+  std::vector<ChannelGroup> groups = {MakeGroup(1, "News"), MakeGroup(2, "Music")};
+  std::vector<Channel> channels = {MakeKindChannel(1, false), MakeKindChannel(2, true)};
+
+  std::vector<ChannelGroup> tv = FilterChannelGroupsByKind(groups, channels, false);
+  std::vector<ChannelGroup> radio = FilterChannelGroupsByKind(groups, channels, true);
+
+  REQUIRE(tv.size() == 1);
+  CHECK(tv[0].name == "News");
+  REQUIRE(radio.size() == 1);
+  CHECK(radio[0].name == "Music");
+}
+
+TEST_CASE("FilterChannelGroupsByKind lists a mixed group under both kinds", "[ChannelGroupFilter]")
+{
+  // Kodi's groups are TV or radio, a Dispatcharr group can be both.
+  std::vector<ChannelGroup> groups = {MakeGroup(1, "Everything")};
+  std::vector<Channel> channels = {MakeKindChannel(1, false), MakeKindChannel(1, true)};
+
+  CHECK(FilterChannelGroupsByKind(groups, channels, false).size() == 1);
+  CHECK(FilterChannelGroupsByKind(groups, channels, true).size() == 1);
+}
+
+TEST_CASE("FilterChannelGroupsByKind lists nothing as radio when no channel is radio", "[ChannelGroupFilter]")
+{
+  // What a server older than 0.32.0 looks like: every channel TV, so the radio list stays empty.
+  std::vector<ChannelGroup> groups = {MakeGroup(1, "News"), MakeGroup(2, "Sport")};
+  std::vector<Channel> channels = {MakeKindChannel(1, false), MakeKindChannel(2, false)};
+
+  CHECK(FilterChannelGroupsByKind(groups, channels, false).size() == 2);
+  CHECK(FilterChannelGroupsByKind(groups, channels, true).empty());
+}
+
+TEST_CASE("FilterChannelGroupsByKind drops a group with no channels, and keeps the groups' order",
+          "[ChannelGroupFilter]")
+{
+  std::vector<ChannelGroup> groups = {MakeGroup(3, "C"), MakeGroup(1, "A"), MakeGroup(2, "Empty")};
+  std::vector<Channel> channels = {MakeKindChannel(1, false), MakeKindChannel(3, false)};
+
+  std::vector<ChannelGroup> result = FilterChannelGroupsByKind(groups, channels, false);
+
+  REQUIRE(result.size() == 2);
+  CHECK(result[0].id == 3);
+  CHECK(result[1].id == 1);
+}
+
 TEST_CASE("FindChannelGroupIdByKodiName finds a group by its exact name", "[ChannelGroupFilter]")
 {
   std::vector<ChannelGroup> groups = {MakeGroup(1, "News"), MakeGroup(2, "Sports")};

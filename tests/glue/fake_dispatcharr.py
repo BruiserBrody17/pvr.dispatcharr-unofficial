@@ -90,6 +90,7 @@ DB = {
 }
 DBL = threading.Lock()
 NCH = 6
+RADIO_ID = 7  # a seventh channel, flagged radio, in group 2 with the TV channels 1, 3 and 5
 
 
 def iso(t):
@@ -113,6 +114,22 @@ def channels():
                 "epg_data_id": i,
             }
         )
+    out.append(
+        {
+            "id": RADIO_ID,
+            "uuid": "uuid%d" % RADIO_ID,
+            "name": "Radio %d" % RADIO_ID,
+            "channel_number": RADIO_ID,
+            "channel_group_id": 2,
+            "tvg_id": "t%d" % RADIO_ID,
+            "logo_id": None,
+            "is_catchup": False,
+            "catchup_days": 0,
+            "epg_data_id": RADIO_ID,
+            "is_radio": False,
+            "effective_is_radio": True,
+        }
+    )
     return out
 
 

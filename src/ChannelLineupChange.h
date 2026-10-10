@@ -43,7 +43,7 @@ inline bool HasChannelLineupChanged(const std::vector<Channel>& oldChannels, con
     const Channel& o = *it->second;
     if (o.uuid != n.uuid || o.name != n.name || o.logoId != n.logoId || o.channelNumber != n.channelNumber ||
         o.groupId != n.groupId || o.groupName != n.groupName || o.tvgId != n.tvgId || o.epgDataId != n.epgDataId ||
-        o.catchupEnabled != n.catchupEnabled || o.catchupDays != n.catchupDays)
+        o.catchupEnabled != n.catchupEnabled || o.catchupDays != n.catchupDays || o.isRadio != n.isRadio)
       return true;
   }
 

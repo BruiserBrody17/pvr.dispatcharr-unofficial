@@ -1942,7 +1942,7 @@ void PVRDispatcharr::StartRealtimeUpdateThread()
 PVR_ERROR PVRDispatcharr::GetCapabilities(kodi::addon::PVRCapabilities& capabilities)
 {
   capabilities.SetSupportsTV(true);
-  capabilities.SetSupportsRadio(false);
+  capabilities.SetSupportsRadio(true);
   capabilities.SetSupportsEPG(true);
   capabilities.SetSupportsChannelGroups(true);
   m_capabilitiesRead = true;
@@ -2817,25 +2817,25 @@ PVR_ERROR PVRDispatcharr::GetChannelGroupsAmount(int& amount)
   // avoids triggering.
   if (dispatcharr::HasNeverLoadedSuccessfully(m_groupsLoadedAt))
     return PVR_ERROR_SERVER_ERROR;
-  amount = static_cast<int>(m_groups.size());
+  // A group with both kinds of channel is listed once per kind -- see FilterChannelGroupsByKind().
+  amount = static_cast<int>(dispatcharr::FilterChannelGroupsByKind(m_groups, m_channels, false).size() +
+                            dispatcharr::FilterChannelGroupsByKind(m_groups, m_channels, true).size());
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR PVRDispatcharr::GetChannelGroups(bool radio, kodi::addon::PVRChannelGroupsResultSet& results)
 {
-  if (radio)
-    return PVR_ERROR_NO_ERROR; // no radio support
-
   EnsureChannelsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
   // See GetChannelGroupsAmount()'s own comment above.
   if (dispatcharr::HasNeverLoadedSuccessfully(m_groupsLoadedAt))
     return PVR_ERROR_SERVER_ERROR;
-  for (const auto& group : m_groups)
+  // A group holding both kinds is listed under each -- see FilterChannelGroupsByKind().
+  for (const auto& group : dispatcharr::FilterChannelGroupsByKind(m_groups, m_channels, radio))
   {
     kodi::addon::PVRChannelGroup g;
     g.SetGroupName(group.name);
-    g.SetIsRadio(false);
+    g.SetIsRadio(radio);
     results.Add(g);
   }
   return PVR_ERROR_NO_ERROR;
@@ -2863,7 +2863,7 @@ PVR_ERROR PVRDispatcharr::GetChannelGroupMembers(const kodi::addon::PVRChannelGr
 
   for (const auto& ch : m_channels)
   {
-    if (ch.groupId != groupId)
+    if (ch.groupId != groupId || ch.isRadio != group.GetIsRadio())
       continue;
     kodi::addon::PVRChannelGroupMember member;
     member.SetGroupName(group.GetGroupName());
@@ -2893,9 +2893,6 @@ PVR_ERROR PVRDispatcharr::GetChannelsAmount(int& amount)
 
 PVR_ERROR PVRDispatcharr::GetChannels(bool radio, kodi::addon::PVRChannelsResultSet& results)
 {
-  if (radio)
-    return PVR_ERROR_NO_ERROR;
-
   EnsureChannelsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
   // See GetChannelsAmount()'s own comment above.
@@ -2903,9 +2900,11 @@ PVR_ERROR PVRDispatcharr::GetChannels(bool radio, kodi::addon::PVRChannelsResult
     return PVR_ERROR_SERVER_ERROR;
   for (const auto& ch : m_channels)
   {
+    if (ch.isRadio != radio)
+      continue;
     kodi::addon::PVRChannel channel;
     channel.SetUniqueId(static_cast<unsigned int>(ch.id));
-    channel.SetIsRadio(false);
+    channel.SetIsRadio(radio);
     // Both halves, not just the whole number: a subchannel (5.1) used to
     // reach Kodi as plain channel 5 -- see dispatcharr::SplitChannelNumber()
     // (ChannelNumber.h).
@@ -3583,9 +3582,13 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
   // which takes m_dataMutex itself and would otherwise deadlock against
   // this same, non-recursive mutex still held for the whole loop.
   std::vector<Recording> recordings;
+  // Channel id -> radio flag, for the recording's channel type below.
+  std::unordered_map<int, bool> channelIsRadio;
   {
     std::lock_guard<std::mutex> lock(m_dataMutex);
     recordings = m_cachedRecordings;
+    for (const auto& ch : m_channels)
+      channelIsRadio[ch.id] = ch.isRadio;
     // Forget links for recordings that no longer exist -- but only against a list
     // that really loaded, so a failed refresh never wipes the lot.
     if (m_recordingsEverLoaded)
@@ -3633,6 +3636,11 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
     recording.SetEpisodeName(rec.subtitle);
     recording.SetPlot(rec.description);
     recording.SetChannelUid(rec.channelId > 0 ? rec.channelId : PVR_CHANNEL_INVALID_UID);
+    // Left unknown for a channel that is gone from the lineup, so Kodi falls back to its own lookup rather than
+    // being told TV for something that may have been radio.
+    auto radioIt = channelIsRadio.find(rec.channelId);
+    if (radioIt != channelIsRadio.end())
+      recording.SetChannelType(radioIt->second ? PVR_RECORDING_CHANNEL_TYPE_RADIO : PVR_RECORDING_CHANNEL_TYPE_TV);
     recording.SetRecordingTime(rec.startTime);
     recording.SetDuration(rec.durationSeconds);
     recording.SetSizeInBytes(rec.bytesWritten);
