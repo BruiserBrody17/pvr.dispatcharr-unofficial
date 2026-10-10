@@ -424,6 +424,21 @@ specifically:
 "M3U / EPG Endpoints" and add the Kodi client's own actual source IP
 (or range) to the allowed list.
 
+## Stalls or slow channel starts that come from the stream itself
+
+Some playback problems start upstream of the addon: a provider CDN that pauses, a timestamp break in the stream, or a
+proxy prebuffer that takes a while to fill. A client cannot repair those, so if the addon's own log shows nothing wrong
+and the same stall or delay shows in another player, look at the server. Dispatcharr's plugin catalogue (the plugin hub
+in its web UI) has plugins aimed at this, read from the catalogue's own descriptions
+([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); none was tested with this addon:
+
+- **Reservoarr**, **Profilarr** and **Segmentarr** are stream profiles that absorb CDN gaps and timestamp breaks before
+  the stream reaches any client.
+- **Audio Buffer Tuner** lowers the proxy's prebuffer for chosen channel groups, which shortens channel start.
+
+This is a pointer, not a recommendation: whether one of them helps, or interacts with `timeshift_buffer`, is
+unconfirmed.
+
 ## Still unconfirmed (verify before relying on in production)
 
 - The account used to verify this (a standard, non-admin test account)

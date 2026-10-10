@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**15 open, 281 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
+**14 open, 282 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
 
@@ -15,10 +15,10 @@ with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REV
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 1 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 246 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 247 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 26 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -206,17 +206,6 @@ Confirm live by watching the plugin log while a stream fails over on a buffered 
 ### Release, CI and manual testing
 
 ### Upstream (Dispatcharr) or documentation accuracy
-
-#### Point the troubleshooting notes at the server-side stream-profile plugins
-
-**Opened 2026-10-10, from the Dispatcharr source review (`docs/DISPATCHARR_SOURCE_REVIEW.md`).** Dispatcharr's plugin
-catalogue carries three stream profiles built to absorb CDN gaps and timestamp breaks before the stream reaches any
-client (Reservoarr, Profilarr, Segmentarr), and one that lowers the proxy's prebuffer per channel group to speed up
-channel start (Audio Buffer Tuner). A stall or a slow zap that this addon cannot fix on the client is often one of those
-on the server, and `docs/TROUBLESHOOTING.md` does not mention that a server-side remedy exists. To close: add a short,
-neutral paragraph there (and one line in the README's troubleshooting pointer if there is one) saying such plugins exist
-in Dispatcharr's own catalogue and what each addresses, without recommending one, since none was tested with this addon.
-Reading is enough; no live check.
 
 ### Known gaps, deliberately deferred
 

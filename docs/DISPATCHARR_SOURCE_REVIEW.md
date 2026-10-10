@@ -168,7 +168,7 @@ Thirty-five plugins; none overlaps either of ours (no timeshift, comskip, EDL or
   knob that bears directly on the zap latency measured on this project's devices; nothing for the addon to do, but
   worth knowing when a user reports slow zaps.
 - **Reservoarr**, **Profilarr**, **Segmentarr**: stream profiles that absorb CDN gaps and timestamp breaks. The server-side
-  answer to stalls a client cannot fix; a candidate pointer for `docs/TROUBLESHOOTING.md` (open item: "Point the
+  answer to stalls a client cannot fix; now pointed to from `docs/TROUBLESHOOTING.md` (closed item: "Point the
   troubleshooting notes at the server-side stream-profile plugins").
 - **Dustarr** records which channels are watched from `client_connect` events; **Newsflasharr** routes other plugins'
   events to notification services. Neither concerns this addon.
