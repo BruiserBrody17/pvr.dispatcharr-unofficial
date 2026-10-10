@@ -2501,6 +2501,13 @@ counted), and CI's `unit-tests-32bit` job runs the whole C++ suite built with `-
 `FindEpgEntryIndexCoveringRecording()` failing an exact 80% overlap on x87 (a double ratio against 0.8); the check is integer
 arithmetic now (`tests/test_epg_program_match.cpp` already pinned 79%, 80% and 100%).
 
+2026-10-09: the live tail wait is taken in one-second slices (`kLiveTailWaitSliceMs`, `TailWaitEpisode`, `DecideTailWaitOutcome()`,
+`HasTailWaitSliceElapsed()` in `CatchUpUtil.h`, unit-tested: episodes continue at one position and restart on a moved position or a
+gap, the give-up decision needs the whole budget or a seek probe). The glue harness gained `live_tail_bound` (a frozen live tail: the
+longest read, the `-1` retries before the first `0`, the total wait, and the stream resuming), which is how the change was measured
+(4515 ms to 1004 ms); it is in CI's glue run. What no test reaches is how ffmpeg reacts to the `-1`s on a slow device
+(`docs/OPEN_ITEMS.md`).
+
 See `docs/CLOSED_ITEMS.md`'s "No automated test suite exists" entry for
 the full reasoning and what's still open on both sides. Verification of
 everything else stays manual: smoke-testing against a real Dispatcharr
