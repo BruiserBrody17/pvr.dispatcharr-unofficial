@@ -1,14 +1,19 @@
 #include "EpgProgramMatch.h"
 
 #include <algorithm>
+#include <cstdint>
 
 namespace dispatcharr
 {
 
 namespace
 {
-constexpr double kMinOverlapRatio = 0.8;
-}
+// The share of the recording the best entry must cover: 4/5, compared as integers. A double ratio against 0.8 is not
+// exact, and where doubles are computed in extended precision (32-bit x86's x87 unit) an overlap of exactly 80% came
+// out just under the constant and failed the match; found by the 32-bit test job.
+constexpr int64_t kMinOverlapNumerator = 4;
+constexpr int64_t kMinOverlapDenominator = 5;
+} // namespace
 
 int FindEpgEntryIndexCoveringRecording(const std::vector<EpgEntry>& entries, time_t recStart, time_t recEnd)
 {
@@ -34,7 +39,8 @@ int FindEpgEntryIndexCoveringRecording(const std::vector<EpgEntry>& entries, tim
     }
   }
 
-  if (bestIdx >= 0 && static_cast<double>(bestOverlap) / static_cast<double>(recDuration) >= kMinOverlapRatio)
+  if (bestIdx >= 0 && static_cast<int64_t>(bestOverlap) * kMinOverlapDenominator >=
+                          static_cast<int64_t>(recDuration) * kMinOverlapNumerator)
     return bestIdx;
   return -1;
 }

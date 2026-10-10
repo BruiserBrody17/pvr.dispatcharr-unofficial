@@ -167,6 +167,50 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build-tests --output-on-failure
 
+  # The same suite built for a 32-bit x86 target (-m32), where time_t, long and size_t are 32 bits wide. Every other job
+  # here runs on a 64-bit host, where a date past 2038 and an int64 -> long narrowing both behave, so a 32-bit
+  # regression in the pure modules (the date parsers, the time-zone table, the size arithmetic) was invisible until
+  # the 32-bit Android and ARM builds this project ships were tried by hand.
+  unit-tests-32bit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # libcurl4-openssl-dev:i386 cannot be installed beside the 64-bit one (the two disagree about
+      # /usr/bin/curl-config), and only its headers are needed: they are unpacked into a private prefix and the 32-bit
+      # runtime library is linked directly.
+      - name: Install a 32-bit toolchain and libcurl
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential gcc-multilib g++-multilib libcurl4-openssl-dev libcurl4t64:i386
+          mkdir -p /tmp/curl32 && cd /tmp/curl32
+          apt-get download libcurl4-openssl-dev:i386
+          dpkg -x libcurl4-openssl-dev_*_i386.deb root
+
+      - name: Configure
+        run: >
+          cmake -S tests -B build-tests-32 -DCMAKE_BUILD_TYPE=Release
+          "-DCMAKE_CXX_FLAGS=-m32 -I/tmp/curl32/root/usr/include/i386-linux-gnu"
+          -DCURL_INCLUDE_DIR=/tmp/curl32/root/usr/include
+          -DCURL_LIBRARY=/usr/lib/i386-linux-gnu/libcurl.so.4
+
+      - name: Check the build is really 32-bit
+        run: |
+          grep -m1 'CMAKE_CXX_FLAGS:STRING=-m32' build-tests-32/CMakeCache.txt
+          grep -m1 'CURL_LIBRARY.*=/usr/lib/i386-linux-gnu' build-tests-32/CMakeCache.txt
+          printf '#include <ctime>\nstatic_assert(sizeof(time_t) == 4, "time_t must be 32-bit here");\nint main(){}\n' > /tmp/t32.cpp
+          g++ -m32 -o /tmp/t32 /tmp/t32.cpp
+
+      - name: Build
+        run: cmake --build build-tests-32 -j"$(nproc)"
+
+      - name: Run tests
+        run: ctest --test-dir build-tests-32 --output-on-failure
+
   # Same test suite as unit-tests above, built and run with
   # ASan/UBSan instead of a plain Release build (added 2026-09-27, a
   # 61st-pass audit, fixing a real, confirmed gap found via a project-wide
