@@ -68,6 +68,7 @@
 // objects too -- see docs/API_NOTES.md for the details.
 
 #include "ApiKeyRecovery.h"
+#include "CatchUpUtil.h"
 #include "DvrAccess.h"
 #include "RecurringRuleEdit.h"
 #include "RequestTimeout.h"
@@ -1497,6 +1498,8 @@ private:
     // repeating the short one indefinitely. See ReadLiveTimeshiftStream()'s
     // own comment.
     int64_t lastShortGiveUpPosition = -1;
+    // Where the current wait at the live tail began (see TailWaitEpisode, CatchUpUtil.h).
+    dispatcharr::TailWaitEpisode tailWait;
     // Last time SendTimeshiftHeartbeat() was actually called for this
     // viewer, not the last manifest/segment fetch -- ReadLiveTimeshiftStream()
     // uses this to send one on an interval (kHeartbeatInterval, local to

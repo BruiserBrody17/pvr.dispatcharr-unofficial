@@ -148,4 +148,73 @@ inline int64_t ComputeShortGiveUpPosition(bool likelySeekProbe, bool caughtUp, i
   return (likelySeekProbe && !caughtUp) ? position : -1;
 }
 
+// ---- The live tail wait in slices (a read parked at the live edge hands control back about once a second) ----
+//
+// ReadLiveTimeshiftStream() used to wait for the next segment inside ONE read call, up to the whole catch-up budget
+// (three segment durations, 4 to 6 s measured on three devices). Kodi acts on a close request only between reads
+// (its demuxer checks its abort flag before each call into the addon, DVDDemuxFFmpeg's dvd_file_read), so a stop or a
+// channel change waited out the rest of the read, and a Player.Open sent in that window was dropped. The wait now
+// ends after kLiveTailWaitSliceMs with -1, which the demuxer retries (a 0 would end playback; only a budget that is
+// really used up still returns it), and the budget is counted across the calls of one episode at the same position.
+constexpr int64_t kLiveTailWaitSliceMs = 1000;
+
+// A read at the same position that arrives later than this after the previous one is a new episode: Kodi retries a -1
+// at once, so a longer gap means playback was paused or the reader went away, and the old start must not count.
+constexpr int64_t kTailWaitEpisodeGapMs = 3000;
+
+inline bool HasTailWaitSliceElapsed(std::chrono::milliseconds sinceThisCallStarted)
+{
+  return sinceThisCallStarted.count() >= kLiveTailWaitSliceMs;
+}
+
+// Where the current wait at the live tail began, so the budget survives a -1 return. Enter() starts a new episode when
+// the position changed (a seek, or data was read) or the previous call is too old.
+class TailWaitEpisode
+{
+public:
+  // Records a read arriving at the tail at `position`; true when it started a new episode.
+  bool Enter(int64_t position, std::chrono::steady_clock::time_point now)
+  {
+    const bool fresh =
+        m_position != position || m_lastCall.time_since_epoch().count() == 0 ||
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastCall).count() > kTailWaitEpisodeGapMs;
+    if (fresh)
+    {
+      m_position = position;
+      m_start = now;
+    }
+    m_lastCall = now;
+    return fresh;
+  }
+  // Called when a call returns -1 to retry: the next call continues this episode.
+  void Touch(std::chrono::steady_clock::time_point now)
+  {
+    m_lastCall = now;
+  }
+  void Reset()
+  {
+    *this = TailWaitEpisode();
+  }
+  int64_t WaitedMs(std::chrono::steady_clock::time_point now) const
+  {
+    return m_position < 0 ? 0 : std::chrono::duration_cast<std::chrono::milliseconds>(now - m_start).count();
+  }
+
+private:
+  int64_t m_position = -1;
+  std::chrono::steady_clock::time_point m_start{};
+  std::chrono::steady_clock::time_point m_lastCall{};
+};
+
+enum class TailWaitOutcome
+{
+  kRetry,  // nothing yet and the budget is not used up: return -1, Kodi retries
+  kGiveUp, // the budget is used up (or this was a seek probe, which never waits): return 0 as before
+};
+
+inline TailWaitOutcome DecideTailWaitOutcome(bool likelySeekProbe, int64_t waitedMs, int64_t budgetMs)
+{
+  return (likelySeekProbe || waitedMs >= budgetMs) ? TailWaitOutcome::kGiveUp : TailWaitOutcome::kRetry;
+}
+
 } // namespace dispatcharr

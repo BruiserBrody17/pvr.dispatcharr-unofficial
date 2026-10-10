@@ -416,6 +416,74 @@ static void live_tail_close(DispatcharrClient& cl)
     FAIL("the stream was still open after Close");
 }
 
+// A reader parked at the live tail has to hand control back to Kodi often: Kodi acts on a close request only between
+// reads, so one read that blocks for the whole catch-up budget (4 to 6 s measured on three devices) delays every
+// close and channel change by that long. The wait is therefore taken in slices; a slice that finds nothing returns -1,
+// which Kodi's demuxer retries (a 0 would end playback), and 0 comes only once the whole budget has been used. This
+// freezes the live buffer and times each read at the tail, then lets it grow again and requires the stream to resume.
+static void live_tail_bound(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  ctl("live_freeze=1");
+  std::vector<uint8_t> buf(1 << 20);
+  long maxTailReadMs = 0, tailWaitMs = 0, waitBeforeFirstZero = -1, minusOnes = 0, bytes = 0;
+  bool sawZero = false;
+  const long phaseStart = ms();
+  // Phase 1: the buffer is frozen, so after the segments already there are consumed every read waits at the tail.
+  while (ms() - phaseStart < 20000 && !sawZero)
+  {
+    const long t0 = ms();
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    const long took = ms() - t0;
+    if (n > 0)
+    {
+      bytes += n;
+      continue;
+    }
+    maxTailReadMs = std::max(maxTailReadMs, took);
+    tailWaitMs += took;
+    if (n < 0)
+      minusOnes++;
+    else
+    {
+      sawZero = true;
+      waitBeforeFirstZero = tailWaitMs;
+    }
+  }
+  INFO("tail bound: max read at the tail %ld ms, %ld retries (-1) before the first 0, waited %ld ms in all, "
+       "bytes before the tail %ld",
+       maxTailReadMs, minusOnes, waitBeforeFirstZero, bytes);
+  if (!sawZero)
+    FAIL("no read ever returned 0 in 20 s: the budget never ended");
+  if (maxTailReadMs > 1800)
+    FAIL("one read at the live tail blocked for %ld ms; Kodi cannot act on a close for that long", maxTailReadMs);
+  if (waitBeforeFirstZero >= 0 && waitBeforeFirstZero < 3000)
+    FAIL("the stream gave up (0) after only %ld ms at the tail; the budget must not shrink", waitBeforeFirstZero);
+  if (minusOnes < 1)
+    FAIL("no -1 was returned while waiting, so the wait was not handed back in slices");
+  if (!cl.IsLiveTimeshiftStreamOpen())
+    FAIL("the stream closed itself while waiting at the tail");
+
+  // Phase 2: the buffer grows again; the same stream must deliver bytes again (a slice's -1 must never have ended it).
+  ctl("live_freeze=0");
+  long resumed = 0;
+  const long phase2 = ms();
+  while (ms() - phase2 < 20000 && resumed == 0)
+  {
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n > 0)
+      resumed += n;
+  }
+  INFO("tail bound: after the buffer grew again %ld bytes arrived within %ld ms", resumed, ms() - phase2);
+  if (resumed == 0)
+    FAIL("the stream did not resume once new segments arrived");
+}
+
 // ---------------------------------------------------------------- completed recording
 static void rec_play(DispatcharrClient& cl, const char* faults)
 {
@@ -923,6 +991,8 @@ int main(int argc, char** argv)
       live_play(*cl, atoi(argv[3]), false, argv[4]);
     else if (what == "live_tail_close")
       live_tail_close(*cl);
+    else if (what == "live_tail_bound")
+      live_tail_bound(*cl);
     else if (what == "live_blackhole_close")
       live_blackhole(*cl, false);
     else if (what == "live_blackhole_read")

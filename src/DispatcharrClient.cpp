@@ -4527,6 +4527,10 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
 
     const int64_t catchUpBudgetMs = ComputeCatchUpWallClockBudgetMs(catchUpAttempts, kCatchUpSleepMs);
     auto catchUpStart = std::chrono::steady_clock::now();
+    // The wait is taken in slices of kLiveTailWaitSliceMs, each ending in a -1 that Kodi retries, so that a close
+    // request can land between reads; the budget (catchUpAttempts * kCatchUpSleepMs) is counted from where this
+    // episode at this position began, across the calls (TailWaitEpisode, CatchUpUtil.h).
+    m_liveTimeshiftStream.tailWait.Enter(m_liveTimeshiftStream.position, catchUpStart);
     int attemptsUsed = 0;
     for (int attempt = 0;
          attempt < catchUpAttempts && m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes; ++attempt)
@@ -4561,6 +4565,10 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - catchUpStart),
               catchUpBudgetMs))
         break; // the server is not answering promptly -- see kMaxCatchUpWallClockMs
+      // This call has used its slice: hand control back to Kodi (the -1 below) rather than wait on.
+      if (HasTailWaitSliceElapsed(
+              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - catchUpStart)))
+        break;
       // Don't sleep after the last attempt -- nothing left to wait for
       // before giving up, and for a likely seek probe (catchUpAttempts==1)
       // this is what makes the "not there yet" response fast instead of
@@ -4579,6 +4587,25 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
     if (IsAtEndedTail(m_liveTimeshiftStream.ended, m_liveTimeshiftStream.position, m_liveTimeshiftStream.totalBytes))
       return 0; // learned during the loop above; EOF
     bool caughtUp = m_liveTimeshiftStream.position < m_liveTimeshiftStream.totalBytes;
+    if (!caughtUp)
+    {
+      // Nothing yet. Either the whole budget is used (give up, as before) or this was only a slice of it: return -1,
+      // which Kodi's demuxer retries at once after checking whether it has been asked to stop, and which does not
+      // touch lastShortGiveUpPosition (this is not a give-up).
+      const auto afterWait = std::chrono::steady_clock::now();
+      if (DecideTailWaitOutcome(likelySeekProbe, m_liveTimeshiftStream.tailWait.WaitedMs(afterWait),
+                                catchUpAttempts * kCatchUpSleepMs) == TailWaitOutcome::kRetry)
+      {
+        m_liveTimeshiftStream.tailWait.Touch(afterWait);
+        kodi::Log(ADDON_LOG_DEBUG,
+                  "pvr.dispatcharr-unofficial: ReadLiveTimeshiftStream: waited %lldms of ~%dms at the live tail, "
+                  "handing the read back (-1) so a stop can land",
+                  static_cast<long long>(m_liveTimeshiftStream.tailWait.WaitedMs(afterWait)),
+                  catchUpAttempts * kCatchUpSleepMs);
+        return -1;
+      }
+    }
+    m_liveTimeshiftStream.tailWait.Reset();
     m_liveTimeshiftStream.lastShortGiveUpPosition =
         ComputeShortGiveUpPosition(likelySeekProbe, caughtUp, m_liveTimeshiftStream.position);
 

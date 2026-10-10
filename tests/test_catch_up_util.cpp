@@ -236,3 +236,65 @@ TEST_CASE("IsLikelySeekProbe is false at exactly the window's edge and true just
   CHECK_FALSE(IsLikelySeekProbe(5, -1, seek, seek + window, window));
   CHECK_FALSE(IsLikelySeekProbe(5, -1, seek, seek + window + milliseconds(1), window));
 }
+
+TEST_CASE("HasTailWaitSliceElapsed hands a read back once its slice is used", "[CatchUpUtil]")
+{
+  CHECK_FALSE(HasTailWaitSliceElapsed(std::chrono::milliseconds(0)));
+  CHECK_FALSE(HasTailWaitSliceElapsed(std::chrono::milliseconds(kLiveTailWaitSliceMs - 1)));
+  CHECK(HasTailWaitSliceElapsed(std::chrono::milliseconds(kLiveTailWaitSliceMs)));
+  CHECK(HasTailWaitSliceElapsed(std::chrono::milliseconds(30000)));
+}
+
+TEST_CASE("TailWaitEpisode counts the wait across the calls of one episode at one position", "[CatchUpUtil]")
+{
+  using namespace std::chrono;
+  const auto t0 = steady_clock::now();
+  TailWaitEpisode episode;
+  CHECK(episode.WaitedMs(t0) == 0); // nothing entered yet
+  CHECK(episode.Enter(5000, t0));   // a new episode
+  CHECK(episode.WaitedMs(t0 + milliseconds(1000)) == 1000);
+  episode.Touch(t0 + milliseconds(1000)); // a call returned -1; Kodi retries at once
+  CHECK_FALSE(episode.Enter(5000, t0 + milliseconds(1010)));
+  CHECK(episode.WaitedMs(t0 + milliseconds(2300)) == 2300); // counted from the first call, not the last
+}
+
+TEST_CASE("TailWaitEpisode starts again when the position moved or the previous call is too old", "[CatchUpUtil]")
+{
+  using namespace std::chrono;
+  const auto t0 = steady_clock::now();
+  TailWaitEpisode episode;
+  episode.Enter(5000, t0);
+  episode.Touch(t0 + milliseconds(1000));
+  // a seek or a read of fresh data changed the position
+  CHECK(episode.Enter(6000, t0 + milliseconds(1010)));
+  CHECK(episode.WaitedMs(t0 + milliseconds(1010)) == 0);
+  // the same position, but Kodi was paused (no read for longer than the episode gap)
+  episode.Touch(t0 + milliseconds(1010));
+  CHECK(episode.Enter(6000, t0 + milliseconds(1010 + kTailWaitEpisodeGapMs + 1)));
+  CHECK(episode.WaitedMs(t0 + milliseconds(1010 + kTailWaitEpisodeGapMs + 1)) == 0);
+  // exactly at the gap it still continues
+  episode.Touch(t0 + milliseconds(5000));
+  CHECK_FALSE(episode.Enter(6000, t0 + milliseconds(5000 + kTailWaitEpisodeGapMs)));
+}
+
+TEST_CASE("TailWaitEpisode::Reset forgets the episode", "[CatchUpUtil]")
+{
+  using namespace std::chrono;
+  const auto t0 = steady_clock::now();
+  TailWaitEpisode episode;
+  episode.Enter(5000, t0);
+  episode.Reset();
+  CHECK(episode.WaitedMs(t0 + milliseconds(4000)) == 0);
+  CHECK(episode.Enter(5000, t0 + milliseconds(4001))); // the same position is a new episode again
+}
+
+TEST_CASE("DecideTailWaitOutcome gives up only with the whole budget used, or for a seek probe", "[CatchUpUtil]")
+{
+  CHECK(DecideTailWaitOutcome(false, 0, 6250) == TailWaitOutcome::kRetry);
+  CHECK(DecideTailWaitOutcome(false, 1000, 6250) == TailWaitOutcome::kRetry);
+  CHECK(DecideTailWaitOutcome(false, 6249, 6250) == TailWaitOutcome::kRetry);
+  CHECK(DecideTailWaitOutcome(false, 6250, 6250) == TailWaitOutcome::kGiveUp); // exactly the budget
+  CHECK(DecideTailWaitOutcome(false, 20000, 6250) == TailWaitOutcome::kGiveUp);
+  // a likely seek probe never waits in slices: the quick "not there" answer is the point
+  CHECK(DecideTailWaitOutcome(true, 0, 250) == TailWaitOutcome::kGiveUp);
+}
