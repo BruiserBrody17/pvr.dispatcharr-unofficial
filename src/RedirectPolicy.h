@@ -79,4 +79,34 @@ inline RedirectFollowAction DecideRedirectFollow(long httpCode, int hop, int max
   return switchPostToGet && switchesToGet ? RedirectFollowAction::kFollowAsGet : RedirectFollowAction::kFollow;
 }
 
+// The whole decision PerformWithSafeRedirects() makes for one response, in the order that matters:
+//   kReturnResponse -- not a redirect, or a redirect with no Location: hand the response back as it is.
+//   kRefuseUnsafe   -- a redirect whose target is not safe (another host, https to http, user info): not followed,
+//                      the caller sees the 3xx itself, and it is refused EVEN WHEN the chain is also too long, so
+//                      the refusal is never mistaken for a hop-limit failure and is always logged.
+//   kFailTooMany    -- a safe redirect, but the hop limit is reached.
+//   kFollow / kFollowAsGet -- as DecideRedirectFollow().
+// `hasLocation` and `targetIsSafe` are only meaningful for a redirect status; they are ignored otherwise.
+enum class RedirectStep
+{
+  kReturnResponse,
+  kRefuseUnsafe,
+  kFailTooMany,
+  kFollow,
+  kFollowAsGet,
+};
+
+inline RedirectStep DecideRedirectStep(long httpCode, int hop, int maxRedirects, bool switchPostToGet, bool hasLocation,
+                                       bool targetIsSafe)
+{
+  const RedirectFollowAction action = DecideRedirectFollow(httpCode, hop, maxRedirects, switchPostToGet);
+  if (action == RedirectFollowAction::kNotARedirect || !hasLocation)
+    return RedirectStep::kReturnResponse;
+  if (!targetIsSafe)
+    return RedirectStep::kRefuseUnsafe;
+  if (action == RedirectFollowAction::kTooManyRedirects)
+    return RedirectStep::kFailTooMany;
+  return action == RedirectFollowAction::kFollowAsGet ? RedirectStep::kFollowAsGet : RedirectStep::kFollow;
+}
+
 } // namespace dispatcharr

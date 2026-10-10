@@ -153,4 +153,35 @@ inline bool IsTransientCooldownBlocking(bool cooldownActive, bool armedByShortAt
   return cooldownActive && (!armedByShortAttempt || callerHasShortBound);
 }
 
+// Which gate of EnsureAuthenticated() turns a call away, in the order they apply once the caller holds the auth flow
+// lock:
+//   kHaveToken        -- a cached token is still valid (looked at again after taking the lock, because the thread
+//                        that held it may have just authenticated): the call succeeds.
+//   kLoginBackoff     -- consecutive credential rejections armed the escalating backoff.
+//   kTransientCooldown-- a transport failure or 5xx armed the short fixed cooldown, and this caller is one it
+//                        applies to (IsTransientCooldownBlocking()).
+//   kProceed          -- none applies: refresh the token, else log in.
+// The ORDER is the point. The cooldown is checked before any refresh or login, not only before Login(): a refresh
+// token, once obtained, is never cleared by a failed refresh, so a cooldown placed after the refresh attempt let every
+// thread of a mid-session outage hold the auth mutex through a full blocking refresh, the storm the 47th-pass
+// audit closed (docs/CLOSED_ITEMS.md). Both blocking outcomes hand the caller the last login error.
+enum class AuthGate
+{
+  kHaveToken,
+  kLoginBackoff,
+  kTransientCooldown,
+  kProceed,
+};
+
+inline AuthGate DecideAuthGate(bool tokenStillValid, bool loginBackoffActive, bool transientCooldownBlocking)
+{
+  if (tokenStillValid)
+    return AuthGate::kHaveToken;
+  if (loginBackoffActive)
+    return AuthGate::kLoginBackoff;
+  if (transientCooldownBlocking)
+    return AuthGate::kTransientCooldown;
+  return AuthGate::kProceed;
+}
+
 } // namespace dispatcharr

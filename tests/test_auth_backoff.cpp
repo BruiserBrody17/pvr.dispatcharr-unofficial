@@ -153,3 +153,24 @@ TEST_CASE("IsTransientCooldownBlocking turns a short-bounded caller away for as 
   CHECK(IsTransientCooldownBlocking(true, true, true));
   CHECK_FALSE(IsTransientCooldownBlocking(true, true, false));
 }
+
+TEST_CASE("DecideAuthGate lets a valid token through whatever else is armed", "[AuthBackoff]")
+{
+  for (bool backoff : {false, true})
+    for (bool cooldown : {false, true})
+      CHECK(DecideAuthGate(true, backoff, cooldown) == AuthGate::kHaveToken);
+}
+
+TEST_CASE("DecideAuthGate applies the login backoff before the transient cooldown", "[AuthBackoff]")
+{
+  CHECK(DecideAuthGate(false, true, true) == AuthGate::kLoginBackoff);
+  CHECK(DecideAuthGate(false, true, false) == AuthGate::kLoginBackoff);
+  CHECK(DecideAuthGate(false, false, true) == AuthGate::kTransientCooldown);
+}
+
+TEST_CASE("DecideAuthGate proceeds to a refresh or login only when no gate applies", "[AuthBackoff]")
+{
+  // The 47th-pass storm: the cooldown must be a gate BEFORE the refresh attempt, so "proceed" is reached only with
+  // no token, no backoff and no blocking cooldown.
+  CHECK(DecideAuthGate(false, false, false) == AuthGate::kProceed);
+}

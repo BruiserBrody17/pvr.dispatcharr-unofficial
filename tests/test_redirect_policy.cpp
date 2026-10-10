@@ -154,6 +154,48 @@ TEST_CASE("DecideRedirectFollow stops a chain at the hop limit", "[RedirectPolic
 // IsSameOrigin
 // ---------------------------------------------------------------------
 
+TEST_CASE("DecideRedirectStep hands back a non-redirect, and a redirect with no Location, as the response",
+          "[RedirectPolicy]")
+{
+  for (long code : {200L, 204L, 304L, 401L, 404L, 500L})
+    for (bool hasLocation : {false, true})
+      for (bool safe : {false, true})
+        CHECK(DecideRedirectStep(code, 0, 5, false, hasLocation, safe) == RedirectStep::kReturnResponse);
+  for (long code : {301L, 302L, 303L, 307L, 308L})
+  {
+    CHECK(DecideRedirectStep(code, 0, 5, false, /*hasLocation=*/false, true) == RedirectStep::kReturnResponse);
+    // even at the hop limit: with nowhere to go there is no chain to call too long
+    CHECK(DecideRedirectStep(code, 5, 5, false, /*hasLocation=*/false, true) == RedirectStep::kReturnResponse);
+  }
+}
+
+TEST_CASE("DecideRedirectStep refuses an unsafe target before it looks at the hop limit", "[RedirectPolicy]")
+{
+  // The order matters: an unsafe target found on the last allowed hop is a refusal (logged, the 3xx handed back),
+  // not a "too many redirects" failure that would hide the refusal and read like a server fault.
+  for (int hop : {0, 3, 4, 5, 6})
+    CHECK(DecideRedirectStep(302, hop, 5, false, true, /*targetIsSafe=*/false) == RedirectStep::kRefuseUnsafe);
+  CHECK(DecideRedirectStep(307, 5, 5, true, true, false) == RedirectStep::kRefuseUnsafe);
+}
+
+TEST_CASE("DecideRedirectStep fails a safe chain only once the hop limit is reached", "[RedirectPolicy]")
+{
+  CHECK(DecideRedirectStep(302, 4, 5, false, true, true) == RedirectStep::kFollow);
+  CHECK(DecideRedirectStep(302, 5, 5, false, true, true) == RedirectStep::kFailTooMany);
+  CHECK(DecideRedirectStep(308, 9, 5, false, true, true) == RedirectStep::kFailTooMany);
+}
+
+TEST_CASE("DecideRedirectStep follows a safe redirect, as a GET only when a POST meets 301/302/303", "[RedirectPolicy]")
+{
+  for (long code : {301L, 302L, 303L})
+  {
+    CHECK(DecideRedirectStep(code, 0, 5, /*switchPostToGet=*/true, true, true) == RedirectStep::kFollowAsGet);
+    CHECK(DecideRedirectStep(code, 0, 5, /*switchPostToGet=*/false, true, true) == RedirectStep::kFollow);
+  }
+  for (long code : {307L, 308L})
+    CHECK(DecideRedirectStep(code, 0, 5, /*switchPostToGet=*/true, true, true) == RedirectStep::kFollow);
+}
+
 TEST_CASE("IsSameOrigin is true for the same scheme, host and port whatever the path", "[RedirectPolicy]")
 {
   const std::string base = "http://dispatcharr.example:9191";

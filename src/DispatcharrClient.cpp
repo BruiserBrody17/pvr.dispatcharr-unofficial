@@ -295,18 +295,18 @@ int DispatcharrClient::PerformWithSafeRedirects(void* curlPtr, const std::string
       return static_cast<int>(res);
     long code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-    // Which statuses are redirects, when the chain is too long, and when a POST
-    // is repeated as a GET: dispatcharr::DecideRedirectFollow() (RedirectPolicy.h,
-    // tested). The Location and same-host checks sit between its outcomes.
-    const RedirectFollowAction action = DecideRedirectFollow(code, hop, kMaxRedirects, switchPostToGet);
-    if (action == RedirectFollowAction::kNotARedirect)
-      return static_cast<int>(res);
+    // Which statuses are redirects, when the chain is too long, when a POST is repeated as a GET, and the order in
+    // which an absent Location, an unsafe target and the hop limit are decided: dispatcharr::DecideRedirectStep()
+    // (RedirectPolicy.h, tested).
     char* location = nullptr;
     curl_easy_getinfo(curl, CURLINFO_REDIRECT_URL, &location);
-    if (!location || !*location)
+    const bool hasLocation = location && *location;
+    std::string next = hasLocation ? std::string(location) : std::string();
+    const RedirectStep step = DecideRedirectStep(code, hop, kMaxRedirects, switchPostToGet, hasLocation,
+                                                 hasLocation && IsSafeRedirectTarget(current, next));
+    if (step == RedirectStep::kReturnResponse)
       return static_cast<int>(res);
-    std::string next = location;
-    if (!IsSafeRedirectTarget(current, next))
+    if (step == RedirectStep::kRefuseUnsafe)
     {
       // Not followed: the caller sees the 3xx itself, which every call site
       // already treats as a failure. Only hosts are logged -- a redirect's
@@ -320,9 +320,9 @@ int DispatcharrClient::PerformWithSafeRedirects(void* curlPtr, const std::string
                 to.valid ? to.host.c_str() : "(not an absolute http(s) URL)");
       return static_cast<int>(res);
     }
-    if (action == RedirectFollowAction::kTooManyRedirects)
+    if (step == RedirectStep::kFailTooMany)
       return static_cast<int>(CURLE_TOO_MANY_REDIRECTS);
-    if (action == RedirectFollowAction::kFollowAsGet)
+    if (step == RedirectStep::kFollowAsGet)
       curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
     if (onRedirect)
       onRedirect();
@@ -561,19 +561,16 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   // that now answers for this call too.
   std::lock_guard<std::mutex> flowLock(m_authFlowMutex);
   std::unique_lock<std::mutex> stateLock(m_authStateMutex);
-  if (!m_accessToken.empty() && std::chrono::steady_clock::now() < m_accessTokenExpiry)
-    return true;
+  auto now = std::chrono::steady_clock::now();
+  const bool callerHasShortBound = timeoutMsOverride > 0 && timeoutMsOverride < m_config.timeoutSeconds * 1000L;
 
+  // Which gate turns this call away, and in what order: dispatcharr::DecideAuthGate() (AuthBackoff.h, tested). The
+  // order is load-bearing; the two comments below say why each gate exists.
+  //
   // Back off after repeated Login() failures instead of retrying it on
   // every single call -- see AuthBackoff.h's own comment for the real
   // incident (wrong/role-incompatible credentials tripping Dispatcharr's
   // own login rate-limiter) this closes.
-  auto now = std::chrono::steady_clock::now();
-  if (m_consecutiveLoginFailures > 0 && now < m_loginBackoffUntil)
-  {
-    error = m_lastLoginError;
-    return false;
-  }
   // Short, fixed, non-escalating cooldown for a transient failure (added
   // 2026-09-27, a 46th-pass audit, fixing a real, confirmed regression
   // found via a project-wide review, not itself independently reproduced
@@ -597,13 +594,20 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   // at addon startup, before any login has ever succeeded) actually the
   // *more* common way to hit the exact thundering-herd/serialization
   // storm these gates exist to prevent, not a narrow corner case of it.
-  const bool callerHasShortBound = timeoutMsOverride > 0 && timeoutMsOverride < m_config.timeoutSeconds * 1000L;
-  if (dispatcharr::IsTransientCooldownBlocking(
+  switch (DecideAuthGate(
+      !m_accessToken.empty() && now < m_accessTokenExpiry, m_consecutiveLoginFailures > 0 && now < m_loginBackoffUntil,
+      dispatcharr::IsTransientCooldownBlocking(
           !dispatcharr::IsRetryDue(m_transientLoginFailedAt, now, std::chrono::seconds(kTransientLoginRetrySeconds)),
-          m_transientLoginArmedByShortAttempt, callerHasShortBound))
+          m_transientLoginArmedByShortAttempt, callerHasShortBound)))
   {
+  case AuthGate::kHaveToken:
+    return true;
+  case AuthGate::kLoginBackoff:
+  case AuthGate::kTransientCooldown:
     error = m_lastLoginError;
     return false;
+  case AuthGate::kProceed:
+    break;
   }
 
   const bool haveRefreshToken = !m_refreshToken.empty();
