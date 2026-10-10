@@ -152,7 +152,7 @@ be hosted anywhere (`Plugin_repo.md`; the flat format needs only `registry_name`
 name must not contain "official" or "dispatcharr").
 
 The fit problem: `{version}` is the *plugin's* version, and this project attaches the plugin zips to addon-version
-releases (0.12.0 carries `timeshift_buffer` 0.8.13), so there is no URL templated on the plugin version to point at.
+releases (0.12.0 carries `timeshift_buffer` 0.8.14, refreshed from 0.8.13 on 2026-10-10), so there is no URL templated on the plugin version to point at.
 Listing would need per-plugin GitHub releases or tags, or a self-hosted manifest with absolute URLs updated by the
 release gate. Open item (a decision, since it changes what gets published and where): "List the two plugins in
 Dispatcharr's Plugin Hub".
