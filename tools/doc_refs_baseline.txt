@@ -47,6 +47,10 @@ docs/CLOSED_ITEMS.md|possessive|Scoped to times only|docs/RECORDINGS.md
 docs/CLOSED_ITEMS.md|possessive|wrong EPG copy|docs/RECORDINGS.md
 docs/CLOSED_ITEMS.md|setting|dvr_settings
 docs/CLOSED_ITEMS.md|setting|system_settings
+docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
+docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
+docs/OPEN_ITEMS.md|function|close_old_connections
+docs/OPEN_ITEMS.md|function|log_system_event
 docs/RECORDINGS.md|function|AnnounceReminder
 docs/RECORDINGS.md|function|CallRecordingMenuHook
 docs/RECORDINGS.md|function|CloseFile

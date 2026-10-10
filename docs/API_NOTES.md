@@ -195,6 +195,10 @@ the same "confirmed live, not just assumed" standard as this one.
 - [PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md) -- what the Tvheadend
   addon (pvr.hts) does that this one does not, which of it Dispatcharr
   can back, and what was decided about each (2026-10-10)
+- [DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md) -- what
+  Dispatcharr's own source (0.32.0) and its plugin catalogue offer that
+  this addon and its two plugins do not use yet, from reading, with the
+  open items each finding produced (2026-10-10)
 
 ## OS sleep/wake and the real-time-updates WebSocket
 

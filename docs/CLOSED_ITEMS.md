@@ -6651,6 +6651,15 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 ### Closed without a change (refuted, explained or harmless)
 
+#### Does Dispatcharr expose recording-disk usage
+
+**Opened 2026-10-10 from the pvr.hts comparison (`docs/PVR_HTS_COMPARISON.md`); closed the same day by reading
+Dispatcharr's source (`docs/DISPATCHARR_SOURCE_REVIEW.md`).** pvr.hts overrides `GetDriveSpace` so Kodi's PVR status
+screen shows the backend's recording disk. Dispatcharr at `eab4b4f` (0.32.0) has no `shutil.disk_usage`, no `statvfs`
+and no storage endpoint anywhere under `apps/` or `core/`; `CoreSettings` holds DVR path templates, comskip options and
+the pre/post offsets, nothing about space; every route in `apps/*/api_urls.py` and `core/api_urls.py` was listed and
+none reports it. Nothing for the addon to call, so no override. Reopen if Dispatcharr adds one.
+
 #### Dispatcharr 0.32.0 compatibility check: nothing to change
 
 **Closed 2026-10-07.** The upstream diff of `v0.31.0..v0.32.0` was read against every endpoint and field the addon and its plugins use, and the pieces most at risk were run live against a 0.32.0 server (the in-progress recording event playlist and its finish, catch-up seeking with `inputstream.ffmpegdirect`, the real-time push, timers and recurring rules, live timeshift, and both plugins). Nothing needed changing; the details, with what was and was not exercised, are in `docs/API_NOTES.md`'s "Dispatcharr 0.32.0 (2026-10-07)", and `tests/test_m3u8_segment_parser.cpp` now pins the new playlist shape. Two things were seen that are not 0.32.0 issues and are written up where they belong: the live-close delay (above, under Design decision needed) and the harness traps in `docs/MANUAL_TESTING.md`.
