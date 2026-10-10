@@ -4,11 +4,11 @@
 
 ## Status at a glance
 
-**3 open, 277 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)).
+**2 open, 278 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
+| Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
@@ -16,17 +16,13 @@
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 243 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 244 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 25 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
 
 ### Needs a live check
-
-#### Closing a live timeshift stream waited for the reader's live-edge wait (4 to 6 seconds measured); now sliced, one slow-device check outstanding
-
-**Found 2026-10-07 in the logs of the 0.12.0 device runs; sliced 2026-10-09.** From Kodi's `CloseFile` to the addon's `CloseLiveStream` took 4.0 to 5.9 seconds on all three devices (the N2+: 5.2 s; the 32-bit phone: 5.9 s; the 64-bit phone: 4.0 s), because the reader thread was parked in `ReadLiveTimeshiftStream()`'s catch-up-to-tail wait and Kodi acts on a close only between reads (its demuxer checks its abort flag before each call into the addon, and a `Player.Open` for the next channel sent in that window was dropped). The wait cannot be interrupted from the addon, and a shorter budget would bring back the early end of playback it exists to prevent (`docs/CLOSED_ITEMS.md`'s "A brief server outage ended playback for good"), so the wait is now taken in slices (`kLiveTailWaitSliceMs`, one second, CatchUpUtil.h): a slice that finds nothing returns `-1`, which Kodi's demuxer retries (a `0` ends playback), the budget is counted across the calls at the same position (`TailWaitEpisode`), and the stream still gives up with `0` only once the whole budget is used; a seek probe still gets its quick answer. **Measured:** the glue harness's `live_tail_bound` scenario (a frozen live tail) shows the longest read at the tail going from 4515 ms to 1004 ms, the total wait before giving up unchanged, and the stream resuming when segments arrive; on the Linux test VM against the real server (four sessions, baseline and candidate alternating) the new path ran (13 slices per session), playback never stalled, and the demuxer, ffmpeg and stall messages in Kodi's log were the same count as the baseline's. **Not shown:** an improvement in the lab (its segments are two seconds long, so the old wait was already about a second) and the one thing the lab cannot answer, whether ffmpeg's flush after each `-1` is visible as a glitch on a slow device that waits at the tail for seconds. Needed: the same close and zap timing, plus a few minutes of live viewing at the live edge, on the N2+ (or either phone); if a glitch shows, the slice length is `kLiveTailWaitSliceMs` and the old behaviour is a slice as long as the budget. Not for a release before that.
 
 ### Fix known, not yet done
 
