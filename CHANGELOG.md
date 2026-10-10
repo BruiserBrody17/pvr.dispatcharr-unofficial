@@ -20,10 +20,12 @@ compare against.
 
 ## [0.12.0] - 2026-10-07
 
-Addon changes since `0.11.0`. This release also bundles `timeshift_buffer` `0.8.13` and `recording_edl` `0.2.3`
+Addon changes since `0.11.0`. This release also bundles `timeshift_buffer` `0.8.14` and `recording_edl` `0.2.3`
 (their own entries are below, from `0.6.3` and `0.2.1` on): **redeploy both plugins to Dispatcharr and restart
 Dispatcharr** so every worker runs them. This list is the user-visible part; the reasoning for each change is in
-`docs/OPEN_ITEMS.md`'s Fixed entries.
+`docs/CLOSED_ITEMS.md`'s Fixed entries (`docs/OPEN_ITEMS.md` in the 0.12.0 tag itself).
+
+**Update 2026-10-10: `timeshift_buffer.zip` on this release was replaced with `0.8.14`** (it was `0.8.13`). A change of the host's clock could make the idle reaper stop buffers that were being watched, and closing one viewer could drop the others; both are fixed (the `timeshift_buffer` `0.8.14` entry below). The addon zips and `recording_edl.zip` are unchanged. If you installed `timeshift_buffer` `0.8.13` from this release, redeploy it and restart Dispatcharr.
 
 **Release downloads**: every release now carries a zip for each platform: Windows, Linux, macOS (Apple silicon),
 Android (64-bit and 32-bit ARM) and CoreELEC, plus the two Dispatcharr plugins. Each one is checked before it is

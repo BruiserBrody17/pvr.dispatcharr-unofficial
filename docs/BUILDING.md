@@ -889,7 +889,12 @@ uploaded, not an earlier copy.
 **Release notes.** When the tag bundles a plugin version that did not move for this release, the notes inline that plugin's
 own Added/Fixed bullets from `CHANGELOG.md` in the release body itself, not a pointer to the file (a separate page, off the
 release page). `CHANGELOG.md` keeps each piece's entry separate; only the posted notes duplicate, and a posted note is a
-frozen snapshot, so the copies cannot drift.
+frozen snapshot, so the copies cannot drift. Keep the heading hierarchy when copying: the addon is `## [x.y.z] - date`
+with its categories (`### Fixed`) beneath it, each bundled plugin is a `## Bundled plugin: <name>` group with one
+`### [version] - date` per version, and that version's categories are `####`. Demoting the version headings without
+their categories makes "Fixed" a sibling of the version it belongs to (the 0.12.0 notes had this until 2026-10-10).
+A later correction to the release, such as a replaced zip, goes in a dated "Update" paragraph under the intro, and the
+same paragraph goes in `CHANGELOG.md`'s entry.
 
 **A plugin-only fix after its addon release shipped.** Plugins have no tags of their own; their zips ride on whichever
 addon tag exists, so a fix merged after the release leaves the published zip stale (a header-injection fix in
