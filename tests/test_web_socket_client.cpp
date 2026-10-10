@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <functional>
 #include <string>
@@ -603,6 +604,73 @@ TEST_CASE("Close() forgets a half-received fragmented message", "[WebSocketClien
   const int rc = client.ReceiveTextMessage(message, 2, error);
   CHECK(message != "partrest");
   CHECK(rc != 1);
+}
+
+TEST_CASE("a stop request ends a pong send that is blocked on a full send buffer", "[WebSocketClient]")
+{
+  // The peer floods maximum-size pings and never reads. The client answers each with a pong; the pongs fill the
+  // peer's small receive buffer and then the client's own send buffer, so a send blocks (WaitForSocketReady in
+  // SendAll's slices of half a second). A stop that arrives then must end that send within a slice or two, not at the
+  // send's own (long) timeout. The flood is how the test gets a blocked send without a kernel-specific buffer size:
+  // the server notices the jam from its own side (its sends stop being accepted once the client has stopped reading).
+  std::atomic<bool> jammed{false};
+  LocalWebSocketServer server(
+      [&jammed](int fd, const std::atomic<bool>& stop)
+      {
+        const int small = 2048;
+        setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &small, sizeof(small));
+        const auto ping = Frame(0x9, std::string(125, 'p'));
+        auto blockedSince = Clock::time_point{};
+        size_t offset = 0;
+        while (!stop)
+        {
+          const ssize_t n = send(fd, ping.data() + offset, ping.size() - offset, MSG_NOSIGNAL | MSG_DONTWAIT);
+          if (n > 0)
+          {
+            offset = (offset + static_cast<size_t>(n)) % ping.size();
+            blockedSince = Clock::time_point{};
+            continue;
+          }
+          if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+            return; // the client went away
+          if (blockedSince == Clock::time_point{})
+            blockedSince = Clock::now();
+          else if (Clock::now() - blockedSince > std::chrono::milliseconds(1500))
+            jammed = true; // nothing has been accepted for 1.5 s: the client is not reading any more
+          std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+      });
+  std::atomic<bool> stop{false};
+  WebSocketClient client;
+  client.SetStopCheck([&stop]() { return stop.load(); });
+  std::string error;
+  REQUIRE(client.Connect("127.0.0.1", server.port(), false, "/ws/", false, 5, error));
+
+  std::atomic<int> result{99};
+  std::atomic<bool> finished{false};
+  std::string message;
+  std::thread reader(
+      [&]()
+      {
+        // 60 s: neither the read deadline nor the send deadline may be what ends this.
+        result = client.ReceiveTextMessage(message, 60, error);
+        finished = true;
+      });
+
+  const auto waitStart = Clock::now();
+  while (!jammed && !finished && SecondsSince(waitStart) < 15.0)
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  const bool wasJammed = jammed.load();
+  const auto stopAt = Clock::now();
+  stop = true;
+  reader.join();
+  const double afterStop = SecondsSince(stopAt);
+
+  if (!wasJammed)
+    SKIP("this kernel's socket buffers absorbed the whole flood, so no send ever blocked");
+  CHECK(result == -1);
+  CHECK(error == "WebSocket send abandoned: shutting down");
+  CHECK(afterStop < 2.0); // one 500 ms slice, with room for a loaded runner
 }
 
 #endif
