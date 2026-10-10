@@ -1821,7 +1821,13 @@ last-seen exceeds `idle_timeout_seconds`, called from `_stop_buffer()`
 right before it decides whether the buffer is still in use by anyone
 else, and from the reaper loop on every tick for ongoing hygiene (so
 `list_buffers`'s reported viewer counts stay accurate too, not just the
-teardown decision). A viewer with no recorded heartbeat yet -- state
+teardown decision). *(Changed in `timeshift_buffer` 0.8.14: that function
+compared two wall-clock stamps, so a host clock step could drop viewers that
+were still watching. It is gone; `_stop_buffer()` removes only the stopping
+viewer and the reaper (`_stale_viewers()`, `_IdleTracker`) ages the stamps on
+a monotonic clock. When it drops the last viewer it ends the buffer in that
+tick, so a phantom viewer left by a crash still frees the provider slot within
+one reaper interval.)* A viewer with no recorded heartbeat yet -- state
 written by a pre-upgrade plugin version, or a `start_buffer` call that
 landed the same instant -- is treated as fresh as of "now", not already
 stale, so a rolling upgrade can't mass-prune viewers that simply haven't
@@ -1850,8 +1856,8 @@ plugin module, not reproduced live.** `viewer_id` is caller-supplied
 JSON and was used unchecked as both a `viewers` list element and a
 `viewer_heartbeats` dict key. An integer id went into `viewers` as an
 int but came back out of Redis as a *string* `viewer_heartbeats` key
-(JSON object keys are always strings), so `_prune_stale_viewers()`
-never found its heartbeat and treated it as permanently fresh -- the
+(JSON object keys are always strings), so the stale-viewer check (then
+`_prune_stale_viewers()`) never found its heartbeat and treated it as permanently fresh -- the
 exact phantom-viewer leak this section's fix exists to prevent. A JSON
 array/object id was worse: `start_buffer` raised `TypeError`
 ("unhashable type") at its own `viewer_heartbeats` write, which on a

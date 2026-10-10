@@ -2256,7 +2256,7 @@ first start must still reach it, via the module-level
 rather than a closure frozen over whichever call happened to start the
 thread), `_stream_attribution_headers` (client_ip
 validation path only -- the username/JWT branch stays untested),
-`_prune_stale_viewers`,
+`_prune_stale_viewers` (replaced by `_stale_viewers()` in 0.8.14, below),
 `_find_orphaned_channel_dirs`/`_scrub_orphaned_dirs` (via `monkeypatch`ing
 their one Redis-dependent call), and `_get_live_manifest` end-to-end
 against a real temp filesystem -- including regression tests for its
@@ -2483,8 +2483,13 @@ that run backwards while the viewer is watching keep it, the first sighting is a
 pruned while another keeps the buffer alive, a prune write-back that spares a viewer that registered or heartbeated in the
 gap, leadership loss clearing what was seen, a vanished buffer being seen afresh, and the teardown's last look comparing
 values instead of reading a clock. Mutation-checked: putting the old subtraction back fails five of them. Not covered:
-`stop_buffer`'s own viewer prune still compares stamps (it runs in a request worker with no memory between calls), and
 nothing runs the reaper thread against a real stepped clock.
+
+2026-10-10: `stop_buffer` no longer prunes other viewers (it compared two stamps in a request worker); `_prune_stale_viewers()` and its
+four unit tests are gone. The reaper ends a buffer whose drop of stale viewers leaves none (`test_the_reaper_ends_a_buffer_whose_last_viewer_went_stale...`
+pins one teardown and its `abort_if`; others pin a remaining viewer, a never-registered viewer list and a viewer registering before the drop),
+`test_run_stop_buffer_leaves_other_viewers_to_the_reaper...` pins a stamp far behind the shared clock being left alone, and the boundary and
+integer-id tests moved onto `_stale_viewers()`. The first and last of those fail against the previous plugin code.
 
 2026-10-09: `WebSocketClient` gained a test for a stop during a blocked send (a server that floods pings and never reads fills the
 client's pong sends until one blocks; the stop must end it within a slice; skipped on a kernel whose buffers absorb the flood).

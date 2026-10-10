@@ -939,41 +939,6 @@ def test_stream_attribution_headers_rejects_ipv6_scope_id_injection_bypass():
 
 
 # ---------------------------------------------------------------------
-# _prune_stale_viewers
-# ---------------------------------------------------------------------
-
-
-def test_prune_stale_viewers_no_viewers():
-    state = {}
-    assert timeshift_buffer_plugin._prune_stale_viewers(state, idle_timeout=60, now=1000) is False
-
-
-def test_prune_stale_viewers_all_fresh():
-    state = {"viewers": ["a", "b"], "viewer_heartbeats": {"a": 990, "b": 995}}
-    changed = timeshift_buffer_plugin._prune_stale_viewers(state, idle_timeout=60, now=1000)
-    assert changed is False
-    assert state["viewers"] == ["a", "b"]
-
-
-def test_prune_stale_viewers_drops_stale_one():
-    state = {"viewers": ["a", "b"], "viewer_heartbeats": {"a": 990, "b": 500}}
-    changed = timeshift_buffer_plugin._prune_stale_viewers(state, idle_timeout=60, now=1000)
-    assert changed is True
-    assert state["viewers"] == ["a"]
-    assert state["viewer_heartbeats"] == {"a": 990}
-
-
-def test_prune_stale_viewers_no_heartbeat_yet_treated_as_fresh():
-    """A viewer with no recorded heartbeat (older plugin-version state,
-    or a start_buffer call that raced this exact instant) must not be
-    mass-pruned just because it hasn't reported in yet."""
-    state = {"viewers": ["a"], "viewer_heartbeats": {}}
-    changed = timeshift_buffer_plugin._prune_stale_viewers(state, idle_timeout=60, now=1000)
-    assert changed is False
-    assert state["viewers"] == ["a"]
-
-
-# ---------------------------------------------------------------------
 # _apply_heartbeat
 # ---------------------------------------------------------------------
 
@@ -1022,7 +987,7 @@ def test_apply_heartbeat_updates_a_known_viewers_own_heartbeat():
 
 def test_apply_heartbeat_re_adds_a_viewer_no_longer_in_the_list():
     # Regression test: a still-watching viewer pruned by
-    # _prune_stale_viewers used to be ignored forever (docs/OPEN_ITEMS.md,
+    # the reaper's viewer prune used to be ignored forever (docs/OPEN_ITEMS.md,
     # 10th-pass audit).
     state = {"viewers": ["a"], "viewer_heartbeats": {"a": 0}}
     timeshift_buffer_plugin._apply_heartbeat(state, now=1000, viewer_id="pruned")
@@ -3512,10 +3477,9 @@ def test_run_start_buffer_with_an_unhashable_viewer_id_still_saves_its_state(mon
 
 
 def test_integer_viewer_id_is_still_prunable_after_a_redis_json_round_trip(monkeypatch, tmp_path):
-    """Regression: an int viewer_id stayed an int in `viewers` but came
-    back from Redis as a str key in `viewer_heartbeats` (JSON object keys
-    are always strings), so _prune_stale_viewers() never found its
-    heartbeat and treated it as permanently fresh."""
+    """Regression: an int viewer_id stayed an int in `viewers` but came back from Redis as a str key in
+    `viewer_heartbeats` (JSON object keys are always strings), so the stale-viewer check never found its heartbeat and
+    treated it as permanently fresh."""
     monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
     monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [])
     fake_state = {"channel_uuid": _UUID, "pid": 123, "http_port": 9192, "playlist_route": f"/{_UUID}/live.m3u8"}
@@ -3526,9 +3490,12 @@ def test_integer_viewer_id_is_still_prunable_after_a_redis_json_round_trip(monke
     _run(monkeypatch, "start_buffer", {"channel_uuid": _UUID, "viewer_id": 123}, {}, tmp_path)
 
     round_tripped = json.loads(json.dumps(saved))
+    clock = _FakeMonotonic()
+    tracker = timeshift_buffer_plugin._IdleTracker(clock=clock)
+    assert timeshift_buffer_plugin._stale_viewers(round_tripped, _UUID, 30, tracker) == {}
+    clock.now += 31
     last_seen = round_tripped["viewer_heartbeats"]["123"]
-    assert timeshift_buffer_plugin._prune_stale_viewers(round_tripped, 30, now=last_seen + 31) is True
-    assert round_tripped["viewers"] == []
+    assert timeshift_buffer_plugin._stale_viewers(round_tripped, _UUID, 30, tracker) == {"123": last_seen}
 
 
 def test_run_get_live_manifest_reports_fatal_without_tearing_down_when_the_buffer_was_replaced(monkeypatch, tmp_path):
@@ -4099,6 +4066,94 @@ def test_reaper_loop_prune_write_back_uses_a_freshly_read_copy(monkeypatch):
     monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: saved.update({uuid: s}))
     _drive_reaper(monkeypatch, states, ticks=4, step=15.0)
     assert saved["abc"]["viewers"] == ["b", "c"]  # only "a", still at the stamp the reaper saw, was dropped
+
+
+def _stale_last_viewer_store(**overrides):
+    base = {
+        "channel_uuid": "abc",
+        "pid": 7,
+        "last_heartbeat": 1000.0,
+        "viewers": ["ghost"],
+        "viewer_heartbeats": {"ghost": 900.0},  # never moves again: a viewer that crashed without stopping
+    }
+    base.update(overrides)
+    return base
+
+
+def test_the_reaper_ends_a_buffer_whose_last_viewer_went_stale_without_waiting_for_the_buffer_wide_timeout(monkeypatch):
+    """stop_buffer no longer prunes a phantom viewer itself (a wall-clock comparison), so when the last real viewer
+    stopped and left only the phantom, the reaper drops it and ends the buffer in that same tick, even though a
+    fetch refreshed the buffer-wide heartbeat a moment ago."""
+    store = {"abc": _stale_last_viewer_store()}
+
+    def states(i):
+        # the buffer-wide stamp keeps moving (a late fetch), so the buffer-wide idle check alone would keep it
+        store["abc"] = {**store["abc"], "last_heartbeat": 1000.0 + i}
+        return [dict(store["abc"])]
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(store[uuid]))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: store.update({uuid: s}))
+    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=4, step=15.0)
+    assert len(teardowns) == 1  # exactly one: not again from the buffer-wide check in the same tick
+    state, kwargs = teardowns[0]
+    assert state["viewers"] == []
+    assert kwargs["abort_if"]({"viewers": ["new"], "last_heartbeat": state["last_heartbeat"]}) is True  # a viewer came
+    assert kwargs["abort_if"]({"viewers": [], "last_heartbeat": state["last_heartbeat"] + 1}) is True  # a heartbeat
+    assert kwargs["abort_if"]({"viewers": [], "last_heartbeat": state["last_heartbeat"]}) is False
+
+
+def test_the_reaper_keeps_a_buffer_when_a_stale_viewer_is_dropped_but_another_remains(monkeypatch):
+    store = {
+        "abc": _stale_last_viewer_store(viewers=["ghost", "live"], viewer_heartbeats={"ghost": 900.0, "live": 1000.0})
+    }
+
+    def states(i):
+        store["abc"] = {
+            **store["abc"],
+            "last_heartbeat": 1000.0 + i,
+            "viewer_heartbeats": {"ghost": 900.0, "live": 1000.0 + i},
+        }
+        return [dict(store["abc"])]
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(store[uuid]))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: store.update({uuid: s}))
+    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=4, step=15.0)
+    assert teardowns == []
+    assert store["abc"]["viewers"] == ["live"]
+
+
+def test_the_reaper_does_not_end_a_buffer_that_never_had_a_registered_viewer(monkeypatch):
+    """A caller without a viewer_id (an older addon, the manual test button) leaves `viewers` empty by design; only a
+    drop that EMPTIES the list may end the buffer early, never an already-empty one."""
+    store = {"abc": _stale_last_viewer_store(viewers=[], viewer_heartbeats={})}
+
+    def states(i):
+        store["abc"] = {**store["abc"], "last_heartbeat": 1000.0 + i}
+        return [dict(store["abc"])]
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(store[uuid]))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: store.update({uuid: s}))
+    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=4, step=15.0)
+    assert teardowns == []
+
+
+def test_the_reaper_does_not_end_a_buffer_when_a_viewer_registered_before_the_stale_one_was_dropped(monkeypatch):
+    """The drop runs against a freshly read copy: a viewer that registered since the tick read its states is in it, so
+    the list is not empty and nothing is torn down."""
+
+    def states(i):
+        return [_stale_last_viewer_store(last_heartbeat=1000.0 + i)]
+
+    fresh = {
+        "abc": _stale_last_viewer_store(
+            viewers=["ghost", "newcomer"], viewer_heartbeats={"ghost": 900.0, "newcomer": 1040.0}
+        )
+    }
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(fresh[uuid]))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: fresh.update({uuid: s}))
+    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=4, step=15.0)
+    assert teardowns == []
+    assert fresh["abc"]["viewers"] == ["newcomer"]
 
 
 def test_drop_stale_viewers_only_removes_a_viewer_whose_stamp_is_still_the_one_that_was_seen():
@@ -5102,11 +5157,15 @@ def test_classify_existing_buffer_stopping_grace_boundary():
     assert classify(state(grace - 0.001), False, now=now) == "stopping"
 
 
-def test_prune_stale_viewers_keeps_a_viewer_exactly_at_the_idle_timeout():
-    prune = timeshift_buffer_plugin._prune_stale_viewers
-    state = {"viewers": ["a", "b"], "viewer_heartbeats": {"a": 970.0, "b": 969.9}}
-    assert prune(state, 30, now=1000.0) is True
-    assert state["viewers"] == ["a"]  # "a" is exactly 30 s old: kept; "b" is just past it
+def test_stale_viewers_keeps_a_viewer_exactly_at_the_idle_timeout():
+    clock = _FakeMonotonic()
+    tracker = timeshift_buffer_plugin._IdleTracker(clock=clock)
+    state = {"viewers": ["a"], "viewer_heartbeats": {"a": 5.0}}
+    assert timeshift_buffer_plugin._stale_viewers(state, _UUID, 30, tracker) == {}
+    clock.now += 30.0
+    assert timeshift_buffer_plugin._stale_viewers(state, _UUID, 30, tracker) == {}  # exactly 30 s old: kept
+    clock.now += 0.1
+    assert timeshift_buffer_plugin._stale_viewers(state, _UUID, 30, tracker) == {"a": 5.0}  # just past it
 
 
 def test_an_orphan_exactly_at_the_minimum_age_is_one(tmp_path, monkeypatch):
@@ -5124,22 +5183,32 @@ def test_an_orphan_exactly_at_the_minimum_age_is_one(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------
 
 
-def test_run_stop_buffer_prunes_a_phantom_viewer_so_the_last_real_one_tears_it_down(monkeypatch, tmp_path):
-    """The documented phantom-viewer leak: viewer B crashed without stopping and was kept "alive" by
-    A's fetches. When A stops, B's stale heartbeat is pruned in the same update, so the buffer ends."""
+def test_run_stop_buffer_leaves_other_viewers_to_the_reaper_even_when_their_stamps_look_old(monkeypatch, tmp_path):
+    """stop_buffer removes only the viewer that is stopping. Another viewer whose stamp is far behind the shared clock
+    (a crashed viewer, or every viewer after a host clock step) is not judged here: a request worker can only subtract
+    two stamps, and the reaper, which ages them on a monotonic clock, decides (the old version pruned them in this
+    request, so a clock step dropped viewers that were still watching)."""
     now = time.time()
     state = {"channel_uuid": _UUID, "viewers": ["A", "B"], "viewer_heartbeats": {"A": now, "B": now - 1000}}
+    written = {}
     monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
-    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: None)
-    teardown_calls = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: written.update(s))
     monkeypatch.setattr(
-        timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger, **kw: teardown_calls.append(s["viewers"])
+        timeshift_buffer_plugin, "_cas_buffer_state", lambda uuid, expected, updated: written.update(updated) or True
     )
+    teardown_calls = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger, **kw: teardown_calls.append(s))
 
     result, _logger = _run(monkeypatch, "stop_buffer", {"channel_uuid": _UUID, "viewer_id": "A"}, {}, tmp_path)
 
-    assert result == {"status": "ok", "message": "Buffer stopped"}
-    assert teardown_calls == [[]]  # torn down with no viewers left, the stale one pruned too
+    assert result == {
+        "status": "ok",
+        "message": "viewer removed; buffer still active for other viewers",
+        "remaining_viewers": 1,
+    }
+    assert teardown_calls == []
+    assert written["viewers"] == ["B"]
+    assert written["viewer_heartbeats"] == {"B": now - 1000}
 
 
 def test_a_stale_config_teardown_does_not_retake_the_start_lock_it_already_holds(monkeypatch, start_locks):
@@ -5827,7 +5896,6 @@ def test_reaper_loop_trims_the_ffmpeg_log_of_each_tracked_buffer(monkeypatch, tm
     monkeypatch.setattr(timeshift_buffer_plugin.time, "time", lambda: 1000.0)
     state = {"channel_uuid": _UUID, "last_heartbeat": 999}
     monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: [state])
-    monkeypatch.setattr(timeshift_buffer_plugin, "_prune_stale_viewers", lambda *a, **k: False)
     monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: [])
     capped = []
     monkeypatch.setattr(timeshift_buffer_plugin, "_cap_ffmpeg_log", lambda channel_dir: capped.append(channel_dir))
@@ -5845,7 +5913,6 @@ def test_reaper_loop_survives_a_state_with_an_unusable_uuid_when_trimming(monkey
     monkeypatch.setattr(
         timeshift_buffer_plugin, "_iter_buffer_states", lambda: [{"channel_uuid": "../x", "last_heartbeat": 999}]
     )
-    monkeypatch.setattr(timeshift_buffer_plugin, "_prune_stale_viewers", lambda *a, **k: False)
     scrubbed = []
     monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: scrubbed.append(1) or [])
 
@@ -6019,14 +6086,6 @@ def test_a_reattach_stamps_the_viewer_and_the_buffer_with_the_shared_clock(monke
     assert result["status"] == "ok"
     assert saved["last_heartbeat"] == pytest.approx(20_000.0)
     assert saved["viewer_heartbeats"]["v"] == pytest.approx(20_000.0)
-
-
-def test_prune_stale_viewers_without_an_explicit_now_uses_the_shared_clock(monkeypatch):
-    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: _TimedFakeRedis(1_000.0))
-    monkeypatch.setattr(timeshift_buffer_plugin.time, "time", lambda: 1_000.0 + 3600)  # a stepped host clock
-    state = {"viewers": ["a"], "viewer_heartbeats": {"a": 990.0}, "last_heartbeat": 990.0}
-    assert timeshift_buffer_plugin._prune_stale_viewers(state, 30) is False
-    assert state["viewers"] == ["a"]
 
 
 def _use_shared_clock(monkeypatch, shared_now, host_now=3.0):
@@ -6230,7 +6289,6 @@ def test_the_reaper_trims_the_log_under_the_buffers_own_storage_path(monkeypatch
         {"channel_uuid": _ORPHAN_UUID, "last_heartbeat": 1000.0},  # a state from before the field existed
     ]
     monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: states)
-    monkeypatch.setattr(timeshift_buffer_plugin, "_prune_stale_viewers", lambda *a, **k: False)
     monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: [])
     trimmed = []
     monkeypatch.setattr(

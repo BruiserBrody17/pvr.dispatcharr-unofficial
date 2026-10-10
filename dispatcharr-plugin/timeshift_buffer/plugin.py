@@ -2696,40 +2696,6 @@ def _buffers_summary(buffers: list) -> str:
     return f"{len(buffers)} active buffer(s): " + ", ".join(parts)
 
 
-def _prune_stale_viewers(state, idle_timeout, now=None):
-    """Drops any viewer_id whose own last-seen heartbeat is older than
-    idle_timeout, in place on state["viewers"]/state["viewer_heartbeats"].
-    Returns True if anything was actually pruned.
-
-    Used by stop_buffer, which runs in a request worker with no memory between calls, so it can only subtract two
-    stamps; the reaper uses _IdleTracker instead (a host clock step misfires THIS comparison, see docs/OPEN_ITEMS.md).
-
-    Needed because last_heartbeat (refreshed by ANY successful file fetch,
-    see _touch_heartbeat) is buffer-wide, not per-viewer: if one viewer
-    crashes hard enough to never call stop_buffer, its viewer_id otherwise
-    stays in state["viewers"] forever, kept "alive" by other viewers'
-    ordinary segment fetches. That phantom entry then blocks stop_buffer's
-    reference count from ever reaching zero once the real remaining
-    viewers actually do stop -- the buffer (and the provider slot it
-    holds) never gets torn down. A viewer with no recorded heartbeat yet
-    (older plugin-version state from before this field existed, or a
-    start_buffer call that raced this exact instant) is treated as fresh
-    as of `now`, not as already stale, so an in-progress upgrade doesn't
-    mass-prune viewers that just haven't had a chance to report in yet.
-    """
-    now = now if now is not None else _shared_now()
-    viewers = state.get("viewers", [])
-    if not viewers:
-        return False
-    heartbeats = state.get("viewer_heartbeats", {})
-    fresh = [v for v in viewers if now - heartbeats.get(v, now) <= idle_timeout]
-    if len(fresh) == len(viewers):
-        return False
-    state["viewers"] = fresh
-    state["viewer_heartbeats"] = {v: heartbeats[v] for v in fresh if v in heartbeats}
-    return True
-
-
 class _IdleTracker:
     """Ages heartbeats on this process's monotonic clock instead of subtracting two wall-clock stamps (0.8.14).
 
@@ -2825,7 +2791,7 @@ def _resolve_viewer_id(params: dict):
       provider stream slot until the container restarts.
     - An integer viewer_id went into `viewers` as an int but came back
       out of Redis as a *string* key in `viewer_heartbeats` (JSON object
-      keys are always strings), so _prune_stale_viewers()'s own
+      keys are always strings), so the old _prune_stale_viewers()'s
       `heartbeats.get(v, now)` never found it and treated that viewer as
       permanently fresh -- a crashed client's phantom viewer_id could then
       keep its buffer alive forever, the exact leak that function exists
@@ -2878,7 +2844,7 @@ def _apply_heartbeat(state: dict, now: float, viewer_id=None) -> dict:
     A viewer_id not currently in `viewers` is re-added, not ignored
     (changed 2026-09-29, `timeshift_buffer` 0.6.5, fixing a real gap
     flagged from a 10th-pass audit, docs/OPEN_ITEMS.md): once
-    _prune_stale_viewers() dropped a still-watching viewer (e.g. a >30s
+    the viewer prune dropped a still-watching viewer (e.g. a >30s
     network stall), its later heartbeat/get_live_manifest calls used to be
     ignored forever, so it stayed uncounted -- and the buffer got torn
     down under it as soon as every other viewer stopped. Cost of the
@@ -3026,10 +2992,30 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_trac
                         # otherwise have its registration silently
                         # overwritten by this stale write-back. A viewer
                         # whose heartbeat moved since is kept.
-                        _update_buffer_state(
-                            uuid,
-                            lambda fresh_state, gone=stale: (_drop_stale_viewers(fresh_state, gone), fresh_state)[1],
-                        )
+                        dropped = {}
+
+                        def drop_stale(fresh_state, gone=stale, dropped=dropped):
+                            dropped["any"] = _drop_stale_viewers(fresh_state, gone)
+                            return fresh_state
+
+                        outcome, written = _update_buffer_state(uuid, drop_stale)
+                        # The stale viewer(s) were the last ones: nobody is watching, and stop_buffer no longer prunes
+                        # a phantom itself, so the buffer ends here rather than waiting out the buffer-wide timeout.
+                        # Re-checked atomically with the stopping marker: a viewer that registered, or a heartbeat
+                        # that landed, since the write above keeps it.
+                        if outcome == "written" and dropped.get("any") and not written.get("viewers"):
+                            seen_heartbeat = written.get("last_heartbeat", 0)
+                            if _teardown_buffer(
+                                written,
+                                logger,
+                                abort_if=lambda fresh, seen=seen_heartbeat: bool(fresh.get("viewers"))
+                                or fresh.get("last_heartbeat", 0) != seen,
+                            ):
+                                logger.info(
+                                    "timeshift_buffer: stopped the buffer for channel %s, its last viewers went stale",
+                                    uuid,
+                                )
+                                continue
                     last_heartbeat = state.get("last_heartbeat", 0)
                     buffer_age = tracker.age(("buffer", uuid), last_heartbeat)
                     if buffer_age > idle_timeout:
@@ -3347,7 +3333,7 @@ class Plugin:
                 "(optional). The buffer-wide timeout is refreshed by any file fetch regardless -- "
                 "pass viewer_id to also refresh that specific viewer's own last-seen time, which is "
                 "what lets stop_buffer tell a still-watching viewer apart from one that crashed "
-                "without ever calling stop_buffer (see plugin.py's _prune_stale_viewers). A client "
+                "without ever calling stop_buffer (see plugin.py's _stale_viewers). A client "
                 "with viewer_id lifecycle (start_buffer/stop_buffer) should call this on an interval "
                 "well under idle_timeout_seconds."
             ),
@@ -3820,20 +3806,16 @@ class Plugin:
         # regression, since there was never a way to reference-count them.
         viewer_id = _resolve_viewer_id(params)
         if viewer_id:
-            # Drops any OTHER viewer_id that's gone stale (crashed without
-            # ever calling stop_buffer) before deciding whether the buffer
-            # is genuinely still in use -- see _prune_stale_viewers' own
-            # comment. Without this, a single leftover phantom viewer_id
-            # would keep this buffer (and the provider slot it holds)
-            # alive forever after the last real viewer cleanly stops.
-            idle_timeout = _int_setting(settings_dict, "idle_timeout_seconds", 30, minimum=1)
-
+            # Only THIS viewer is removed here. A phantom viewer (crashed without ever calling stop_buffer, kept
+            # "alive" in the buffer-wide heartbeat by the others' fetches) is not pruned in this request: a worker has
+            # no memory between calls, so the only test it has is "now minus a stamp", which a host clock step
+            # misjudges for every viewer at once (0.8.14, docs/CLOSED_ITEMS.md). The reaper, which can age the
+            # stamps on a monotonic clock, drops the phantom and ends the buffer within one tick (_reaper_loop).
             def drop_viewer(current):
                 current_viewers = current.get("viewers", [])
                 if viewer_id in current_viewers:
                     current_viewers.remove(viewer_id)
                     current.get("viewer_heartbeats", {}).pop(viewer_id, None)
-                _prune_stale_viewers(current, idle_timeout)
                 return current
 
             outcome, state = _update_buffer_state(channel_uuid, drop_viewer)
@@ -3873,10 +3855,10 @@ class Plugin:
             }
 
         # An explicit per-viewer heartbeat (viewer_id passed alongside
-        # channel_uuid) is what lets _prune_stale_viewers tell a genuinely
+        # channel_uuid) is what lets _stale_viewers tell a genuinely
         # still-watching viewer apart from a crashed one -- see that
         # function's own comment. Only recorded for a viewer_id this
-        # buffer (re-adding one _prune_stale_viewers dropped) --
+        # buffer (re-adding one the reaper dropped) --
         # see _apply_heartbeat()'s own comment for why this write-back
         # only ever touches the heartbeat/viewer fields, never the rest of
         # state (a pruned-but-still-watching viewer is re-added there).

@@ -130,8 +130,13 @@ Dispatcharr restart for every worker to pick it up.
   slot it holds, until the clock caught up. The reaper now times each heartbeat on its own steady clock,
   from when it last changed, so neither a step nor a suspend matters. A buffer is reaped after it has had no
   heartbeat for the idle timeout plus up to one reaper interval (15 seconds), and a reaper that has just
-  started gives each buffer one idle timeout before it judges it. (Closing the last viewer with
-  `stop_buffer` still compares the stored times when it drops other viewers that have gone silent.)
+  started gives each buffer one idle timeout before it judges it.
+- **Closing a viewer with `stop_buffer` no longer drops the other viewers.** It used to remove every other
+  viewer whose last heartbeat looked older than the idle timeout by the same two-times subtraction, so a clock
+  step shortly before a stop could end a buffer under viewers that were still watching. It removes only the
+  viewer that is stopping now; the reaper drops viewers that went silent and, when that leaves nobody, ends the
+  buffer in that same pass (within 15 seconds), so a viewer that crashed without stopping still frees its
+  provider slot promptly.
 
 ## `timeshift_buffer` [0.8.13] - 2026-10-06
 
