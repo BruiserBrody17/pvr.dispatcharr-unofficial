@@ -2545,6 +2545,8 @@ and 0.28 to 1.37 s after (`docs/CLOSED_ITEMS.md`).
 
 2026-10-11: `ColdStartWallClockBudgetMs()` (`RequestTimeout.h`, `tests/test_request_timeout.cpp`: the live and in-progress budgets at the default timeout, growth with a raised timeout, never under the healthy wait) bounds both open cold-start loops by wall-clock time. The glue harness gained `live_silent_open` (`get_live_manifest` never answers; in CI's glue run; fails on the old code by running past its kill timer) and `ip_silent_open` (by hand, about a minute: a playlist that 404s slowly). Checked live through a forwarder that held the manifest request: the open ended at 61 s (`docs/CLOSED_ITEMS.md`).
 
+2026-10-11: `IsTimeshiftFileServerReachable()` and `BuildTimeshiftFileServerUnreachableMessage()` (`PluginUrlUtil.h`, `tests/test_plugin_url_util.cpp`: any HTTP answer including the token-less 403 is reachable; a failed transfer is not, whatever stale status was left behind; the message names the port and the setting) decide the open-time probe of the plugin's file server. The glue harness gained the live_fileserver_unreachable scenario (the fake's fs_port knob reports a port nothing listens on: the open must fail at once with the port in the error, and succeed again once it is reachable; it fails on the old code, where the open succeeded; in CI's glue run). Checked live through a forwarder that exposed only the API port: 35.4 s of spinner before, 3.5 s to the notification after (`docs/CLOSED_ITEMS.md`).
+
 See `docs/CLOSED_ITEMS.md`'s "No automated test suite exists" entry for
 the full reasoning and what's still open on both sides. Verification of
 everything else stays manual: smoke-testing against a real Dispatcharr

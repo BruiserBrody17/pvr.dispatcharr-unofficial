@@ -38,6 +38,10 @@ compare against.
   accepted the request to start the live buffer and then stopped responding, Kodi's channel spinner could run for about
   fifteen minutes before an error. The open now gives up after about a minute (at the default 30 s connection timeout) and
   releases the buffer it had started.
+- **A server timeshift that cannot reach the buffer's file server now says so.** The plugin serves the buffer from its own
+  port (`http_port`, 9192 by default), which the Dispatcharr container has to publish; when it was not reachable, the
+  channel spun for about 30 seconds and then exited with no explanation. The addon now checks that port when the channel
+  opens and shows a message naming it, within a few seconds.
 
 ### Changed
 

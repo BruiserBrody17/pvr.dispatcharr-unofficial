@@ -2171,6 +2171,32 @@ int XferInfoCallback(void* clientp, curl_off_t, curl_off_t, curl_off_t, curl_off
 }
 } // namespace
 
+bool DispatcharrClient::ProbeTimeshiftFileServer(const std::string& url)
+{
+  CURL* curl = curl_easy_init();
+  if (!curl)
+    return true;
+  // Headers only: a reachable file server answers 403 (no token) and the body is of no interest.
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+  ApplyStandardCurlOptions(curl, GetCurlShare());
+  // The short bound, like the other calls a viewer is made to wait for (RequestTimeout.h): a port nothing answers on
+  // must not cost the whole configured timeout.
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, ShortRequestTimeoutMs());
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, ShortRequestTimeoutMs());
+  const CURLcode res = curl_easy_perform(curl);
+  long httpCode = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+  curl_easy_cleanup(curl);
+  if (res == CURLE_ABORTED_BY_CALLBACK)
+    return true;
+  const bool reachable = IsTimeshiftFileServerReachable(res == CURLE_OK, httpCode);
+  kodi::Log(reachable ? ADDON_LOG_DEBUG : ADDON_LOG_WARNING,
+            "pvr.dispatcharr-unofficial: ProbeTimeshiftFileServer: curlResult=%d (%s) httpCode=%ld -> %s",
+            static_cast<int>(res), curl_easy_strerror(res), httpCode, reachable ? "reachable" : "unreachable");
+  return reachable;
+}
+
 void DispatcharrClient::ApplyStandardCurlOptions(void* curlPtr, void* share) const
 {
   CURL* curl = static_cast<CURL*>(curlPtr);
@@ -4001,6 +4027,7 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
     return false;
   }
   m_liveTimeshiftStream.segmentBaseUrl = std::move(newSegmentBaseUrl);
+  m_liveTimeshiftStream.fileServerPort = httpPort;
 
   // Segments come back ordered by sequence; only ones newer than what we already know get appended, each
   // extending OUR cumulative address space (not reusing the response's own relative offsets -- see this method's
@@ -4297,6 +4324,36 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
     return false;
   }
 
+  // The buffer is running and its manifest came back through Dispatcharr's own port, but the segments are read from the
+  // plugin's file server on another port, which has to be published by the container and match the plugin's
+  // `http_port` setting. When it is not reachable every segment read fails until Kodi gives the stream up (a spinner
+  // for about 30 s, then the channel exits, with nothing saying why), so ask once now and say so.
+  {
+    std::string probeUrl;
+    int probePort = 0;
+    {
+      std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
+      probeUrl = m_liveTimeshiftStream.segmentBaseUrl;
+      probePort = m_liveTimeshiftStream.fileServerPort;
+    }
+    if (!probeUrl.empty() && !ProbeTimeshiftFileServer(probeUrl))
+    {
+      error = BuildTimeshiftFileServerUnreachableMessage(probePort);
+      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: OpenLiveTimeshiftStream: %s", error.c_str());
+      kodi::QueueNotification(QUEUE_ERROR, "", error);
+      // Same cleanup as a cold start that never produced a manifest: the viewer registered above must not keep the
+      // buffer (and a provider slot) running until the plugin's reaper notices.
+      std::string stopError;
+      StopTimeshiftBuffer(channelUuid, viewerId, stopError);
+      {
+        std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
+        m_liveTimeshiftStream = LiveTimeshiftStreamState();
+        ++m_liveSession;
+      }
+      return false;
+    }
+  }
+
   // Discard everything except the trailing kLiveEdgeMarginSegments worth of
   // segments from what the cold-start fetch above just returned, rebasing
   // the kept ones so the oldest of them becomes local byte 0 -- **confirmed
@@ -4409,11 +4466,21 @@ int DispatcharrClient::HandleLiveTimeshiftSegmentFetchFailure()
               "pvr.dispatcharr-unofficial: ReadLiveTimeshiftStream: giving up after %d consecutive segment fetch "
               "failure(s) (manifest refresh reported fatal=%s%s%s) -- marking stream fatal",
               failures, refreshFatal ? "true" : "false", refreshError.empty() ? "" : ": ", refreshError.c_str());
+    std::string probeUrl;
+    int probePort = 0;
     {
       std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
       if (m_liveSession == session)
+      {
         m_liveTimeshiftStream.fatal = true;
+        probeUrl = m_liveTimeshiftStream.segmentBaseUrl;
+        probePort = m_liveTimeshiftStream.fileServerPort;
+      }
     }
+    // A file server that stopped answering mid-session (the container restarted without the port, a firewall rule)
+    // looks the same to the viewer as any dead stream; name it when that is what it is.
+    if (!probeUrl.empty() && !ProbeTimeshiftFileServer(probeUrl))
+      kodi::QueueNotification(QUEUE_ERROR, "", BuildTimeshiftFileServerUnreachableMessage(probePort));
     return -1;
   }
 

@@ -19,4 +19,15 @@ std::string BuildTimeshiftSegmentBaseUrl(const std::string& host, int httpPort, 
   return "http://" + FormatHostForUrl(host) + ":" + std::to_string(httpPort) + segmentRoutePrefix;
 }
 
+bool IsTimeshiftFileServerReachable(bool transferOk, long httpCode)
+{
+  return transferOk && httpCode > 0;
+}
+
+std::string BuildTimeshiftFileServerUnreachableMessage(int httpPort)
+{
+  return "Can't reach Dispatcharr's timeshift file server on port " + std::to_string(httpPort) +
+         ". Publish that port and make it match the plugin's http_port setting.";
+}
+
 } // namespace dispatcharr

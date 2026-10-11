@@ -46,6 +46,7 @@ A run prints `RESULT fails=N` and `rc=0` when it passed.
 | `ip_blackhole_close` | Stop while a reader waits at the tail of an in-progress recording and the API hangs: the longest blocked `Read()` is how long Stop waits |
 | `rec_range_dropped` | a proxy starts dropping `Range` and sends the whole file slowly: the read must end the stream at once |
 | `live_silent_open`, `ip_silent_open` | a server that answers the start request and then never answers the first manifest (live), or answers a missing playlist slowly (in-progress, by hand, about a minute): the open must end once its wall-clock budget has passed, not after every try has taken the full timeout (run with `TMO=5`) |
+| `live_fileserver_unreachable` | the buffer starts but the plugin's file server port is not reachable: the open must fail at once with an error naming the port (and queue a notification), and open fine once the port is reachable again |
 | `live_slow_open` | an API answering every request in 6 s: Open must still succeed (its cold-start wait uses the configured timeout) |
 | `ip_cascade` | a 400-segment backlog with one transient probe failure: the whole backlog must merge within about a second |
 | `dtor_inflight` | destroying the client with a request in flight (run.sh turns leak detection off for it: the leak is the documented limit below) |

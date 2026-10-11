@@ -4,22 +4,22 @@
 
 ## Status at a glance
 
-**8 open, 293 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but two open items came from the
+**7 open, 294 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other two came from the
-stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`) and from a user report.
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other came from the
+stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 1 |
+| Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 256 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 257 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 28 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -32,10 +32,6 @@ stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`) and fr
 **Opened 2026-10-11, left over from the open-time cap item (`docs/CLOSED_ITEMS.md`, "Put a wall-clock cap on a stream open").** The two cold-start loops are now bounded (about 60 s live and 75 s in progress at the default timeout, plus the try in flight), but nothing cancels one earlier: the abort flag (`m_abortRequests`) is set only when the addon instance is destroyed. What is not known is whether a viewer can still cause a Stop while an open is running: Kodi may call `CloseLiveStream()` from another thread during the spinner (then `m_liveTimeshiftStream.open`, already true during the loop, could be checked per try) or may wait for `OpenLiveStream()` to return first. Measure that first: with a forwarder holding `get_live_manifest` as in the closed entry, press Back during the spinner and time Kodi's return to the channel list, and read the log for whether `CloseLiveTimeshiftStream()` ran before the open ended. If Kodi waits, there is nothing for the addon to do and this closes as explained; if it calls close concurrently, the loop should stop on a closed session (a per-open flag or the session counter, not the shutdown flag).
 
 ### Fix known, not yet done
-
-#### Say why a server-timeshift open fails when the buffer's file server cannot be reached
-
-**Opened 2026-10-11, from a user report (Docker install, server timeshift: the channel spins for about 30 s and then exits, local timeshift works); the cause was confirmed the same day: the file server's port was wrong (not the number the plugin listens on), and the channel played once it was corrected.** The buffer starts and its files appear on the server, so `start_buffer` and the manifest calls (through Dispatcharr's own port) succeed and the open completes; only the first segment read goes to the plugin's file server on `http_port` (default 9192, a separate port that has to be published by the container and match the plugin's setting), and when that port is not reachable from the Kodi device (not published, published under another number than the setting, a host firewall) every fetch fails to connect. `ReadLiveTimeshiftStream()` retries for its 25 s outage budget, answers 0, and Kodi ends the stream: the viewer sees a spinner and then nothing, and nothing in Kodi says why (the log has the connect failures at debug level only). The README says to map the port, but a user who maps a different one gets no signal. The fix: probe the file server at the end of the open (one request to `http://<host>:<http_port>/`, which answers 403 when it is alive; any HTTP answer counts as reachable, a connect failure or timeout within the short request bound does not), fail the open at once on a connect failure, and queue a notification that names the port and says it must be published and match the plugin's `http_port` setting; the same message when a running stream is given up on after connect failures to that port. The new pure part (classify a probe result) gets a unit test; the glue harness can refuse connections on the fake's file-server port. Confirm live by pointing the plugin's `http_port` at a port nothing publishes (or blocking it with the forwarder) and opening a channel: today the 30 s spinner, after the change a notification within a few seconds. Also add a line to `docs/TROUBLESHOOTING.md` and the plugin's README for the symptom (spinner then exit, buffer files on disk).
 
 ### Architectural / concurrency
 

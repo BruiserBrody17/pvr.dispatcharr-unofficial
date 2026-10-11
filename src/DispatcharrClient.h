@@ -1192,6 +1192,10 @@ private:
   // separate). `curl`/`share` are void* (actually CURL*/CURLSH*) for the
   // same reason as GetCurlShare().
   void ApplyStandardCurlOptions(void* curl, void* share) const;
+
+  // One short request to the timeshift_buffer plugin's file server (see dispatcharr::IsTimeshiftFileServerReachable()):
+  // false only when nothing answered. A probe cut short by the shutdown abort says nothing, so it counts as reachable.
+  bool ProbeTimeshiftFileServer(const std::string& url);
   // Set once the addon instance is being torn down: every request in flight, and every
   // one started afterwards, then ends at once instead of running to its timeout.
   // Mutable because ApplyStandardCurlOptions() is const and hands libcurl its address.
@@ -1482,6 +1486,7 @@ private:
     // fetch, since it doesn't change for the life of the buffer.
     std::string accessToken;
     std::string segmentBaseUrl; // "http://host:port/<uuid>/" -- filename appended per-request
+    int fileServerPort = 0;     // the port in segmentBaseUrl, for the message when it cannot be reached
     // Ordered by sequence, append-only for the life of this open stream --
     // byteOffset/timeOffsetMs are this stream's OWN fixed-origin addressing,
     // deliberately NOT the plugin response's own (relative-to-that-fetch)

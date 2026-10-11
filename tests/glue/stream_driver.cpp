@@ -920,6 +920,35 @@ static void silent_open(DispatcharrClient& cl, bool inProgress)
     FAIL("the open took %ld ms against a silent server (budget %ld ms): the loop is not bounded by it", took, budgetMs);
 }
 
+// The buffer starts and its manifest comes back through the API port, but the plugin's file server (a different port
+// the container has to publish) cannot be reached: the open used to succeed and every segment read then failed until
+// Kodi gave the stream up, a spinner for about 30 s and a channel that exited with nothing saying why. The open now
+// probes the file server and fails at once, naming the port (the stub prints the notification as a "[notify]" line).
+static void live_fileserver_unreachable(DispatcharrClient& cl)
+{
+  ctl("fs_port=1"); // nothing listens there: the connection is refused
+  std::string err;
+  const long t0 = ms();
+  const bool ok = cl.OpenLiveTimeshiftStream("uuid", err);
+  const long took = ms() - t0;
+  INFO("open with the file server's port unreachable: ok=%d in %ld ms err=%s", ok, took, err.c_str());
+  if (ok)
+    FAIL("the open succeeded although the file server cannot be reached");
+  if (err.find("port 1") == std::string::npos)
+    FAIL("the error does not name the port: %s", err.c_str());
+  if (took > 15000)
+    FAIL("the open took %ld ms to notice an unreachable file server", took);
+  if (cl.IsLiveTimeshiftStreamOpen())
+    FAIL("the stream was left open after the failed open");
+  // And the same server, reachable again: the open must work (the probe is not sticky).
+  ctl("fs_port=0");
+  err.clear();
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+    FAIL("the open failed once the file server was reachable: %s", err.c_str());
+  else
+    cl.CloseLiveTimeshiftStream();
+}
+
 // A proxy that starts dropping Range mid-playback and sends the whole file slowly: the read at a non-zero offset
 // must end the stream at once, not after downloading (and discarding) the file or waiting out the timeout (the
 // fifteenth sweep's follow-up to the open-time Range probe fix).
@@ -1112,6 +1141,8 @@ int main(int argc, char** argv)
       silent_open(*cl, false);
     else if (what == "ip_silent_open")
       silent_open(*cl, true);
+    else if (what == "live_fileserver_unreachable")
+      live_fileserver_unreachable(*cl);
     else if (what == "live_slow_open")
       live_slow_open(*cl);
     else if (what == "ip_cascade")

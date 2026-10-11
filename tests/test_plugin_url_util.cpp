@@ -58,3 +58,29 @@ TEST_CASE("BuildTimeshiftSegmentBaseUrl brackets an IPv6 host literal", "[Plugin
   CHECK(BuildTimeshiftSegmentBaseUrl("2001:db8::1", 9192, "/segments/abc/") ==
         "http://[2001:db8::1]:9192/segments/abc/");
 }
+
+// IsTimeshiftFileServerReachable
+TEST_CASE("IsTimeshiftFileServerReachable counts any HTTP answer, including the token-less 403", "[PluginUrlUtil]")
+{
+  CHECK(IsTimeshiftFileServerReachable(true, 403));
+  CHECK(IsTimeshiftFileServerReachable(true, 200));
+  CHECK(IsTimeshiftFileServerReachable(true, 404));
+  CHECK(IsTimeshiftFileServerReachable(true, 501));
+}
+
+TEST_CASE("IsTimeshiftFileServerReachable rejects a failed transfer, whatever status was left behind",
+          "[PluginUrlUtil]")
+{
+  // A refused or timed-out connection has no status (0); a stale one must not make it look reachable.
+  CHECK_FALSE(IsTimeshiftFileServerReachable(false, 0));
+  CHECK_FALSE(IsTimeshiftFileServerReachable(false, 403));
+  CHECK_FALSE(IsTimeshiftFileServerReachable(true, 0));
+}
+
+TEST_CASE("BuildTimeshiftFileServerUnreachableMessage names the port", "[PluginUrlUtil]")
+{
+  const std::string message = BuildTimeshiftFileServerUnreachableMessage(9192);
+  CHECK(message.find("9192") != std::string::npos);
+  CHECK(message.find("http_port") != std::string::npos);
+  CHECK(BuildTimeshiftFileServerUnreachableMessage(9393).find("9393") != std::string::npos);
+}

@@ -600,7 +600,7 @@ class H(BaseHTTPRequestHandler):
                         "success": True,
                         "result": {
                             "status": "ok",
-                            "http_port": PORT,
+                            "http_port": ctl_int("fs_port", 0) or PORT,
                             "segment_route_prefix": "/tsbuf/u/",
                             "segments": segs,
                             "ended": CTL["live_ended"] == "1",

@@ -434,6 +434,21 @@ specifically:
 "M3U / EPG Endpoints" and add the Kodi client's own actual source IP
 (or range) to the allowed list.
 
+## Server timeshift: spinner for about 30 s, then the channel exits (buffer files are on the server)
+
+The timeshift buffer plugin serves the buffer's segments from its own file server, on its `http_port` setting (default
+9192), not on Dispatcharr's port. Starting the buffer and listing it go through Dispatcharr's own port, so a buffer
+starts and its files appear on disk even when Kodi cannot reach the file server; "Start Test Buffer" in the plugin's
+page runs entirely inside the container and succeeds too. The port has to be published by the container
+(`-p 9192:9192`, or whatever number the setting holds, the same number on both sides) and reachable from the Kodi
+device. Since the open-time probe (2026-10-11) the addon says so: a notification names the port, and the log has
+`ProbeTimeshiftFileServer: ... unreachable`. On an older build the same cause showed as a spinner that ended the channel
+after about 30 s, with `giving up after N consecutive segment fetch failure(s)` in the debug log. To check by hand from
+the Kodi device: `curl -i http://<dispatcharr-host>:<http_port>/` answers `403 Forbidden` when the file server is
+reachable (a connection refused or a hang means it is not). Confirmed live (`docs/CLOSED_ITEMS.md`, "Say why a
+server-timeshift open fails when the buffer's file server cannot be reached"); first met in a Docker install where
+the number in the plugin's setting and the published port differed.
+
 ## Stalls or slow channel starts that come from the stream itself
 
 Some playback problems start upstream of the addon: a provider CDN that pauses, a timestamp break in the stream, or a

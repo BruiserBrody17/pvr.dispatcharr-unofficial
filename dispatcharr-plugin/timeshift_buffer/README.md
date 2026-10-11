@@ -61,6 +61,9 @@ section for why.
 4. **Map `http_port` (default `9192`) through your container config**,
    the same way `9191` already is -- without this, the plugin's file
    server is only reachable from inside the container.
+   The number in the plugin's `http_port` setting and the published port must be the same: if they differ, the buffer
+   starts but Kodi cannot read it (the addon now says so with a notification; `curl -i http://<host>:<http_port>/` from the
+   Kodi device should answer `403`).
    The file server listens on IPv6 as well as IPv4 where the host has
    IPv6 (a dual-stack `::` socket), and on IPv4 alone where it doesn't.
 5. Check `internal_base_url` matches how this plugin reaches Dispatcharr's
