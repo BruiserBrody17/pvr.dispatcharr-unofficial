@@ -566,6 +566,23 @@ int main(int argc, char** argv)
           FAIL("a recording with no numbers shows %d / %d", plain->iSeriesNumber, plain->iEpisodeNumber);
       }
     }
+    // A recording nothing titled shows its channel's name, not "Recording <id>"; one with a title keeps it.
+    {
+      Collected titleRecs;
+      A()->GetRecordings(I(), (PVR_HANDLE)&titleRecs, false);
+      std::string untitled, titled;
+      for (const auto& rec : titleRecs.recordings)
+      {
+        if (std::string(rec.strRecordingId) == "910")
+          untitled = rec.strTitle;
+        else if (std::string(rec.strRecordingId) == "908")
+          titled = rec.strTitle;
+      }
+      if (untitled != "Channel 1")
+        FAIL("a recording with no title shows '%s', expected its channel's name", untitled.c_str());
+      if (titled != "Enriched show")
+        FAIL("a recording with a title shows '%s'", titled.c_str());
+    }
     // The EDL: what comskip left decides whether the plugin is asked at all, and a break over the whole recording is
     // dropped. Three hour-long recordings in the fake: no commercials found (905), an ordinary break (906), one break
     // over the whole hour (907). The fake's plugin answers with a break for each whatever the metadata says.

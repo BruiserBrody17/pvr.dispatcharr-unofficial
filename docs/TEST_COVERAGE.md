@@ -2547,6 +2547,8 @@ and 0.28 to 1.37 s after (`docs/CLOSED_ITEMS.md`).
 
 2026-10-11: `IsTimeshiftFileServerReachable()` and `BuildTimeshiftFileServerUnreachableMessage()` (`PluginUrlUtil.h`, `tests/test_plugin_url_util.cpp`: any HTTP answer including the token-less 403 is reachable; a failed transfer is not, whatever stale status was left behind; the message names the port and the setting) decide the open-time probe of the plugin's file server. The glue harness gained the live_fileserver_unreachable scenario (the fake's fs_port knob reports a port nothing listens on: the open must fail at once with the port in the error, and succeed again once it is reachable; it fails on the old code, where the open succeeded; in CI's glue run). Checked live through a forwarder that exposed only the API port: 35.4 s of spinner before, 3.5 s to the notification after (`docs/CLOSED_ITEMS.md`).
 
+2026-10-11: `DisplayTitleForRecording()` (`RecordingParser.h`, `tests/test_recording_parser.cpp`: a placeholder takes the channel's name, a real title is never replaced even when it looks like the placeholder, no known channel name keeps the placeholder) picks what Kodi shows for a recording nothing titled. The glue harness's functional scenario gained fake recording 910 (completed, no title, on a named channel: it must show the channel's name; it fails with the substitution removed) beside the titled 908. Checked live: a recording Kodi had listed as "Recording <id>" showed its channel's name (`docs/CLOSED_ITEMS.md`).
+
 See `docs/CLOSED_ITEMS.md`'s "No automated test suite exists" entry for
 the full reasoning and what's still open on both sides. Verification of
 everything else stays manual: smoke-testing against a real Dispatcharr

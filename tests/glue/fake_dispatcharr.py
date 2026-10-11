@@ -280,6 +280,16 @@ def pvr_route(h, method, p, q, body):
                 },
             }
         )
+        # A recording nothing titled (no guide data when it was made): its channel's name stands in for "Recording 910".
+        lst.append(
+            {
+                "id": 910,
+                "channel": 1,
+                "start_time": "2026-10-03T14:00:00Z",
+                "end_time": "2026-10-03T15:00:00Z",
+                "custom_properties": {"status": "completed"},
+            }
+        )
         lst.append(
             {
                 "id": 7,

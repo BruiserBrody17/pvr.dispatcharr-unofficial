@@ -228,6 +228,11 @@ Recording ParseRecordingFields(const nlohmann::json& item, time_t now)
   return r;
 }
 
+std::string DisplayTitleForRecording(const std::string& title, bool titleIsPlaceholder, const std::string& channelName)
+{
+  return titleIsPlaceholder && !channelName.empty() ? channelName : title;
+}
+
 ComskipInfo ParseComskipInfo(const nlohmann::json& custom)
 {
   ComskipInfo info;

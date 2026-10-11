@@ -738,3 +738,20 @@ TEST_CASE("ParseRecordingFields reads season and episode from custom_properties,
     CHECK(r.episodeNumber == -1);
   }
 }
+
+TEST_CASE("DisplayTitleForRecording shows the channel name for a recording nothing titled", "[RecordingParser]")
+{
+  CHECK(DisplayTitleForRecording("Recording 1234", true, "Channel A") == "Channel A");
+}
+
+TEST_CASE("DisplayTitleForRecording never replaces a real title", "[RecordingParser]")
+{
+  CHECK(DisplayTitleForRecording("Show Name", false, "Channel A") == "Show Name");
+  // A title that merely looks like the placeholder is still a real one when the parser did not default it.
+  CHECK(DisplayTitleForRecording("Recording 7", false, "Channel A") == "Recording 7");
+}
+
+TEST_CASE("DisplayTitleForRecording keeps the placeholder when the channel has no known name", "[RecordingParser]")
+{
+  CHECK(DisplayTitleForRecording("Recording 1234", true, "") == "Recording 1234");
+}

@@ -9,6 +9,7 @@
 #include "EdlDecision.h"
 #include "EpgTagUtil.h"
 #include "RealtimeUpdateParser.h"
+#include "RecordingParser.h"
 #include "RecordingDirectory.h"
 #include "RecordingVisibility.h"
 #include "RecurringRuleRenewal.h"
@@ -2590,6 +2591,18 @@ bool PVRDispatcharr::EnsureRecordingsLoaded()
     kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: recordings cache refreshed (%zu recording(s))",
               recordings.size());
   std::lock_guard<std::mutex> lock(m_dataMutex);
+  // The channel's name stands in for a recording nothing titled, here rather than at display time so every reader of
+  // the cache (the recordings list, the timers list, and the timer-edit check that compares a title Kodi echoes back
+  // against the cached one) sees the same title. See dispatcharr::DisplayTitleForRecording().
+  for (auto& rec : recordings)
+  {
+    if (!rec.titleIsPlaceholder)
+      continue;
+    const auto channel = std::find_if(m_channels.begin(), m_channels.end(),
+                                      [&rec](const Channel& ch) { return ch.id == rec.channelId; });
+    if (channel != m_channels.end())
+      rec.title = dispatcharr::DisplayTitleForRecording(rec.title, rec.titleIsPlaceholder, channel->name);
+  }
   m_cachedRecordings = std::move(recordings);
   m_recordingsEverLoaded = true;
   // Not marked fresh when an invalidation landed while this fetch was running: its result

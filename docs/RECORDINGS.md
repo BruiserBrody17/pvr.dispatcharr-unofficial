@@ -1235,6 +1235,12 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   correct-by-construction (a pure fallback, only consulted when the
   server-provided title is still empty) rather than confirmed against a
   reproduced failure the way most fixes in this file are.
+  A recording nothing ever titled (no guide data when it was made, so no
+  enrichment, and the three minutes are over) used to stay "Recording <id>"
+  for good; it now shows its channel's name instead (2026-10-11,
+  `docs/CLOSED_ITEMS.md`, "A recording nothing titled showed as ..."), which is
+  what Kodi itself titles an instant recording and, on an event-named channel,
+  the event.
 - **The entire `inputstream.ffmpegdirect`-based in-progress recording
   mechanism documented at length above -- `LocalPlaylistServer`, the
   gradual-cap join-position workaround, the "Play live"/"Play from start"

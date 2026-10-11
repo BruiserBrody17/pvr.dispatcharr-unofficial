@@ -1329,7 +1329,10 @@ Recording DispatcharrClient::ParseRecordingJson(const json& item, time_t now)
       r.title = match->title;
   }
   if (r.title.empty())
+  {
     r.title = "Recording " + std::to_string(r.id);
+    r.titleIsPlaceholder = true;
+  }
   return r;
 }
 

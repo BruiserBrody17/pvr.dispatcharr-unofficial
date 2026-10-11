@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**7 open, 294 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
+**8 open, 295 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other came from the
 stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
@@ -14,12 +14,12 @@ stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
 | Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 4 |
+| Open: Design decision needed | 5 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 257 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 258 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 28 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -36,6 +36,10 @@ stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
 ### Architectural / concurrency
 
 ### Design decision needed
+
+#### Keep a title the user typed for a manual timer
+
+**Opened 2026-10-11, left over from the untitled-recording fix (`docs/CLOSED_ITEMS.md`, the entry on a recording nothing titled).** `AddTimer()` keeps the title Kodi sends for three minutes (`PendingTitle`) and never writes it to the server, because the one write available, `RenameRecording()` (the `update-metadata` endpoint), stores `custom_properties.program.title` and marks the recording `user_edited`, which stops Dispatcharr's own later enrichment (description, poster, programme data) for it. For a recording Kodi named from the guide or the channel that is the right trade (enrichment supplies the title, the channel name stands in now), but a manual timer whose Name field the user typed loses that name after three minutes and shows the channel name instead. The difficulty is telling a typed name from Kodi's default: the default is the localized string "New Timer", which the addon cannot compare against reliably. Decisions: whether to persist the title for a manual timer (`timer.GetEPGUid() == PVR_TIMER_NO_EPG_UID`) only when it differs from the channel's name and from "New Timer" in the languages Kodi ships, or to persist it client-side in the addon's data like `RecordingEpgLinks` (survives restarts, not other Kodi clients), or to leave it. Confirm live with a manual timer named by hand: after the change the name must survive the three minutes and a Kodi restart, and a manual timer left at Kodi's default must still pick up the programme's title from Dispatcharr's enrichment.
 
 #### Report the connection state to Kodi instead of hand-rolled notifications
 

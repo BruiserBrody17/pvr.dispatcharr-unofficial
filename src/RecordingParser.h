@@ -5,6 +5,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include <ctime>
+#include <string>
 
 namespace dispatcharr
 {
@@ -14,6 +15,14 @@ namespace dispatcharr
 // (found by the 2026-10-04 fourth hardening sweep; a 64-bit time_t can hold the difference, an int
 // cannot).
 int ClampedDurationSeconds(time_t start, time_t end);
+
+// What Kodi shows for a recording or timer. A recording Dispatcharr gave no title (no guide data for the time it was
+// made, so nothing enriched it) and that carries no title Kodi sent with the request (that one is kept for three
+// minutes only, see PendingTitle) used to show as "Recording <id>", which says nothing about what it is. The channel's
+// own name is what Kodi itself uses for an instant recording, and on a channel named for its event (a provider's
+// pay-per-view or sports slot) it is the event; a recording that has a real title is never touched, and a channel with
+// no known name leaves the placeholder.
+std::string DisplayTitleForRecording(const std::string& title, bool titleIsPlaceholder, const std::string& channelName);
 
 // Pure field-mapping core of DispatcharrClient::ParseRecordingJson -- maps
 // a single /api/channels/recordings/ item onto a Recording, including its

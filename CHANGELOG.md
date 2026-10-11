@@ -42,6 +42,9 @@ compare against.
   port (`http_port`, 9192 by default), which the Dispatcharr container has to publish; when it was not reachable, the
   channel spun for about 30 seconds and then exited with no explanation. The addon now checks that port when the channel
   opens and shows a message naming it, within a few seconds.
+- **A recording nothing titled now shows its channel's name instead of "Recording" and a number.** When a channel had no
+  guide data for the time a recording was made, Dispatcharr had no programme to name it after and Kodi listed it as
+  "Recording 1234". It now shows the channel's name, which on a channel named for its event is the event.
 
 ### Changed
 

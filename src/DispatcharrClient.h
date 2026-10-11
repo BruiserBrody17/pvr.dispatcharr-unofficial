@@ -178,6 +178,9 @@ struct Recording
   // these are read out of custom_properties on a best-effort basis, see
   // DispatcharrClient.cpp.
   std::string title;
+  // True when `title` is the addon's own "Recording <id>" default: neither Dispatcharr nor a title Kodi sent with the
+  // request had one. See dispatcharr::DisplayTitleForRecording().
+  bool titleIsPlaceholder = false;
   std::string subtitle;
   std::string description;
   time_t startTime = 0;
