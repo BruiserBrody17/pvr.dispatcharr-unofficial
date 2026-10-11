@@ -387,3 +387,26 @@ TEST_CASE("category keyword matching does not depend on the process locale", "[E
   if (!switched)
     WARN("no Turkish locale installed; only the C locale was exercised");
 }
+
+// ---------------------------------------------------------------------
+// BuildXmlTvQuery
+// ---------------------------------------------------------------------
+
+TEST_CASE("BuildXmlTvQuery always names the channel-id source and adds nothing else by default", "[EpgTagUtil]")
+{
+  CHECK(BuildXmlTvQuery(0) == "?tvg_id_source=channel_number");
+}
+
+TEST_CASE("BuildXmlTvQuery adds prev_days only when it is positive", "[EpgTagUtil]")
+{
+  CHECK(BuildXmlTvQuery(3) == "?tvg_id_source=channel_number&prev_days=3");
+  CHECK(BuildXmlTvQuery(30) == "?tvg_id_source=channel_number&prev_days=30");
+  CHECK(BuildXmlTvQuery(-1) == "?tvg_id_source=channel_number");
+}
+
+TEST_CASE("BuildXmlTvQuery never asks for a forward window", "[EpgTagUtil]")
+{
+  // See its comment: `days` is not a limit on what the account already gets, and a long one outgrows the response cap.
+  CHECK(BuildXmlTvQuery(3).find("&days=") == std::string::npos);
+  CHECK(BuildXmlTvQuery(0).find("days") == std::string::npos);
+}

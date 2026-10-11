@@ -23,6 +23,10 @@ compare against.
 
 ### Changed
 
+- **Guide requests name the channel-id source**: the guide is now asked for with `tvg_id_source=channel_number`,
+  Dispatcharr's own default, so a later Dispatcharr release that changed that default could not mismatch channels and
+  their guides. The guide you get is identical.
+
 - Checked against Dispatcharr `0.32.0`: no addon change was needed. In-progress recording playback (Dispatcharr now
   writes those as event playlists), catch-up, timers and recurring rules, the real-time recording push and live
   timeshift all work against it, on a 64-bit Android phone and on the other devices tested.

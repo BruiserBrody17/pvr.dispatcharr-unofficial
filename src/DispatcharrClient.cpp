@@ -8,6 +8,7 @@
 #include "ChannelParser.h"
 #include "CurlCallbacks.h"
 #include "DateTimeFormat.h"
+#include "EpgTagUtil.h"
 #include "HlsViewerKeepAlive.h"
 #include "InProgressSegmentCache.h"
 #include "UnprobeableSegment.h"
@@ -828,9 +829,7 @@ bool DispatcharrClient::GetXmlTvGuide(std::string& xmlOut, std::string& error, l
     error = "Failed to initialise libcurl";
     return false;
   }
-  std::string url = BaseUrl() + kEpgOutputPath;
-  if (prevDays > 0)
-    url += "?prev_days=" + std::to_string(prevDays);
+  std::string url = BaseUrl() + kEpgOutputPath + BuildXmlTvQuery(prevDays);
   xmlOut.clear();
   BoundedStringSink xmlSink{&xmlOut, kMaxXmlTvResponseBytes};
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());

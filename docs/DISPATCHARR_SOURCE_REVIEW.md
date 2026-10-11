@@ -87,9 +87,10 @@ carries these values instead of the two the addon had seen in real rules.
 
 `epg_endpoint` in `apps/output/views.py` reads `tvg_id_source` (default `channel_number`; also `tvg_id` and `gracenote`),
 `days` (default: the account's `epg_days` custom property, 0 meaning no limit), `prev_days`, `cachedlogos` and `direct`.
-`GetXmlTvGuide()` sends only `prev_days`; the parser's assumption that `<channel id>` is the channel number (recorded in
-`docs/API_NOTES.md`'s table) rests on the server default. Open item: "Pin the XMLTV export's channel-id source and day
-window explicitly".
+`GetXmlTvGuide()` used to send only `prev_days`, so the parser's assumption that `<channel id>` is the channel number
+(recorded in `docs/API_NOTES.md`'s table) rested on the server default. It now sends `tvg_id_source=channel_number` as
+well; sending `days` was measured and left out (closed item: "Pin the XMLTV export's channel-id source and day window
+explicitly").
 
 ### Looked at and left alone
 

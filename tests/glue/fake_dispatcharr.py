@@ -158,6 +158,9 @@ def xmltv():
     return "".join(parts).encode()
 
 
+LAST_EPG_QUERY = {"q": {}}  # the query of the latest /output/epg request, for the harness to assert
+
+
 def pvr_route(h, method, p, q, body):
     if CTL["pvr_api_500"] == "1":
         return h.J(500, {"detail": "boom"})
@@ -182,6 +185,7 @@ def pvr_route(h, method, p, q, body):
     if p == "/api/channels/groups/":
         return h.J(200, [{"id": 1, "name": "G1"}, {"id": 2, "name": "G2"}, {"id": 3, "name": "Empty"}])
     if p == "/output/epg":
+        LAST_EPG_QUERY["q"] = {k: v[0] for k, v in q.items()}
         if CTL["epg_slow_ms"]:
             time.sleep(ctl_int("epg_slow_ms") / 1000.0)
         return h.send(200, xmltv(), "application/xml")
@@ -385,6 +389,8 @@ class H(BaseHTTPRequestHandler):
             return self.websocket()
         if p == "/__stats":
             return self.J(200, dict(counts))
+        if p == "/__epgquery":
+            return self.J(200, LAST_EPG_QUERY["q"])
         if p == "/__ctl":
             for k, v in q.items():
                 CTL[k] = v[0]

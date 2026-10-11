@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**13 open, 284 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
+**12 open, 285 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other was found during the
 radio channel live check.
@@ -12,14 +12,14 @@ radio channel live check.
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 2 |
-| Open: Fix known, not yet done | 3 |
+| Open: Fix known, not yet done | 2 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 249 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 250 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 26 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -84,18 +84,6 @@ servers and recordings behave as today), table-tested, consulted before `GetReco
 against the plugin's own handling of the same cases (`dispatcharr-plugin/recording_edl/plugin.py` distinguishes them
 by the file, not the mode key) so the two never disagree on a recording that does have markers, and live with one
 marked and one cut recording.
-
-#### Pin the XMLTV export's channel-id source and day window explicitly
-
-**Opened 2026-10-10, from the Dispatcharr source review.** `/output/epg` (`epg_endpoint` in `apps/output/views.py`)
-takes `tvg_id_source` (`channel_number` by default, also `tvg_id` and `gracenote`), `days` (defaulting to the account's
-`epg_days` custom property, 0 meaning no limit) and `prev_days`. `GetXmlTvGuide()` sends only `prev_days`; the parser's
-assumption that `<channel id>` is the channel number (`docs/API_NOTES.md`'s table) rests on the server default, and the
-forward window rests on whatever the account's `epg_days` happens to be. The change: send `tvg_id_source=channel_number`
-always, and consider sending `days` from Kodi's own EPG future-days value (`SetEPGMaxFutureDays`, not yet overridden)
-instead of inheriting the account's. Confirm live that the export is byte-identical with and without the explicit
-source parameter on a 0.32.0 server, and that an account with a non-zero `epg_days` still gets the window Kodi asked
-for.
 
 ### Architectural / concurrency
 

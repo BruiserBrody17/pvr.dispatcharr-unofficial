@@ -527,6 +527,14 @@ int main(int argc, char** argv)
         }
       }
     }
+    // The guide fetch names the channel-id source and the catch-up depth of the fake's channels (3), and no forward
+    // window.
+    {
+      std::string q = http("/__epgquery");
+      if (q.find("\"tvg_id_source\": \"channel_number\"") == std::string::npos ||
+          q.find("\"prev_days\": \"3\"") == std::string::npos || q.find("\"days\": ") != std::string::npos)
+        FAIL("the guide was fetched with the query %s", q.c_str());
+    }
     time_t now = time(nullptr);
     // EPG-based one-time on channel 6 (5.1), next programme
     PVR_TIMER t{};

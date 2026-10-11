@@ -213,4 +213,12 @@ int ComputeGuidePrevDays(const std::vector<int>& offeredCatchupDays)
   return std::min(days, kServerMaxPrevDays);
 }
 
+std::string BuildXmlTvQuery(int prevDays)
+{
+  std::string query = "?tvg_id_source=channel_number";
+  if (prevDays > 0)
+    query += "&prev_days=" + std::to_string(prevDays);
+  return query;
+}
+
 } // namespace dispatcharr

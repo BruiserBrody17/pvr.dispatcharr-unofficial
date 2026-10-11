@@ -140,4 +140,18 @@ bool ShouldOfferCatchup(bool channelCatchupEnabled, bool catchupEnabledGlobally,
 // largest window is simply asked for and the server's own 30-day cap applied here as well.
 int ComputeGuidePrevDays(const std::vector<int>& offeredCatchupDays);
 
+// The query string of the guide fetch (`/output/epg?...`): always the channel-id source, plus `prev_days` when asked.
+//
+// `tvg_id_source=channel_number` is Dispatcharr's own default, sent anyway so the parser's assumption (every
+// `<channel id>` is the channel's number, see FormatChannelGuideKey()) does not rest on a default a later release could
+// change; measured against a real 0.32.0 instance the export is byte-identical with and without it.
+//
+// There is deliberately no `days`. It looks like a way to ask for no more than Kodi shows, but measured on a real
+// instance the window it gives is not smaller than what the account already gets: at Kodi's own default length the
+// export was within a few percent of the unrestricted one, and at twice that it was about half as large again with
+// twice the programmes. The response cap (kMaxXmlTvResponseBytes) is 256 MB on a 32-bit build, so a Kodi set to a long
+// window would have pushed the guide past it; the account's own `epg_days` stays the only forward limit
+// (docs/CLOSED_ITEMS.md, "Pin the XMLTV export's channel-id source and day window explicitly").
+std::string BuildXmlTvQuery(int prevDays);
+
 } // namespace dispatcharr
