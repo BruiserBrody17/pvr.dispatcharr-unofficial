@@ -68,8 +68,9 @@ item below, not as a separate item.
 `video_codec`, `resolution`, `source_fps`, `ffmpeg_speed`, `stream_profile`, `stream_name`, `client_count`, uptime, total
 bytes and a computed bitrate, all read from the Redis channel metadata whose field names are in
 `apps/proxy/live_proxy/constants.py` (`ChannelMetadataField`). So a Kodi signal-status panel fed from it would work for
-admin accounts only, which is now written into the open item "Fill Kodi's signal-status panel with the active stream's
-account and profile".
+admin accounts only. The live check (2026-10-11) found the codec fields absent on a Proxy-profile channel and the body
+carrying the upstream address with the provider's credentials; see `docs/CLOSED_ITEMS.md`, "Fill Kodi's signal-status
+panel with the active stream's account and profile".
 
 ### No disk usage anywhere
 

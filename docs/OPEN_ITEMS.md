@@ -4,13 +4,13 @@
 
 ## Status at a glance
 
-**8 open, 289 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
+**7 open, 290 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
+| Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 4 |
@@ -19,26 +19,12 @@ with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REV
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 253 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 27 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 28 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
 
 ### Needs a live check
-
-#### Fill Kodi's signal-status panel with the active stream's account and profile
-
-**Opened 2026-10-10, from the pvr.hts comparison; narrowed the same day by the Dispatcharr source review
-(`docs/DISPATCHARR_SOURCE_REVIEW.md`).** pvr.hts fills `GetSignalStatus` with the tuner's provider, service and mux
-names, which Kodi shows in the player's information panel for a live channel. The IPTV equivalent is what Dispatcharr's
-`GET /proxy/ts/status/{channel_id}` already returns for a running channel: `stream_profile`, `stream_name`, `video_codec`,
-`resolution`, `source_fps`, `ffmpeg_speed`, `client_count`, uptime and a computed bitrate (read from the Redis channel
-metadata, `apps/proxy/live_proxy/channel_status.py`). The catch, confirmed from source: that view is
-`@permission_classes([IsAdmin])`, so a non-admin account gets nothing, and the panel would be an admin-only feature like
-the two companion plugins. To close: decide whether an admin-only panel is worth one request per channel open plus a
-periodic refresh (Kodi polls `GetSignalStatus` while the panel is open); if yes, confirm live what the detailed body
-holds for a channel this addon opened, through the proxy path it uses, and keep every field out of the log at default
-verbosity. Not a correctness feature; drop it if the answer is "admin only and one more request".
 
 ### Fix known, not yet done
 
