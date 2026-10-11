@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**10 open, 287 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
+**9 open, 288 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
 
@@ -12,14 +12,14 @@ with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REV
 |---|---|
 | Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 1 |
-| Open: Architectural / concurrency | 2 |
+| Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 252 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 26 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 27 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
@@ -78,16 +78,6 @@ handle, so it is out of scope. One input from the Dispatcharr source review (`do
 0.32.0 the `channel_buffering`, `channel_failover`, `channel_reconnect`, `channel_error` and `stream_switch` system events
 name the active stream, so "the server is already failing over" is knowable rather than inferred from byte starvation;
 whether the addon or the plugin should listen for them belongs to this review.
-
-#### Confirm no plugin thread uses the ORM without closing its connection
-
-**Opened 2026-10-10, from the Dispatcharr source review.** `PluginManager.run_action()` and `stop_plugin()` call
-`close_old_connections()` after the plugin returns, but Dispatcharr's `Plugins.md` is explicit that this covers only the
-calling greenlet: every thread or greenlet a plugin spawns that touches the ORM must call it in its own `finally`, or it
-holds one of the eight pooled connections per uWSGI worker. `timeshift_buffer` runs its own threads (the segment file
-server, the reaper). Whether any of them executes ORM code was not checked during the review. To close: read each thread
-body in `dispatcharr-plugin/timeshift_buffer/plugin.py` for Django model access (Redis use is fine); if any exists, add
-the `finally` and a test that the hook is called; if none, record that here and close. Reading is enough to confirm.
 
 ### Design decision needed
 

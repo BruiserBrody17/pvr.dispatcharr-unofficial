@@ -132,8 +132,9 @@ platform docs say to defer heavy work to Celery). Open item: "Use Dispatcharr's 
 
 `run_action` and `stop_plugin` call `close_old_connections()` after the plugin returns, but only for the calling greenlet;
 `Plugins.md` says any thread or greenlet a plugin spawns that touches the ORM must call it in its own `finally`.
-`timeshift_buffer` runs its own threads (the file server, the reaper). Whether any of them touches the ORM was not
-checked here. Open item: "Confirm no plugin thread uses the ORM without closing its connection".
+`timeshift_buffer` runs its own threads (the file server, the reaper). Neither touches the ORM (the only model access
+is on the `start_buffer` action's own call path); see `docs/CLOSED_ITEMS.md`, "Confirm no plugin thread uses the ORM
+without closing its connection".
 
 ### Periodic tasks
 

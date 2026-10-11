@@ -6675,6 +6675,10 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 ### Closed without a change (refuted, explained or harmless)
 
+#### Confirm no plugin thread uses the ORM without closing its connection
+
+**Opened 2026-10-10 from the Dispatcharr source review; closed without a change 2026-10-10 by reading `dispatcharr-plugin/timeshift_buffer/plugin.py`.** Dispatcharr's `Plugins.md` says a thread or greenlet a plugin spawns that touches the ORM must close its own connection. The plugin starts exactly two kinds of thread: the buffer file server (`serve_forever` on a `ThreadingHTTPServer`, which also runs one thread per request) and the reaper (`_reaper_loop`). Neither reaches Django: the request handler and the reaper call only Redis helpers (`_get_buffer_state`, `_update_buffer_state`, `_iter_buffer_states`), the filesystem and the process table, and the plugin's only Django imports are `core.utils.RedisClient` (a Redis client, not a model) and, inside `_stream_attribution_headers()`, `get_user_model()` with `User.objects.get()` and `simplejwt`. That function is reached only from `_start_ffmpeg()`, whose only caller is `_start_buffer_locked()`, whose only caller is the `start_buffer` action. The action runs in the greenlet `run_action` already cleans up after, so its connection is closed by the platform. `recording_edl` starts no threads, and its `Recording.objects` lookups are inside its own actions, the same case. If a later change makes the file server or the reaper start a buffer, or reads a model from either, it needs to close Django's old database connections in its own `finally`.
+
 #### Does Dispatcharr expose recording-disk usage
 
 **Opened 2026-10-10 from the pvr.hts comparison (`docs/PVR_HTS_COMPARISON.md`); closed the same day by reading
