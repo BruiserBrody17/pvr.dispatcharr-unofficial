@@ -160,6 +160,21 @@ def xmltv():
 
 LAST_EPG_QUERY = {"q": {}}  # the query of the latest /output/epg request, for the harness to assert
 
+# comskip's result per recording, as comskip_process_recording writes it: no commercials found, markers (an ordinary
+# break), and markers that cover the whole hour (what comskip made of a 35-second recording live).
+EDL_RECORDINGS = {
+    905: {"status": "completed", "skipped": True},
+    906: {"status": "completed", "mode": "mark", "edl": "a.edl", "commercials": 1},
+    907: {"status": "completed", "mode": "mark", "edl": "b.edl", "commercials": 1},
+}
+# What the plugin's get_edl returns for each, whatever the metadata says -- so a call the addon should not have made
+# shows up as an entry, and the per-recording call counter.
+EDL_ENTRIES = {
+    905: [{"start": 0, "end": 3610000, "type": 3}],
+    906: [{"start": 300000, "end": 480000, "type": 3}],
+    907: [{"start": 0, "end": 3610000, "type": 3}],
+}
+
 
 def pvr_route(h, method, p, q, body):
     if CTL["pvr_api_500"] == "1":
@@ -219,6 +234,21 @@ def pvr_route(h, method, p, q, body):
                 "custom_properties": {"status": "completed", "program": {"title": "Done show"}},
             }
         )
+        # Completed hour-long recordings that differ only in what comskip left, for the recording_edl route below.
+        for rid, comskip in EDL_RECORDINGS.items():
+            lst.append(
+                {
+                    "id": rid,
+                    "channel": 1,
+                    "start_time": "2026-10-02T10:00:00Z",
+                    "end_time": "2026-10-02T11:00:00Z",
+                    "custom_properties": {
+                        "status": "completed",
+                        "program": {"title": "EDL show %d" % rid},
+                        "comskip": comskip,
+                    },
+                }
+            )
         lst.append(
             {
                 "id": 7,
@@ -471,6 +501,14 @@ class H(BaseHTTPRequestHandler):
             return self.J(200, {"access": "AR"})
         if p == "/api/accounts/api-keys/":
             return self.J(200, {"key": CTL["require_key"] or "K1"})
+        if p == "/api/plugins/plugins/recording_edl/run/":
+            req = json.loads(b or b"{}")
+            rid = int((req.get("params") or {}).get("recording_id", 0))
+            with lock:
+                counts["edl %d" % rid] += 1
+            return self.J(
+                200, {"success": True, "result": {"status": "ok", "message": "", "entries": EDL_ENTRIES.get(rid, [])}}
+            )
         if p == "/api/plugins/plugins/timeshift_buffer/run/":
             req = json.loads(b or b"{}")
             act = req.get("action")

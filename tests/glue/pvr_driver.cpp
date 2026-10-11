@@ -535,6 +535,36 @@ int main(int argc, char** argv)
           q.find("\"prev_days\": \"3\"") == std::string::npos || q.find("\"days\": ") != std::string::npos)
         FAIL("the guide was fetched with the query %s", q.c_str());
     }
+    // The EDL: what comskip left decides whether the plugin is asked at all, and a break over the whole recording is
+    // dropped. Three hour-long recordings in the fake: no commercials found (905), an ordinary break (906), one break
+    // over the whole hour (907). The fake's plugin answers with a break for each whatever the metadata says.
+    {
+      Collected edlRecs;
+      A()->GetRecordings(I(), (PVR_HANDLE)&edlRecs, false);
+      auto edlCalls = [&](int rid) -> bool
+      { return http("/__stats").find("\"edl " + std::to_string(rid) + "\"") != std::string::npos; };
+      auto edlFor = [&](int rid, int& n) -> PVR_EDL_ENTRY
+      {
+        PVR_RECORDING rec{};
+        snprintf(rec.strRecordingId, sizeof rec.strRecordingId, "%d", rid);
+        PVR_EDL_ENTRY entries[PVR_ADDON_EDL_LENGTH];
+        n = PVR_ADDON_EDL_LENGTH;
+        A()->GetRecordingEdl(I(), &rec, entries, &n);
+        return n > 0 ? entries[0] : PVR_EDL_ENTRY{};
+      };
+      int n905 = -1, n906 = -1, n907 = -1;
+      edlFor(905, n905);
+      PVR_EDL_ENTRY e906 = edlFor(906, n906);
+      edlFor(907, n907);
+      if (n905 != 0 || edlCalls(905))
+        FAIL("a recording comskip found no commercials in gave %d EDL entries and the plugin %s asked", n905,
+             edlCalls(905) ? "was" : "was not");
+      if (n906 != 1 || e906.start != 300000 || !edlCalls(906))
+        FAIL("an ordinary break was not passed on (%d entries, start %lld)", n906, (long long)e906.start);
+      if (n907 != 0 || !edlCalls(907))
+        FAIL("a break over the whole recording gave %d entries (plugin asked: %d), expected none after asking", n907,
+             (int)edlCalls(907));
+    }
     time_t now = time(nullptr);
     // EPG-based one-time on channel 6 (5.1), next programme
     PVR_TIMER t{};

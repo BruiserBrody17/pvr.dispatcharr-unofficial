@@ -158,6 +158,17 @@ struct ChannelGroup
   std::string name;
 };
 
+// What Dispatcharr's comskip step left in custom_properties.comskip (`comskip_process_recording`,
+// apps/channels/tasks.py), reduced to what decides whether there can be markers to fetch -- see ShouldAskPluginForEdl()
+// (EdlDecision.h).
+struct ComskipInfo
+{
+  bool present = false; // the key exists at all; absent before comskip has run, when it is off, or on an older server
+  std::string status;   // "completed", "skipped" (comskip is not installed on the server), "error", ...
+  bool noCommercials = false; // `skipped: true`: comskip found no commercials, so there is no EDL file worth reading
+  bool cutMode = false; // `segments_kept` present: the commercials were cut out of the file and the EDL file removed
+};
+
 struct Recording
 {
   int id = 0;
@@ -201,6 +212,8 @@ struct Recording
   // custom_properties at finalization, see the comment where this is parsed
   // in DispatcharrClient.cpp.
   int64_t bytesWritten = 0;
+  // See ComskipInfo.
+  ComskipInfo comskip;
   // Non-zero when this Recording was materialized by Dispatcharr's own
   // recurring-rule scheduler (custom_properties.rule.{type:"recurring",id})
   // rather than created directly -- see RecurringRule below. Used to link

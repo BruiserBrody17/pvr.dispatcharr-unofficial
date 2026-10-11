@@ -92,6 +92,7 @@ add_executable(pvr_dispatcharr_tests
   test_unicode_text.cpp
   test_recurring_rule_weekdays.cpp
   test_channel_group_filter.cpp
+  test_edl_decision.cpp
   test_web_socket_handshake.cpp
   test_auth_backoff.cpp
   test_stream_seek.cpp

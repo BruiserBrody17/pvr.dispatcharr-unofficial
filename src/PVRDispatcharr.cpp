@@ -6,6 +6,7 @@
 #include "ChannelNumber.h"
 #include "ChannelRenumbering.h"
 #include "EpgProgramMatch.h"
+#include "EdlDecision.h"
 #include "EpgTagUtil.h"
 #include "RealtimeUpdateParser.h"
 #include "RecordingDirectory.h"
@@ -3910,6 +3911,28 @@ PVR_ERROR PVRDispatcharr::GetRecordingEdl(const kodi::addon::PVRRecording& recor
                                           std::vector<kodi::addon::PVREDLEntry>& edl)
 {
   int id = std::atoi(recording.GetRecordingId().c_str());
+
+  // What the recording cache knows about this one, copied out so the plugin call below runs without the lock. A
+  // recording not in the cache is asked about as before and its breaks are kept: nothing is known to say otherwise.
+  ComskipInfo comskip;
+  int durationSeconds = 0;
+  {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    auto it = std::find_if(m_cachedRecordings.begin(), m_cachedRecordings.end(),
+                           [id](const Recording& r) { return r.id == id; });
+    if (it != m_cachedRecordings.end())
+    {
+      comskip = it->comskip;
+      durationSeconds = it->durationSeconds;
+    }
+  }
+  if (!dispatcharr::ShouldAskPluginForEdl(comskip))
+  {
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: no EDL for recording %d: comskip left no markers (%s)", id,
+              comskip.status.c_str());
+    return PVR_ERROR_NO_ERROR;
+  }
+
   std::vector<RecordingEdlEntry> entries;
   std::string error;
   if (!m_client.GetRecordingEdl(id, entries, error))
@@ -3922,6 +3945,11 @@ PVR_ERROR PVRDispatcharr::GetRecordingEdl(const kodi::addon::PVRRecording& recor
     kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: no EDL for recording %d: %s", id, error.c_str());
     return PVR_ERROR_NO_ERROR; // empty edl -- not a failure, just nothing to show
   }
+  const size_t entriesFromServer = entries.size();
+  entries = dispatcharr::WithoutBreaksCoveringRecording(std::move(entries), durationSeconds);
+  if (entries.size() != entriesFromServer)
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: ignoring %zu EDL break(s) covering all of recording %d",
+              entriesFromServer - entries.size(), id);
   for (const auto& entry : entries)
   {
     kodi::addon::PVREDLEntry e;

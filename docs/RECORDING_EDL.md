@@ -58,6 +58,20 @@ than hard: `GetRecordingEdl()` treats any `get_edl` failure the same as
 entries returned, no playback impact -- so the only visible symptom is
 recordings simply never showing commercial-break markers.
 
+**When the addon asks, and what it does with the answer (2026-10-10).** It does not ask for every recording it opens.
+It reads `custom_properties.comskip` from the recording list it already holds (`ParseComskipInfo()`,
+`ShouldAskPluginForEdl()` in `EdlDecision.h`) and skips the request only for results that leave no EDL file to read:
+`status: "skipped"` (comskip not installed), `completed` with `skipped: true` (no commercials found), and `completed`
+with `segments_kept` (cut mode, the EDL file removed). Everything else asks: mark mode, an absent key (not run yet, off,
+or an older server), an error, a status it does not know. The plugin decides by the file and by `segments_kept`, not by
+`mode`, so the two agree on a recording that has markers; the one deliberate difference is a recording whose comskip run
+left an EDL file with half a second of commercials or less, which the plugin would return as slivers and the addon
+now does not ask about. After the answer comes back the addon drops a skip (type cut or commercial break) that covers
+nine tenths or more of the recording's own length: comskip once marked a whole 35-second recording as one break, and
+Kodi, which starts playback at the end of a break that begins at zero, sought to the last second and reached the end of
+the file in two seconds. A mute or scene marker is kept, and nothing is dropped while the length is unknown (a recording
+still being made).
+
 **comskip's `.edl` format**, confirmed against Dispatcharr's own
 `docker/comskip.ini` (`[Output]` section) and `apps/channels/tasks.py`'s
 own parsing of the same file: plain text, one entry per line,

@@ -130,6 +130,7 @@ set(DISPATCHARR_HEADERS
     src/TimeUtil.h
     src/TimeZoneUtil.h
     src/EpgTagUtil.h
+    src/EdlDecision.h
     src/RedirectPolicy.h
     src/Sha1.h
     src/StringUtil.h

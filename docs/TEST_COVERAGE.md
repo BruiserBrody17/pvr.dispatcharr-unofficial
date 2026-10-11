@@ -319,6 +319,14 @@ out-of-range `type` value to `3` (COMBREAK): Kodi's own `PVR_EDL_TYPE`
 is an unscoped enum with no fixed underlying type, so
 `GetRecordingEdl()`'s `static_cast<PVR_EDL_TYPE>()` is undefined
 behavior in C++ for a value outside its defined `0`-`3` range.
+`EdlDecision` (2026-10-10) is `ShouldAskPluginForEdl()` and `WithoutBreaksCoveringRecording()`, with `ParseComskipInfo()`
+in `RecordingParser`. The first reads the comskip result shapes `comskip_process_recording` writes (mark, no commercials,
+cut, not installed, error) and only declines to ask where no EDL file can exist, so an older block with no `skipped` or
+`segments_kept` key is still asked (a test pins that, the one that would lose markers if "completed without mode: mark"
+were read as cut mode). The second drops a cut or commercial break covering nine tenths of the recording, clamped to the
+duration, with the live numbers as its first test (an EDL of 35.27 s over a 33 s recording). The glue harness's
+`functional` scenario checks both through the real `GetRecordingEdl()` against a fake plugin that counts its calls, and
+fails with either decision disabled.
 `TimerIdentity` is `ComputeSeriesRuleClientIndex()`, the hash-based
 `(title, tvgId)` identity scheme `PVRDispatcharr::GetTimers()` uses to
 give a series rule -- which has no real numeric id in Dispatcharr's own

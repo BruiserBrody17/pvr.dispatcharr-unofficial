@@ -53,4 +53,7 @@ bool IsRecordingResponseFor(const nlohmann::json& item, int expectedId);
 // original loop's own silent-skip behavior for that case.
 bool ParseRecordingEdlEntryJson(const nlohmann::json& item, RecordingEdlEntry& out);
 
+// custom_properties.comskip as a ComskipInfo; `present` is false for an absent, null or non-object value.
+ComskipInfo ParseComskipInfo(const nlohmann::json& custom);
+
 } // namespace dispatcharr

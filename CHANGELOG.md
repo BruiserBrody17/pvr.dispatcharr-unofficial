@@ -21,12 +21,22 @@ compare against.
   list, with its own radio channel groups (a group holding both kinds is listed in both), and its recordings are marked
   as radio. A server older than 0.32.0 sends no flag, so every channel stays TV as before.
 
+### Fixed
+
+- **A recording whose commercial markers cover all of it no longer plays to its end at once.** Comskip can mark a
+  whole short recording as one commercial break; Kodi then skipped to the end and marked the recording watched. The
+  addon now ignores a skip that covers nine tenths or more of the recording and plays it normally.
+
 ### Changed
 
 - **Guide requests name the channel-id source**: the guide is now asked for with `tvg_id_source=channel_number`,
   Dispatcharr's own default, so a later Dispatcharr release that changed that default could not mismatch channels and
   their guides. The guide you get is identical.
 
+- **Opening a recording where comskip found nothing no longer asks the `recording_edl` plugin.** The addon reads what
+  comskip recorded about the recording and skips the request when there can be no markers (no commercials found,
+  commercials already cut out, or comskip not installed); a recording with markers, and one comskip has said nothing
+  about, are asked as before.
 - Checked against Dispatcharr `0.32.0`: no addon change was needed. In-progress recording playback (Dispatcharr now
   writes those as event playlists), catch-up, timers and recurring rules, the real-time recording push and live
   timeshift all work against it, on a 64-bit Android phone and on the other devices tested.

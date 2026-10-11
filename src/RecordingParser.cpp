@@ -162,6 +162,7 @@ Recording ParseRecordingFields(const nlohmann::json& item, time_t now)
     // post-processing step) -- absent while genuinely still recording,
     // hence the 0 default here rather than treating absence as an error.
     r.bytesWritten = FieldOr<int64_t>(custom, "bytes_written", 0);
+    r.comskip = ParseComskipInfo(custom);
 
     const nlohmann::json& program = custom.contains("program") ? custom["program"] : nlohmann::json();
     if (program.is_object())
@@ -200,6 +201,19 @@ Recording ParseRecordingFields(const nlohmann::json& item, time_t now)
   if (r.recurringRuleId != 0)
     r.title = StripManagedRuleMarker(r.title);
   return r;
+}
+
+ComskipInfo ParseComskipInfo(const nlohmann::json& custom)
+{
+  ComskipInfo info;
+  if (!custom.is_object() || !custom.contains("comskip") || !custom["comskip"].is_object())
+    return info;
+  const nlohmann::json& comskip = custom["comskip"];
+  info.present = true;
+  info.status = FieldOr<std::string>(comskip, "status", "");
+  info.noCommercials = FieldOr(comskip, "skipped", false);
+  info.cutMode = comskip.contains("segments_kept") && !comskip["segments_kept"].is_null();
+  return info;
 }
 
 bool ParseRecordingEdlEntryJson(const nlohmann::json& item, RecordingEdlEntry& out)

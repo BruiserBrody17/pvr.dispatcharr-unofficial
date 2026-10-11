@@ -4,40 +4,27 @@
 
 ## Status at a glance
 
-**12 open, 285 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
-two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other was found during the
-radio channel live check.
+**10 open, 287 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
+2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 2 |
-| Open: Fix known, not yet done | 2 |
+| Open: Needs a live check | 1 |
+| Open: Fix known, not yet done | 1 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 250 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 252 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 26 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
 
 ### Needs a live check
-
-#### A short recording whose EDL covers all of it plays to its end at once
-
-**Opened 2026-10-10, found during the radio live check; cause not investigated.** A 35-second recording made through
-the addon was opened from Kodi's recordings list and ended after about two seconds. Kodi's log showed one EDL break
-spanning the whole recording (`Added break [0 - 35.27 s]`, then `Start position set to end of first commercial break`,
-a seek to 33.8 s and EOF), and the recording was marked watched. The addon only relays what the server's comskip data or
-the `recording_edl` plugin returns (`GetRecordingEdl()`), so the first question is what the server returned for that
-recording: a comskip run on a recording this short, or the plugin's mapping. Nothing to do with the radio flag (the
-recording's content was an ordinary TV stream). To close: reproduce with a short recording, read the EDL the server
-returned, and decide whether the fault is the server's data (document it) or whether the addon should ignore a break
-that covers the whole runtime, since playing nothing is never what a user wants from a skip.
 
 #### Fill Kodi's signal-status panel with the active stream's account and profile
 
@@ -72,18 +59,6 @@ that `docs/EPG.md`'s "Not mapped, deliberately" paragraph declined for the guide
 unenriched recording on the Linux client and a phone, checking the recordings list and the recording's information
 dialog.
 
-#### Skip the EDL plugin call when the recording's comskip metadata says there is nothing to fetch
-
-**Opened 2026-10-10, from the Dispatcharr source review.** After comskip runs, Dispatcharr writes
-`custom_properties.comskip` with `status` (`completed`, `skipped`, `error`), `mode` (`mark`, or absent for cut),
-`commercials` and the EDL basename (`comskip_process_recording` in `apps/channels/tasks.py`; the EDL content itself is
-still not served anywhere, so `recording_edl` stays). The addon does not read that key and asks the plugin for every
-recording it opens, including those where comskip never ran, failed, or ran in cut mode and deleted the file. The change:
-a pure decision (comskip metadata in, "ask the plugin" or "no markers" out, with "ask" for an absent key so older
-servers and recordings behave as today), table-tested, consulted before `GetRecordingEdl()` calls the plugin. Confirm
-against the plugin's own handling of the same cases (`dispatcharr-plugin/recording_edl/plugin.py` distinguishes them
-by the file, not the mode key) so the two never disagree on a recording that does have markers, and live with one
-marked and one cut recording.
 
 ### Architectural / concurrency
 
