@@ -961,6 +961,72 @@ static void ip_blackhole_close(DispatcharrClient& cl, long limitMs)
   ctl("ip_freeze=0");
 }
 
+// The in-progress recording's tail wait in slices, as live_tail_bound does for the live buffer: a reader parked at the
+// tail of a recording that is still being written (a stalled recorder, a viewer who caught up) has to hand control back
+// to Kodi about once a second, because Kodi acts on a stop only between reads. A slice that finds nothing returns -1,
+// 0 comes only once the whole budget is used, and the same stream resumes when the recording grows again.
+static void ip_tail_bound(DispatcharrClient& cl)
+{
+  ctl("ip_reset=3");
+  std::string err;
+  if (!cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  ctl("ip_freeze=1");
+  std::vector<uint8_t> buf(1 << 18);
+  long maxTailReadMs = 0, tailWaitMs = 0, waitBeforeFirstZero = -1, minusOnes = 0, bytes = 0;
+  bool sawZero = false;
+  const long phaseStart = ms();
+  while (ms() - phaseStart < 30000 && !sawZero)
+  {
+    const long t0 = ms();
+    const int n = cl.ReadInProgressRecordingStream(buf.data(), (unsigned)buf.size());
+    const long took = ms() - t0;
+    if (n > 0)
+    {
+      bytes += n;
+      continue;
+    }
+    maxTailReadMs = std::max(maxTailReadMs, took);
+    tailWaitMs += took;
+    if (n < 0)
+      minusOnes++;
+    else
+    {
+      sawZero = true;
+      waitBeforeFirstZero = tailWaitMs;
+    }
+  }
+  INFO("ip tail bound: max read at the tail %ld ms, %ld retries (-1) before the first 0, waited %ld ms in all, "
+       "bytes before the tail %ld",
+       maxTailReadMs, minusOnes, waitBeforeFirstZero, bytes);
+  if (!sawZero)
+    FAIL("no read ever returned 0 in 30 s: the budget never ended");
+  if (maxTailReadMs > 1800)
+    FAIL("one read at the tail blocked for %ld ms; Kodi cannot act on a stop for that long", maxTailReadMs);
+  if (waitBeforeFirstZero >= 0 && waitBeforeFirstZero < 2000)
+    FAIL("the stream gave up (0) after only %ld ms at the tail; the budget must not shrink", waitBeforeFirstZero);
+  if (minusOnes < 1)
+    FAIL("no -1 was returned while waiting, so the wait was not handed back in slices");
+  if (!cl.IsInProgressRecordingStreamOpen())
+    FAIL("the stream closed itself while waiting at the tail");
+
+  ctl("ip_freeze=0");
+  long resumed = 0;
+  const long phase2 = ms();
+  while (ms() - phase2 < 20000 && resumed == 0)
+  {
+    const int n = cl.ReadInProgressRecordingStream(buf.data(), (unsigned)buf.size());
+    if (n > 0)
+      resumed += n;
+  }
+  INFO("ip tail bound: after the recording grew again %ld bytes arrived within %ld ms", resumed, ms() - phase2);
+  if (resumed == 0)
+    FAIL("the stream did not resume once new segments arrived");
+}
+
 // A recording row whose file does not exist: opening it must fail and tell the viewer why (the stub prints each
 // notification as a "[notify]" line).
 static void rec_open_missing(DispatcharrClient& cl)
@@ -1003,6 +1069,8 @@ int main(int argc, char** argv)
       rec_range_dropped(*cl);
     else if (what == "ip_blackhole_close")
       ip_blackhole_close(*cl, arg ? atol(arg) : 4 * dispatcharr::ShortRequestTimeoutMs(configuredTimeout()));
+    else if (what == "ip_tail_bound")
+      ip_tail_bound(*cl);
     else if (what == "live_slow_open")
       live_slow_open(*cl);
     else if (what == "ip_cascade")

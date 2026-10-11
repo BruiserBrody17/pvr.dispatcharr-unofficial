@@ -4,22 +4,22 @@
 
 ## Status at a glance
 
-**8 open, 291 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but two open items came from the
+**7 open, 292 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other two came from the
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other came from the
 stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 1 |
+| Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 5 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 254 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 255 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 28 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -28,10 +28,6 @@ stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
 ### Needs a live check
 
 ### Fix known, not yet done
-
-#### Slice the in-progress recording's tail wait the way the live one is
-
-**Opened 2026-10-11, from the stalled-stream review (`docs/TIMESHIFT.md`, "Stalled streams: what each read path does").** The live tail wait returns -1 every second (`kLiveTailWaitSliceMs`, `TailWaitEpisode` in `CatchUpUtil.h`) so that Kodi, which acts on a close or a channel change only between reads, is not left waiting out the budget; that cut the slowest closes seen (7.0 and 14.5 s) to under 3.4 s on a phone (`docs/CLOSED_ITEMS.md`, the close-latency entry). `ReadInProgressRecordingStream()` has the same wait as one blocking loop, so a Stop at the tail of a recording still being written takes up to the budget (about 6 s with two-second segments, up to 120 s with long ones) and a `Player.Open` sent meanwhile is dropped. The change: reuse `TailWaitEpisode` and `HasTailWaitSliceElapsed()` in that loop, keeping the budget, the give-up answer (0) and the seek-probe's single attempt; the slice decisions are already tested, so the new test is a glue scenario with a frozen in-progress tail that measures the longest read, the way the live one's `live_tail_bound` does. Confirm live with a Stop and a channel change while parked at the tail of a recording in progress, comparing the time to `CloseRecordedStream`.
 
 ### Architectural / concurrency
 

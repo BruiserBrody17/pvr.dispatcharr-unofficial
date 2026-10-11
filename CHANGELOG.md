@@ -31,6 +31,9 @@ compare against.
 - **A recording whose commercial markers cover all of it no longer plays to its end at once.** Comskip can mark a
   whole short recording as one commercial break; Kodi then skipped to the end and marked the recording watched. The
   addon now ignores a skip that covers nine tenths or more of the recording and plays it normally.
+- **Stopping a recording that is still being written no longer waits for the next segment.** With playback caught up to
+  the end of a recording in progress, Stop (or a channel change) could take up to six seconds, the same wait the live
+  buffer had before its fix; it now takes about a second at most.
 
 ### Changed
 

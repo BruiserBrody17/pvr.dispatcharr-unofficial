@@ -2537,6 +2537,12 @@ longest read, the `-1` retries before the first `0`, the total wait, and the str
 (4515 ms to 1004 ms); it is in CI's glue run. What no test reaches is how ffmpeg reacts to the `-1`s on a slow device; that was
 checked by hand on a 64-bit phone on 2026-10-10 and showed no glitch (`docs/CLOSED_ITEMS.md`).
 
+2026-10-11: the in-progress recording's tail wait uses the same slices (`ReadInProgressRecordingStream()` calls `HasTailWaitSliceElapsed()`,
+`TailWaitEpisode` and `DecideTailWaitOutcome()`, so no new pure logic and no new unit test; the existing ones pin the decisions). The glue
+harness gained `ip_tail_bound` (a frozen in-progress tail: same four measurements as `live_tail_bound`; it fails on the pre-change code with
+one 4535 ms read and no `-1`), in CI's glue run. Checked live against a recording in progress, Stop latency at the tail 0.27 to 5.80 s before
+and 0.28 to 1.37 s after (`docs/CLOSED_ITEMS.md`).
+
 See `docs/CLOSED_ITEMS.md`'s "No automated test suite exists" entry for
 the full reasoning and what's still open on both sides. Verification of
 everything else stays manual: smoke-testing against a real Dispatcharr

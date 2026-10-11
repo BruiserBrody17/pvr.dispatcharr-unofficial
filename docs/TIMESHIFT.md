@@ -3411,7 +3411,7 @@ further.
 
 | Path | Stalled means | Tolerated for | Answer |
 |---|---|---|---|
-| In-progress recording, `ReadInProgressRecordingStream()` | Reader at the tail of a recording that has not finished | One blocking (not sliced) loop with the same budget formula as live, each attempt a manifest refresh | 0 when used up |
+| In-progress recording, `ReadInProgressRecordingStream()` | Reader at the tail of a recording that has not finished | The same budget formula and one-second slices as live (a slice that finds nothing returns -1), each attempt a manifest refresh | -1 per slice, 0 when the budget is used up |
 | | Segment fetch fails transiently (unreachable, 500/502/503/504) | 20 s inside one call (`kTransientReadBudget`), plus a request in flight | -1 |
 | | 401 | One API-key regeneration, then the read is retried | - |
 | | Permanent failure (403, an unexplained 404, a size disagreement) | Five failures over at least 3 s (`PermanentReadFailureTracker`) | -1 until then, then 0 for good |
@@ -3454,10 +3454,10 @@ constants named in the tables are the places to look.
 
 Every wait is bounded, by a count times a request timeout at worst; none is unbounded. These are the soft spots:
 
-1. **The in-progress recording's tail wait is not sliced.** The live tail wait returns -1 each second so a Stop can land
-   between reads (`docs/CLOSED_ITEMS.md`, the close that took 4 to 6 s); the in-progress one is a single blocking loop,
-   so a Stop at the tail of a recording still being written waits out the budget (about 6 s with two-second segments).
-   Open item.
+1. **The in-progress recording's tail wait was not sliced (fixed the same day).** It is now taken in the same one-second
+   slices as the live one, so a Stop at the tail of a recording still being written no longer waits out the budget
+   (`docs/CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the live one is": Stop took up to 5.8 s
+   before, 1.4 s after).
 2. **The open-time loops have no wall-clock cap and cannot be cancelled.** The abort flag (`AbortInFlightRequests()`)
    is set only when the addon instance is destroyed, so a Stop during an open does not interrupt it. The live first-manifest
    loop is thirty tries each as long as the request timeout, which is about fifteen minutes against a server that

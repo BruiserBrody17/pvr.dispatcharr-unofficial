@@ -3080,6 +3080,10 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
 
     const int64_t catchUpBudgetMs = ComputeCatchUpWallClockBudgetMs(catchUpAttempts, kCatchUpSleepMs);
     auto catchUpStart = std::chrono::steady_clock::now();
+    // Taken in slices of kLiveTailWaitSliceMs, each ending in a -1 that Kodi retries, exactly as in
+    // ReadLiveTimeshiftStream() (see its comment): a stop or channel change lands between reads, and the budget is
+    // counted from where this episode at this position began.
+    m_inProgressRecordingStream.tailWait.Enter(m_inProgressRecordingStream.position, catchUpStart);
     int attemptsUsed = 0;
     for (int attempt = 0;
          attempt < catchUpAttempts && m_inProgressRecordingStream.position >= m_inProgressRecordingStream.totalBytes;
@@ -3100,6 +3104,10 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - catchUpStart),
               catchUpBudgetMs))
         break; // the server is not answering promptly -- see kMaxCatchUpWallClockMs
+      // This call has used its slice: hand control back to Kodi (the -1 below) rather than wait on.
+      if (HasTailWaitSliceElapsed(
+              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - catchUpStart)))
+        break;
       if (attempt + 1 < catchUpAttempts)
       {
         stateLock.unlock();
@@ -3111,6 +3119,25 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
     }
 
     bool caughtUp = m_inProgressRecordingStream.position < m_inProgressRecordingStream.totalBytes;
+    if (!caughtUp && !m_inProgressRecordingStream.finished)
+    {
+      // Nothing yet. Either the whole budget is used (give up, as before) or this was only a slice of it: -1, which
+      // Kodi's demuxer retries at once after checking whether it has been asked to stop, and which does not touch
+      // lastShortGiveUpPosition (this is not a give-up).
+      const auto afterWait = std::chrono::steady_clock::now();
+      if (DecideTailWaitOutcome(likelySeekProbe, m_inProgressRecordingStream.tailWait.WaitedMs(afterWait),
+                                catchUpAttempts * kCatchUpSleepMs) == TailWaitOutcome::kRetry)
+      {
+        m_inProgressRecordingStream.tailWait.Touch(afterWait);
+        kodi::Log(ADDON_LOG_DEBUG,
+                  "pvr.dispatcharr-unofficial: ReadInProgressRecordingStream: waited %lldms of ~%dms at the tail, "
+                  "handing the read back (-1) so a stop can land",
+                  static_cast<long long>(m_inProgressRecordingStream.tailWait.WaitedMs(afterWait)),
+                  catchUpAttempts * kCatchUpSleepMs);
+        return -1;
+      }
+    }
+    m_inProgressRecordingStream.tailWait.Reset();
     m_inProgressRecordingStream.lastShortGiveUpPosition =
         ComputeShortGiveUpPosition(likelySeekProbe, caughtUp, m_inProgressRecordingStream.position);
 

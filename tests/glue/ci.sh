@@ -29,6 +29,7 @@ run "completed recording"        TMO=30 T=120 -- rec
 run "recording, Range dropped"   TMO=30 T=120 -- rec_range_dropped
 run "recording with no file"     TMO=30 T=120 -- rec_open_missing
 run "in-progress recording"      TMO=30 T=120 -- ip 6000
+run "in-progress (tail wait in slices)" TMO=30 T=120 -- ip_tail_bound
 run "in-progress, probe cascade" TMO=30 T=120 -- ip_cascade
 run "in-progress, hung API"      TMO=30 T=300 -- ip_blackhole_close
 run "in-progress, 500 blip"      TMO=30 T=120 IP_EXPECT_RESUME=1 -- ip 9000 "2000:ip_seg_status=500;5500:ip_seg_status=0"

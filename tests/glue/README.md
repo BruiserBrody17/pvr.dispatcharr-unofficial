@@ -42,6 +42,7 @@ A run prints `RESULT fails=N` and `rc=0` when it passed.
 | `rec "<at_ms>:<knob>=<v>"` | a completed recording: random seeks, outages, a file that shrinks, a 404 |
 | `ip [ms] "<at_ms>:<knob>=<v>"`, `ip_chaos` | an in-progress recording: cold open (`IP_AGE` segments of backlog), natural finish, user stop, deleted mid-play, an unsizeable segment, 403 segments, key rotation, foreign host |
 | `live_blackhole_close`, `live_blackhole_read` | a hung API with the token hint lapsed: Close and a tail-wait read must stay bounded (run with `TMO=30`) |
+| `ip_tail_bound` | an in-progress recording whose tail stops growing: the longest read at the tail (about a second, not the whole budget), the `-1` retries before the first `0`, and the stream resuming when segments arrive |
 | `ip_blackhole_close` | Stop while a reader waits at the tail of an in-progress recording and the API hangs: the longest blocked `Read()` is how long Stop waits |
 | `rec_range_dropped` | a proxy starts dropping `Range` and sends the whole file slowly: the read must end the stream at once |
 | `live_slow_open` | an API answering every request in 6 s: Open must still succeed (its cold-start wait uses the configured timeout) |
