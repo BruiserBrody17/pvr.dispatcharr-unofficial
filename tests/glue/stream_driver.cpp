@@ -883,6 +883,43 @@ static void live_slow_open(DispatcharrClient& cl)
     cl.CloseLiveTimeshiftStream();
 }
 
+// A server that answers the start request and then goes silent: the live cold-start loop used to try thirty times, each
+// as long as the request timeout, which held an open for about fifteen minutes at the default 30 s. The loop now ends
+// once its own healthy wait plus one timeout has passed (ColdStartWallClockBudgetMs()): with the harness's 5 s timeout,
+// 20 s plus the try in flight. The in-progress variant (by hand, about a minute) is a recording whose playlist does
+// not exist yet, which retries ninety times, against an API that takes 3 s to say so: 315 s before, 50 s plus a try
+// now. (A playlist request that never answers is not retried there: any failure but a 404 ends that open at once.)
+static void silent_open(DispatcharrClient& cl, bool inProgress)
+{
+  const long timeoutMs = configuredTimeout() * 1000L;
+  const long budgetMs = inProgress ? dispatcharr::ColdStartWallClockBudgetMs(90, 500, configuredTimeout())
+                                   : dispatcharr::ColdStartWallClockBudgetMs(30, 500, configuredTimeout());
+  std::string err;
+  if (inProgress)
+  {
+    ctl("ip_reset=3");
+    ctl("ip_nodir=1");
+    ctl("api_delay_ms=3000");
+  }
+  else
+    ctl("manifest_hang=1");
+  const long t0 = ms();
+  const bool ok = inProgress ? cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, err)
+                             : cl.OpenLiveTimeshiftStream("uuid", err);
+  const long took = ms() - t0;
+  INFO("silent %s open: ok=%d in %ld ms (budget %ld ms, timeout %ld ms) err=%s", inProgress ? "in-progress" : "live",
+       ok, took, budgetMs, timeoutMs, err.c_str());
+  ctl("ip_nodir=0");
+  ctl("api_delay_ms=0");
+  ctl("manifest_hang=0");
+  if (ok)
+    FAIL("the open succeeded against a server that never answered the playlist");
+  if (took < budgetMs)
+    FAIL("the open gave up after %ld ms, before its %ld ms budget", took, budgetMs);
+  if (took > budgetMs + 2 * timeoutMs)
+    FAIL("the open took %ld ms against a silent server (budget %ld ms): the loop is not bounded by it", took, budgetMs);
+}
+
 // A proxy that starts dropping Range mid-playback and sends the whole file slowly: the read at a non-zero offset
 // must end the stream at once, not after downloading (and discarding) the file or waiting out the timeout (the
 // fifteenth sweep's follow-up to the open-time Range probe fix).
@@ -1071,6 +1108,10 @@ int main(int argc, char** argv)
       ip_blackhole_close(*cl, arg ? atol(arg) : 4 * dispatcharr::ShortRequestTimeoutMs(configuredTimeout()));
     else if (what == "ip_tail_bound")
       ip_tail_bound(*cl);
+    else if (what == "live_silent_open")
+      silent_open(*cl, false);
+    else if (what == "ip_silent_open")
+      silent_open(*cl, true);
     else if (what == "live_slow_open")
       live_slow_open(*cl);
     else if (what == "ip_cascade")

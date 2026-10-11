@@ -2964,6 +2964,9 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
   constexpr int kColdStartMaxAttempts = 90;
   constexpr int kColdStartSleepMs = 500;
   bool haveSegment = false;
+  const auto coldStartBegan = std::chrono::steady_clock::now();
+  const std::chrono::milliseconds coldStartBudget{
+      ColdStartWallClockBudgetMs(kColdStartMaxAttempts, kColdStartSleepMs, m_config.timeoutSeconds)};
   for (int attempt = 0; attempt < kColdStartMaxAttempts; ++attempt)
   {
     kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: OpenInProgressRecordingStream: cold-start attempt=%d",
@@ -3010,6 +3013,17 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
     }
     if (stopWaiting)
       break;
+    // See ColdStartWallClockBudgetMs(): a server that stopped answering makes every try take the whole timeout.
+    if (!ShouldKeepRetryingTransientRead(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - coldStartBegan),
+            coldStartBudget))
+    {
+      kodi::Log(ADDON_LOG_WARNING,
+                "pvr.dispatcharr-unofficial: OpenInProgressRecordingStream: no segment after %d tries and %llds, "
+                "giving up",
+                attempt + 1, static_cast<long long>(coldStartBudget.count() / 1000));
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(kColdStartSleepMs));
   }
   bool finishedNow;
@@ -4232,6 +4246,9 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   constexpr int kColdStartMaxAttempts = 30;
   constexpr int kColdStartSleepMs = 500;
   bool manifestReady = false;
+  const auto coldStartBegan = std::chrono::steady_clock::now();
+  const std::chrono::milliseconds coldStartBudget{
+      ColdStartWallClockBudgetMs(kColdStartMaxAttempts, kColdStartSleepMs, m_config.timeoutSeconds)};
   for (int attempt = 0; attempt < kColdStartMaxAttempts; ++attempt)
   {
     bool fatal = false;
@@ -4242,6 +4259,17 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
     }
     if (fatal)
       break;
+    // A server that stopped answering makes every try take the whole timeout: see ColdStartWallClockBudgetMs().
+    if (!ShouldKeepRetryingTransientRead(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - coldStartBegan),
+            coldStartBudget))
+    {
+      kodi::Log(ADDON_LOG_WARNING,
+                "pvr.dispatcharr-unofficial: OpenLiveTimeshiftStream: no live playlist after %d tries and %llds, "
+                "giving up: %s",
+                attempt + 1, static_cast<long long>(coldStartBudget.count() / 1000), error.c_str());
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(kColdStartSleepMs));
   }
   if (!manifestReady)

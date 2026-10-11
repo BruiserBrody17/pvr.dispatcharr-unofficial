@@ -3428,8 +3428,8 @@ Both recording paths keep their stall handling in tested decision functions (`Re
 | Open | Waits for | Gives up on |
 |---|---|---|
 | Live, `start_buffer` | Up to 20 tries 500 ms apart, only while the plugin answers "retryable" (a buffer mid-teardown) | Anything else at once |
-| Live, first manifest | Up to 30 tries 500 ms apart, any non-fatal failure retries, each request taking the full `timeout` | A fatal answer from the plugin; on failure the viewer it registered is deregistered |
-| In-progress recording, first manifest | Up to 90 tries 500 ms apart, but only a 404 "playlist not created yet" retries | Any other failure at once |
+| Live, first manifest | Up to 30 tries 500 ms apart, any non-fatal failure retries, each request taking the full `timeout`; also ends once 15 s plus one `timeout` have passed (`ColdStartWallClockBudgetMs()`: 45 s, so about 60 s against a silent server) | A fatal answer from the plugin; on failure the viewer it registered is deregistered |
+| In-progress recording, first manifest | Up to 90 tries 500 ms apart, but only a 404 "playlist not created yet" retries; also ends once 45 s plus one `timeout` have passed (75 s) | Any other failure at once |
 | Completed recording | One one-byte ranged GET (two with an API-key refresh), 4 MB cap | The first failure |
 
 Catch-up playback and the live mode "Off" (and "Local") hand Kodi a URL and read nothing in the addon, so Kodi's own
@@ -3458,13 +3458,15 @@ Every wait is bounded, by a count times a request timeout at worst; none is unbo
    slices as the live one, so a Stop at the tail of a recording still being written no longer waits out the budget
    (`docs/CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the live one is": Stop took up to 5.8 s
    before, 1.4 s after).
-2. **The open-time loops have no wall-clock cap and cannot be cancelled.** The abort flag (`AbortInFlightRequests()`)
-   is set only when the addon instance is destroyed, so a Stop during an open does not interrupt it. The live first-manifest
-   loop is thirty tries each as long as the request timeout, which is about fifteen minutes against a server that
-   accepts the connection and then goes silent after `start_buffer` succeeded; a narrow case, but unbounded in practice.
-   Open item.
+2. **The open-time loops had no wall-clock cap (fixed 2026-10-11) and still cannot be cancelled.** The live first-manifest
+   loop was thirty tries each as long as the request timeout, about fifteen minutes against a server that accepts the
+   connection and then goes silent after `start_buffer` succeeded; both cold-start loops now end once their own healthy wait
+   plus one timeout has passed (`docs/CLOSED_ITEMS.md`, "Put a wall-clock cap on a stream open"; measured live, 61 s).
+   The abort flag (`AbortInFlightRequests()`) is still set only when the addon instance is destroyed, so a Stop during an
+   open does not interrupt it; open item.
 3. **No low-speed limit.** A server that trickles bytes holds a transfer for the whole `timeout` (up to 180 s if raised).
-   Adding one risks cutting a legitimately slow link, so it is recorded here, not changed.
+   Adding one risks cutting a legitimately slow link, and nothing seen in the lab trickles, so it is recorded here, not
+   changed (decided 2026-10-11, with the open-time cap).
 4. **One live `Read()` can overrun its 25 s budget.** The budget is checked after each attempt, and an attempt can be a
    full segment fetch plus a refresh, so against a server that drops packets one call can take about a minute. The
    catch-up wait has the same documented overshoot (`kMaxCatchUpWallClockMs`: the budget plus one attempt's requests).

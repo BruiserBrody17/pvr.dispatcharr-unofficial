@@ -4,28 +4,32 @@
 
 ## Status at a glance
 
-**8 open, 292 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
+**8 open, 293 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but two open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other came from the
-stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other two came from the
+stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`) and from a user report.
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 0 |
+| Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 1 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 5 |
+| Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 255 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 256 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 28 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
 
 ### Needs a live check
+
+#### Find out whether a Stop during an open reaches the open's cold-start loop
+
+**Opened 2026-10-11, left over from the open-time cap item (`docs/CLOSED_ITEMS.md`, "Put a wall-clock cap on a stream open").** The two cold-start loops are now bounded (about 60 s live and 75 s in progress at the default timeout, plus the try in flight), but nothing cancels one earlier: the abort flag (`m_abortRequests`) is set only when the addon instance is destroyed. What is not known is whether a viewer can still cause a Stop while an open is running: Kodi may call `CloseLiveStream()` from another thread during the spinner (then `m_liveTimeshiftStream.open`, already true during the loop, could be checked per try) or may wait for `OpenLiveStream()` to return first. Measure that first: with a forwarder holding `get_live_manifest` as in the closed entry, press Back during the spinner and time Kodi's return to the channel list, and read the log for whether `CloseLiveTimeshiftStream()` ran before the open ended. If Kodi waits, there is nothing for the addon to do and this closes as explained; if it calls close concurrently, the loop should stop on a closed session (a per-open flag or the session counter, not the shutdown flag).
 
 ### Fix known, not yet done
 
@@ -36,10 +40,6 @@ stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
 ### Architectural / concurrency
 
 ### Design decision needed
-
-#### Put a wall-clock cap on a stream open, and decide about slow-trickle servers
-
-**Opened 2026-10-11, from the stalled-stream review (`docs/TIMESHIFT.md`).** The open paths are bounded by a count (the live first-manifest loop, `kColdStartMaxAttempts` of 30, in `OpenLiveTimeshiftStream()`; the `start_buffer` retries; the in-progress cold start) and each try may take the full `timeout` (30 s by default, 180 s at most), so a server that answers `start_buffer` and then goes silent holds the open for about fifteen minutes, and the abort flag is set only when the addon instance is destroyed, so a Stop cannot end it. Nothing is wrong when the server answers. Decisions: a wall-clock budget for the cold-start loop (the existing `ShouldKeepRetryingTransientRead()` already decides "keep trying for another" and could be reused; the budget should sit well above the few seconds a healthy open takes and below the point where a user has given up, 30 to 60 s is the range to measure against); whether a cancelled open (Kodi's Back during the spinner) should be able to reach the loop at all, which needs a per-open flag and not the shutdown one; and whether any transfer should get a low-speed limit (`CURLOPT_LOW_SPEED_LIMIT`/`TIME`), which would end a server that trickles bytes after a few seconds instead of the whole `timeout` but risks cutting a legitimately slow link, so a default has to be measured on the slowest device in the lab. Confirm live with the forwarder's hang mode against a channel open, and with the glue harness's hung-API knobs.
 
 #### Report the connection state to Kodi instead of hand-rolled notifications
 

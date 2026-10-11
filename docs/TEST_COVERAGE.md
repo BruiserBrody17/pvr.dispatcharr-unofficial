@@ -2543,6 +2543,8 @@ harness gained `ip_tail_bound` (a frozen in-progress tail: same four measurement
 one 4535 ms read and no `-1`), in CI's glue run. Checked live against a recording in progress, Stop latency at the tail 0.27 to 5.80 s before
 and 0.28 to 1.37 s after (`docs/CLOSED_ITEMS.md`).
 
+2026-10-11: `ColdStartWallClockBudgetMs()` (`RequestTimeout.h`, `tests/test_request_timeout.cpp`: the live and in-progress budgets at the default timeout, growth with a raised timeout, never under the healthy wait) bounds both open cold-start loops by wall-clock time. The glue harness gained `live_silent_open` (`get_live_manifest` never answers; in CI's glue run; fails on the old code by running past its kill timer) and `ip_silent_open` (by hand, about a minute: a playlist that 404s slowly). Checked live through a forwarder that held the manifest request: the open ended at 61 s (`docs/CLOSED_ITEMS.md`).
+
 See `docs/CLOSED_ITEMS.md`'s "No automated test suite exists" entry for
 the full reasoning and what's still open on both sides. Verification of
 everything else stays manual: smoke-testing against a real Dispatcharr

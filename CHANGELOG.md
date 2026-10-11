@@ -34,6 +34,10 @@ compare against.
 - **Stopping a recording that is still being written no longer waits for the next segment.** With playback caught up to
   the end of a recording in progress, Stop (or a channel change) could take up to six seconds, the same wait the live
   buffer had before its fix; it now takes about a second at most.
+- **A server that stops answering while a channel is opening no longer holds the open for minutes.** If Dispatcharr
+  accepted the request to start the live buffer and then stopped responding, Kodi's channel spinner could run for about
+  fifteen minutes before an error. The open now gives up after about a minute (at the default 30 s connection timeout) and
+  releases the buffer it had started.
 
 ### Changed
 

@@ -568,6 +568,9 @@ class H(BaseHTTPRequestHandler):
             if act == "heartbeat":
                 return self.J(200, {"success": True, "result": {"status": "ok"}})
             if act == "get_live_manifest":
+                if CTL["manifest_hang"] == "1":  # answers start_buffer, then goes silent
+                    time.sleep(40)
+                    return self.J(503, {})
                 if CTL["live_fatal"] == "1":
                     return self.J(
                         200, {"success": True, "result": {"status": "error", "fatal": True, "message": "dead"}}

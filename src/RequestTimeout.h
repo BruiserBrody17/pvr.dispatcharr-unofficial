@@ -34,6 +34,19 @@ constexpr long ShortRequestTimeoutMs(int timeoutSeconds)
   return ms;
 }
 
+// The wall-clock ceiling on an open's cold-start loop (OpenLiveTimeshiftStream(), OpenInProgressRecordingStream()).
+// Each loop is bounded by a count of tries, but every try may take the whole configured timeout, so a server that
+// answered the start request and then goes silent held the open for tries x timeout (about fifteen minutes for the
+// live loop at the default 30 s; found by the 2026-10-11 stalled-stream review). The budget is the loop's own healthy
+// waiting (its tries x its sleep, which a slow-to-start encoder legitimately uses) plus one full timeout, so a hung
+// server costs the viewer a couple of timed-out tries: at the default the budget is 45 s for the live loop (30 tries
+// of 500 ms) and 75 s for an in-progress recording's (90 tries), so a silent server ends the open after about 60 s and
+// 90 s. Checked after each failed try, so the worst case is the budget plus one try, like kMaxCatchUpWallClockMs.
+constexpr long ColdStartWallClockBudgetMs(int maxTries, int sleepMs, int timeoutSeconds)
+{
+  return static_cast<long>(maxTries) * sleepMs + static_cast<long>(timeoutSeconds) * 1000;
+}
+
 // Whether an in-progress recording's manifest refresh is in steady state, where its requests get the short bound: it
 // already has segments AND is not the cold-start loop of an open. A reopened recording is seeded from the segment cache
 // and so already "has segments", but it is a cold start all the same: a slow server must get the configured timeout,

@@ -87,3 +87,19 @@ TEST_CASE("ShouldSkipPlaylistAfterUnansweredLookup skips only for a server that 
   // did not.
   CHECK_FALSE(ShouldSkipPlaylistAfterUnansweredLookup(false, false, 0, false));
 }
+
+TEST_CASE("ColdStartWallClockBudgetMs is the loop's own waiting plus one full timeout", "[RequestTimeout]")
+{
+  // Live loop at the default timeout: 30 tries of 500 ms, plus 30 s.
+  CHECK(ColdStartWallClockBudgetMs(30, 500, 30) == 45000);
+  // In-progress loop: 90 tries of 500 ms, plus 30 s.
+  CHECK(ColdStartWallClockBudgetMs(90, 500, 30) == 75000);
+}
+
+TEST_CASE("ColdStartWallClockBudgetMs grows with a raised timeout and never drops under the healthy wait",
+          "[RequestTimeout]")
+{
+  CHECK(ColdStartWallClockBudgetMs(30, 500, 180) == 195000);
+  CHECK(ColdStartWallClockBudgetMs(30, 500, 5) == 20000);
+  CHECK(ColdStartWallClockBudgetMs(30, 500, 5) >= 30 * 500);
+}
