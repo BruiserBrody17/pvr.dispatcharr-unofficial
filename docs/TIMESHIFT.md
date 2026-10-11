@@ -3373,3 +3373,107 @@ for the reaper, the second thread's stop event overwrote the first's, so the fir
 When the buffer's ffmpeg exits mid-session -- an upstream drop, a provider limit; it runs with no reconnect -- the playlist and every listed segment stay on disk and stay valid; only growth stops. `_get_live_manifest()` used to treat that as fatal: it raised `BufferFailedError`, and the `get_live_manifest` handler answered `fatal: true` and tore the buffer down on the spot (`rmtree` plus the Redis state). A client that is paused polls that action, so the first poll after ffmpeg died wiped the buffered window of a viewer paused or rewound well behind live, who had plenty of valid content left to play. Dead is not exhausted. Now the frozen manifest is returned with `ended: true` and the buffer is left to the normal teardown paths (`stop_buffer`, the idle reaper once nobody is polling). Only a buffer that never produced a playlist at all still fails fast.
 
 On the addon side `ended` is sticky on the stream state and `IsAtEndedTail()` decides what it means: a read behind the tail carries on, a read at the tail of an ended buffer stops waiting (no catch-up budget) and returns end-of-file. EOF, not `-1`: Kodi retries `-1` about five times a second and never ends playback, whereas EOF ends it cleanly -- the same result the in-progress-recording path already found. Verified live against the real instance by pausing a server-side-timeshift viewer ~45 s behind live, stopping the upstream channel through Dispatcharr's own stop endpoint, and resuming 25 s later: 0.6.9 had already torn the buffer down and playback ended 11 s after resume; 0.7.0 still had it (`ended: true`), played about 72 s of it, and ended by itself.
+
+## Stalled streams: what each read path does (reviewed 2026-10-11)
+
+Written down from the code (not its comments) after a review prompted by `pvr.hts`, which has one rule for a stalled live
+stream: no demux packet for N seconds (default 10, a setting) drops the connection and reconnects once. This addon has no
+such single rule, and the review's conclusion is that it should not: see "Why there is no single threshold" below. Nothing
+here is a bug found; the unbounded-or-slow spots it did find are listed after the tables and are open items.
+
+Every request on these paths is bounded by the `timeout` setting (`resources/settings.xml`, default 30 s, 5 to 180 s),
+applied as `CURLOPT_TIMEOUT` in `ApplyStandardCurlOptions()`; no request has a low-speed limit or a separate connect
+timeout (`WebSocketClient` aside). A manifest refresh made while a stream is playing uses the short bound instead
+(`ShortRequestTimeoutMs()`: the setting divided by six, clamped to 5 to 30 s, so 5 s by default). `ReadLiveStream()`,
+`SeekLiveStream()` and `ReadRecordedStream()` in `PVRDispatcharr.cpp` hand the client's return value to Kodi unchanged and
+add no timing of their own. In the tables, **0** is the end-of-stream answer (Kodi treats a few in quick succession as the
+stream ended), **-1** is a read error that Kodi retries at once and eventually gives up on.
+
+### Live timeshift (server-side mode), `ReadLiveTimeshiftStream()`
+
+| Stalled means | Tolerated for | Answer |
+|---|---|---|
+| A segment fetch fails (server unreachable, gateway error, 401/403/5xx) | Retried inside one `Read()` with a delay doubling from 250 ms to 2 s, for up to 25 s (`kOutageReadBudget`); the failure streak carries across calls | 0 when the 25 s is used up |
+| The same failures keep going | Four in a row and 30 s since the first (`kMaxConsecutiveSegmentFetchFailures`, `kMinSegmentFetchFailureStreak`), or at once when a manifest refresh reports the buffer gone | -1 on this and every later call, stream marked fatal, logged at error level |
+| Reader at the live tail, no new segment yet (normal for up to a segment's length) | One-second slices (`kLiveTailWaitSliceMs`) so a close can land between reads; budget 3 times the estimated segment length (mean of the last five, 6 s with no samples, floor 1.5 s, cap 60 s), counted across the slices of one episode at one position; a call is also capped at twice the budget's own sleep time, at most 120 s | -1 per slice, 0 once the budget is used up; a seek probe gets one attempt, then 0 |
+| The buffer's ffmpeg has exited | Not a wait: the reader keeps playing what is on disk | 0 at the tail (`IsAtEndedTail`) |
+| A manifest refresh during the wait says the buffer is dead | - | -1, fatal |
+| The segment was recycled, or the read sits in a gap | - | 0 |
+| The segment server ignores a range or sends the wrong size | - | -1, fatal |
+
+A sustained live outage therefore ends in two steps: the first `Read()` returns 0 after about 25 s, and if Kodi calls
+again the failure streak passes 30 s within that call and the stream is marked fatal. Measured live (`docs/CLOSED_ITEMS.md`,
+"A brief server outage ended playback for good"): an outage of 8 s and one of 20 s resumed; one of 45 s ended playback
+at about 40 s. Both limits were chosen against that measurement and the plugin's own 30 s idle reaper, not tuned
+further.
+
+### Recording playback
+
+| Path | Stalled means | Tolerated for | Answer |
+|---|---|---|---|
+| In-progress recording, `ReadInProgressRecordingStream()` | Reader at the tail of a recording that has not finished | One blocking (not sliced) loop with the same budget formula as live, each attempt a manifest refresh | 0 when used up |
+| | Segment fetch fails transiently (unreachable, 500/502/503/504) | 20 s inside one call (`kTransientReadBudget`), plus a request in flight | -1 |
+| | 401 | One API-key regeneration, then the read is retried | - |
+| | Permanent failure (403, an unexplained 404, a size disagreement) | Five failures over at least 3 s (`PermanentReadFailureTracker`) | -1 until then, then 0 for good |
+| | The refresh confirms the recording is gone or finished | - | 0 |
+| Completed recording, `ReadRecordingStream()` | Transient failure | 20 s inside one call, plus a request in flight | -1 |
+| | Permanent failure or the file changed | Five failures over at least 3 s | 0 for good |
+| | The server ignores the range | - | 0 for good |
+
+Both recording paths keep their stall handling in tested decision functions (`RecordingHttpUtil.h`,
+`SegmentFetchFailure.h`); the loops that use them are checked by the glue harness.
+
+### Opening a stream (no data flowing yet)
+
+| Open | Waits for | Gives up on |
+|---|---|---|
+| Live, `start_buffer` | Up to 20 tries 500 ms apart, only while the plugin answers "retryable" (a buffer mid-teardown) | Anything else at once |
+| Live, first manifest | Up to 30 tries 500 ms apart, any non-fatal failure retries, each request taking the full `timeout` | A fatal answer from the plugin; on failure the viewer it registered is deregistered |
+| In-progress recording, first manifest | Up to 90 tries 500 ms apart, but only a 404 "playlist not created yet" retries | Any other failure at once |
+| Completed recording | One one-byte ranged GET (two with an API-key refresh), 4 MB cap | The first failure |
+
+Catch-up playback and the live mode "Off" (and "Local") hand Kodi a URL and read nothing in the addon, so Kodi's own
+rules apply to them and they are out of scope here.
+
+### Why there is no single threshold
+
+- `pvr.hts` has one stream of packets to watch. Here the data arrives as separate segment fetches from the buffer's file
+  server, and the addon never sees "no packet": it sees a manifest with nothing new (normal for a segment's length), a
+  fetch that failed (a fault between the addon and the server), or a dead encoder. They need different answers, and one
+  number would have to exceed the longest legitimate gap (about three segments) while staying under what Kodi tolerates
+  (a few zero-byte reads in five or six seconds), which is the pair of limits the present constants already sit between.
+- The one user-facing knob, the request timeout, scales every per-request bound. A second setting interacting with the
+  25 s, 30 s and 20 s constants would be harder to reason about than the constants are.
+- Every path ends playback cleanly within about 25 to 40 s of a sustained outage, which is what a user can see and
+  what was measured.
+
+So the thresholds stay fixed constants, documented here. If a device or a server ever needs different ones, the
+constants named in the tables are the places to look.
+
+### What the review found
+
+Every wait is bounded, by a count times a request timeout at worst; none is unbounded. These are the soft spots:
+
+1. **The in-progress recording's tail wait is not sliced.** The live tail wait returns -1 each second so a Stop can land
+   between reads (`docs/CLOSED_ITEMS.md`, the close that took 4 to 6 s); the in-progress one is a single blocking loop,
+   so a Stop at the tail of a recording still being written waits out the budget (about 6 s with two-second segments).
+   Open item.
+2. **The open-time loops have no wall-clock cap and cannot be cancelled.** The abort flag (`AbortInFlightRequests()`)
+   is set only when the addon instance is destroyed, so a Stop during an open does not interrupt it. The live first-manifest
+   loop is thirty tries each as long as the request timeout, which is about fifteen minutes against a server that
+   accepts the connection and then goes silent after `start_buffer` succeeded; a narrow case, but unbounded in practice.
+   Open item.
+3. **No low-speed limit.** A server that trickles bytes holds a transfer for the whole `timeout` (up to 180 s if raised).
+   Adding one risks cutting a legitimately slow link, so it is recorded here, not changed.
+4. **One live `Read()` can overrun its 25 s budget.** The budget is checked after each attempt, and an attempt can be a
+   full segment fetch plus a refresh, so against a server that drops packets one call can take about a minute. The
+   catch-up wait has the same documented overshoot (`kMaxCatchUpWallClockMs`: the budget plus one attempt's requests).
+5. **A recorded read that keeps returning -1 has no bound across calls.** Each call retries for up to 20 s and the budget
+   restarts on the next, so Kodi's own give-up is the only end. Two comments in the source describe Kodi's behaviour
+   differently ("does not keep retrying" in `SegmentFetchFailure.h`'s `IsTransientReadFailure` comment, "retries at once"
+   beside the permanent-failure tracker); both are measurements of the same thing: Kodi retries a failed recorded read
+   at once and ends playback if it keeps failing. How many tries it allows was not measured.
+
+Dispatcharr 0.32.0's `channel_failover`, `channel_reconnect`, `channel_error` and `stream_switch` system events name the
+active stream, so "the server is already failing over" is knowable rather than inferred from starvation. Whether the
+plugin should subscribe belongs to the event-hooks open item, not here.

@@ -4,21 +4,22 @@
 
 ## Status at a glance
 
-**7 open, 290 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
-2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
+**8 open, 291 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but two open items came from the
+two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other two came from the
+stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 0 |
-| Open: Architectural / concurrency | 1 |
-| Open: Design decision needed | 4 |
+| Open: Fix known, not yet done | 1 |
+| Open: Architectural / concurrency | 0 |
+| Open: Design decision needed | 5 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 253 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 254 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 28 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -28,26 +29,17 @@ with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REV
 
 ### Fix known, not yet done
 
+#### Slice the in-progress recording's tail wait the way the live one is
+
+**Opened 2026-10-11, from the stalled-stream review (`docs/TIMESHIFT.md`, "Stalled streams: what each read path does").** The live tail wait returns -1 every second (`kLiveTailWaitSliceMs`, `TailWaitEpisode` in `CatchUpUtil.h`) so that Kodi, which acts on a close or a channel change only between reads, is not left waiting out the budget; that cut the slowest closes seen (7.0 and 14.5 s) to under 3.4 s on a phone (`docs/CLOSED_ITEMS.md`, the close-latency entry). `ReadInProgressRecordingStream()` has the same wait as one blocking loop, so a Stop at the tail of a recording still being written takes up to the budget (about 6 s with two-second segments, up to 120 s with long ones) and a `Player.Open` sent meanwhile is dropped. The change: reuse `TailWaitEpisode` and `HasTailWaitSliceElapsed()` in that loop, keeping the budget, the give-up answer (0) and the seek-probe's single attempt; the slice decisions are already tested, so the new test is a glue scenario with a frozen in-progress tail that measures the longest read, the way the live one's `live_tail_bound` does. Confirm live with a Stop and a channel change while parked at the tail of a recording in progress, comparing the time to `CloseRecordedStream`.
+
 ### Architectural / concurrency
 
-#### One stated stalled-stream rule per read path, with one threshold
-
-**Opened 2026-10-10, from the pvr.hts comparison.** pvr.hts has a single rule for a stalled live stream: no demux packet
-for N seconds while not paused (default 10, user-adjustable) drops the connection and reconnects once. This addon's read
-paths each bound their own waits (the sliced live tail wait and its catch-up-to-tail budget in
-`ReadLiveTimeshiftStream()`, the segment-fetch give-up rules of `ShouldGiveUpAfterSegmentFetchFailure()`, the
-in-progress recording's short give-up, `IsAtEndedTail` for a dead encoder with a playlist on disk), with constants chosen
-case by case and documented in `docs/TIMESHIFT.md` and `docs/RECORDINGS.md`. Nothing is known to be wrong; the item is
-a review. To close: write down, per read path, what "stalled" means, how long it is tolerated, and whether the response
-is a reopen, an EOF or a `-1`, in one table in `docs/TIMESHIFT.md`; decide whether the thresholds should be one
-user-facing setting (pvr.hts's choice) or stay fixed; and, if any path turns out to have no bounded stall handling at
-all, add it with a test in the tested decision functions. The `Off` live mode hands Kodi a stream URL and is Kodi's to
-handle, so it is out of scope. One input from the Dispatcharr source review (`docs/DISPATCHARR_SOURCE_REVIEW.md`): since
-0.32.0 the `channel_buffering`, `channel_failover`, `channel_reconnect`, `channel_error` and `stream_switch` system events
-name the active stream, so "the server is already failing over" is knowable rather than inferred from byte starvation;
-whether the addon or the plugin should listen for them belongs to this review.
-
 ### Design decision needed
+
+#### Put a wall-clock cap on a stream open, and decide about slow-trickle servers
+
+**Opened 2026-10-11, from the stalled-stream review (`docs/TIMESHIFT.md`).** The open paths are bounded by a count (the live first-manifest loop, `kColdStartMaxAttempts` of 30, in `OpenLiveTimeshiftStream()`; the `start_buffer` retries; the in-progress cold start) and each try may take the full `timeout` (30 s by default, 180 s at most), so a server that answers `start_buffer` and then goes silent holds the open for about fifteen minutes, and the abort flag is set only when the addon instance is destroyed, so a Stop cannot end it. Nothing is wrong when the server answers. Decisions: a wall-clock budget for the cold-start loop (the existing `ShouldKeepRetryingTransientRead()` already decides "keep trying for another" and could be reused; the budget should sit well above the few seconds a healthy open takes and below the point where a user has given up, 30 to 60 s is the range to measure against); whether a cancelled open (Kodi's Back during the spinner) should be able to reach the loop at all, which needs a per-open flag and not the shutdown one; and whether any transfer should get a low-speed limit (`CURLOPT_LOW_SPEED_LIMIT`/`TIME`), which would end a server that trickles bytes after a few seconds instead of the whole `timeout` but risks cutting a legitimately slow link, so a default has to be measured on the slowest device in the lab. Confirm live with the forwarder's hang mode against a channel open, and with the glue harness's hung-API knobs.
 
 #### Report the connection state to Kodi instead of hand-rolled notifications
 
