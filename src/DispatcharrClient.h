@@ -250,6 +250,16 @@ struct Recording
   // a channel, so this is what links such a recording back to its rule (see
   // MatchRecordingsToSeriesRules()).
   std::string programTvgId;
+  // Dispatcharr's artwork task writes poster_url (the programme's own artwork, an external address) and
+  // poster_logo_id (that artwork cached as a Dispatcharr logo) for every recording, but when the programme has no
+  // artwork the logo id is the channel's own logo, so a poster exists only when poster_url is non-empty (confirmed
+  // across a lab server's recordings: poster_url present on exactly the ones whose logo id differs from the
+  // channel's). Both stay empty/-1 otherwise, and posterLogoId is only ever set alongside a posterUrl.
+  std::string posterUrl;
+  int posterLogoId = -1;
+  // custom_properties.season / .episode (also on the programme snapshot); -1 means absent or not a whole number.
+  int seasonNumber = -1;
+  int episodeNumber = -1;
 };
 
 // A scheduled recording: either a one-off (isSeries == false) or a

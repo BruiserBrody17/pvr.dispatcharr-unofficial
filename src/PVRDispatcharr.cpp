@@ -3644,6 +3644,17 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
     recording.SetDirectory(dispatcharr::SanitizeRecordingDirectory(rec.title));
     recording.SetEpisodeName(rec.subtitle);
     recording.SetPlot(rec.description);
+    // The cached copy on Dispatcharr is preferred over the programme's external address (one server for the device to
+    // reach, and the image is already fetched); the external address stands in only when no logo was made for it.
+    const std::string poster = rec.posterLogoId >= 0 ? m_client.GetChannelLogoUrl(rec.posterLogoId) : rec.posterUrl;
+    if (!poster.empty())
+      recording.SetThumbnailPath(poster);
+    // The same rule as the guide entry the recording came from (a season of 0 is a real one, an episode needs a
+    // positive number).
+    if (rec.seasonNumber >= 0)
+      recording.SetSeriesNumber(rec.seasonNumber);
+    if (rec.episodeNumber > 0)
+      recording.SetEpisodeNumber(rec.episodeNumber);
     recording.SetChannelUid(rec.channelId > 0 ? rec.channelId : PVR_CHANNEL_INVALID_UID);
     // Left unknown for a channel that is gone from the lineup, so Kodi falls back to its own lookup rather than
     // being told TV for something that may have been radio.

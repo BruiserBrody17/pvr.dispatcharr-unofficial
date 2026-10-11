@@ -4,21 +4,21 @@
 
 ## Status at a glance
 
-**9 open, 288 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
+**8 open, 289 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Every open item came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 1 |
+| Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 252 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 253 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 27 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -41,24 +41,6 @@ holds for a channel this addon opened, through the proxy path it uses, and keep 
 verbosity. Not a correctness feature; drop it if the answer is "admin only and one more request".
 
 ### Fix known, not yet done
-
-#### Show a recording's poster, season and episode and rating from Dispatcharr's enrichment
-
-**Opened 2026-10-10, from the Dispatcharr source review (`docs/DISPATCHARR_SOURCE_REVIEW.md`).** Dispatcharr's artwork
-prefetch task writes `poster_url`, `poster_logo_id`, `rating`, `rating_system`, `season`, `episode` and
-`onscreen_episode` into a recording's `custom_properties` when the matched EPG programme supplies them, and the capture
-task adds `stream_info`. `src/RecordingParser.cpp` reads only `program.title`, `program.sub_title` and
-`program.description`, and `GetRecordings()` never calls `SetIconPath()` on a recording, so a recording in Kodi has no
-artwork, no season or episode number and no rating while the guide entry it came from has all three. The change: parse
-the keys in `RecordingParser` (table-tested in `tests/test_recording_parser.cpp`, including absent and malformed
-values), build the poster URL from `poster_logo_id` the way channel logos are built (`poster_url` as the fallback), and
-set the icon, series and episode numbers on the Kodi recording. Two decisions ride along: whether season/episode are
-trusted at all (`docs/RECORDINGS.md` saw a daily programme whose every airing carried one series-level date, which is why
-`FirstAired` is guarded; apply the same scepticism), and whether `rating_system` now allows the parental-rating mapping
-that `docs/EPG.md`'s "Not mapped, deliberately" paragraph declined for the guide. Confirm live with one enriched and one
-unenriched recording on the Linux client and a phone, checking the recordings list and the recording's information
-dialog.
-
 
 ### Architectural / concurrency
 

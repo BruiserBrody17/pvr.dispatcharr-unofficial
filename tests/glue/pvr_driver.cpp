@@ -535,6 +535,37 @@ int main(int argc, char** argv)
           q.find("\"prev_days\": \"3\"") == std::string::npos || q.find("\"days\": ") != std::string::npos)
         FAIL("the guide was fetched with the query %s", q.c_str());
     }
+    // Recording artwork and numbering: a recording whose programme had a poster gets it (the cached copy on the server,
+    // by logo id) and its season and episode; one that only carries the channel's own logo as poster_logo_id gets no
+    // artwork and no numbers.
+    {
+      Collected artRecs;
+      A()->GetRecordings(I(), (PVR_HANDLE)&artRecs, false);
+      const PVR_RECORDING* enriched = nullptr;
+      const PVR_RECORDING* plain = nullptr;
+      for (const auto& rec : artRecs.recordings)
+      {
+        if (std::string(rec.strRecordingId) == "908")
+          enriched = &rec;
+        else if (std::string(rec.strRecordingId) == "909")
+          plain = &rec;
+      }
+      if (!enriched || !plain)
+        FAIL("the enriched or the plain recording is missing from the list");
+      else
+      {
+        const std::string thumb = enriched->strThumbnailPath;
+        if (thumb.find("/api/channels/logos/31/cache/") == std::string::npos)
+          FAIL("a recording with a poster has the thumbnail '%s'", thumb.c_str());
+        if (enriched->iSeriesNumber != 4 || enriched->iEpisodeNumber != 44)
+          FAIL("a recording with season 4 episode 44 shows %d / %d", enriched->iSeriesNumber, enriched->iEpisodeNumber);
+        if (plain->strThumbnailPath[0] != '\0')
+          FAIL("a recording with only the channel's logo has the thumbnail '%s'", plain->strThumbnailPath);
+        if (plain->iSeriesNumber != PVR_RECORDING_INVALID_SERIES_EPISODE ||
+            plain->iEpisodeNumber != PVR_RECORDING_INVALID_SERIES_EPISODE)
+          FAIL("a recording with no numbers shows %d / %d", plain->iSeriesNumber, plain->iEpisodeNumber);
+      }
+    }
     // The EDL: what comskip left decides whether the plugin is asked at all, and a break over the whole recording is
     // dropped. Three hour-long recordings in the fake: no commercials found (905), an ordinary break (906), one break
     // over the whole hour (907). The fake's plugin answers with a break for each whatever the metadata says.

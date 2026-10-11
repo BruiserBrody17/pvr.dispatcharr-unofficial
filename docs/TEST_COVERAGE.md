@@ -327,6 +327,13 @@ were read as cut mode). The second drops a cut or commercial break covering nine
 duration, with the live numbers as its first test (an EDL of 35.27 s over a 33 s recording). The glue harness's
 `functional` scenario checks both through the real `GetRecordingEdl()` against a fake plugin that counts its calls, and
 fails with either decision disabled.
+`RecordingParser` also reads the artwork enrichment (2026-10-10): `posterUrl`/`posterLogoId` and `seasonNumber`/`episodeNumber`.
+The poster tests pin the one thing that is easy to get wrong: Dispatcharr writes `poster_logo_id` for every recording, and
+with no programme poster it is the channel's own logo, so a poster exists only with a non-empty `http(s)` `poster_url`
+(live: every recording with one had a logo id of its own, every one without carried the channel's). The number
+tests cover both sources (`custom_properties`, then the programme snapshot), a season that is a year, season 0, and null,
+string, fractional, negative and boolean values. The glue harness's `functional` scenario serves one enriched and one
+plain recording and checks the thumbnail and numbers on what reaches Kodi, and fails with the thumbnail line removed.
 `TimerIdentity` is `ComputeSeriesRuleClientIndex()`, the hash-based
 `(title, tvgId)` identity scheme `PVRDispatcharr::GetTimers()` uses to
 give a series rule -- which has no real numeric id in Dispatcharr's own

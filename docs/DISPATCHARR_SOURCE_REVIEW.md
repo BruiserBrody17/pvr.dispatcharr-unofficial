@@ -40,7 +40,8 @@ every airing carried the same date and no per-episode identifier, which is why `
 season and episode from `custom_properties` deserve the same scepticism. And `docs/EPG.md`'s "Not mapped, deliberately"
 paragraph explains why parental ratings were left out of the guide (several rating boards, one integer field in Kodi);
 `rating_system` is now available alongside `rating`, which may allow a per-system mapping, or the same decision may stand.
-Open item: "Show a recording's poster, season and episode and rating from Dispatcharr's enrichment".
+Done, apart from the rating (Kodi's recording has no field for one): `docs/CLOSED_ITEMS.md`, "Show a recording's poster,
+season and episode and rating from Dispatcharr's enrichment".
 
 ### Comskip metadata on the recording itself
 

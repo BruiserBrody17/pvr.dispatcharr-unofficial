@@ -25,6 +25,18 @@ int ClampedDurationSeconds(time_t start, time_t end)
   return seconds > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() : static_cast<int>(seconds);
 }
 
+namespace
+{
+// A whole non-negative number, or -1: a null, a string, a fraction or a negative number are all "not given".
+int SeriesOrEpisodeNumber(const nlohmann::json& object, const char* key)
+{
+  if (!object.contains(key) || !object[key].is_number_integer())
+    return -1;
+  const int value = FieldOr(object, key, -1);
+  return value < 0 ? -1 : value;
+}
+} // namespace
+
 Recording ParseRecordingFields(const nlohmann::json& item, time_t now)
 {
   Recording r;
@@ -178,6 +190,19 @@ Recording ParseRecordingFields(const nlohmann::json& item, time_t now)
       r.programEndTime = TimeFromIso(FieldOr<std::string>(program, "end_time", ""));
       r.programTvgId = FieldOr<std::string>(program, "tvg_id", "");
     }
+    // The enrichment keys sit on custom_properties itself; the programme snapshot carries season and episode too, so
+    // a recording made without the artwork task having run still has them.
+    r.seasonNumber = SeriesOrEpisodeNumber(custom, "season");
+    r.episodeNumber = SeriesOrEpisodeNumber(custom, "episode");
+    if (r.seasonNumber < 0 && program.is_object())
+      r.seasonNumber = SeriesOrEpisodeNumber(program, "season");
+    if (r.episodeNumber < 0 && program.is_object())
+      r.episodeNumber = SeriesOrEpisodeNumber(program, "episode");
+    r.posterUrl = FieldOr<std::string>(custom, "poster_url", "");
+    if (r.posterUrl.rfind("http://", 0) != 0 && r.posterUrl.rfind("https://", 0) != 0)
+      r.posterUrl.clear();
+    if (!r.posterUrl.empty())
+      r.posterLogoId = FieldOr(custom, "poster_logo_id", -1);
     if (r.title.empty())
       r.title = FieldOr<std::string>(custom, "title", "");
     if (r.subtitle.empty())

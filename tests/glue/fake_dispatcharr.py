@@ -249,6 +249,37 @@ def pvr_route(h, method, p, q, body):
                     },
                 }
             )
+        # Dispatcharr's artwork enrichment: a recording whose programme had a poster (and numbers), and one where the
+        # logo id is only the channel's own logo -- the server writes poster_logo_id for both, poster_url for the first.
+        lst.append(
+            {
+                "id": 908,
+                "channel": 1,
+                "start_time": "2026-10-03T10:00:00Z",
+                "end_time": "2026-10-03T11:00:00Z",
+                "custom_properties": {
+                    "status": "completed",
+                    "program": {"title": "Enriched show", "season": 4, "episode": 44},
+                    "poster_url": "https://images.example.test/p/908.jpg",
+                    "poster_logo_id": 31,
+                    "season": 4,
+                    "episode": 44,
+                },
+            }
+        )
+        lst.append(
+            {
+                "id": 909,
+                "channel": 1,
+                "start_time": "2026-10-03T12:00:00Z",
+                "end_time": "2026-10-03T13:00:00Z",
+                "custom_properties": {
+                    "status": "completed",
+                    "program": {"title": "Plain show", "season": None, "episode": None},
+                    "poster_logo_id": 1,
+                },
+            }
+        )
         lst.append(
             {
                 "id": 7,

@@ -21,6 +21,11 @@ compare against.
   list, with its own radio channel groups (a group holding both kinds is listed in both), and its recordings are marked
   as radio. A server older than 0.32.0 sends no flag, so every channel stays TV as before.
 
+- **Recording posters and numbers**: a recording whose programme had artwork now shows it in Kodi's recordings list and
+  information dialog, and a recording whose programme had a season and episode number shows them, the same as the guide
+  entry it came from. Recordings without either look as before. Parental ratings are not shown: Kodi has no place for
+  one on a recording.
+
 ### Fixed
 
 - **A recording whose commercial markers cover all of it no longer plays to its end at once.** Comskip can mark a

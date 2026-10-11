@@ -614,3 +614,127 @@ TEST_CASE("ParseRecordingEdlEntryJson keeps a cut (type 0) and turns an out-of-r
   REQUIRE(ParseRecordingEdlEntryJson(json{{"start", 1000}, {"end", 5000}, {"type", 4}}, entry));
   CHECK(entry.type == 3);
 }
+
+TEST_CASE("ParseRecordingFields reads a poster only when the programme had one", "[RecordingParser]")
+{
+  SECTION("poster_url present: it and its cached logo id are kept")
+  {
+    json item = {
+        {"custom_properties", {{"poster_url", "https://images.example.test/p/1.jpg"}, {"poster_logo_id", 4001}}}};
+    Recording r = ParseRecordingFields(item, 0);
+    CHECK(r.posterUrl == "https://images.example.test/p/1.jpg");
+    CHECK(r.posterLogoId == 4001);
+  }
+
+  SECTION("no poster_url: poster_logo_id is the channel's own logo and is not a poster")
+  {
+    json item = {{"custom_properties", {{"poster_logo_id", 4002}}}};
+    Recording r = ParseRecordingFields(item, 0);
+    CHECK(r.posterUrl.empty());
+    CHECK(r.posterLogoId == -1);
+  }
+
+  SECTION("an empty or null poster_url is no poster either")
+  {
+    for (const json& url : {json(""), json(nullptr)})
+    {
+      json item = {{"custom_properties", {{"poster_url", url}, {"poster_logo_id", 4002}}}};
+      Recording r = ParseRecordingFields(item, 0);
+      CHECK(r.posterUrl.empty());
+      CHECK(r.posterLogoId == -1);
+    }
+  }
+
+  SECTION("a poster_url that is not an http(s) address is dropped, so nothing odd reaches Kodi's image loader")
+  {
+    for (const char* url : {"file:///etc/passwd", "smb://host/share/x.jpg", "/relative/path.jpg", "javascript:x"})
+    {
+      json item = {{"custom_properties", {{"poster_url", url}, {"poster_logo_id", 4001}}}};
+      Recording r = ParseRecordingFields(item, 0);
+      CHECK(r.posterUrl.empty());
+      CHECK(r.posterLogoId == -1);
+    }
+  }
+
+  SECTION("a poster_url with no logo id keeps the address and no logo")
+  {
+    json item = {{"custom_properties", {{"poster_url", "http://images.example.test/p/2.jpg"}}}};
+    Recording r = ParseRecordingFields(item, 0);
+    CHECK(r.posterUrl == "http://images.example.test/p/2.jpg");
+    CHECK(r.posterLogoId == -1);
+  }
+
+  SECTION("a poster_logo_id of the wrong type is no logo")
+  {
+    json item = {
+        {"custom_properties", {{"poster_url", "https://images.example.test/p/3.jpg"}, {"poster_logo_id", "x"}}}};
+    CHECK(ParseRecordingFields(item, 0).posterLogoId == -1);
+  }
+
+  SECTION("no custom_properties at all")
+  {
+    Recording r = ParseRecordingFields(json::object(), 0);
+    CHECK(r.posterUrl.empty());
+    CHECK(r.posterLogoId == -1);
+  }
+}
+
+TEST_CASE("ParseRecordingFields reads season and episode from custom_properties, then from the programme",
+          "[RecordingParser]")
+{
+  SECTION("both on custom_properties")
+  {
+    json item = {{"custom_properties", {{"season", 4}, {"episode", 44}}}};
+    Recording r = ParseRecordingFields(item, 0);
+    CHECK(r.seasonNumber == 4);
+    CHECK(r.episodeNumber == 44);
+  }
+
+  SECTION("a season that is a year is passed on as it is, the same as the guide does")
+  {
+    json item = {{"custom_properties", {{"season", 2026}, {"episode", 6}}}};
+    Recording r = ParseRecordingFields(item, 0);
+    CHECK(r.seasonNumber == 2026);
+    CHECK(r.episodeNumber == 6);
+  }
+
+  SECTION("season 0 is a real season (specials) and stays 0")
+  {
+    json item = {{"custom_properties", {{"season", 0}, {"episode", 3}}}};
+    CHECK(ParseRecordingFields(item, 0).seasonNumber == 0);
+  }
+
+  SECTION("only the programme snapshot has them")
+  {
+    json item = {{"custom_properties", {{"program", {{"season", 2}, {"episode", 9}}}}}};
+    Recording r = ParseRecordingFields(item, 0);
+    CHECK(r.seasonNumber == 2);
+    CHECK(r.episodeNumber == 9);
+  }
+
+  SECTION("custom_properties wins over the programme snapshot")
+  {
+    json item = {{"custom_properties", {{"season", 5}, {"program", {{"season", 2}, {"episode", 9}}}}}};
+    Recording r = ParseRecordingFields(item, 0);
+    CHECK(r.seasonNumber == 5);
+    CHECK(r.episodeNumber == 9);
+  }
+
+  SECTION("null, a string, a fraction and a negative number are all 'not given'")
+  {
+    for (const json& bad : {json(nullptr), json("7"), json(2.5), json(-3), json(true)})
+    {
+      json item = {{"custom_properties", {{"season", bad}, {"episode", bad}, {"program", {{"season", nullptr}}}}}};
+      Recording r = ParseRecordingFields(item, 0);
+      CHECK(r.seasonNumber == -1);
+      CHECK(r.episodeNumber == -1);
+    }
+  }
+
+  SECTION("absent everywhere")
+  {
+    Recording r = ParseRecordingFields(json::object(), 0);
+    CHECK(r.seasonNumber == -1);
+    CHECK(r.episodeNumber == -1);
+  }
+}
