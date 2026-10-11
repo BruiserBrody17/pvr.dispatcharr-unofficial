@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**7 open, 292 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
+**8 open, 292 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other came from the
 stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
@@ -12,7 +12,7 @@ stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 0 |
+| Open: Fix known, not yet done | 1 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 5 |
 | Open: Release, CI and manual testing | 0 |
@@ -28,6 +28,10 @@ stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
 ### Needs a live check
 
 ### Fix known, not yet done
+
+#### Say why a server-timeshift open fails when the buffer's file server cannot be reached
+
+**Opened 2026-10-11, from a user report (Docker install, server timeshift: the channel spins for about 30 s and then exits, local timeshift works).** The buffer starts and its files appear on the server, so `start_buffer` and the manifest calls (through Dispatcharr's own port) succeed and the open completes; only the first segment read goes to the plugin's file server on `http_port` (default 9192, a separate port that has to be published by the container and match the plugin's setting), and when that port is not reachable from the Kodi device (not published, published under another number than the setting, a host firewall) every fetch fails to connect. `ReadLiveTimeshiftStream()` retries for its 25 s outage budget, answers 0, and Kodi ends the stream: the viewer sees a spinner and then nothing, and nothing in Kodi says why (the log has the connect failures at debug level only). The README says to map the port, but a user who maps a different one gets no signal. The fix: probe the file server at the end of the open (one request to `http://<host>:<http_port>/`, which answers 403 when it is alive; any HTTP answer counts as reachable, a connect failure or timeout within the short request bound does not), fail the open at once on a connect failure, and queue a notification that names the port and says it must be published and match the plugin's `http_port` setting; the same message when a running stream is given up on after connect failures to that port. The new pure part (classify a probe result) gets a unit test; the glue harness can refuse connections on the fake's file-server port. Confirm live by pointing the plugin's `http_port` at a port nothing publishes (or blocking it with the forwarder) and opening a channel: today the 30 s spinner, after the change a notification within a few seconds. Also add a line to `docs/TROUBLESHOOTING.md` and the plugin's README for the symptom (spinner then exit, buffer files on disk).
 
 ### Architectural / concurrency
 
