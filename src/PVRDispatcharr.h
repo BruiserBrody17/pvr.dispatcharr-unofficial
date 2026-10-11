@@ -51,6 +51,7 @@ public:
   PVR_ERROR GetCapabilities(kodi::addon::PVRCapabilities& capabilities) override;
   PVR_ERROR GetBackendName(std::string& name) override;
   PVR_ERROR GetBackendVersion(std::string& version) override;
+  PVR_ERROR GetBackendHostname(std::string& hostname) override;
   PVR_ERROR GetConnectionString(std::string& connection) override;
 
   // Only override worth having of the two system-power-state hooks Kodi's

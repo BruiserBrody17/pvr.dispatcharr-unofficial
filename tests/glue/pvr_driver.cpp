@@ -448,6 +448,13 @@ int main(int argc, char** argv)
     A()->GetChannels(I(), (PVR_HANDLE)&c, false);
     if (c.channels.empty())
       FAIL("no channels were listed");
+    // The backend hostname is the configured host alone: no scheme, port or brackets (the connection string has those).
+    {
+      char host[256] = {};
+      PVR_ERROR he = A()->GetBackendHostname(I(), host, sizeof host);
+      if (he != PVR_ERROR_NO_ERROR || std::string(host) != "127.0.0.1")
+        FAIL("the backend hostname was '%s' (err %d), expected the bare configured host", host, (int)he);
+    }
     // Radio: the fake's one radio channel (id 7, group 2, which also holds TV channels) is in the radio list only,
     // and the group is listed under both kinds with the members split the same way.
     {

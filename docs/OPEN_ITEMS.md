@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**14 open, 283 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
+**13 open, 284 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other was found during the
 radio channel live check.
@@ -12,14 +12,14 @@ radio channel live check.
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 2 |
-| Open: Fix known, not yet done | 4 |
+| Open: Fix known, not yet done | 3 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 248 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 249 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 26 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -96,15 +96,6 @@ always, and consider sending `days` from Kodi's own EPG future-days value (`SetE
 instead of inheriting the account's. Confirm live that the export is byte-identical with and without the explicit
 source parameter on a 0.32.0 server, and that an account with a non-zero `epg_days` still gets the window Kodi asked
 for.
-
-#### Report the backend hostname
-
-**Opened 2026-10-10, from the pvr.hts comparison.** pvr.hts overrides `GetBackendHostname`; this addon overrides
-`GetBackendName()`, `GetBackendVersion()` and `GetConnectionString()` but not the hostname, so Kodi's PVR information
-screen leaves that line empty. One override returning the configured host (not the user-facing connection string, which
-already carries the scheme and port). Confirm by reading the field in Kodi's PVR information dialog; the glue harness's
-`pvr_harness` can assert the value. Keep the hostname out of any log line the addon writes at default verbosity, matching
-how the connection string is handled.
 
 ### Architectural / concurrency
 

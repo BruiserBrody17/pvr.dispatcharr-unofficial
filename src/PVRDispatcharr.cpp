@@ -1999,6 +1999,14 @@ PVR_ERROR PVRDispatcharr::GetBackendVersion(std::string& version)
   return PVR_ERROR_NO_ERROR;
 }
 
+PVR_ERROR PVRDispatcharr::GetBackendHostname(std::string& hostname)
+{
+  // The host as configured, without the scheme, port or IPv6 brackets GetConnectionString() adds. Only returned to
+  // Kodi's PVR information screen, never logged: a hostname can identify a deployment.
+  hostname = kodi::addon::GetSettingString("host", "127.0.0.1");
+  return PVR_ERROR_NO_ERROR;
+}
+
 PVR_ERROR PVRDispatcharr::GetConnectionString(std::string& connection)
 {
   // FormatHostForUrl() brackets an IPv6 literal, so "[::1]:9191" reads as

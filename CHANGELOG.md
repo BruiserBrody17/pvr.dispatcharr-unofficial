@@ -14,6 +14,9 @@ compare against.
 
 ### Added
 
+- **Backend hostname**: the addon now tells Kodi the Dispatcharr host's name. Kodi uses it to tell whether a recording
+  is running on the same machine as Kodi itself, and then asks before it powers that machine down mid-recording. Nothing
+  changes when Dispatcharr is on another machine, and Kodi's information screen shows the same host and port as before.
 - **Radio channels**: a channel Dispatcharr 0.32.0 flags as radio now appears in Kodi's Radio section instead of the TV
   list, with its own radio channel groups (a group holding both kinds is listed in both), and its recordings are marked
   as radio. A server older than 0.32.0 sends no flag, so every channel stays TV as before.
