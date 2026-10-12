@@ -4,17 +4,18 @@
 
 ## Status at a glance
 
-**8 open, 298 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Six open items came from the
+**9 open, 298 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Six open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one came from the
-untitled-recording fix and one from the live check of a Stop during an open (`docs/TIMESHIFT.md`'s stalled-streams section).
+untitled-recording fix, one from the live check of a Stop during an open (`docs/TIMESHIFT.md`'s stalled-streams section) and one
+from a user's report.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 6 |
+| Open: Design decision needed | 7 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
@@ -36,6 +37,10 @@ untitled-recording fix and one from the live check of a Stop during an open (`do
 #### Decide whether a stalled open should hold Kodi's UI for less than a minute
 
 **Opened 2026-10-11, from the live check of a Stop during an open (`docs/CLOSED_ITEMS.md`, "Find out whether a Stop during an open reaches the open's cold-start loop").** Kodi runs `CVideoPlayer::CloseFile()` on its main thread and the call waits for the player thread, which is parked inside `OpenLiveStream()`; the addon is told nothing until the open returns. So when a viewer presses Stop during an open whose server has stalled, Kodi's whole UI freezes for the rest of the open (measured: 55 s of a 61 s open at the default 30 s timeout). The wall-clock cap bounds it and nothing in the addon can shorten an open already running, so the only lever is the bound itself. The condition is narrow (a server that accepts the connection and answers `start_buffer`, then goes silent on `get_live_manifest`; a dead or refusing server fails fast). Options: leave it; give the live first-manifest request a per-try timeout shorter than the general one (`RefreshLiveManifest()` uses the full configured timeout while `coldStart` is set), at the cost of failing a slow-to-start encoder that currently succeeds on a late try; or shrink the budget's allowance of one full extra timeout (`ColdStartWallClockBudgetMs()`). Decide; if it changes, confirm with the same forwarder hold (Stop 5 s into an open, UI back within the new bound) and that a normal cold open on a slow channel still succeeds.
+
+#### Watching live while a recording runs on the channel starts a second buffer
+
+**Opened 2026-10-12, from a user's report (Server-side mode; they were recording a programme, then tuned the channel and answered "live" at Kodi's "play recording or tune to live" prompt).** `GetChannelStreamProperties()` and `OpenLiveStream()` never look for a recording on the channel: in Server-side mode every live open starts (or joins) the timeshift-buffer plugin's own buffer for it, a second ffmpeg and a rolling buffer on disk next to the recording's own. The user's expectation, from Tvheadend: the in-progress recording already allows pause and rewind, so watching live should use it and start no buffer. The cost today is the extra process and disk, not an extra provider connection (the buffer and the recording should both be clients of Dispatcharr's one proxy stream for the channel; not checked live). The idea is feasible in outline, since the addon already plays an in-progress recording with seek and pause (`OpenInProgressRecordingStream()`), but Kodi plays a channel through the live-stream callbacks (`OpenLiveStream()`, `ReadLiveStream()`, `SeekLiveStream()`, `GetStreamTimes()`) and a recording through the recorded-stream ones, so the live path would have to delegate to the recording's reader and report stream times for it. The blocking questions are semantic. (1) **The recording ends** at the programme's end plus post-padding, so a viewer who chose "live" reaches the end of the stream mid-channel; handing over to a timeshift buffer without a gap (or without Kodi leaving the channel) is not something the callbacks obviously allow, and a reopen drops the viewer to the channel with a gap. (2) **The recording can be stopped or deleted** (from Kodi or Dispatcharr) while someone watches it as live, which ends a stream they never asked to end. (3) **The live edge** of a recording is a segment or two behind the real one, as the timeshift buffer's is; rewind reaches back only to the recording's start, which is probably what a viewer wants. (4) **Tvheadend parity is unverified**: the report says it plays the recording instead of starting timeshift when "live" is chosen over a joined recording; that was not checked against pvr.hts or Tvheadend. Options: leave it (it works, it costs a process and disk); a setting that plays the channel plainly (no pause or rewind) when a recording already runs on it, which saves the buffer but loses the pause the user wants; or the delegation above, preceded by a live experiment of what Kodi does when a live stream's reader returns end-of-stream mid-playback (does it leave, retry the open, or hold the player?), which decides (1). Confirm live with a recording running on a channel and the channel opened as live: today's behaviour is a buffer in `list_buffers` for that channel (the baseline to record), and after any change none, with pause, rewind and the recording's own end handled as decided.
 
 #### Keep a title the user typed for a manual timer
 
