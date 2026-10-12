@@ -622,6 +622,7 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
     stateLock.lock();
     if (refreshed)
     {
+      NotifyConnection(ConnectionReport::kConnected);
       // Reset here too, not just in Login()'s own success branch below
       // (fixed 2026-09-27, a 58th-pass audit, fixing a real, confirmed
       // gap found via a project-wide review, not itself independently
@@ -649,6 +650,7 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
       m_refreshToken.clear();
       break;
     case RefreshTokenFailure::kTransient:
+      NotifyConnection(ReportForAuthFailure(refreshHttpStatus, callerHasShortBound));
       m_lastLoginError = error;
       m_transientLoginFailedAt = std::chrono::steady_clock::now();
       m_transientLoginArmedByShortAttempt = callerHasShortBound;
@@ -664,6 +666,7 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   stateLock.lock();
   if (loggedIn)
   {
+    NotifyConnection(ConnectionReport::kConnected);
     m_consecutiveLoginFailures = 0;
     m_transientLoginFailedAt = {};
     m_transientLoginArmedByShortAttempt = false;
@@ -684,6 +687,8 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   // just had fixed (PVRDispatcharr.cpp).
   auto failedAt = std::chrono::steady_clock::now();
   m_lastLoginError = error;
+  // What this failure proves to Kodi's connection state (ConnectionReport.h); the same status split as the backoff.
+  NotifyConnection(ReportForAuthFailure(httpStatus, callerHasShortBound));
   // Only a genuine credential/authorization rejection extends the
   // backoff -- see dispatcharr::ShouldCountTowardLoginBackoff()'s own
   // comment (AuthBackoff.h) for the real, confirmed gap this closes: a

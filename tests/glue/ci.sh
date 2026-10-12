@@ -40,4 +40,9 @@ run "PVR surface: functional"    BIN=pvr_harness T=180 -- functional
 run "PVR: M3U refresh event"       BIN=pvr_harness T=60 -- refresh_events
 run "PVR: server offset vs table"   BIN=pvr_harness T=60 -- offset_cross_check
 run "PVR surface: threads"       BIN=pvr_harness T=180 -- surface 6000
+run "PVR: connection, healthy"    BIN=pvr_harness T=60 -- connection_state 4000 connected
+run "PVR: connection, rejected"   BIN=pvr_harness T=60 CTL="login_status=401" -- connection_state 4000 denied
+run "PVR: connection, throttled"  BIN=pvr_harness T=60 CTL="login_status=429" -- connection_state 4000 ""
+run "PVR: connection, down at start" BIN=pvr_harness T=60 CTL="api_down=1" -- connection_state 4000 unreachable
+run "PVR: connection, proxy error at login" BIN=pvr_harness T=60 CTL="login_status=502" -- connection_state 4000 unreachable
 [ "$failed" -eq 0 ] && echo "all glue scenarios passed" || { echo "$failed glue scenario(s) failed"; exit 1; }

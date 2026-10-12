@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**8 open, 296 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Six open items came from the
+**8 open, 297 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Six open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one came from the
 untitled-recording fix and one from the live check of a Stop during an open (`docs/TIMESHIFT.md`'s stalled-streams section).
@@ -19,7 +19,7 @@ untitled-recording fix and one from the live check of a Stop during an open (`do
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 258 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 259 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 29 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -41,25 +41,9 @@ untitled-recording fix and one from the live check of a Stop during an open (`do
 
 **Opened 2026-10-11, left over from the untitled-recording fix (`docs/CLOSED_ITEMS.md`, the entry on a recording nothing titled).** `AddTimer()` keeps the title Kodi sends for three minutes (`PendingTitle`) and never writes it to the server, because the one write available, `RenameRecording()` (the `update-metadata` endpoint), stores `custom_properties.program.title` and marks the recording `user_edited`, which stops Dispatcharr's own later enrichment (description, poster, programme data) for it. For a recording Kodi named from the guide or the channel that is the right trade (enrichment supplies the title, the channel name stands in now), but a manual timer whose Name field the user typed loses that name after three minutes and shows the channel name instead. The difficulty is telling a typed name from Kodi's default: the default is the localized string "New Timer", which the addon cannot compare against reliably. Decisions: whether to persist the title for a manual timer (`timer.GetEPGUid() == PVR_TIMER_NO_EPG_UID`) only when it differs from the channel's name and from "New Timer" in the languages Kodi ships, or to persist it client-side in the addon's data like `RecordingEpgLinks` (survives restarts, not other Kodi clients), or to leave it. Confirm live with a manual timer named by hand: after the change the name must survive the three minutes and a Kodi restart, and a manual timer left at Kodi's default must still pick up the programme's title from Dispatcharr's enrichment.
 
-#### Report the connection state to Kodi instead of hand-rolled notifications
+#### Report a mid-session outage, and a server that is not Dispatcharr, to Kodi
 
-**Opened 2026-10-10, from the pvr.hts comparison.** pvr.hts reports every connect, disconnect, refusal and recovery to
-Kodi through the `ConnectionStateChange` callback; this addon never calls it, so Kodi holds it at
-`PVR_CONNECTION_STATE_UNKNOWN` for its whole life and the addon shows its own messages through `kodi::QueueNotification`
-(14 call sites across `src/PVRDispatcharr.cpp` and `src/DispatcharrClient.cpp`). What Kodi 21 does with a reported state
-was confirmed by reading `xbmc/pvr/addons/PVRClient.cpp` and `PVRClients.cpp` (the facts are in
-`docs/PVR_HTS_COMPARISON.md`'s "Kodi-side facts confirmed while reading (Kodi 21)" section): standard localized
-messages for unreachable, access denied, lost and re-established; the first unreachable after start-up deliberately not
-shown; and, on `CONNECTED`, a re-read of the addon's `PVRCapabilities`. That last point is the reason this is a design
-item and not a cosmetic one: `GetCapabilities()` depends on `m_dvrManageAllowed`, known only after the first login, and
-reporting `CONNECTED` after login is the sanctioned way to make Kodi pick up the real DVR capabilities. Decisions needed:
-which of the addon's failure modes map to which state (a 401 after the backoff in `AuthBackoff` is "access denied"; a
-connect failure is "unreachable"; a `/api/core/version/` that answers but is not Dispatcharr is "server mismatch"), which
-of the existing notifications become redundant and go, and whether to report `CONNECTING` at start-up (it makes Kodi
-ignore the client until `CONNECTED`, which changes start-up ordering). Confirm live: Kodi start with the server down,
-server coming up later, credentials revoked mid-session, server restarted mid-playback, each on the Linux client and one
-phone, watching Kodi's messages and the channel list. The glue harness's `pvr_harness` already fakes the server and can
-drive the transitions.
+**Opened 2026-10-10 from the pvr.hts comparison; the login-driven part is done (`docs/CLOSED_ITEMS.md`, "Tell Kodi when Dispatcharr is unreachable or refuses the login"), this is what is left.** The addon now reports "connected", "access denied" and "unreachable" from the login layer. Three gaps remain. (1) **A mid-session outage with a still-valid token is not seen** until the token (about four minutes) next has to be refreshed, because only login and refresh results are observed. Reporting from `DispatcharrClient::Request()` would be faster but must not count a timeout on a heavy endpoint (the guide download takes 13 to 30 s against a 30 s default timeout) and must not flap: Kodi never suppresses "Connection lost" and "Connection established", so a flaky link would flash both; it needs a few consecutive connect-level failures (`CURLE_COULDNT_CONNECT`, `CURLE_COULDNT_RESOLVE_HOST`) across requests before reporting, and `DISCONNECTED` ("Connection lost") rather than `UNREACHABLE` once the link was up. The realtime WebSocket cannot be the signal (it closes about once a minute in the logs and can be switched off). (2) **A server that answers but is not Dispatcharr** (a 404 or 405 from a proxy on the token path, a 200 with no token, a version endpoint with no version) is left unreported; Kodi has `SERVER_MISMATCH` ("Server does not respond properly") for it. (3) **The "Restart Kodi to hide the record, delete and rename actions" warning** (`SyncDvrAccessFromDispatcharr()`) exists because Kodi reads capabilities once; since the held `CONNECTED` report now forces a re-read after the access level is learned, it may be removable, but nobody has seen Kodi's UI drop the actions without a restart. Confirm live with a view-only account (a disposable user on the lab server, which changes the lab: ask first) and the server unreachable at Kodi start, then reachable: the Record button, Timers window and delete/rename must disappear after "Connection established", and if they do the warning goes. Decide (1) first; it is the only one that changes what a viewer sees often.
 
 #### Let a series rule's title and description match modes be set from Kodi
 

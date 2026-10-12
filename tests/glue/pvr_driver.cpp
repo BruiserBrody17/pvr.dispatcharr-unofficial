@@ -21,6 +21,9 @@ extern std::map<std::string, std::string> g_settings;
 extern std::atomic<bool> g_dropSetSetting;
 extern std::atomic<long> g_setCount, g_notifyCount, g_triggerCount;
 extern std::string g_userPath;
+extern std::mutex g_connMu;
+extern std::vector<int> g_connCalls;
+extern std::vector<std::string> g_connMessages;
 extern AddonInstance_PVR g_pvr;
 struct Collected
 {
@@ -766,6 +769,77 @@ int main(int argc, char** argv)
     // One evaluation is not enough to move every rule: the first start seen is the table's, whatever it settles on.
     if (first >= 0 && ((first % 86400) + 86400) % 86400 != kTableTimeOfDay)
       FAIL("the offset was adopted on a single evaluation (the first start seen was already the server's)");
+  }
+  else if (what == "connection_state")
+  {
+    // What the addon tells Kodi about the link (ConnectionStateChange), in order. argv[4] is the expected sequence, a
+    // comma-separated list of connected, denied, unreachable (empty: none). The fake's faults come from CTL
+    // (login_status=401, api_down=1), set before the constructor ran. With CONN_RECOVER=1 the scenario clears api_down
+    // after the first report and waits (up to `dur`) for the rest; otherwise it waits the whole `dur` so a spurious
+    // extra report is caught too.
+    const std::string expectArg = argc > 4 ? argv[4] : "";
+    std::vector<std::string> expected;
+    for (size_t p = 0; !expectArg.empty() && p <= expectArg.size();)
+    {
+      size_t comma = expectArg.find(',', p);
+      expected.push_back(expectArg.substr(p, comma == std::string::npos ? std::string::npos : comma - p));
+      if (comma == std::string::npos)
+        break;
+      p = comma + 1;
+    }
+    auto name = [](int state) -> std::string
+    {
+      switch (state)
+      {
+      case PVR_CONNECTION_STATE_CONNECTED:
+        return "connected";
+      case PVR_CONNECTION_STATE_ACCESS_DENIED:
+        return "denied";
+      case PVR_CONNECTION_STATE_SERVER_UNREACHABLE:
+        return "unreachable";
+      default:
+        return "state" + std::to_string(state);
+      }
+    };
+    auto snapshot = [&name]()
+    {
+      std::lock_guard<std::mutex> lock(g_connMu);
+      std::vector<std::string> out;
+      for (int state : g_connCalls)
+        out.push_back(name(state));
+      return out;
+    };
+    const bool recover = getenv("CONN_RECOVER") != nullptr;
+    bool cleared = false;
+    const long began = ms();
+    while (ms() - began < dur)
+    {
+      const auto now = snapshot();
+      if (recover && !cleared && !now.empty())
+      {
+        INFO("first report %s; clearing the fault", now.front().c_str());
+        ctl("api_down=0&login_status=");
+        cleared = true;
+      }
+      if (recover && now.size() >= expected.size())
+        break;
+      sleep_ms(100);
+    }
+    const auto got = snapshot();
+    std::string gotText, wantText;
+    for (const auto& g : got)
+      gotText += (gotText.empty() ? "" : ",") + g;
+    for (const auto& w : expected)
+      wantText += (wantText.empty() ? "" : ",") + w;
+    INFO("reported to Kodi after %ld ms: [%s], expected [%s]", ms() - began, gotText.c_str(), wantText.c_str());
+    if (got != expected)
+      FAIL("the addon reported [%s] to Kodi, expected [%s]", gotText.c_str(), wantText.c_str());
+    {
+      std::lock_guard<std::mutex> lock(g_connMu);
+      for (const auto& m : g_connMessages)
+        if (!m.empty())
+          FAIL("a report carried the message '%s'; an empty one makes Kodi use its own localized text", m.c_str());
+    }
   }
   else if (what == "dtor_busy")
   {

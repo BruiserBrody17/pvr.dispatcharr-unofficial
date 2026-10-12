@@ -107,6 +107,7 @@ set(DISPATCHARR_SOURCES
     src/SeriesRuleTextMatch.cpp
     src/UnicodeText.cpp
     src/AuthBackoff.cpp
+    src/ConnectionReport.cpp
     src/StreamSeek.cpp
     src/RecordingVisibility.cpp
     src/PluginUrlUtil.cpp
@@ -167,6 +168,7 @@ set(DISPATCHARR_HEADERS
     src/RecurringRuleWeekdays.h
     src/ChannelGroupFilter.h
     src/AuthBackoff.h
+    src/ConnectionReport.h
     src/WebSocketHandshake.h
     src/StreamSeek.h
     src/SegmentAppendOffsets.h

@@ -301,8 +301,15 @@ static void t_trigger_epg(void*, unsigned int)
 {
   g_triggerCount++;
 }
-static void t_conn(void*, const char*, PVR_CONNECTION_STATE, const char*)
+// Every ConnectionStateChange the addon made, in order, for the connection_state scenario.
+std::mutex g_connMu;
+std::vector<int> g_connCalls;
+std::vector<std::string> g_connMessages;
+static void t_conn(void*, const char*, PVR_CONNECTION_STATE state, const char* message)
 {
+  std::lock_guard<std::mutex> lock(g_connMu);
+  g_connCalls.push_back(static_cast<int>(state));
+  g_connMessages.push_back(message ? message : "");
 }
 static void t_menu(void*, const PVR_MENUHOOK*)
 {

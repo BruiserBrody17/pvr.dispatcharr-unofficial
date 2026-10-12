@@ -69,6 +69,7 @@
 
 #include "ApiKeyRecovery.h"
 #include "CatchUpUtil.h"
+#include "ConnectionReport.h"
 #include "DvrAccess.h"
 #include "RecurringRuleEdit.h"
 #include "RequestTimeout.h"
@@ -380,6 +381,14 @@ public:
   // dispatcharr::ShouldCountTowardEpgFailureBackoff().
   // `prevDays` > 0 asks for that many days of already-aired programmes too
   // (`?prev_days=N`), see dispatcharr::ComputeGuidePrevDays().
+  // Receives what each login or token refresh proved about the link to Dispatcharr (see ConnectionReport.h). Called on
+  // whichever thread was authenticating, with the auth locks held, so it must only record and return; it must be set
+  // before the first request and not changed after.
+  void SetConnectionObserver(std::function<void(ConnectionReport)> observer)
+  {
+    m_connectionObserver = std::move(observer);
+  }
+
   // Makes every request in flight (and any started later) fail immediately. Called when
   // the addon instance is being destroyed, so shutdown does not wait out a request to an
   // unresponsive server -- see CurlCallbacks.h's TransferAbortResult().
@@ -1203,6 +1212,12 @@ private:
   // one started afterwards, then ends at once instead of running to its timeout.
   // Mutable because ApplyStandardCurlOptions() is const and hands libcurl its address.
   mutable std::atomic<bool> m_abortRequests{false};
+  std::function<void(ConnectionReport)> m_connectionObserver;
+  void NotifyConnection(ConnectionReport report)
+  {
+    if (report != ConnectionReport::kNone && m_connectionObserver)
+      m_connectionObserver(report);
+  }
 
   // curl_easy_perform() on `curl` for `startUrl`, following up to five redirects
   // but only ones dispatcharr::IsSafeRedirectTarget() allows (same host, never

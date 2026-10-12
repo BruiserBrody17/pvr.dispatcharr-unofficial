@@ -1,6 +1,7 @@
 #include "PVRDispatcharr.h"
 
 #include "AuthBackoff.h"
+#include "ConnectionReport.h"
 #include "ChannelGroupFilter.h"
 #include "ChannelLineupChange.h"
 #include "ChannelNumber.h"
@@ -599,7 +600,11 @@ void PVRDispatcharr::RetryDeferredServerSyncs()
   if (!m_catchupFlagsChecked)
     m_catchupFlagsChecked = SyncCatchupFlagsFromDispatcharr();
   if (!m_dvrAccessChecked)
+  {
     m_dvrAccessChecked = SyncDvrAccessFromDispatcharr();
+    if (m_dvrAccessChecked)
+      ScheduleConnectionReport();
+  }
 
   ReassertApiKeySetting();
 }
@@ -609,6 +614,8 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
       m_apiKeyOwnerHost(ComputeApiKeyOwnerServer(m_lastAppliedConfig)),
       m_apiKeyOwnerUsername(m_lastAppliedConfig.username), m_client(LoadConfigFromSettings())
 {
+  // Before the first request, so the startup login is observed too.
+  m_client.SetConnectionObserver([this](dispatcharr::ConnectionReport report) { OnConnectionObserved(report); });
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
   m_liveTimeshiftMode = kodi::addon::GetSettingInt("live_timeshift_mode", kLiveTimeshiftOff);
@@ -643,7 +650,12 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
       // once and the background thread's deferred syncs reconnect when the server answers (found by the
       // fourteenth hardening sweep: 10 s at a 5 s timeout, about 60 s at the default, against a hung server).
       if (versionStatus == 0)
+      {
         m_client.DeferAuthenticationAfterUnresponsiveServer("Dispatcharr did not answer at startup: " + versionError);
+        // No login is attempted now, so the login layer has nothing to report; this is the one observation of the
+        // outage until the first retry (Kodi keeps its first "unreachable" out of the toasts, but logs it).
+        OnConnectionObserved(dispatcharr::ConnectionReport::kUnreachable);
+      }
     }
   }
 
@@ -815,6 +827,8 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   // See SyncDvrAccessFromDispatcharr()'s own comment. Before Kodi's first
   // GetCapabilities() on the normal path, which is the point.
   m_dvrAccessChecked = SyncDvrAccessFromDispatcharr();
+  // CONNECTED, if the login succeeded, was held until the access level was known (ConnectionReport.h).
+  ScheduleConnectionReport();
 
   StartRecordingRefreshThread();
   StartChannelEpgRefreshThread();
@@ -827,6 +841,55 @@ bool PVRDispatcharr::SleepUnlessShuttingDown(std::chrono::seconds duration)
   std::unique_lock<std::mutex> lock(m_shutdownMutex);
   m_shutdownCv.wait_for(lock, duration, [this]() { return m_shuttingDown.load(); });
   return !m_shuttingDown.load();
+}
+
+void PVRDispatcharr::OnConnectionObserved(dispatcharr::ConnectionReport report)
+{
+  // The shutdown abort makes requests fail with no response, which says nothing about the server; and a task started
+  // now could outlive the join in the destructor.
+  if (m_shuttingDown)
+    return;
+  if (m_connectionLatch.Observe(report))
+    ScheduleConnectionReport();
+}
+
+void PVRDispatcharr::ScheduleConnectionReport()
+{
+  TrackDetachedThread([this]() { ReportConnectionToKodi(); });
+}
+
+void PVRDispatcharr::ReportConnectionToKodi()
+{
+  // One reporter at a time, so a slow call cannot be overtaken by a later one; each loop pass delivers the newest
+  // state, not the one this thread was started for.
+  std::lock_guard<std::mutex> reportLock(m_connectionReportMutex);
+  dispatcharr::ConnectionReport report = dispatcharr::ConnectionReport::kNone;
+  while (!m_shuttingDown && m_connectionLatch.TakePending(report, m_dvrAccessChecked))
+  {
+    PVR_CONNECTION_STATE state = PVR_CONNECTION_STATE_UNKNOWN;
+    switch (report)
+    {
+    case dispatcharr::ConnectionReport::kConnected:
+      state = PVR_CONNECTION_STATE_CONNECTED;
+      break;
+    case dispatcharr::ConnectionReport::kUnreachable:
+      state = PVR_CONNECTION_STATE_SERVER_UNREACHABLE;
+      break;
+    case dispatcharr::ConnectionReport::kAccessDenied:
+      state = PVR_CONNECTION_STATE_ACCESS_DENIED;
+      break;
+    case dispatcharr::ConnectionReport::kNone:
+      continue;
+    }
+    std::string connection;
+    GetConnectionString(connection);
+    kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: telling Kodi the connection is now %s",
+              state == PVR_CONNECTION_STATE_CONNECTED       ? "connected"
+              : state == PVR_CONNECTION_STATE_ACCESS_DENIED ? "access denied"
+                                                            : "unreachable");
+    // An empty message makes Kodi use its own localized text for the state.
+    ConnectionStateChange(connection, state, "");
+  }
 }
 
 PVRDispatcharr::~PVRDispatcharr()

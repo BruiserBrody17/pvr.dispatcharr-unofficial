@@ -95,6 +95,7 @@ add_executable(pvr_dispatcharr_tests
   test_edl_decision.cpp
   test_web_socket_handshake.cpp
   test_auth_backoff.cpp
+  test_connection_report.cpp
   test_stream_seek.cpp
   test_segment_append_offsets.cpp
   test_pending_title_lookup.cpp
@@ -154,6 +155,7 @@ add_executable(pvr_dispatcharr_tests
   ${DISPATCHARR_SRC_DIR}/SeriesRuleTextMatch.cpp
   ${DISPATCHARR_SRC_DIR}/UnicodeText.cpp
   ${DISPATCHARR_SRC_DIR}/AuthBackoff.cpp
+  ${DISPATCHARR_SRC_DIR}/ConnectionReport.cpp
   ${DISPATCHARR_SRC_DIR}/StreamSeek.cpp
   ${DISPATCHARR_SRC_DIR}/RecordingVisibility.cpp
   ${DISPATCHARR_SRC_DIR}/PluginUrlUtil.cpp

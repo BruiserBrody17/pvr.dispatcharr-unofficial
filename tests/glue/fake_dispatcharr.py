@@ -537,6 +537,8 @@ class H(BaseHTTPRequestHandler):
             time.sleep(40)
             return self.J(503, {})
         if p == "/api/accounts/token/":
+            if CTL["login_status"]:  # a rejected login (401), a throttled one (429), a proxy error (502) ...
+                return self.J(ctl_int("login_status"), {"detail": "No active account found with the given credentials"})
             return self.J(200, {"access": "A", "refresh": "R"})
         if p == "/api/accounts/token/refresh/":
             return self.J(200, {"access": "AR"})

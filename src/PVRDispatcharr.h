@@ -353,6 +353,16 @@ private:
   // SyncDvrAccessFromDispatcharr().
   std::atomic<bool> m_dvrManageAllowed{true};
   std::atomic<bool> m_dvrAccessChecked{false};
+  // What the login layer last learned about the link to Dispatcharr, waiting to be told to Kodi through
+  // ConnectionStateChange. The observer (a client thread, auth locks held) only records here; ReportConnectionToKodi(),
+  // on a worker thread with no addon lock held, makes the call, because Kodi answers it by calling this addon's
+  // getters and taking its own locks. See ConnectionReport.h for the latch and why CONNECTED waits for
+  // m_dvrAccessChecked.
+  dispatcharr::ConnectionReportLatch m_connectionLatch;
+  std::mutex m_connectionReportMutex;
+  void OnConnectionObserved(dispatcharr::ConnectionReport report);
+  void ScheduleConnectionReport();
+  void ReportConnectionToKodi();
   // Set by GetCapabilities(): from then on a changed access level can no longer
   // reach what Kodi offers.
   std::atomic<bool> m_capabilitiesRead{false};

@@ -59,7 +59,12 @@ hang stress. Fault knobs and counters (`api_down`, `api_hang`, `api_delay_ms`, .
 struct and drives it as Kodi's PVR manager does: `ctor_dtor`, `dtor_busy`, `functional` (the radio lists, EPG on six channels
 including a 5.1, all four timer types), `surface <ms>` (four threads on lists and EPG, timer add/update/delete
 cycles, stream cycles with a `GetStreamTimes` thread, settings changes including the dialog-open dropped-write
-case, `OnSystemWake`).
+case, `OnSystemWake`), and `connection_state <ms> <states>`: what the addon tells Kodi through `ConnectionStateChange`, in order, as a
+comma-separated list of `connected`, `denied`, `unreachable` (empty for none), against a fault set with `CTL` before the constructor
+runs (`login_status=401` a rejected login, `429` a throttled one, `502` a proxy error; `api_down=1` a server down at start). In CI for
+healthy, 401, 429, down at start and 502. With `CONN_RECOVER=1` it clears the fault after the first report and waits for the rest
+(`CTL="api_down=1" CONN_RECOVER=1 ... connection_state 170000 unreachable,connected`, about a minute: the login cooldown plus the
+background thread's one-minute retry).
 
 ## Plugin integration (`plugin_integration/`)
 

@@ -14,6 +14,12 @@ compare against.
 
 ### Added
 
+- **Connection problems are shown by Kodi**: when Dispatcharr cannot be reached, or refuses the addon's username and
+  password, Kodi now says so itself ("Server is unreachable", "Access denied", and "Connection established" once it is
+  back), with the host and port, in its own language, and keeps the entries in its Event Log. Before, the only trace was
+  in the log file and the channel list simply stayed empty. Kodi does not pop up the first "unreachable" after it starts
+  (a server that is not up yet at boot is common); it is in the Event Log. A server that goes away while Kodi is running
+  is noticed when the addon next has to log in again, within a few minutes, not at once.
 - **Backend hostname**: the addon now tells Kodi the Dispatcharr host's name. Kodi uses it to tell whether a recording
   is running on the same machine as Kodi itself, and then asks before it powers that machine down mid-recording. Nothing
   changes when Dispatcharr is on another machine, and Kodi's information screen shows the same host and port as before.
