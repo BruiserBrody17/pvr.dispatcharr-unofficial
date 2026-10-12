@@ -425,8 +425,17 @@ bool DispatcharrClient::Request(const std::string& method, const std::string& pa
       m_lastLocalIp = localIp;
     }
   }
+  // A timeout in which the connection was never established is a host that drops packets instead of refusing them,
+  // which LinkHealth counts as the link being down; one on an established connection is just a slow answer.
+  bool connectNeverCompleted = false;
+#if LIBCURL_VERSION_NUM >= 0x073d00
+  curl_off_t connectTimeUs = 0;
+  if (res == CURLE_OPERATION_TIMEDOUT && curl_easy_getinfo(curl, CURLINFO_CONNECT_TIME_T, &connectTimeUs) == CURLE_OK)
+    connectNeverCompleted = connectTimeUs == 0;
+#endif
   curl_slist_free_all(headers);
   curl_easy_cleanup(curl);
+  NotifyLinkAttempt(res, httpCode, withAuth, connectNeverCompleted);
 
   if (res != CURLE_OK)
   {

@@ -2,6 +2,8 @@
 
 #include "AuthBackoff.h"
 
+#include <curl/curl.h>
+
 namespace dispatcharr
 {
 
@@ -14,6 +16,48 @@ ConnectionReport ReportForAuthFailure(long httpStatus, bool callerHasShortBound)
   if (httpStatus == 0)
     return callerHasShortBound ? ConnectionReport::kNone : ConnectionReport::kUnreachable;
   if (httpStatus >= 500)
+    return ConnectionReport::kUnreachable;
+  return ConnectionReport::kNone;
+}
+
+bool IsConnectLevelFailure(int curlCode, bool connectNeverCompleted)
+{
+  switch (curlCode)
+  {
+  case CURLE_COULDNT_RESOLVE_PROXY:
+  case CURLE_COULDNT_RESOLVE_HOST:
+  case CURLE_COULDNT_CONNECT:
+  case CURLE_GOT_NOTHING:
+  case CURLE_SEND_ERROR:
+  case CURLE_RECV_ERROR:
+    return true;
+  case CURLE_OPERATION_TIMEDOUT:
+    return connectNeverCompleted;
+  default:
+    return false;
+  }
+}
+
+ConnectionReport LinkHealth::OnAttempt(std::chrono::steady_clock::time_point now, int curlCode, long httpCode,
+                                       bool authenticated, bool connectNeverCompleted)
+{
+  std::lock_guard<std::mutex> lock(m_mutex);
+  if (curlCode == 0)
+  {
+    if (httpCode >= 500)
+      return ConnectionReport::kNone;
+    m_failures = 0;
+    return authenticated && httpCode >= 200 && httpCode < 300 ? ConnectionReport::kConnected : ConnectionReport::kNone;
+  }
+  if (!IsConnectLevelFailure(curlCode, connectNeverCompleted))
+    return ConnectionReport::kNone;
+  if (m_failures > 0 && now - m_lastFailure > kMaxGap)
+    m_failures = 0;
+  if (m_failures == 0)
+    m_firstFailure = now;
+  ++m_failures;
+  m_lastFailure = now;
+  if (m_failures >= kFailuresToTrip && now - m_firstFailure >= kMinSpan)
     return ConnectionReport::kUnreachable;
   return ConnectionReport::kNone;
 }
@@ -31,12 +75,18 @@ bool ConnectionReportLatch::Observe(ConnectionReport report)
 bool ConnectionReportLatch::TakePending(ConnectionReport& out, bool connectedReady)
 {
   std::lock_guard<std::mutex> lock(m_mutex);
-  if (m_observed == ConnectionReport::kNone || m_observed == m_delivered)
+  if (m_observed == ConnectionReport::kNone)
     return false;
-  if (m_observed == ConnectionReport::kConnected && !connectedReady)
+  ConnectionReport target = m_observed;
+  if (target == ConnectionReport::kUnreachable &&
+      (m_delivered == ConnectionReport::kConnected || m_delivered == ConnectionReport::kDisconnected))
+    target = ConnectionReport::kDisconnected;
+  if (target == m_delivered)
     return false;
-  out = m_observed;
-  m_delivered = m_observed;
+  if (target == ConnectionReport::kConnected && !connectedReady)
+    return false;
+  out = target;
+  m_delivered = target;
   return true;
 }
 

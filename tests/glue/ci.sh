@@ -45,4 +45,6 @@ run "PVR: connection, rejected"   BIN=pvr_harness T=60 CTL="login_status=401" --
 run "PVR: connection, throttled"  BIN=pvr_harness T=60 CTL="login_status=429" -- connection_state 4000 ""
 run "PVR: connection, down at start" BIN=pvr_harness T=60 CTL="api_down=1" -- connection_state 4000 unreachable
 run "PVR: connection, proxy error at login" BIN=pvr_harness T=60 CTL="login_status=502" -- connection_state 4000 unreachable
+run "PVR: connection, lost mid-session" BIN=pvr_harness T=120 -- connection_loss
+run "PVR: connection, five-second blip" BIN=pvr_harness T=60 -- connection_blip
 [ "$failed" -eq 0 ] && echo "all glue scenarios passed" || { echo "$failed glue scenario(s) failed"; exit 1; }

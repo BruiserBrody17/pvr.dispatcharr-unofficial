@@ -1217,6 +1217,15 @@ private:
   {
     if (report != ConnectionReport::kNone && m_connectionObserver)
       m_connectionObserver(report);
+  } // What one finished request says about the link, judged over the run of recent ones (LinkHealth). Not while the
+  // instance is shutting down: the abort makes every request fail without saying anything about the server.
+  LinkHealth m_linkHealth;
+  void NotifyLinkAttempt(int curlCode, long httpCode, bool authenticated, bool connectNeverCompleted)
+  {
+    if (m_abortRequests)
+      return;
+    NotifyConnection(m_linkHealth.OnAttempt(std::chrono::steady_clock::now(), curlCode, httpCode, authenticated,
+                                            connectNeverCompleted));
   }
 
   // curl_easy_perform() on `curl` for `startUrl`, following up to five redirects

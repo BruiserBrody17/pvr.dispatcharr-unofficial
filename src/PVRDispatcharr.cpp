@@ -878,6 +878,9 @@ void PVRDispatcharr::ReportConnectionToKodi()
     case dispatcharr::ConnectionReport::kAccessDenied:
       state = PVR_CONNECTION_STATE_ACCESS_DENIED;
       break;
+    case dispatcharr::ConnectionReport::kDisconnected:
+      state = PVR_CONNECTION_STATE_DISCONNECTED;
+      break;
     case dispatcharr::ConnectionReport::kNone:
       continue;
     }
@@ -886,6 +889,7 @@ void PVRDispatcharr::ReportConnectionToKodi()
     kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: telling Kodi the connection is now %s",
               state == PVR_CONNECTION_STATE_CONNECTED       ? "connected"
               : state == PVR_CONNECTION_STATE_ACCESS_DENIED ? "access denied"
+              : state == PVR_CONNECTION_STATE_DISCONNECTED  ? "lost"
                                                             : "unreachable");
     // An empty message makes Kodi use its own localized text for the state.
     ConnectionStateChange(connection, state, "");

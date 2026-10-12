@@ -65,6 +65,7 @@ runs (`login_status=401` a rejected login, `429` a throttled one, `502` a proxy 
 healthy, 401, 429, down at start and 502. With `CONN_RECOVER=1` it clears the fault after the first report and waits for the rest
 (`CTL="api_down=1" CONN_RECOVER=1 ... connection_state 170000 unreachable,connected`, about a minute: the login cooldown plus the
 background thread's one-minute retry).
+`connection_loss` is a server that goes away mid-session with the token still valid (so only `LinkHealth`'s run of failed requests can notice): connected, then `lost` about eleven seconds after the fake starts dropping connections, nothing more while it stays down, `connected` again when a request succeeds. `connection_blip` is five seconds of failures, which must report nothing. Both use `AddTimer` once a second as their traffic and are in CI.
 
 ## Plugin integration (`plugin_integration/`)
 

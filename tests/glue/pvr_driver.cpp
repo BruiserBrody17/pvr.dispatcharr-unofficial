@@ -141,6 +141,56 @@ static PVR_ERROR all_lists(Collected& c, bool withEpg)
   return e;
 }
 
+// The states the addon told Kodi through ConnectionStateChange, as the names the connection scenarios use.
+static std::string ConnName(int state)
+{
+  switch (state)
+  {
+  case PVR_CONNECTION_STATE_CONNECTED:
+    return "connected";
+  case PVR_CONNECTION_STATE_ACCESS_DENIED:
+    return "denied";
+  case PVR_CONNECTION_STATE_SERVER_UNREACHABLE:
+    return "unreachable";
+  case PVR_CONNECTION_STATE_DISCONNECTED:
+    return "lost";
+  default:
+    return "state" + std::to_string(state);
+  }
+}
+
+static std::vector<std::string> ConnSnapshot()
+{
+  std::lock_guard<std::mutex> lock(g_connMu);
+  std::vector<std::string> out;
+  for (int state : g_connCalls)
+    out.push_back(ConnName(state));
+  return out;
+}
+
+static std::string Joined(const std::vector<std::string>& v)
+{
+  std::string out;
+  for (const auto& e : v)
+    out += (out.empty() ? "" : ",") + e;
+  return out;
+}
+
+// One manual timer request, the steady traffic the mid-session connection scenarios need (a failed one is a failed
+// request).
+static PVR_ERROR ConnTraffic(const std::vector<PVR_CHANNEL>& chans)
+{
+  PVR_TIMER t{};
+  t.iTimerType = 1;
+  t.iClientChannelUid = (int)chans[0].iUniqueId;
+  t.state = PVR_TIMER_STATE_SCHEDULED;
+  t.startTime = time(nullptr) + 7200;
+  t.endTime = t.startTime + 1800;
+  t.iEpgUid = PVR_TIMER_NO_EPG_UID;
+  snprintf(t.strTitle, sizeof t.strTitle, "loss probe");
+  return A()->AddTimer(I(), &t);
+}
+
 static int timer_cycle(std::mt19937& rng, const std::vector<PVR_CHANNEL>& chans, const std::vector<EPG_TAG>& epg)
 {
   int fails = 0;
@@ -787,34 +837,12 @@ int main(int argc, char** argv)
         break;
       p = comma + 1;
     }
-    auto name = [](int state) -> std::string
-    {
-      switch (state)
-      {
-      case PVR_CONNECTION_STATE_CONNECTED:
-        return "connected";
-      case PVR_CONNECTION_STATE_ACCESS_DENIED:
-        return "denied";
-      case PVR_CONNECTION_STATE_SERVER_UNREACHABLE:
-        return "unreachable";
-      default:
-        return "state" + std::to_string(state);
-      }
-    };
-    auto snapshot = [&name]()
-    {
-      std::lock_guard<std::mutex> lock(g_connMu);
-      std::vector<std::string> out;
-      for (int state : g_connCalls)
-        out.push_back(name(state));
-      return out;
-    };
     const bool recover = getenv("CONN_RECOVER") != nullptr;
     bool cleared = false;
     const long began = ms();
     while (ms() - began < dur)
     {
-      const auto now = snapshot();
+      const auto now = ConnSnapshot();
       if (recover && !cleared && !now.empty())
       {
         INFO("first report %s; clearing the fault", now.front().c_str());
@@ -825,12 +853,8 @@ int main(int argc, char** argv)
         break;
       sleep_ms(100);
     }
-    const auto got = snapshot();
-    std::string gotText, wantText;
-    for (const auto& g : got)
-      gotText += (gotText.empty() ? "" : ",") + g;
-    for (const auto& w : expected)
-      wantText += (wantText.empty() ? "" : ",") + w;
+    const auto got = ConnSnapshot();
+    const std::string gotText = Joined(got), wantText = Joined(expected);
     INFO("reported to Kodi after %ld ms: [%s], expected [%s]", ms() - began, gotText.c_str(), wantText.c_str());
     if (got != expected)
       FAIL("the addon reported [%s] to Kodi, expected [%s]", gotText.c_str(), wantText.c_str());
@@ -839,6 +863,90 @@ int main(int argc, char** argv)
       for (const auto& m : g_connMessages)
         if (!m.empty())
           FAIL("a report carried the message '%s'; an empty one makes Kodi use its own localized text", m.c_str());
+    }
+  }
+  else if (what == "connection_loss")
+  {
+    // A server that goes away mid-session, with the token still valid: no login happens, so only the run of failed
+    // requests (LinkHealth) can say so. Expects connected, then lost once the failures span about ten seconds, then
+    // connected again when a request succeeds after the server is back. AddTimer is the traffic, one call a second.
+    auto waitFor = [](size_t count, long limitMs)
+    {
+      const long began = ms();
+      while (ms() - began < limitMs && ConnSnapshot().size() < count)
+        sleep_ms(100);
+      return ConnSnapshot();
+    };
+    waitFor(1, 6000);
+    Collected c0;
+    all_lists(c0, false);
+    if (c0.channels.empty())
+      FAIL("the connection_loss scenario loaded no channels");
+    else
+    {
+      if (ConnSnapshot() != std::vector<std::string>{"connected"})
+        FAIL("expected [connected] before the outage, got [%s]", Joined(ConnSnapshot()).c_str());
+      ctl("api_down=1");
+      const long outageAt = ms();
+      std::vector<std::string> now;
+      while (ms() - outageAt < 40000 && (now = ConnSnapshot()).size() < 2)
+      {
+        ConnTraffic(c0.channels);
+        sleep_ms(1000);
+      }
+      INFO("%ld ms after the server went away: [%s]", ms() - outageAt, Joined(now).c_str());
+      const long lostAfter = ms() - outageAt;
+      if (now != std::vector<std::string>{"connected", "lost"})
+        FAIL("expected [connected,lost] after the outage, got [%s]", Joined(now).c_str());
+      else if (lostAfter < 9000)
+        FAIL("the loss was reported after %ld ms, before the failures could span ten seconds", lostAfter);
+      // More failures while it is still down must not say anything else (never "unreachable" after "lost").
+      for (int i = 0; i < 4; i++)
+      {
+        ConnTraffic(c0.channels);
+        sleep_ms(1000);
+      }
+      if (ConnSnapshot().size() != 2)
+        FAIL("more was reported while the server was still down: [%s]", Joined(ConnSnapshot()).c_str());
+      ctl("api_down=0");
+      const long backAt = ms();
+      while (ms() - backAt < 20000 && ConnSnapshot().size() < 3)
+      {
+        ConnTraffic(c0.channels);
+        sleep_ms(500);
+      }
+      INFO("%ld ms after the server came back: [%s]", ms() - backAt, Joined(ConnSnapshot()).c_str());
+      if (ConnSnapshot() != std::vector<std::string>{"connected", "lost", "connected"})
+        FAIL("expected [connected,lost,connected], got [%s]", Joined(ConnSnapshot()).c_str());
+    }
+  }
+  else if (what == "connection_blip")
+  {
+    // A short outage (five seconds of failed requests) is not a lost connection: nothing may be reported beyond the
+    // first connected, neither during the outage nor when the server returns.
+    const long began = ms();
+    while (ms() - began < 6000 && ConnSnapshot().empty())
+      sleep_ms(100);
+    Collected c0;
+    all_lists(c0, false);
+    if (c0.channels.empty())
+      FAIL("the connection_blip scenario loaded no channels");
+    else
+    {
+      ctl("api_down=1");
+      for (int i = 0; i < 5; i++)
+      {
+        ConnTraffic(c0.channels);
+        sleep_ms(1000);
+      }
+      ctl("api_down=0");
+      for (int i = 0; i < 6; i++)
+      {
+        ConnTraffic(c0.channels);
+        sleep_ms(500);
+      }
+      if (ConnSnapshot() != std::vector<std::string>{"connected"})
+        FAIL("a five-second outage reported [%s], expected only [connected]", Joined(ConnSnapshot()).c_str());
     }
   }
   else if (what == "dtor_busy")
