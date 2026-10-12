@@ -3458,12 +3458,15 @@ Every wait is bounded, by a count times a request timeout at worst; none is unbo
    slices as the live one, so a Stop at the tail of a recording still being written no longer waits out the budget
    (`docs/CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the live one is": Stop took up to 5.8 s
    before, 1.4 s after).
-2. **The open-time loops had no wall-clock cap (fixed 2026-10-11) and still cannot be cancelled.** The live first-manifest
+2. **The open-time loops had no wall-clock cap (fixed 2026-10-11) and cannot be cancelled, by design of Kodi.** The live first-manifest
    loop was thirty tries each as long as the request timeout, about fifteen minutes against a server that accepts the
    connection and then goes silent after `start_buffer` succeeded; both cold-start loops now end once their own healthy wait
    plus one timeout has passed (`docs/CLOSED_ITEMS.md`, "Put a wall-clock cap on a stream open"; measured live, 61 s).
-   The abort flag (`AbortInFlightRequests()`) is still set only when the addon instance is destroyed, so a Stop during an
-   open does not interrupt it; open item.
+   The abort flag (`AbortInFlightRequests()`) is still set only when the addon instance is destroyed, and a Stop during an
+   open does not reach the addon at all: Kodi's `CVideoPlayer::CloseFile()` waits on its main thread for the open to return before
+   calling `CloseLiveStream()`, so the UI is frozen for the rest of the open (measured live 2026-10-11, 55 s of a 61 s
+   open; `docs/CLOSED_ITEMS.md`, "Find out whether a Stop during an open reaches the open's cold-start loop"). The bound
+   is therefore the only lever; open item.
 3. **No low-speed limit.** A server that trickles bytes holds a transfer for the whole `timeout` (up to 180 s if raised).
    Adding one risks cutting a legitimately slow link, and nothing seen in the lab trickles, so it is recorded here, not
    changed (decided 2026-10-11, with the open-time cap).

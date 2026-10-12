@@ -11,8 +11,12 @@ docs/BUILDING.md|function|add_internal
 docs/BUILDING.md|function|find_library
 docs/BUILDING.md|function|target_link_libraries
 docs/CATCHUP.md|setting|tv_archive_duration
+docs/CLOSED_ITEMS.md|function|AbortDemux
+docs/CLOSED_ITEMS.md|function|CloseFile
+docs/CLOSED_ITEMS.md|function|ClosePVRStream
 docs/CLOSED_ITEMS.md|function|ComputeSeriesRuleDisplayFields
 docs/CLOSED_ITEMS.md|function|DeleteFromClient
+docs/CLOSED_ITEMS.md|function|DemuxAbort
 docs/CLOSED_ITEMS.md|function|FetchContent_Declare
 docs/CLOSED_ITEMS.md|function|FindLatestPendingTitleForChannel
 docs/CLOSED_ITEMS.md|function|GetText
@@ -49,6 +53,7 @@ docs/CLOSED_ITEMS.md|setting|dvr_settings
 docs/CLOSED_ITEMS.md|setting|system_settings
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
+docs/OPEN_ITEMS.md|function|CloseFile
 docs/OPEN_ITEMS.md|function|log_system_event
 docs/RECORDINGS.md|function|AnnounceReminder
 docs/RECORDINGS.md|function|CallRecordingMenuHook
@@ -92,6 +97,7 @@ docs/TEST_COVERAGE.md|function|add_internal
 docs/TEST_COVERAGE.md|setting|dvr_settings
 docs/TIMESHIFT.md|function|CallChannelMenuHook
 docs/TIMESHIFT.md|function|CheckDependencies
+docs/TIMESHIFT.md|function|CloseFile
 docs/TIMESHIFT.md|function|ClosePVRStream
 docs/TIMESHIFT.md|function|GetBlockSize
 docs/TIMESHIFT.md|function|GetTimes

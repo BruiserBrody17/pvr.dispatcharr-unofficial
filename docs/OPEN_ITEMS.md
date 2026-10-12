@@ -4,38 +4,38 @@
 
 ## Status at a glance
 
-**8 open, 295 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). All but one open item came from the
+**8 open, 296 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Six open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other came from the
-stalled-stream review of the addon's own read paths (`docs/TIMESHIFT.md`).
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one came from the
+untitled-recording fix and one from the live check of a Stop during an open (`docs/TIMESHIFT.md`'s stalled-streams section).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
+| Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 5 |
+| Open: Design decision needed | 6 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 258 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 28 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 29 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
 
 ### Needs a live check
 
-#### Find out whether a Stop during an open reaches the open's cold-start loop
-
-**Opened 2026-10-11, left over from the open-time cap item (`docs/CLOSED_ITEMS.md`, "Put a wall-clock cap on a stream open").** The two cold-start loops are now bounded (about 60 s live and 75 s in progress at the default timeout, plus the try in flight), but nothing cancels one earlier: the abort flag (`m_abortRequests`) is set only when the addon instance is destroyed. What is not known is whether a viewer can still cause a Stop while an open is running: Kodi may call `CloseLiveStream()` from another thread during the spinner (then `m_liveTimeshiftStream.open`, already true during the loop, could be checked per try) or may wait for `OpenLiveStream()` to return first. Measure that first: with a forwarder holding `get_live_manifest` as in the closed entry, press Back during the spinner and time Kodi's return to the channel list, and read the log for whether `CloseLiveTimeshiftStream()` ran before the open ended. If Kodi waits, there is nothing for the addon to do and this closes as explained; if it calls close concurrently, the loop should stop on a closed session (a per-open flag or the session counter, not the shutdown flag).
-
 ### Fix known, not yet done
 
 ### Architectural / concurrency
 
 ### Design decision needed
+
+#### Decide whether a stalled open should hold Kodi's UI for less than a minute
+
+**Opened 2026-10-11, from the live check of a Stop during an open (`docs/CLOSED_ITEMS.md`, "Find out whether a Stop during an open reaches the open's cold-start loop").** Kodi runs `CVideoPlayer::CloseFile()` on its main thread and the call waits for the player thread, which is parked inside `OpenLiveStream()`; the addon is told nothing until the open returns. So when a viewer presses Stop during an open whose server has stalled, Kodi's whole UI freezes for the rest of the open (measured: 55 s of a 61 s open at the default 30 s timeout). The wall-clock cap bounds it and nothing in the addon can shorten an open already running, so the only lever is the bound itself. The condition is narrow (a server that accepts the connection and answers `start_buffer`, then goes silent on `get_live_manifest`; a dead or refusing server fails fast). Options: leave it; give the live first-manifest request a per-try timeout shorter than the general one (`RefreshLiveManifest()` uses the full configured timeout while `coldStart` is set), at the cost of failing a slow-to-start encoder that currently succeeds on a late try; or shrink the budget's allowance of one full extra timeout (`ColdStartWallClockBudgetMs()`). Decide; if it changes, confirm with the same forwarder hold (Stop 5 s into an open, UI back within the new bound) and that a normal cold open on a slow channel still succeeds.
 
 #### Keep a title the user typed for a manual timer
 
