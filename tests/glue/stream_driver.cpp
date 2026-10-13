@@ -885,10 +885,11 @@ static void live_slow_open(DispatcharrClient& cl)
 
 // A server that answers the start request and then goes silent: the live cold-start loop used to try thirty times, each
 // as long as the request timeout, which held an open for about fifteen minutes at the default 30 s. The loop now ends
-// once its own healthy wait plus one timeout has passed (ColdStartWallClockBudgetMs()): with the harness's 5 s timeout,
-// 20 s plus the try in flight. The in-progress variant (by hand, about a minute) is a recording whose playlist does
-// not exist yet, which retries ninety times, against an API that takes 3 s to say so: 315 s before, 50 s plus a try
-// now. (A playlist request that never answers is not retried there: any failure but a 404 ends that open at once.)
+// once its own healthy wait plus one short bound has passed (ColdStartWallClockBudgetMs()): with the harness's 5 s
+// timeout, 20 s plus the try in flight; at the default 30 s timeout the first timed-out try is the last. The
+// in-progress variant (by hand, about a minute) is a recording whose playlist does not exist yet, which retries ninety
+// times, against an API that takes 3 s to say so: 315 s before, 50 s plus a try now. (A playlist request that never
+// answers is not retried there: any failure but a 404 ends that open at once.)
 static void silent_open(DispatcharrClient& cl, bool inProgress)
 {
   const long timeoutMs = configuredTimeout() * 1000L;
@@ -918,6 +919,14 @@ static void silent_open(DispatcharrClient& cl, bool inProgress)
     FAIL("the open gave up after %ld ms, before its %ld ms budget", took, budgetMs);
   if (took > budgetMs + 2 * timeoutMs)
     FAIL("the open took %ld ms against a silent server (budget %ld ms): the loop is not bounded by it", took, budgetMs);
+  // At the default 30 s timeout a try that already used the whole timeout is the last one, so the open ends right after
+  // it. Kodi holds its UI for the open's length when a viewer presses Stop, which is why a second timeout-long try is
+  // not worth waiting for. Stated against a fixed 20 s, not the budget function's own value, so that a budget that grew
+  // back cannot excuse itself.
+  if (!inProgress && timeoutMs > 20000 && took > timeoutMs + 3000)
+    FAIL("the open took %ld ms against a silent server: a second try started after the first used the whole %ld ms "
+         "timeout (budget %ld ms)",
+         took, timeoutMs, budgetMs);
 }
 
 // A channel whose provider is slow to deliver its first segment: the plugin keeps answering "live playlist not found"

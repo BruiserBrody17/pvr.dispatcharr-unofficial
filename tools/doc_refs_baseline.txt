@@ -53,7 +53,6 @@ docs/CLOSED_ITEMS.md|setting|dvr_settings
 docs/CLOSED_ITEMS.md|setting|system_settings
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
-docs/OPEN_ITEMS.md|function|CloseFile
 docs/OPEN_ITEMS.md|function|GetRecordedStreamTimes
 docs/OPEN_ITEMS.md|function|IsRecordedStreamRealTime
 docs/OPEN_ITEMS.md|function|PauseRecordedStream

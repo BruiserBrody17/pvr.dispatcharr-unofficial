@@ -38,13 +38,17 @@ constexpr long ShortRequestTimeoutMs(int timeoutSeconds)
 // Each loop is bounded by a count of tries, but every try may take the whole configured timeout, so a server that
 // answered the start request and then goes silent held the open for tries x timeout (about fifteen minutes for the
 // live loop at the default 30 s; found by the 2026-10-11 stalled-stream review). The budget is the loop's own healthy
-// waiting (its tries x its sleep, which a slow-to-start encoder legitimately uses) plus one full timeout, so a hung
-// server costs the viewer a couple of timed-out tries: at the default the budget is 45 s for the live loop (30 tries
-// of 500 ms) and 75 s for an in-progress recording's (90 tries), so a silent server ends the open after about 60 s and
-// 90 s. Checked after each failed try, so the worst case is the budget plus one try, like kMaxCatchUpWallClockMs.
+// waiting (its tries x its sleep, which a slow-to-start encoder legitimately uses) plus one short bound, and it is
+// checked after each failed try, so a try that has already used a full timeout is the last one: a silent server ends
+// the open after one timeout (30 s at the default) instead of two (61 s measured with the earlier allowance of a full
+// timeout beyond the healthy wait). That matters because Kodi runs a Stop on its main thread and waits for the open to
+// return, so the open's length is how long the UI is held (docs/OPEN_ITEMS.md, the entry on a stalled open). A server
+// that merely answers slowly is not cut short: each try still gets the whole configured timeout, only whether a
+// further try is allowed after a failed one is decided here. At the default the budget is 20 s for the live loop (30
+// tries of 500 ms) and 50 s for an in-progress recording's (90 tries).
 constexpr long ColdStartWallClockBudgetMs(int maxTries, int sleepMs, int timeoutSeconds)
 {
-  return static_cast<long>(maxTries) * sleepMs + static_cast<long>(timeoutSeconds) * 1000;
+  return static_cast<long>(maxTries) * sleepMs + ShortRequestTimeoutMs(timeoutSeconds);
 }
 
 // How many tries the live cold-start loop (OpenLiveTimeshiftStream()) is allowed, given what its last failed try was.

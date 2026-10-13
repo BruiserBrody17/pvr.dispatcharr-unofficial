@@ -3428,8 +3428,8 @@ Both recording paths keep their stall handling in tested decision functions (`Re
 | Open | Waits for | Gives up on |
 |---|---|---|
 | Live, `start_buffer` | Up to 20 tries 500 ms apart, only while the plugin answers "retryable" (a buffer mid-teardown) | Anything else at once |
-| Live, first manifest | Up to 30 tries 500 ms apart, any non-fatal failure retries, each request taking the full `timeout`; also ends once 15 s plus one `timeout` have passed (`ColdStartWallClockBudgetMs()`: 45 s, so about 60 s against a silent server). While the plugin itself keeps answering "live playlist not found" without `fatal` (its ffmpeg is alive, the channel is still starting) the limit is 60 tries, about 30 s (`ColdStartTryLimit()`); a try that got no answer from the plugin never earns the extension | A fatal answer from the plugin; on failure the viewer it registered is deregistered |
-| In-progress recording, first manifest | Up to 90 tries 500 ms apart, but only a 404 "playlist not created yet" retries; also ends once 45 s plus one `timeout` have passed (75 s) | Any other failure at once |
+| Live, first manifest | Up to 30 tries 500 ms apart, any non-fatal failure retries, each request taking the full `timeout`; also ends once 15 s plus one short bound (`ShortRequestTimeoutMs()`, 5 s by default) have passed (`ColdStartWallClockBudgetMs()`: 20 s, checked after each failed try, so a silent server ends the open after its first timed-out try, about 30 s). While the plugin itself keeps answering "live playlist not found" without `fatal` (its ffmpeg is alive, the channel is still starting) the limit is 60 tries, about 30 s (`ColdStartTryLimit()`); a try that got no answer from the plugin never earns the extension | A fatal answer from the plugin; on failure the viewer it registered is deregistered |
+| In-progress recording, first manifest | Up to 90 tries 500 ms apart, but only a 404 "playlist not created yet" retries; also ends once 45 s plus one short bound have passed (50 s at the default) | Any other failure at once |
 | Completed recording | One one-byte ranged GET (two with an API-key refresh), 4 MB cap | The first failure |
 
 Catch-up playback and the live mode "Off" (and "Local") hand Kodi a URL and read nothing in the addon, so Kodi's own
@@ -3461,12 +3461,14 @@ Every wait is bounded, by a count times a request timeout at worst; none is unbo
 2. **The open-time loops had no wall-clock cap (fixed 2026-10-11) and cannot be cancelled, by design of Kodi.** The live first-manifest
    loop was thirty tries each as long as the request timeout, about fifteen minutes against a server that accepts the
    connection and then goes silent after `start_buffer` succeeded; both cold-start loops now end once their own healthy wait
-   plus one timeout has passed (`docs/CLOSED_ITEMS.md`, "Put a wall-clock cap on a stream open"; measured live, 61 s).
+   plus one timeout has passed (`docs/CLOSED_ITEMS.md`, "Put a wall-clock cap on a stream open"; measured live, 61 s); the allowance beyond the
+   healthy wait was then cut to one short bound, so a try that used a full timeout is the last (about 30 s).
    The abort flag (`AbortInFlightRequests()`) is still set only when the addon instance is destroyed, and a Stop during an
    open does not reach the addon at all: Kodi's `CVideoPlayer::CloseFile()` waits on its main thread for the open to return before
    calling `CloseLiveStream()`, so the UI is frozen for the rest of the open (measured live 2026-10-11, 55 s of a 61 s
    open; `docs/CLOSED_ITEMS.md`, "Find out whether a Stop during an open reaches the open's cold-start loop"). The bound
-   is therefore the only lever; open item.
+   is therefore the only lever, and it was shortened on 2026-10-13: a try that has used a full timeout is now the last, so a silent server
+   ends the open after about 30 s and a Stop 5 s in held the UI for 26.8 s (`docs/CLOSED_ITEMS.md`, "Cut the time a stalled open holds Kodi's UI").
 3. **No low-speed limit.** A server that trickles bytes holds a transfer for the whole `timeout` (up to 180 s if raised).
    Adding one risks cutting a legitimately slow link, and nothing seen in the lab trickles, so it is recorded here, not
    changed (decided 2026-10-11, with the open-time cap).

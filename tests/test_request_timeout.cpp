@@ -88,19 +88,28 @@ TEST_CASE("ShouldSkipPlaylistAfterUnansweredLookup skips only for a server that 
   CHECK_FALSE(ShouldSkipPlaylistAfterUnansweredLookup(false, false, 0, false));
 }
 
-TEST_CASE("ColdStartWallClockBudgetMs is the loop's own waiting plus one full timeout", "[RequestTimeout]")
+TEST_CASE("ColdStartWallClockBudgetMs is the loop's own waiting plus one short bound", "[RequestTimeout]")
 {
-  // Live loop at the default timeout: 30 tries of 500 ms, plus 30 s.
-  CHECK(ColdStartWallClockBudgetMs(30, 500, 30) == 45000);
-  // In-progress loop: 90 tries of 500 ms, plus 30 s.
-  CHECK(ColdStartWallClockBudgetMs(90, 500, 30) == 75000);
+  // Live loop at the default timeout: 30 tries of 500 ms, plus the 5 s short bound.
+  CHECK(ColdStartWallClockBudgetMs(30, 500, 30) == 20000);
+  // In-progress loop: 90 tries of 500 ms, plus 5 s.
+  CHECK(ColdStartWallClockBudgetMs(90, 500, 30) == 50000);
 }
 
-TEST_CASE("ColdStartWallClockBudgetMs grows with a raised timeout and never drops under the healthy wait",
+TEST_CASE("ColdStartWallClockBudgetMs ends a silent server's open after its first timed-out try", "[RequestTimeout]")
+{
+  // The point of the short bound: one try that used the whole timeout already exceeds the budget, so no second
+  // 30 s try starts. Held for the default and for a raised timeout, where the short bound grows to at most 30 s.
+  for (int timeoutSeconds : {30, 60, 90, 180})
+    CHECK(ColdStartWallClockBudgetMs(30, 500, timeoutSeconds) < static_cast<long>(timeoutSeconds) * 1000);
+}
+
+TEST_CASE("ColdStartWallClockBudgetMs follows the short bound and never drops under the healthy wait",
           "[RequestTimeout]")
 {
-  CHECK(ColdStartWallClockBudgetMs(30, 500, 180) == 195000);
-  CHECK(ColdStartWallClockBudgetMs(30, 500, 5) == 20000);
+  CHECK(ColdStartWallClockBudgetMs(30, 500, 180) == 45000); // the short bound tops out at 30 s
+  CHECK(ColdStartWallClockBudgetMs(30, 500, 60) == 25000);
+  CHECK(ColdStartWallClockBudgetMs(30, 500, 5) == 20000); // at the minimum timeout the short bound is the timeout
   CHECK(ColdStartWallClockBudgetMs(30, 500, 5) >= 30 * 500);
 }
 
