@@ -288,6 +288,18 @@
             <dependency type="enable" setting="dispatcharr_is_admin">true</dependency>
           </dependencies>
         </setting>
+        <setting id="series_rule_title_mode" type="integer" label="30119" help="30120">
+          <level>0</level>
+          <default>0</default>
+          <constraints>
+            <options>
+              <option label="30121">0</option>
+              <option label="30122">1</option>
+              <option label="30123">2</option>
+            </options>
+          </constraints>
+          <control type="list" format="integer" />
+        </setting>
       </group>
     </category>
 

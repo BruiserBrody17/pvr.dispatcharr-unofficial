@@ -933,6 +933,10 @@ private:
   // of the box, Local and server-side are both explicit opt-ins.
   std::atomic<int> m_liveTimeshiftMode{kLiveTimeshiftOff};
   std::atomic<bool> m_enableCatchupFfmpegdirectSeek{false};
+  // series_rule_title_mode: how a series rule CREATED from Kodi matches titles (kSeriesTitleMode*,
+  // TimerRequestBuilder.h). Read when a rule is created, so a change applies to the next one; existing rules keep their
+  // own mode (UpdateTimer() echoes it).
+  std::atomic<int> m_seriesRuleTitleMode{0};
   std::atomic<bool> m_debugLogging{false};
   // Fetched once at startup (see the constructor) via
   // DispatcharrClient::GetServerVersion() and never written again after

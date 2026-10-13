@@ -82,8 +82,8 @@ recording-disk usage" is closed on this evidence (`docs/CLOSED_ITEMS.md`).
 
 `SeriesRulesAPIView` (`apps/channels/api_views.py`) validates `title_mode` against `exact`, `contains`, `search` and
 `regex` (default `exact`) and `description_mode` against `contains`, `search` and `regex` (default `contains`), and
-accepts `untagged_is_new`. The open item "Let a series rule's title and description match modes be set from Kodi" now
-carries these values instead of the two the addon had seen in real rules.
+accepts `untagged_is_new`. The open item then called "Let a series rule's title and description match modes be set from Kodi" (title half
+closed 2026-10-13, description half still open) carried these values instead of the two the addon had seen in real rules.
 
 ### `/output/epg` parameters
 

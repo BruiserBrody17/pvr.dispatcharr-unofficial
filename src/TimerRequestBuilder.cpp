@@ -37,6 +37,19 @@ nlohmann::json BuildSeriesRuleRequestBody(int channelId, const std::string& tvgI
   return body;
 }
 
+std::string SeriesRuleTitleModeForSetting(int setting)
+{
+  switch (setting)
+  {
+  case kSeriesTitleModeContains:
+    return "contains";
+  case kSeriesTitleModeSearch:
+    return "search";
+  default:
+    return "";
+  }
+}
+
 nlohmann::json BuildRecurringRuleUpdateBody(const RecurringRuleEditPatch& patch)
 {
   nlohmann::json body = nlohmann::json::object();

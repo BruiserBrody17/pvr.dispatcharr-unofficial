@@ -752,6 +752,50 @@ int main(int argc, char** argv)
     snprintf(s.strEpgSearchString, sizeof s.strEpgSearchString, "Show 3-1");
     s.bStartAnyTime = s.bEndAnyTime = true;
     mustAdd("series", &s);
+    // series_rule_title_mode: a rule created under the default (Exact) sends no title_mode at all, which is exactly
+    // what it sent before the setting existed; Contains and Whole words send that mode; a value outside the list sends
+    // none. The setting is read when a rule is created, so it is changed between the adds, as the settings dialog does.
+    {
+      auto ruleBody = [&](const std::string& db, const char* title) -> std::string
+      {
+        const size_t at = db.find(std::string("\"title\": \"") + title + "\"");
+        if (at == std::string::npos)
+          return "";
+        return db.substr(at, db.find('}', at) - at);
+      };
+      auto addSeriesUnder = [&](const char* mode, const char* title)
+      {
+        set("series_rule_title_mode", mode);
+        pvr->OnAddonSettingChanged("series_rule_title_mode", kodi::addon::CSettingValue(mode));
+        PVR_TIMER x{};
+        x.iTimerType = 2;
+        x.iClientChannelUid = 3;
+        snprintf(x.strTitle, sizeof x.strTitle, "%s", title);
+        snprintf(x.strEpgSearchString, sizeof x.strEpgSearchString, "%s", title);
+        x.bStartAnyTime = x.bEndAnyTime = true;
+        mustAdd(title, &x);
+      };
+      addSeriesUnder("1", "Show 3-2");
+      addSeriesUnder("2", "Show 3-3");
+      addSeriesUnder("7", "Show 3-4");
+      addSeriesUnder("0", "Show 3-5");
+      const std::string dbRules = http("/__db");
+      auto check = [&](const char* title, const char* wanted)
+      {
+        const std::string body = ruleBody(dbRules, title);
+        if (body.empty())
+          FAIL("the series rule '%s' never reached the server: %s", title, dbRules.c_str());
+        else if (wanted[0] == 0 && body.find("title_mode") != std::string::npos)
+          FAIL("series rule '%s' sent a title_mode it should not have: %s", title, body.c_str());
+        else if (wanted[0] != 0 && body.find(std::string("\"title_mode\": \"") + wanted + "\"") == std::string::npos)
+          FAIL("series rule '%s' should carry title_mode '%s': %s", title, wanted, body.c_str());
+      };
+      check("Show 3-1", "");
+      check("Show 3-2", "contains");
+      check("Show 3-3", "search");
+      check("Show 3-4", "");
+      check("Show 3-5", "");
+    }
     sleep_ms(1500);
     Collected tt;
     PVR_ERROR timersRc = A()->GetTimers(I(), (PVR_HANDLE)&tt);

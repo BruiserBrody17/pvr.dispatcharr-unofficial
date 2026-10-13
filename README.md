@@ -50,6 +50,9 @@ in the issue template) are genuinely useful for exactly this reason.
   extending the rule's end date for you, and picks it back up if no Kodi
   ran for a while. Rules you make in Dispatcharr yourself are never
   touched. Remove the tag to make the addon stop managing a rule
+- Series rules made from Kodi can match the programme title loosely: the setting "Series rules made here: how the title is
+  matched" chooses Exact (default), Contains, or Whole words, for rules created from then on. Existing rules, and rules made
+  in Dispatcharr's web interface (which also offers regular expressions and a description filter), are never changed by it
 - Catch-up/archive playback ("play from guide") for channels whose
   provider supports it
 - Optional real-time push updates for recordings/timers, so most changes

@@ -412,3 +412,23 @@ msgstr ""
 msgctxt "#30034"
 msgid "Used only to play recordings, which Dispatcharr requires authentication for. Leave blank and the addon reads your account's existing key from Dispatcharr (it only creates a new one if your account has none), so other apps and scripts using that key keep working. Only set this manually if you want to use a specific key."
 msgstr ""
+
+msgctxt "#30119"
+msgid "Series rules made here: how the title is matched"
+msgstr ""
+
+msgctxt "#30120"
+msgid "How a NEW series rule created from Kodi (\"Record series\") compares its title with programme titles. Exact matches the whole title, ignoring case. Contains matches the text anywhere in a title, so a rule for \"News\" also records \"Late News\" and \"Newsreel\". Whole words matches the text only as whole words, so \"News\" matches \"Late News\" but not \"Newsreel\". Rules that already exist are never changed by this setting; edit them in Dispatcharr's web interface for more options (such as regular expressions)."
+msgstr ""
+
+msgctxt "#30121"
+msgid "Exact (the whole title)"
+msgstr ""
+
+msgctxt "#30122"
+msgid "Contains (anywhere in the title)"
+msgstr ""
+
+msgctxt "#30123"
+msgid "Whole words (anywhere in the title)"
+msgstr ""

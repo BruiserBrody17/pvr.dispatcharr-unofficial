@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**10 open, 300 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Six open items came from the
+**10 open, 301 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Six open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one came from the
 untitled-recording fix and three are still open from user reports.
@@ -19,7 +19,7 @@ untitled-recording fix and three are still open from user reports.
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 262 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 263 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 29 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -53,21 +53,9 @@ untitled-recording fix and three are still open from user reports.
 
 **Opened 2026-10-10 from the pvr.hts comparison; the login-driven part and the mid-session outage are done (`docs/CLOSED_ITEMS.md`, "Tell Kodi when Dispatcharr is unreachable or refuses the login" and "Tell Kodi when the server goes away mid-session"), this is what is left.** (1) **A server that answers but is not Dispatcharr** (a 404 or 405 from a proxy on the token path, a 200 with no token, a version endpoint with no version) is left unreported; Kodi has `SERVER_MISMATCH` ("Server does not respond properly") for it. The signals exist (`ReportForAuthFailure()` already sees the status; the startup version check sees a missing version), the open question is only which answers are unambiguous enough: a 404 on a path that exists on every Dispatcharr is, a 200 with an unexpected body from behind a captive portal may be, a transient 404 during a Dispatcharr upgrade is not. (2) **The "Restart Kodi to hide the record, delete and rename actions" warning** (`SyncDvrAccessFromDispatcharr()`) exists because Kodi reads capabilities once; since the held `CONNECTED` report now forces a re-read after the access level is learned, it may be removable, but nobody has seen Kodi's UI drop the actions without a restart. Confirm live with a view-only account (a disposable user on the lab server, which changes the lab: ask first) and the server unreachable at Kodi start, then reachable: the Record button, Timers window and delete/rename must disappear after "Connection established", and if they do the warning goes. Neither changes what a viewer sees often; (2) is the one with a concrete gain (no restart).
 
-#### Let a series rule's title and description match modes be set from Kodi
+#### Let a series rule's description filter be set from Kodi
 
-**Opened 2026-10-10, from the pvr.hts comparison.** pvr.hts lets a timer rule match its title as "contains" or as a
-regular expression (one global setting) and search the full EPG text per rule (`PVR_TIMER_TYPE_SUPPORTS_FULLTEXT_EPG_MATCH`).
-Dispatcharr's series rule has `title_mode`, `description` and `description_mode` (confirmed shape in
-`docs/API_NOTES.md`'s "Confirmed against a live instance" table); `src/TimerRuleParser.cpp` reads them back, but
-`AddTimer()` creates every rule with them blank, so a rule made from Kodi always gets Dispatcharr's defaults and a rule
-edited from Kodi keeps whatever it had. Decisions: whether the title mode is a global addon setting (pvr.hts's choice,
-simplest) or per rule (Kodi's timer dialog has no match-mode field, so per rule would ride on the full-text flag);
-whether Kodi's full-text flag maps to "also match the description" with the search string as `description`; and how
-the four title modes are offered when Kodi has room for two. The values are confirmed from source (the Dispatcharr
-source review, `docs/DISPATCHARR_SOURCE_REVIEW.md`): `title_mode` is `exact` (default), `contains`, `search` or `regex`;
-`description_mode` is `contains` (default), `search` or `regex`; `untagged_is_new` is a separate boolean
-(`SeriesRulesAPIView` in `apps/channels/api_views.py`). Confirm live by creating a rule from Kodi with each mode and
-checking what Dispatcharr's web UI shows and which programmes it schedules.
+**Opened 2026-10-10, from the pvr.hts comparison; narrowed 2026-10-13 when the title half was done (`docs/CLOSED_ITEMS.md`, "Let a series rule made in Kodi match the title loosely").** What is left is the rest of the original item. pvr.hts searches the full EPG text per rule (`PVR_TIMER_TYPE_SUPPORTS_FULLTEXT_EPG_MATCH`, Kodi's "Fulltext EPG search" checkbox); Dispatcharr's series rule has `description` and `description_mode` (`contains` by default, or `search` or `regex`; `docs/DISPATCHARR_SOURCE_REVIEW.md`), and `AddTimer()` still creates every rule with them blank, so a rule made from Kodi never filters on the description, and an edit from Kodi keeps whatever the rule had. Decisions: whether the full-text flag maps to "also match the description", with the search string as `description` (the checkbox means that in Kodi, and the title filter would then be what, the same string or blank?), which `description_mode` it uses (a second setting, or follow the title setting), and whether regex is ever offered (the addon cannot evaluate PostgreSQL regexes, so a regex rule is left unlinked from its recordings, `docs/CLOSED_ITEMS.md`). Nobody has asked for it; the title setting covered the case the reporter-style requests had in mind. Confirm live by creating a rule from Kodi with the flag set and checking what Dispatcharr stores and which programmes it schedules.
 
 #### List the two plugins in Dispatcharr's Plugin Hub
 

@@ -14,6 +14,11 @@ compare against.
 
 ### Added
 
+- **Choose how a series rule made in Kodi matches the title**: a new setting, "Series rules made here: how the title is
+  matched" (Exact by default, as before; Contains; Whole words). With Contains, a rule made from the guide for "News" also
+  records "Late News" and "Newsreel"; Whole words matches "Late News" but not "Newsreel". It applies to rules created
+  after you change it, never to rules that already exist, and rules made in Dispatcharr's web interface keep their own
+  settings when edited from Kodi.
 - **Connection problems are shown by Kodi**: when Dispatcharr cannot be reached, or refuses the addon's username and
   password, Kodi now says so itself ("Server is unreachable", "Access denied", and "Connection established" once it is
   back), with the host and port, in its own language, and keeps the entries in its Event Log. Before, the only trace was

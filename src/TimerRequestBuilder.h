@@ -42,7 +42,9 @@ namespace dispatcharr
 // own web UI back to their plain server-side defaults, live-confirmed
 // with a real round trip. None of these five have any Kodi-side UI of
 // their own (Kodi's timer dialog has no "how to match the title" field,
-// etc.), so this addon can never *set* them on the user's behalf -- the
+// etc.), so for an EDIT this addon can never *set* them on the user's behalf
+// (a NEW rule's title mode is the one exception: the global
+// `series_rule_title_mode` setting, see SeriesRuleTitleModeForSetting()) -- the
 // only correct behavior is to echo back whatever was last cached for
 // this exact rule (UpdateTimer()'s job) so an edit to an unrelated field
 // doesn't collaterally reset them. `titleMode`/`descriptionMode` follow
@@ -65,6 +67,20 @@ nlohmann::json BuildSeriesRuleRequestBody(int channelId, const std::string& tvgI
                                           bool recordNewOnly, const std::string& titleMode,
                                           const std::string& description, const std::string& descriptionMode,
                                           bool untaggedIsNew, int epgSourceId);
+
+// The `series_rule_title_mode` setting's values: how a series rule CREATED from Kodi matches a programme's title.
+// Kodi's timer dialog has no field for this, so one global setting stands in (docs/CLOSED_ITEMS.md, "Let a series
+// rule made in Kodi match the title loosely"). It applies to new rules only: an edit echoes the
+// rule's own cached mode (UpdateTimer()), so the setting never rewrites a rule that exists. Regex is left out on
+// purpose: the addon cannot evaluate PostgreSQL regexes, so a rule using one is never linked to its recordings.
+constexpr int kSeriesTitleModeExact = 0;
+constexpr int kSeriesTitleModeContains = 1;
+constexpr int kSeriesTitleModeSearch = 2;
+
+// The `title_mode` for a new series rule, from the setting's value. Exact is "" (the key is omitted, so the request is
+// byte for byte what it was before the setting existed and Dispatcharr applies its own default of `exact`), and so is
+// any value outside the list: a stale or corrupt setting must not send a mode name the server might refuse.
+std::string SeriesRuleTitleModeForSetting(int setting);
 
 // DispatcharrClient::UpdateRecurringRule()'s own PATCH body: exactly the fields in
 // `patch`, and nothing else (see RecurringRuleEdit.h for why an edit sends only

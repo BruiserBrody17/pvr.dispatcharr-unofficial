@@ -406,3 +406,43 @@ TEST_CASE("BuildSeriesRuleDeleteQuery encodes a tvg_id as it does a title", "[Ti
   CHECK(BuildSeriesRuleDeleteQuery("Show", "x y+z", 0) == "?title=Show&tvg_id=x%20y%2Bz");
   CHECK(BuildSeriesRuleDeleteQuery("Show", "50%#", 7) == "?title=Show&tvg_id=50%25%23&epg_source_id=7");
 }
+
+// ---------------------------------------------------------------------
+// SeriesRuleTitleModeForSetting
+// ---------------------------------------------------------------------
+
+TEST_CASE("SeriesRuleTitleModeForSetting maps the setting's three choices", "[TimerRequestBuilder]")
+{
+  // Exact is the empty string, not "exact": the key is then omitted and the request is what it was before the setting.
+  CHECK(SeriesRuleTitleModeForSetting(kSeriesTitleModeExact).empty());
+  CHECK(SeriesRuleTitleModeForSetting(kSeriesTitleModeContains) == "contains");
+  CHECK(SeriesRuleTitleModeForSetting(kSeriesTitleModeSearch) == "search");
+}
+
+TEST_CASE("SeriesRuleTitleModeForSetting never turns an unknown value into a mode name", "[TimerRequestBuilder]")
+{
+  // A stale or corrupt setting must not send something the server might refuse; regex is deliberately not a choice.
+  for (int bad : {-1, 3, 4, 99, 1000000})
+    CHECK(SeriesRuleTitleModeForSetting(bad).empty());
+}
+
+TEST_CASE("SeriesRuleTitleModeForSetting values are what the settings.xml options use", "[TimerRequestBuilder]")
+{
+  CHECK(kSeriesTitleModeExact == 0);
+  CHECK(kSeriesTitleModeContains == 1);
+  CHECK(kSeriesTitleModeSearch == 2);
+}
+
+TEST_CASE("A new rule's body carries the chosen title mode and nothing for exact", "[TimerRequestBuilder]")
+{
+  json exact = BuildSeriesRuleRequestBody(3, "tvg", "News", false, SeriesRuleTitleModeForSetting(kSeriesTitleModeExact),
+                                          "", "", false, 0);
+  CHECK_FALSE(exact.contains("title_mode"));
+  json contains = BuildSeriesRuleRequestBody(3, "tvg", "News", false,
+                                             SeriesRuleTitleModeForSetting(kSeriesTitleModeContains), "", "", false, 0);
+  CHECK(contains["title_mode"] == "contains");
+  json search = BuildSeriesRuleRequestBody(3, "tvg", "News", true,
+                                           SeriesRuleTitleModeForSetting(kSeriesTitleModeSearch), "", "", false, 0);
+  CHECK(search["title_mode"] == "search");
+  CHECK(search["mode"] == "new");
+}

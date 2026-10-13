@@ -620,6 +620,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
   m_liveTimeshiftMode = kodi::addon::GetSettingInt("live_timeshift_mode", kLiveTimeshiftOff);
   m_enableCatchupFfmpegdirectSeek = kodi::addon::GetSettingBoolean("enable_catchup_ffmpegdirect_seek", false);
+  m_seriesRuleTitleMode = kodi::addon::GetSettingInt("series_rule_title_mode", dispatcharr::kSeriesTitleModeExact);
   m_recordingRefreshMinutes = kodi::addon::GetSettingInt("recording_refresh_minutes", 5);
   m_recurringRuleUtcOffsetMinutes = kodi::addon::GetSettingInt("recurring_rule_utc_offset_minutes", 0);
   m_enableRealtimeUpdates = kodi::addon::GetSettingBoolean("enable_realtime_updates", false);
@@ -1021,6 +1022,10 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
   else if (settingName == "enable_catchup_ffmpegdirect_seek")
   {
     m_enableCatchupFfmpegdirectSeek = settingValue.GetBoolean();
+  }
+  else if (settingName == "series_rule_title_mode")
+  {
+    m_seriesRuleTitleMode = settingValue.GetInt();
   }
   else if (settingName == "recording_refresh_minutes")
   {
@@ -4767,17 +4772,17 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
     // actual EPG-title match pattern Kodi's own "Search guide for" field
     // represents -- not GetTitle() ("Name", a separate, cosmetic label)
     // -- see that function's own comment for the real bug this fixes.
-    // titleMode/description/descriptionMode/untaggedIsNew/epgSourceId
-    // are left at their "nothing to echo" sentinel here -- a brand-new
-    // rule has nothing cached yet to preserve, and none of these five
-    // have any Kodi-side UI of their own anyway (see
-    // dispatcharr::BuildSeriesRuleRequestBody()'s own comment,
-    // TimerRequestBuilder.h).
+    // description/descriptionMode/untaggedIsNew/epgSourceId are left at their "nothing to echo" sentinel
+    // here -- a brand-new rule has nothing cached yet to preserve, and none of them have any Kodi-side UI of
+    // their own (see dispatcharr::BuildSeriesRuleRequestBody()'s own comment, TimerRequestBuilder.h). The
+    // title mode is the one exception: it comes from the global series_rule_title_mode setting, and is ""
+    // (key omitted, the server's own "exact") unless the user chose otherwise. Only a NEW rule reads it;
+    // UpdateTimer() echoes the rule's own cached mode, so changing the setting never rewrites an existing rule.
     ok = m_client.CreateSeriesRule(
         static_cast<int>(timer.GetClientChannelUid()), tvgId,
         dispatcharr::ResolveSeriesRuleMatchTitle(timer.GetEPGSearchString(), timer.GetTitle()),
-        timer.GetPreventDuplicateEpisodes() != 0, /*titleMode=*/"", /*description=*/"", /*descriptionMode=*/"",
-        /*untaggedIsNew=*/false, /*epgSourceId=*/0, error);
+        timer.GetPreventDuplicateEpisodes() != 0, dispatcharr::SeriesRuleTitleModeForSetting(m_seriesRuleTitleMode),
+        /*description=*/"", /*descriptionMode=*/"", /*untaggedIsNew=*/false, /*epgSourceId=*/0, error);
   }
   else if (timer.GetTimerType() == kTimerTypeRecurring)
   {
