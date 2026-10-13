@@ -1,6 +1,7 @@
 #include "TimerRequestBuilder.h"
 
 #include "DateTimeFormat.h"
+#include "UrlEncode.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -282,6 +283,100 @@ TEST_CASE("BuildOneTimeRecordingCreateBody's custom_properties.program window us
 // ---------------------------------------------------------------------
 // BuildSeriesRuleDeleteQuery
 // ---------------------------------------------------------------------
+
+TEST_CASE("BuildOneTimeRecordingCreateBody adds the looked-up programme's fields next to the window -- what "
+          "Dispatcharr's own guide posts, and what keeps a short programme titled when padding pushes the "
+          "recording under the server's 80% time-slot rule (confirmed live 2026-10-13)",
+          "[TimerRequestBuilder]")
+{
+  nlohmann::json fields = {{"id", 4242},
+                           {"title", "Show A"},
+                           {"sub_title", "Episode"},
+                           {"description", "Plot"},
+                           {"tvg_id", "a.example"},
+                           {"start_time", "ignored"}};
+  auto body = BuildOneTimeRecordingCreateBody(7, 1000000, 1000540, 5, true, fields);
+  const auto& program = body["custom_properties"]["program"];
+  CHECK(program["id"] == 4242);
+  CHECK(program["title"] == "Show A");
+  CHECK(program["sub_title"] == "Episode");
+  CHECK(program["description"] == "Plot");
+  CHECK(program["tvg_id"] == "a.example");
+  CHECK(program["start_time"] == IsoFromTime(1000000));
+  CHECK(program["end_time"] == IsoFromTime(1000540));
+}
+
+TEST_CASE("BuildOneTimeRecordingCreateBody ignores programme fields for a recording that is not EPG-based, and "
+          "null or empty ones",
+          "[TimerRequestBuilder]")
+{
+  nlohmann::json fields = {{"id", 5}, {"title", "Show A"}};
+  CHECK_FALSE(BuildOneTimeRecordingCreateBody(7, 1000000, 1000540, 5, false, fields).contains("custom_properties"));
+
+  auto bare = BuildOneTimeRecordingCreateBody(7, 1000000, 1000540, 5, true, nlohmann::json());
+  CHECK(bare["custom_properties"]["program"].size() == 2);
+
+  nlohmann::json withNull = {{"id", 5}, {"title", "Show A"}, {"sub_title", nullptr}};
+  auto body = BuildOneTimeRecordingCreateBody(7, 1000000, 1000540, 5, true, withNull);
+  CHECK_FALSE(body["custom_properties"]["program"].contains("sub_title"));
+}
+
+TEST_CASE("BuildProgramLookupQuery asks for the channel's programme starting within a second of the start",
+          "[TimerRequestBuilder]")
+{
+  const std::string q = BuildProgramLookupQuery(7, 1000000);
+  CHECK(q.rfind("?channel_id=7&", 0) == 0);
+  CHECK(q.find("start_after=" + UrlEncode(IsoFromTime(999999))) != std::string::npos);
+  CHECK(q.find("start_before=" + UrlEncode(IsoFromTime(1000001))) != std::string::npos);
+  CHECK(q.find("fields=id,title,sub_title,description,tvg_id,start_time,end_time") != std::string::npos);
+}
+
+TEST_CASE("ParseProgramLookupResponse picks the programme that starts when the timer does, preferring one that also "
+          "ends when it does",
+          "[TimerRequestBuilder]")
+{
+  nlohmann::json response = {
+      {"count", 2},
+      {"results",
+       {{{"id", 1}, {"title", "Longer"}, {"start_time", IsoFromTime(1000000)}, {"end_time", IsoFromTime(1003600)}},
+        {{"id", 2},
+         {"title", "Exact"},
+         {"sub_title", nullptr},
+         {"description", "d"},
+         {"tvg_id", "x"},
+         {"start_time", IsoFromTime(1000000)},
+         {"end_time", IsoFromTime(1000540)}}}}};
+  auto out = ParseProgramLookupResponse(response, 1000000, 1000540);
+  REQUIRE(out.is_object());
+  CHECK(out["id"] == 2);
+  CHECK(out["title"] == "Exact");
+  CHECK(out["description"] == "d");
+  CHECK(out["tvg_id"] == "x");
+  CHECK_FALSE(out.contains("sub_title"));
+  CHECK_FALSE(out.contains("start_time"));
+
+  // Only a same-start programme with a different end still qualifies.
+  CHECK(ParseProgramLookupResponse(response, 1000000, 999)["id"] == 1);
+}
+
+TEST_CASE("ParseProgramLookupResponse accepts a bare array and returns null for anything unusable",
+          "[TimerRequestBuilder]")
+{
+  nlohmann::json one = nlohmann::json::array(
+      {{{"id", 9}, {"title", "T"}, {"start_time", IsoFromTime(1000000)}, {"end_time", IsoFromTime(1000540)}}});
+  CHECK(ParseProgramLookupResponse(one, 1000000, 1000540)["id"] == 9);
+
+  CHECK(ParseProgramLookupResponse(nlohmann::json::array(), 1000000, 1000540).is_null());
+  CHECK(ParseProgramLookupResponse(nlohmann::json::object(), 1000000, 1000540).is_null());
+  CHECK(ParseProgramLookupResponse(nlohmann::json("html"), 1000000, 1000540).is_null());
+  // Starts at a different time, no id, a zero id, an empty or missing title.
+  CHECK(ParseProgramLookupResponse(one, 1000600, 1000540).is_null());
+  for (const nlohmann::json& bad : {nlohmann::json{{"title", "T"}, {"start_time", IsoFromTime(1000000)}},
+                                    nlohmann::json{{"id", 0}, {"title", "T"}, {"start_time", IsoFromTime(1000000)}},
+                                    nlohmann::json{{"id", 3}, {"title", ""}, {"start_time", IsoFromTime(1000000)}},
+                                    nlohmann::json{{"id", 3}, {"start_time", IsoFromTime(1000000)}}})
+    CHECK(ParseProgramLookupResponse(nlohmann::json::array({bad}), 1000000, 1000540).is_null());
+}
 
 TEST_CASE("BuildSeriesRuleDeleteQuery always includes title", "[TimerRequestBuilder]")
 {

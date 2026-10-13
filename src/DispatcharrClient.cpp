@@ -85,6 +85,7 @@ constexpr const char* kSeriesRulesPath = "/api/channels/series-rules/";
 // viewset as "epgdata" (not "epg-data" or "epg/data/"), a real REST route
 // with a path-addressable id -- unlike series rules, which have none.
 constexpr const char* kEpgDataPath = "/api/epg/epgdata/";
+constexpr const char* kEpgProgramSearchPath = "/api/epg/programs/search/";
 constexpr const char* kRecurringRulesPath = "/api/channels/recurring-rules/";
 constexpr const char* kCoreSettingsPath = "/api/core/settings/";
 constexpr const char* kVersionPath = "/api/core/version/";
@@ -1610,31 +1611,37 @@ bool DispatcharrClient::CreateOneTimeRecording(int channelId, time_t start, time
   if (!EnsureAuthenticated(error))
     return false;
 
-  // Confirmed against a real recording: channel/start_time/end_time are the
-  // only fields a MANUAL (non-EPG) recording needs to send. Deliberately
-  // NOT sending its own title/id via custom_properties (e.g. {"title":
-  // title}) -- confirmed that Dispatcharr auto-populates
-  // custom_properties.program.{title,sub_title,description} (plus
-  // status/file paths/poster logo) from whatever EPG programme was
-  // actually airing on this channel at this time, and sending an explicit
-  // title/id on create *replaces* that entirely rather than merging,
-  // which would throw away the richer data for what's normally an exact
-  // match anyway (Kodi's "record from guide" title already came from
-  // that same EPG programme).
+  // channel/start_time/end_time are all a MANUAL (non-EPG) recording needs (confirmed against a real recording).
   //
-  // isEpgBased DOES now send a title/id-free custom_properties.program
-  // window (added 2026-09-29, fixing a real, confirmed, live-verified
-  // bug -- see dispatcharr::BuildOneTimeRecordingCreateBody()'s own
-  // comment, TimerRequestBuilder.h, for the full account, including why
-  // this doesn't reintroduce the enrichment-replacement risk the
-  // paragraph above warns about: confirmed live, not just from source,
-  // that this narrower shape merges rather than replaces). The body
-  // itself lives in dispatcharr::BuildOneTimeRecordingCreateBody()
-  // (TimerRequestBuilder.h) so it's unit-testable standalone -- see that
-  // function's own comment for the real, confirmed, previously-
-  // undocumented dependency it also closes: Kodi's own instant recording
-  // sends `start` as a literal 0, not the real current time.
-  json body = dispatcharr::BuildOneTimeRecordingCreateBody(channelId, start, end, time(nullptr), isEpgBased);
+  // An EPG-based one also sends custom_properties.program, which is what makes Dispatcharr apply its pre/post padding
+  // (RecordingSerializer.validate() only does so when `program` is a dict; added 2026-09-29, see
+  // dispatcharr::BuildOneTimeRecordingCreateBody()'s comment). Left holding only the window, the title then depends on
+  // the server matching one guide programme against 80% of the PADDED recording window, which a short programme, a
+  // large padding or a recording spanning two programmes fails: confirmed live 2026-10-13, such a recording starts with
+  // no title, no description and a timestamp for a file name. So the programme is looked up and sent the way
+  // Dispatcharr's own guide sends it (id, title, sub_title, description, tvg_id); the id keeps the server's poster and
+  // episode lookups working, which a bare title would not. The lookup is best effort: an older Dispatcharr without the
+  // search endpoint, or any failure, leaves the window-only body, i.e. the server's own enrichment, as before.
+  json programFields;
+  if (isEpgBased && start > 0)
+  {
+    json lookup;
+    std::string lookupError;
+    if (Request("GET", std::string(kEpgProgramSearchPath) + dispatcharr::BuildProgramLookupQuery(channelId, start),
+                json(), lookup, lookupError))
+    {
+      programFields = dispatcharr::ParseProgramLookupResponse(lookup, start, end);
+    }
+    if (programFields.is_null())
+    {
+      kodi::Log(ADDON_LOG_DEBUG,
+                "pvr.dispatcharr-unofficial: CreateOneTimeRecording: no guide programme found for channel %d at %lld "
+                "(%s); leaving the title to Dispatcharr",
+                channelId, static_cast<long long>(start), lookupError.empty() ? "no match" : lookupError.c_str());
+    }
+  }
+  json body =
+      dispatcharr::BuildOneTimeRecordingCreateBody(channelId, start, end, time(nullptr), isEpgBased, programFields);
   json response;
   if (!Request("POST", kRecordingsPath, body, response, error))
     return false;

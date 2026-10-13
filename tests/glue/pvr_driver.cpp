@@ -691,6 +691,42 @@ int main(int argc, char** argv)
     if (!t.startTime)
       FAIL("no upcoming guide entry on channel 6 to record");
     mustAdd("epg-based", &t);
+    // The recording it created carries the guide programme the search found (its id and title, the way Dispatcharr's
+    // own guide posts it), so the server's 80% time-slot match has nothing left to fail at. Without the search endpoint
+    // (an older Dispatcharr) the timer still gets created, with only the window, as before.
+    {
+      std::string db = http("/__db");
+      if (db.find("\"title\": \"Guide programme\"") == std::string::npos ||
+          db.find("\"id\": 4242") == std::string::npos || db.find("From the programme search") == std::string::npos)
+        FAIL("the EPG-based recording did not carry the looked-up programme: %s", db.c_str());
+      http("/__ctl?program_search=off");
+      PVR_TIMER later{};
+      later.iTimerType = 3;
+      later.iClientChannelUid = 6;
+      later.state = PVR_TIMER_STATE_SCHEDULED;
+      for (size_t i = 0; i < c.epg.size(); i++)
+        if (c.epg[i].iUniqueChannelId == 6 && c.epg[i].startTime > t.startTime)
+        {
+          later.startTime = c.epg[i].startTime;
+          later.endTime = c.epg[i].endTime;
+          later.iEpgUid = c.epg[i].iUniqueBroadcastId;
+          snprintf(later.strTitle, sizeof later.strTitle, "%s", c.epgTitles[i].c_str());
+          break;
+        }
+      if (!later.startTime)
+        FAIL("no second upcoming guide entry on channel 6");
+      mustAdd("epg-based, no programme search", &later);
+      http("/__ctl?program_search=");
+      std::string db2 = http("/__db");
+      size_t guide = 0, n = 0;
+      while ((guide = db2.find("Guide programme", guide)) != std::string::npos)
+      {
+        n++;
+        guide++;
+      }
+      if (n != 1)
+        FAIL("a timer made without the programme search still carried a looked-up programme (%zu)", n);
+    }
     // instant recording: start 0
     PVR_TIMER inst{};
     inst.iTimerType = 1;

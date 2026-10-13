@@ -80,7 +80,7 @@ int ChannelToSendOnOneTimeEdit(int kodiChannelUid, int currentChannelId)
 }
 
 nlohmann::json BuildOneTimeRecordingCreateBody(int channelId, time_t start, time_t end, time_t now,
-                                               bool includeEpgProgramWindow)
+                                               bool includeEpgProgramWindow, const nlohmann::json& programFields)
 {
   time_t effectiveStart = start > 0 ? start : now;
   nlohmann::json body = {
@@ -90,11 +90,77 @@ nlohmann::json BuildOneTimeRecordingCreateBody(int channelId, time_t start, time
   };
   if (includeEpgProgramWindow)
   {
-    body["custom_properties"] = {
-        {"program", {{"start_time", IsoFromTime(effectiveStart)}, {"end_time", IsoFromTime(end)}}},
-    };
+    nlohmann::json program = {{"start_time", IsoFromTime(effectiveStart)}, {"end_time", IsoFromTime(end)}};
+    if (programFields.is_object())
+    {
+      for (const char* key : {"id", "title", "sub_title", "description", "tvg_id"})
+      {
+        auto it = programFields.find(key);
+        if (it != programFields.end() && !it->is_null())
+          program[key] = *it;
+      }
+    }
+    body["custom_properties"] = {{"program", program}};
   }
   return body;
+}
+
+nlohmann::json BuildOneTimeRecordingCreateBody(int channelId, time_t start, time_t end, time_t now,
+                                               bool includeEpgProgramWindow)
+{
+  return BuildOneTimeRecordingCreateBody(channelId, start, end, now, includeEpgProgramWindow, nlohmann::json());
+}
+
+std::string BuildProgramLookupQuery(int channelId, time_t start)
+{
+  return "?channel_id=" + std::to_string(channelId) + "&start_after=" + UrlEncode(IsoFromTime(start - 1)) +
+         "&start_before=" + UrlEncode(IsoFromTime(start + 1)) +
+         "&fields=id,title,sub_title,description,tvg_id,start_time,end_time";
+}
+
+nlohmann::json ParseProgramLookupResponse(const nlohmann::json& response, time_t start, time_t end)
+{
+  const nlohmann::json* list = nullptr;
+  if (response.is_array())
+    list = &response;
+  else if (response.is_object() && response.contains("results") && response["results"].is_array())
+    list = &response["results"];
+  if (!list)
+    return nullptr;
+
+  const nlohmann::json* best = nullptr;
+  bool bestEndsRight = false;
+  for (const auto& entry : *list)
+  {
+    if (!entry.is_object())
+      continue;
+    const auto id = entry.find("id");
+    const auto title = entry.find("title");
+    if (id == entry.end() || !id->is_number_integer() || id->get<long long>() <= 0 || title == entry.end() ||
+        !title->is_string() || title->get<std::string>().empty())
+      continue;
+    const auto st = entry.find("start_time");
+    if (st == entry.end() || !st->is_string() || TimeFromIso(st->get<std::string>()) != start)
+      continue;
+    const auto en = entry.find("end_time");
+    const bool endsRight = en != entry.end() && en->is_string() && TimeFromIso(en->get<std::string>()) == end;
+    if (!best || (endsRight && !bestEndsRight))
+    {
+      best = &entry;
+      bestEndsRight = endsRight;
+    }
+  }
+  if (!best)
+    return nullptr;
+
+  nlohmann::json out = nlohmann::json::object();
+  for (const char* key : {"id", "title", "sub_title", "description", "tvg_id"})
+  {
+    auto it = best->find(key);
+    if (it != best->end() && !it->is_null())
+      out[key] = *it;
+  }
+  return out;
 }
 
 std::string BuildSeriesRuleDeleteQuery(const std::string& title, const std::string& tvgId, int epgSourceId)

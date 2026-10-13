@@ -2169,6 +2169,16 @@ against a fake Dispatcharr, a stub Kodi runtime and Kodi's own dev-kit
 headers, which CI runs as the `glue-harness` job); a real Dispatcharr and a
 real Kodi remain manual/live-hardware verification territory.
 
+`TimerRequestBuilder` gained the programme lookup on 2026-10-13 (`docs/CLOSED_ITEMS.md`, "Recordings made from Kodi miss
+their title and description when padding pushes them under Dispatcharr's 80% rule"): `BuildProgramLookupQuery()` (the
+channel and a one-second window either side of the start), `ParseProgramLookupResponse()` (a paginated or bare list; a
+programme qualifies when it starts when the timer does and has a positive id and a title, one that also ends when the
+timer does wins; null fields dropped; anything unusable returns null) and `BuildOneTimeRecordingCreateBody()`'s
+`programFields` argument (added next to the window only for an EPG-based recording; null and empty fields left out).
+The glue harness's `functional` scenario covers the client side: the fake answers `/api/epg/programs/search/`, the
+recording the addon creates carries the looked-up id and title, and with the endpoint answering 404 the timer is still
+created.
+
 **Python** (`dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/`,
 pytest, wired into CI's `unit-tests-python` job): `recording_edl` covers
 `_parse_edl` (including a milliseconds-overflow regression: a

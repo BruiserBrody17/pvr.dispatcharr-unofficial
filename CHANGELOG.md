@@ -36,6 +36,12 @@ compare against.
 
 ### Fixed
 
+- **Recordings made from Kodi's guide keep their title and description**: a recording made from the guide could come out
+  named "Recording <number>", with no description, when Dispatcharr's pre/post padding
+  was large for the programme (a short show, or a few minutes of padding on a half-hour one) or when it spanned two
+  programmes. The addon now sends the programme's details with the recording, the way Dispatcharr's own guide does.
+  With an older Dispatcharr that cannot look the programme up, nothing changes from before.
+
 - **A recording whose commercial markers cover all of it no longer plays to its end at once.** Comskip can mark a
   whole short recording as one commercial break; Kodi then skipped to the end and marked the recording watched. The
   addon now ignores a skip that covers nine tenths or more of the recording and plays it normally.

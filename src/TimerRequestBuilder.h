@@ -118,12 +118,11 @@ int ChannelToSendOnOneTimeEdit(int kodiChannelUid, int currentChannelId);
 // includeEpgProgramWindow (added 2026-09-29, fixing a real, confirmed,
 // live-verified bug -- see docs/CLOSED_ITEMS.md's "One-time recordings from
 // Kodi miss Dispatcharr's pre/post padding" entry): when true, adds `custom_properties: {"program":
-// {"start_time", "end_time"}}` -- title/id deliberately omitted so
-// Dispatcharr's own later auto-enrichment still runs (confirmed live,
-// not just from source: two real recordings, one with this exact shape
-// and one with none, both came back fully enriched within seconds of
-// the same async task, with this one's own start_time/end_time merged
-// in alongside the new fields rather than replaced).
+// {"start_time", "end_time"}}`, with no title or id when the programme is not known: Dispatcharr's own later
+// auto-enrichment then runs (confirmed live, not just from source: two real recordings, one with this exact shape
+// and one with none, both came back fully enriched within seconds of the same async task, with this one's own
+// start_time/end_time merged in alongside the new fields rather than replaced) -- but only while one programme
+// covers 80% of the padded window, see programFields below.
 // `RecordingSerializer.validate()` only applies the instance's own
 // configured pre/post padding when `custom_properties.get("program")`
 // is a dict -- CreateOneTimeRecording() previously never sent one at
@@ -135,8 +134,29 @@ int ChannelToSendOnOneTimeEdit(int kodiChannelUid, int currentChannelId);
 // recording has no real programme window to associate with the padding
 // mechanism in the first place, matching this fix's own original,
 // deliberately narrower scope.
+//
+// `programFields` (added 2026-10-13, fixing the missing-title report in docs/CLOSED_ITEMS.md, "Recordings made from
+// Kodi miss their title...") is the guide programme the timer is for, as ParseProgramLookupResponse() returns it. When
+// it is a non-empty object its fields (`id`, `title`, `sub_title`, `description`, `tvg_id`) go into
+// `custom_properties.program` next to the window, which is what Dispatcharr's own web interface posts. A `program`
+// that already carries an id or a title skips the server's time-slot match (`_match_epg_program_by_timeslot()`,
+// which needs one programme covering 80% of the padded window and so fails for a short programme or a large padding),
+// and the id keeps the server's poster and episode lookups working. Ignored unless `includeEpgProgramWindow`.
+nlohmann::json BuildOneTimeRecordingCreateBody(int channelId, time_t start, time_t end, time_t now,
+                                               bool includeEpgProgramWindow, const nlohmann::json& programFields);
 nlohmann::json BuildOneTimeRecordingCreateBody(int channelId, time_t start, time_t end, time_t now,
                                                bool includeEpgProgramWindow);
+
+// The query string for GET /api/epg/programs/search/ that finds the programme starting at `start` on a channel
+// (`channel_id` resolves the channel's effective EPG mapping on the server, the same one the guide used), asking only
+// for the fields BuildOneTimeRecordingCreateBody() sends. A second either side of `start` absorbs sub-second rounding.
+std::string BuildProgramLookupQuery(int channelId, time_t start);
+
+// Picks the programme a timer is for out of the search response (a paginated `{"results": [...]}` or a bare array).
+// A programme qualifies when its start equals `start` and it has a positive `id` and a non-empty `title`; one whose end
+// also equals `end` wins over one that only starts at the same time. Returns the fields to send (null values dropped),
+// or null json when nothing qualifies, which leaves the recording to the server's own enrichment.
+nlohmann::json ParseProgramLookupResponse(const nlohmann::json& response, time_t start, time_t end);
 
 // DispatcharrClient::DeleteSeriesRule()'s own query-string suffix
 // (everything after the base path) -- confirmed against the live schema

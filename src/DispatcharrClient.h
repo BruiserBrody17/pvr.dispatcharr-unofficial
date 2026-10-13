@@ -664,11 +664,11 @@ public:
 
   bool GetTimerRules(std::vector<TimerRule>& out, std::string& error);
   // title is used only as a client-side placeholder (see GetRecordings()'s
-  // pending-title cache) -- not sent to Dispatcharr itself; see the .cpp for
-  // why. isEpgBased (added 2026-09-29, fixing a real, confirmed,
-  // live-verified bug -- see dispatcharr::BuildOneTimeRecordingCreateBody()'s
-  // own comment, TimerRequestBuilder.h) should be true only for a
-  // genuinely EPG-based timer (timer.GetEPGUid() != PVR_TIMER_NO_EPG_UID)
+  // pending-title cache); the title Dispatcharr stores for an EPG-based
+  // recording is the one of the guide programme it looks up (see the .cpp). isEpgBased (added 2026-09-29, fixing a
+  // real, confirmed, live-verified bug -- see dispatcharr::BuildOneTimeRecordingCreateBody()'s own comment,
+  // TimerRequestBuilder.h) should be true only for a genuinely EPG-based timer (timer.GetEPGUid() !=
+  // PVR_TIMER_NO_EPG_UID)
   // -- lets Dispatcharr's own configured pre/post padding actually apply
   // to a recording created by pressing "Record" in Kodi's own EPG guide,
   // which previously always got the raw, unpadded EPG start/end times

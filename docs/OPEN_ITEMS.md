@@ -4,23 +4,23 @@
 
 ## Status at a glance
 
-**12 open, 298 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Six open items came from the
+**11 open, 299 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Six open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one came from the
-untitled-recording fix, one from the live check of a Stop during an open (`docs/TIMESHIFT.md`'s stalled-streams section) and four
-from user reports.
+untitled-recording fix, one from the live check of a Stop during an open (`docs/TIMESHIFT.md`'s stalled-streams section) and three
+still open from user reports.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 2 |
+| Open: Fix known, not yet done | 1 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 7 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 260 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 261 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 29 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -37,10 +37,6 @@ from user reports.
 #### Support Kodi 22 (Piers): the addon is refused by Kodi 22 RC1
 
 **Opened 2026-10-12, from a user's report: on Kodi 22 RC1 (a Windows laptop) the addon "is not supported yet".** Kodi 22's PVR API is 9.2.0 with a minimum of 9.2.0 (Omega, which this branch builds against: 8.3.0, minimum 8.2.0), and its main and general APIs moved to 2.0.4 and 1.0.5, so the addon's declared imports and an Omega-built binary are refused outright; it must be rebuilt against Kodi 22's headers. A syntax-only compile of every `src/` file against the Piers dev-kit headers (branch `Piers`, 2026-10-11) gave six errors, all in `PVRDispatcharr.h`: the five recorded-stream overrides (`OpenRecordedStream()` now also returns a stream id, `ReadRecordedStream()`, `SeekRecordedStream()`, `LengthRecordedStream()` and `CloseRecordedStream()` take it), and `GetChannelStreamProperties()`, which gains a `PVR_SOURCE` argument (regular live, or playing a guide entry as live). The C++ wrapper hides the rest of the change (the C structs now hold string pointers instead of fixed arrays, EDL and timer-type lists are heap arrays), so most of `src/` compiles unchanged. What the port still needs: (1) the stream id means Kodi may hold more than one recorded stream open, but `DispatcharrClient` keeps one `m_recordingStream` and one `m_inProgressRecordingStream`, so either the state is keyed by id or a second open is refused deliberately; (2) the glue harness's stub and driver use the C structs directly and need the new shapes; (3) new optional calls worth a look, `GetRecordedStreamTimes()`, `IsRecordedStreamRealTime()` and `PauseRecordedStream()`, which bear on how an in-progress recording behaves in the player and on the open item about watching live while a recording runs; (4) `addon.xml.in` import versions, `KODI_COMMIT` and `KODI_BRANCH` in the workflow, and the Windows, Android and CoreELEC builds against Piers (`docs/BUILDING.md` notes `coreelec-22` tracks it); (5) the branching policy in `CLAUDE.md`: branch `Piers` off `Omega` once the source differs, keep `Omega` as the Kodi 21 maintenance branch, and decide how fixes flow between them (merge `Omega` into `Piers`; the six signatures are the only divergence so far). Confirm live on Kodi 22 RC1 with a Windows build: the addon loads, channels and guide appear, a live channel plays in each timeshift mode, a recording plays (completed and in progress) and seeks, and the timers dialog works.
-
-#### Recordings made from Kodi miss their title and description when padding pushes them under Dispatcharr's 80% rule
-
-**Opened 2026-10-12, from a user's report: some recordings made from Kodi are named "Recording <number>" with no description, while the same show added from Dispatcharr's web interface has its title and description. Derived from Dispatcharr's source, confirmed live on the lab server 2026-10-13 (below).** The addon creates an EPG-based recording with `custom_properties.program` holding only the programme's start and end (`BuildOneTimeRecordingCreateBody()`, title and id deliberately left out so Dispatcharr's own enrichment runs). Two server steps then decide the title. `RecordingSerializer.validate()` widens the stored start and end by the DVR pre and post padding whenever `program` is a dict. At the recording's start, `run_recording` fills an empty `program` (no id, no title) from `_match_epg_program_by_timeslot()`, which accepts a guide programme only if it covers **at least 80% of the recording's window**, and that window is the padded one. So a programme of length L with total padding P matches only while L / (L + P) is at least 0.8, which is P at most L / 4: a 30-minute show tolerates 7.5 minutes of padding in all, a 15-minute one under 4, a 10-minute one 2.5. Larger padding (5 minutes before and 10 after is a common choice), a short programme, or a recording that spans two programmes gives no match, and the recording keeps no title, which the web interface avoids by posting the programme's id, title, sub-title and description itself. This is a second route to the symptom, besides the one fixed on 2026-10-11 for a channel with no guide data at all (`docs/CLOSED_ITEMS.md`, the entry on a recording nothing titled, which only makes the placeholder show the channel's name) and the raw-versus-effective EPG source mismatch recorded under "Dispatcharr's own enrichment" in the closed items. **Confirmed live (2026-10-13, lab Dispatcharr 0.32.0, padding one minute before and two after).** Recordings were created with exactly the body the addon sends (`channel`, `start_time`, `end_time`, and `custom_properties.program` holding only the two times) and read back from `custom_properties.program` once they had started. (1) A programme of 9 minutes (9 of 12 padded minutes, 75%): started with no title, no description and no programme id, and the file name came from the timestamp. (2) A window spanning a programme boundary (neither programme covers 80%): the same, untitled. (3) A window inside a long programme: enriched within seconds with title, sub-title, description and programme id. (4) The 10-minute programme sent the way the web interface does (`id`, `title`, `sub_title`, `description`, `tvg_id` inside `program`): titled and described straight away, before it had even started. So the 80% rule is the cause for short programmes and for recordings that span two, and the fix below works. The fix is the addon sending what the web interface sends: `title`, `sub_title` and `description` from its own guide cache for the timer's EPG entry (Kodi gives the entry's id; the guide has no Dispatcharr programme id, so `id` stays out). A non-empty `title` skips the time-slot match, so the title and description become certain; the cost to weigh is the poster, which Dispatcharr resolves from the programme's id when it has one and otherwise from the title and its own lookups, and the recording's file name, which is built from the programme title. The other option is writing the title afterwards through the rename call, which marks the recording user-edited and stops enrichment entirely. Decide the poster and file-name trade-off, then implement; ask the reporter for their padding and an affected programme's length to confirm it matches their case.
 
 ### Architectural / concurrency
 

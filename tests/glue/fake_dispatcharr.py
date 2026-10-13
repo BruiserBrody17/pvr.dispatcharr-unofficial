@@ -204,6 +204,34 @@ def pvr_route(h, method, p, q, body):
         if CTL["epg_slow_ms"]:
             time.sleep(ctl_int("epg_slow_ms") / 1000.0)
         return h.send(200, xmltv(), "application/xml")
+    if p == "/api/epg/programs/search/":
+        # The guide programme a timer is for: one starting at the query's start_after plus a second, with an id and
+        # a title the driver looks for in the recording that gets created. program_search=off answers like a
+        # Dispatcharr without the endpoint.
+        if CTL["program_search"] == "off":
+            return h.J(404, {"detail": "nf"})
+        start = datetime.datetime.strptime(q["start_after"][0], "%Y-%m-%dT%H:%M:%SZ") + datetime.timedelta(seconds=1)
+        end = start + datetime.timedelta(minutes=9)
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        return h.J(
+            200,
+            {
+                "count": 1,
+                "next": None,
+                "previous": None,
+                "results": [
+                    {
+                        "id": 4242,
+                        "title": "Guide programme",
+                        "sub_title": None,
+                        "description": "From the programme search",
+                        "tvg_id": "t%s" % q.get("channel_id", ["0"])[0],
+                        "start_time": start.strftime(fmt),
+                        "end_time": end.strftime(fmt),
+                    }
+                ],
+            },
+        )
     if p.startswith("/api/epg/epgdata/"):
         eid = int(p.split("/")[4])
         return h.J(200, {"id": eid, "tvg_id": "t%d" % eid, "epg_source": 1})
