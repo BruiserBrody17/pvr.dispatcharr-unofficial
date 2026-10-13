@@ -2484,6 +2484,7 @@ assertions, 650 test cases, 4 new for
 entirely when false, present with no title/id when true, and using
 the same now-mapped effective start time as the top-level field for
 Kodi's own instant-recording sentinel).
+**Help text corrected 2026-10-13.** The two settings' help texts (`strings.po` #30055 and #30057) kept saying a recording started from Kodi's own guide was "a known gap" for a fortnight after this fix; they now say the padding applies to a guide recording and not to a manual timer set by time (no programme behind it) or a recurring timer.
 **A separate, real Dispatcharr-side gap found live while re-verifying
 this fix, NOT caused by it and not something this addon can control --
 logged separately as "Dispatcharr recording enrichment ignores a channel's EPG override" rather than left buried in this entry's own
