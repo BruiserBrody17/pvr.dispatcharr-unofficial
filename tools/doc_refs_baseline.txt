@@ -66,6 +66,7 @@ docs/OPEN_ITEMS.md|function|PauseStream
 docs/OPEN_ITEMS.md|function|SwitchToChannel
 docs/OPEN_ITEMS.md|function|log_system_event
 docs/OPEN_ITEMS.md|setting|description_mode
+docs/OPEN_ITEMS.md|setting|started_at
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work
