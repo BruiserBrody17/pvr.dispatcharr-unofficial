@@ -663,9 +663,11 @@ public:
   bool ObtainApiKey(std::string& keyOut, std::string& error);
 
   bool GetTimerRules(std::vector<TimerRule>& out, std::string& error);
-  // title is used only as a client-side placeholder (see GetRecordings()'s
+  // title is used as a client-side placeholder (see GetRecordings()'s
   // pending-title cache); the title Dispatcharr stores for an EPG-based
-  // recording is the one of the guide programme it looks up (see the .cpp). isEpgBased (added 2026-09-29, fixing a
+  // recording is the one of the guide programme it looks up (see the .cpp).
+  // A manual timer's typed name is written separately by AddTimer(), see
+  // ShouldPersistTypedTimerTitle() (TimerIdentity.h). isEpgBased (added 2026-09-29, fixing a
   // real, confirmed, live-verified bug -- see dispatcharr::BuildOneTimeRecordingCreateBody()'s own comment,
   // TimerRequestBuilder.h) should be true only for a genuinely EPG-based timer (timer.GetEPGUid() !=
   // PVR_TIMER_NO_EPG_UID)
@@ -673,8 +675,10 @@ public:
   // to a recording created by pressing "Record" in Kodi's own EPG guide,
   // which previously always got the raw, unpadded EPG start/end times
   // instead.
+  // createdRecordingIdOut, when given, receives the new recording's id (0 if the response carried none), so a caller
+  // can follow the create with a call about that recording (AddTimer() writes a typed manual title this way).
   bool CreateOneTimeRecording(int channelId, time_t start, time_t end, const std::string& title, bool isEpgBased,
-                              std::string& error);
+                              std::string& error, int* createdRecordingIdOut = nullptr);
   // Reschedules an existing one-time recording's start/end time via
   // PATCH /api/channels/recordings/{id}/. Deliberately sends ONLY
   // start_time/end_time, mirroring CreateOneTimeRecording()'s own choice

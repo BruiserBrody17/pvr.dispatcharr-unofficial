@@ -145,6 +145,42 @@ TEST_CASE("ComputeRecordingExtendMinutes accepts a 1-second delta as a 1-minute 
 }
 
 // ---------------------------------------------------------------------
+// ShouldPersistTypedTimerTitle
+TEST_CASE("ShouldPersistTypedTimerTitle is true for a name typed on a manual timer", "[TimerIdentity]")
+{
+  CHECK(ShouldPersistTypedTimerTitle(false, "Garden show", "Channel A"));
+}
+
+TEST_CASE("ShouldPersistTypedTimerTitle is false when the name is the channel's", "[TimerIdentity]")
+{
+  // Kodi's timer dialog sends the channel's name for an empty or default name, and instant recordings carry it too.
+  CHECK_FALSE(ShouldPersistTypedTimerTitle(false, "Channel A", "Channel A"));
+}
+
+TEST_CASE("ShouldPersistTypedTimerTitle is false for a guide timer", "[TimerIdentity]")
+{
+  // The server looks the programme's title up itself; writing one would stop its enrichment for nothing.
+  CHECK_FALSE(ShouldPersistTypedTimerTitle(true, "Garden show", "Channel A"));
+}
+
+TEST_CASE("ShouldPersistTypedTimerTitle is false for an empty or blank name", "[TimerIdentity]")
+{
+  CHECK_FALSE(ShouldPersistTypedTimerTitle(false, "", "Channel A"));
+  CHECK_FALSE(ShouldPersistTypedTimerTitle(false, " \t", "Channel A"));
+}
+
+TEST_CASE("ShouldPersistTypedTimerTitle is false when the channel's name is unknown", "[TimerIdentity]")
+{
+  // Without it a default cannot be told from a typed name, so nothing is written.
+  CHECK_FALSE(ShouldPersistTypedTimerTitle(false, "Garden show", ""));
+}
+
+TEST_CASE("ShouldPersistTypedTimerTitle compares the whole name, case sensitively", "[TimerIdentity]")
+{
+  CHECK(ShouldPersistTypedTimerTitle(false, "channel a", "Channel A"));
+  CHECK(ShouldPersistTypedTimerTitle(false, "Channel A news", "Channel A"));
+}
+
 // ShouldRenameOnTimerEdit
 // ---------------------------------------------------------------------
 

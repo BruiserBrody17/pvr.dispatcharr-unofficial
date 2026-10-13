@@ -163,6 +163,24 @@ inline bool ShouldRenameOnTimerEdit(const std::string& kodiTitle, const std::str
   return kodiTitle != freshTitle;
 }
 
+// Whether AddTimer() should write the title of a new one-time timer to the server right after creating it. Only a
+// manual timer (no guide entry) whose name the user typed: Kodi's timer dialog replaces an empty name or its localized
+// "New Timer" with the channel's name before the timer reaches the addon (CGUIDialogPVRTimerSettings::Save(), read from
+// Kodi's source 2026-10-13), and an instant recording is named after the channel too
+// (CPVRTimerInfoTag::CreateInstantTimerTag()), so "equals the channel's name" is the whole test for a name nobody
+// typed. Such a name is left to Dispatcharr's own enrichment, because writing it (RenameRecording()) marks the
+// recording user_edited and stops that enrichment. A guide timer carries the programme's title, which the server looks
+// up itself. An empty or unknown channel name means the default cannot be told from a typed name, so nothing is
+// written.
+inline bool ShouldPersistTypedTimerTitle(bool isEpgBased, const std::string& title, const std::string& channelName)
+{
+  if (isEpgBased || channelName.empty())
+    return false;
+  if (title.find_first_not_of(" \t\r\n") == std::string::npos)
+    return false;
+  return title != channelName;
+}
+
 // The recurring-rule counterpart of ShouldRenameOnTimerEdit() above, for
 // a real, confirmed bug found via a project-wide review, not itself
 // independently reproduced (this branch never got the equivalent guard

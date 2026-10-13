@@ -727,14 +727,14 @@ int main(int argc, char** argv)
       if (n != 1)
         FAIL("a timer made without the programme search still carried a looked-up programme (%zu)", n);
     }
-    // instant recording: start 0
+    // instant recording: start 0, and named after the channel, which is what Kodi sends for one
     PVR_TIMER inst{};
     inst.iTimerType = 1;
     inst.iClientChannelUid = 2;
     inst.startTime = 0;
     inst.endTime = now + 1800;
     inst.iEpgUid = PVR_TIMER_NO_EPG_UID;
-    snprintf(inst.strTitle, sizeof inst.strTitle, "Instant");
+    snprintf(inst.strTitle, sizeof inst.strTitle, "Channel 2");
     mustAdd("instant", &inst);
     PVR_TIMER r{};
     r.iTimerType = 4;
@@ -795,6 +795,42 @@ int main(int argc, char** argv)
       check("Show 3-3", "search");
       check("Show 3-4", "");
       check("Show 3-5", "");
+    }
+    // A manual timer's typed name is written to the server (it would otherwise give way to the channel's name once the
+    // pending-title cache expires); a manual timer that carries the channel's name, which is what Kodi's dialog sends
+    // for an empty or default name, and a guide timer are not (writing marks the recording user_edited, which stops
+    // Dispatcharr's own enrichment).
+    {
+      auto addManual = [&](const char* title)
+      {
+        PVR_TIMER m{};
+        m.iTimerType = 1;
+        m.iClientChannelUid = 4;
+        m.state = PVR_TIMER_STATE_SCHEDULED;
+        m.startTime = now + 10800;
+        m.endTime = m.startTime + 1800;
+        m.iEpgUid = PVR_TIMER_NO_EPG_UID;
+        snprintf(m.strTitle, sizeof m.strTitle, "%s", title);
+        mustAdd(title, &m);
+      };
+      addManual("Typed manual name");
+      addManual("Channel 4");
+      const std::string dbTitles = http("/__db");
+      const size_t typedAt = dbTitles.find("\"title\": \"Typed manual name\"");
+      if (typedAt == std::string::npos)
+        FAIL("a manual timer's typed name was not stored on the server: %s", dbTitles.c_str());
+      else if (dbTitles.find("\"user_edited\": true", typedAt > 200 ? typedAt - 200 : 0) == std::string::npos)
+        FAIL("the stored typed name is not marked user_edited: %s", dbTitles.c_str());
+      // The one with the channel's name stored nothing, and the guide timer added earlier stored no rename either: the
+      // only user_edited recording is the typed one.
+      size_t edited = 0, at = 0;
+      while ((at = dbTitles.find("\"user_edited\"", at)) != std::string::npos)
+      {
+        edited++;
+        at++;
+      }
+      if (edited != 1)
+        FAIL("expected exactly one recording renamed by AddTimer, found %d: %s", (int)edited, dbTitles.c_str());
     }
     sleep_ms(1500);
     Collected tt;

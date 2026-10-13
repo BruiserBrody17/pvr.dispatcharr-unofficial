@@ -4824,9 +4824,28 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
     // non-EPG timer (GetEPGUid() == PVR_TIMER_NO_EPG_UID) has no real
     // programme window to associate with that mechanism in the first
     // place, so it's deliberately excluded.
+    const bool isEpgBased = timer.GetEPGUid() != PVR_TIMER_NO_EPG_UID;
+    int createdRecordingId = 0;
     ok = m_client.CreateOneTimeRecording(static_cast<int>(timer.GetClientChannelUid()), timer.GetStartTime(),
-                                         timer.GetEndTime(), timer.GetTitle(),
-                                         timer.GetEPGUid() != PVR_TIMER_NO_EPG_UID, error);
+                                         timer.GetEndTime(), timer.GetTitle(), isEpgBased, error, &createdRecordingId);
+    // A name the user typed for a manual timer would otherwise live only in the three-minute pending-title cache and
+    // then give way to the channel's name (see ShouldPersistTypedTimerTitle()). A failure here costs only that: the
+    // timer exists and shows the cached title for now.
+    if (ok && createdRecordingId > 0)
+    {
+      std::string channelName;
+      {
+        std::lock_guard<std::mutex> lock(m_dataMutex);
+        const Channel* ch = FindChannelByUid(static_cast<int>(timer.GetClientChannelUid()));
+        if (ch)
+          channelName = ch->name;
+      }
+      std::string renameError;
+      if (dispatcharr::ShouldPersistTypedTimerTitle(isEpgBased, timer.GetTitle(), channelName) &&
+          !m_client.RenameRecording(createdRecordingId, timer.GetTitle(), renameError))
+        kodi::Log(ADDON_LOG_WARNING, "pvr.dispatcharr-unofficial: created timer %d but could not store its name: %s",
+                  createdRecordingId, renameError.c_str());
+    }
   }
 
   if (!ok)

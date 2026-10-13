@@ -1735,6 +1735,14 @@ matching Dispatcharr's own `parse_optional_epg_source_id()` treating
 anything `<= 0` the same way. `FindSeriesRuleIndexByClientIndex()`'s own
 duck-typed `RuleT` now needs an `epgSourceId` member too, alongside the
 `title`/`tvgId` it already required.
+`TimerIdentity` also holds `ShouldPersistTypedTimerTitle()` (added 2026-10-13, see `docs/CLOSED_ITEMS.md`, "Keep a title
+the user typed for a manual timer"): true for a manual timer (no guide entry) whose title is not the channel's name,
+which is when `AddTimer()` writes the title with `RenameRecording()` right after the create. Six cases: a typed name,
+the channel's own name (what Kodi's dialog sends for an empty or "New Timer" name, and instant recordings), a guide timer,
+an empty or blank name, an unknown channel name, and a whole-name case-sensitive comparison. The `functional` glue scenario
+adds a manual timer with a typed name and one carrying the channel's name and checks the fake server's stored recordings:
+only the typed one is renamed (mutation-verified: with the call disabled the scenario fails twice). Its instant recording
+now carries the channel's name, as Kodi's does.
 `JsonFieldUtil` also gained `MergeDvrOffsetMinutes()`, `SetDvrOffsetMinutes()`'s
 own merge-preserving PATCH body assembly -- Dispatcharr's PATCH replaces
 the whole `value` blob rather than merging it server-side, so this sets

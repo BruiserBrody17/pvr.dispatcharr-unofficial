@@ -1606,8 +1606,10 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
 }
 
 bool DispatcharrClient::CreateOneTimeRecording(int channelId, time_t start, time_t end, const std::string& title,
-                                               bool isEpgBased, std::string& error)
+                                               bool isEpgBased, std::string& error, int* createdRecordingIdOut)
 {
+  if (createdRecordingIdOut)
+    *createdRecordingIdOut = 0;
   if (!EnsureAuthenticated(error))
     return false;
 
@@ -1655,6 +1657,8 @@ bool DispatcharrClient::CreateOneTimeRecording(int channelId, time_t start, time
   // uses fields="__all__", which always includes it) -- not channelId, see
   // PendingTitle's own comment for the real bug that fixes.
   int recordingId = FieldOr<int>(response, "id", 0);
+  if (createdRecordingIdOut)
+    *createdRecordingIdOut = recordingId;
   if (!title.empty() && recordingId > 0)
   {
     std::lock_guard<std::mutex> lock(m_pendingTitlesMutex);

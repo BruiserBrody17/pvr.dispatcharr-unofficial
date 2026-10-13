@@ -41,6 +41,13 @@ compare against.
 
 ### Fixed
 
+- **A name you type for a manual timer is kept**: a timer made with "Add timer..." (not from the guide) and a name you
+  typed showed that name for about three minutes and then fell back to the channel's name. The addon now stores the name
+  on the server when it creates the timer, so it stays after that, after a restart of Kodi, on other Kodi devices and in
+  Dispatcharr's own interface. A timer left at Kodi's default name,
+  an instant recording and a timer made from the guide are unchanged and keep the title Dispatcharr finds for them. A
+  manual timer you name by hand no longer gets a description or poster filled in by Dispatcharr, since a name set by hand
+  takes priority.
 - **A channel that is slow to start no longer fails the first open (Server-side live mode)**: the addon gave up on a
   channel's first segment after about 15 seconds, so a channel whose provider was slow to start showed a playback error
   and played at once on the second try. It now keeps waiting, up to about 30 seconds, for as long as the timeshift buffer

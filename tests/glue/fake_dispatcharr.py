@@ -348,6 +348,12 @@ def pvr_route(h, method, p, q, body):
             if len(parts) > 4 and parts[4] == "stop":
                 rec["custom_properties"]["status"] = "stopped"
                 return h.J(200, rec)
+            if len(parts) > 4 and parts[4] == "update-metadata" and method == "POST":
+                # What the real endpoint stores for a title: program.title, and user_edited, which stops enrichment.
+                prog = rec["custom_properties"].setdefault("program", {})
+                prog["title"] = body.get("title")
+                prog["user_edited"] = True
+                return h.J(200, rec)
             if len(parts) > 4:
                 return h.J(200, rec)
             return h.J(200, rec)
