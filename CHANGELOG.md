@@ -14,6 +14,13 @@ compare against.
 
 ### Added
 
+- **Kodi says when the address is not a Dispatcharr server**: if the host and port in the addon's settings reach something
+  that answers but is not Dispatcharr (a plain web server, a proxy with nothing behind it, a login page), Kodi now shows
+  "Server does not respond properly" with the address, and keeps it in the Event Log, instead of leaving an empty
+  channel list and a line in the log file. It is reported for a 404, 405, 501, a redirect, or an answer to the login
+  that has no token in it. A server that is simply down is still "Server is unreachable", and a refused password is
+  still "Access denied". A proxy that answers 404 for a few seconds while Dispatcharr restarts shows the same message,
+  followed by "Connection established" when the login works again.
 - **Choose how a series rule made in Kodi matches the title**: a new setting, "Series rules made here: how the title is
   matched" (Exact by default, as before; Contains; Whole words). With Contains, a rule made from the guide for "News" also
   records "Late News" and "Newsreel"; Whole words matches "Late News" but not "Newsreel". It applies to rules created

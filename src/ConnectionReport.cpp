@@ -15,6 +15,9 @@ ConnectionReport ReportForAuthFailure(long httpStatus, bool callerHasShortBound)
     return ConnectionReport::kAccessDenied;
   if (httpStatus == 0)
     return callerHasShortBound ? ConnectionReport::kNone : ConnectionReport::kUnreachable;
+  // Before the 5xx range: 501 is a server that does not implement POST, not a gateway with nothing behind it.
+  if ((httpStatus >= 200 && httpStatus < 400) || httpStatus == 404 || httpStatus == 405 || httpStatus == 501)
+    return ConnectionReport::kServerMismatch;
   if (httpStatus >= 500)
     return ConnectionReport::kUnreachable;
   return ConnectionReport::kNone;

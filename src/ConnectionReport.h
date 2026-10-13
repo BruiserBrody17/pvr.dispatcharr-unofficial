@@ -10,7 +10,8 @@ namespace dispatcharr
 // Kodi's CONNECTING is deliberately never reported (it makes Kodi ignore the client until CONNECTED, which a server
 // that never answers would turn into a client Kodi never uses). kNone means "this outcome proves nothing".
 // What is observed is kConnected, kUnreachable ("the server cannot be reached", from a login, a refresh or a run of
-// failed requests) and kAccessDenied. kDisconnected is only ever delivered, never observed: the latch turns an
+// failed requests), kAccessDenied and kServerMismatch (the address answers, but not as Dispatcharr's login does).
+// kDisconnected is only ever delivered, never observed: the latch turns an
 // unreachable server into it once the link had been reported up, because Kodi words that as "Connection lost" and an
 // unreachable one as "Server is unreachable", and the first is the true one for a server that went away mid-session.
 enum class ConnectionReport
@@ -19,17 +20,21 @@ enum class ConnectionReport
   kConnected,
   kUnreachable,
   kAccessDenied,
+  kServerMismatch,
   kDisconnected,
 };
 
 // The report for a failed login or token refresh, by HTTP status (0 == no response at all). The split is the one
 // ShouldCountTowardLoginBackoff() (AuthBackoff.h) already makes: a rejection of the credentials or of the network
 // (400/401/403) is "access denied"; no response or a 5xx is "unreachable". 429 is the login throttle, which only
-// follows earlier rejections that were already reported, and says nothing new. Any other status (a 404 from a proxy
-// that is not Dispatcharr, a malformed body) is left unreported, since "server mismatch" is not a state this slice
-// reports. callerHasShortBound is true when the attempt ran under a caller's short deadline (a live read's, not the
-// configured timeout): a timeout there only proves the server was slower than that caller could wait, so it is not
-// reported as unreachable. A refused or unresolvable connection under a short deadline is lost with it, an accepted
+// follows earlier rejections that were already reported, and says nothing new. A status Dispatcharr's token endpoint
+// never answers with is "server mismatch": a 2xx whose body held no token (a captive portal's page, another
+// service's JSON), a redirect, 404, 405 and 501 (a plain web server, a proxy with no route, a server that does not
+// know POST). Any other status (410, 422, a 4xx nobody has seen) says nothing. A 404 is also what a reverse proxy can
+// answer for the few seconds its backend is being replaced; the report then corrects itself to "connected" when the
+// login next succeeds. callerHasShortBound is true when the attempt ran under a caller's short deadline (a live read's,
+// not the configured timeout): a timeout there only proves the server was slower than that caller could wait, so it is
+// not reported as unreachable. A refused or unresolvable connection under a short deadline is lost with it, an accepted
 // cost of not threading the curl result up from Request().
 ConnectionReport ReportForAuthFailure(long httpStatus, bool callerHasShortBound);
 

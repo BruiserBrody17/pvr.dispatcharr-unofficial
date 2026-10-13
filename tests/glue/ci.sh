@@ -47,6 +47,9 @@ run "PVR: connection, rejected"   BIN=pvr_harness T=60 CTL="login_status=401" --
 run "PVR: connection, throttled"  BIN=pvr_harness T=60 CTL="login_status=429" -- connection_state 4000 ""
 run "PVR: connection, down at start" BIN=pvr_harness T=60 CTL="api_down=1" -- connection_state 4000 unreachable
 run "PVR: connection, proxy error at login" BIN=pvr_harness T=60 CTL="login_status=502" -- connection_state 4000 unreachable
+run "PVR: connection, no such route at login" BIN=pvr_harness T=60 CTL="login_status=404" -- connection_state 4000 mismatch
+run "PVR: connection, no POST at login" BIN=pvr_harness T=60 CTL="login_status=405" -- connection_state 4000 mismatch
+run "PVR: connection, login answers without a token" BIN=pvr_harness T=60 CTL="login_status=200" -- connection_state 4000 mismatch
 run "PVR: view-only account, known at start" BIN=pvr_harness T=60 CTL="user_level=1" -- dvr_access 8000
 run "PVR: view-only account, learned late" BIN=pvr_harness T=150 CTL="user_level=1&api_down=1" -- dvr_access 120000 late
 run "PVR: connection, lost mid-session" BIN=pvr_harness T=120 -- connection_loss

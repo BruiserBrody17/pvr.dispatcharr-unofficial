@@ -36,14 +36,87 @@ TEST_CASE("Silence under a caller's short deadline is not reported as unreachabl
   CHECK(ReportForAuthFailure(0, true) == ConnectionReport::kNone);
 }
 
-TEST_CASE("The login throttle and unrelated statuses report nothing", "[ConnectionReport]")
+TEST_CASE("The login throttle and statuses nobody has explained report nothing", "[ConnectionReport]")
 {
   // 429 follows earlier rejections that were already reported.
   CHECK(ReportForAuthFailure(429, false) == ConnectionReport::kNone);
-  CHECK(ReportForAuthFailure(404, false) == ConnectionReport::kNone);
-  CHECK(ReportForAuthFailure(405, false) == ConnectionReport::kNone);
-  // A 200 whose body held no token reaches the caller with the status 200.
-  CHECK(ReportForAuthFailure(200, false) == ConnectionReport::kNone);
+  // Other 4xx: a status Dispatcharr's token endpoint could plausibly give and nobody has seen; saying "not Dispatcharr"
+  // about one would be a guess.
+  CHECK(ReportForAuthFailure(410, false) == ConnectionReport::kNone);
+  CHECK(ReportForAuthFailure(415, false) == ConnectionReport::kNone);
+  CHECK(ReportForAuthFailure(422, false) == ConnectionReport::kNone);
+  CHECK(ReportForAuthFailure(499, false) == ConnectionReport::kNone);
+  // Informational responses and the status of a request that never got one.
+  CHECK(ReportForAuthFailure(100, false) == ConnectionReport::kNone);
+  CHECK(ReportForAuthFailure(-1, false) == ConnectionReport::kNone);
+}
+
+TEST_CASE("An answer Dispatcharr's token endpoint never gives is reported as a server mismatch", "[ConnectionReport]")
+{
+  // A 2xx that is not a token (a login that reaches the caller as a failure with the status 200: a captive portal's
+  // page, another service's JSON), a redirect, a route that does not exist, a path that does not take POST, and a
+  // server that does not know the method (a plain web server).
+  for (long status : {200L, 201L, 204L, 301L, 302L, 307L, 308L, 399L, 404L, 405L, 501L})
+    CHECK(ReportForAuthFailure(status, false) == ConnectionReport::kServerMismatch);
+  // What an answer proves does not depend on the caller's deadline.
+  CHECK(ReportForAuthFailure(404, true) == ConnectionReport::kServerMismatch);
+}
+
+TEST_CASE("A gateway error is still unreachable, not a mismatch", "[ConnectionReport]")
+{
+  // 501 is the one 5xx that is a mismatch; 500, 502, 503 and 504 are a Dispatcharr (or its proxy) that is not up.
+  for (long status : {500L, 502L, 503L, 504L, 599L})
+    CHECK(ReportForAuthFailure(status, false) == ConnectionReport::kUnreachable);
+}
+
+TEST_CASE("The credential statuses stay access denied", "[ConnectionReport]")
+{
+  // None of the mismatch statuses may swallow the three that mean "Dispatcharr refused you".
+  CHECK(ReportForAuthFailure(400, false) == ConnectionReport::kAccessDenied);
+  CHECK(ReportForAuthFailure(401, false) == ConnectionReport::kAccessDenied);
+  CHECK(ReportForAuthFailure(403, false) == ConnectionReport::kAccessDenied);
+}
+
+TEST_CASE("A mismatch is delivered once, and corrected to connected when the login next works", "[ConnectionReport]")
+{
+  ConnectionReportLatch latch;
+  ConnectionReport out = ConnectionReport::kNone;
+  CHECK(latch.Observe(ConnectionReport::kServerMismatch));
+  CHECK(latch.TakePending(out, false));
+  CHECK(out == ConnectionReport::kServerMismatch);
+  // The same answer again (every login retry) says nothing new.
+  CHECK_FALSE(latch.Observe(ConnectionReport::kServerMismatch));
+  CHECK_FALSE(latch.TakePending(out, true));
+  // A reverse proxy's 404 while its backend was replaced: the next login works.
+  CHECK(latch.Observe(ConnectionReport::kConnected));
+  CHECK_FALSE(latch.TakePending(out, false));
+  CHECK(latch.TakePending(out, true));
+  CHECK(out == ConnectionReport::kConnected);
+}
+
+TEST_CASE("A mismatch is not held back like connected", "[ConnectionReport]")
+{
+  ConnectionReportLatch latch;
+  ConnectionReport out = ConnectionReport::kNone;
+  latch.Observe(ConnectionReport::kServerMismatch);
+  CHECK(latch.TakePending(out, false));
+  CHECK(out == ConnectionReport::kServerMismatch);
+}
+
+TEST_CASE("A mismatch after the link was up is delivered as a mismatch, and an outage after it as unreachable",
+          "[ConnectionReport]")
+{
+  ConnectionReportLatch latch;
+  ConnectionReport out = ConnectionReport::kNone;
+  latch.Observe(ConnectionReport::kConnected);
+  CHECK(latch.TakePending(out, true));
+  latch.Observe(ConnectionReport::kServerMismatch);
+  CHECK(latch.TakePending(out, true));
+  CHECK(out == ConnectionReport::kServerMismatch);
+  // The link is no longer reported as up, so an outage now is "unreachable", not "lost".
+  latch.Observe(ConnectionReport::kUnreachable);
+  CHECK(latch.TakePending(out, true));
+  CHECK(out == ConnectionReport::kUnreachable);
 }
 
 TEST_CASE("The latch delivers nothing until something was observed", "[ConnectionReport]")

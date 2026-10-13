@@ -156,6 +156,8 @@ static std::string ConnName(int state)
     return "unreachable";
   case PVR_CONNECTION_STATE_DISCONNECTED:
     return "lost";
+  case PVR_CONNECTION_STATE_SERVER_MISMATCH:
+    return "mismatch";
   default:
     return "state" + std::to_string(state);
   }
@@ -941,7 +943,7 @@ int main(int argc, char** argv)
   else if (what == "connection_state")
   {
     // What the addon tells Kodi about the link (ConnectionStateChange), in order. argv[4] is the expected sequence, a
-    // comma-separated list of connected, denied, unreachable (empty: none). The fake's faults come from CTL
+    // comma-separated list of connected, denied, unreachable, mismatch (empty: none). The fake's faults come from CTL
     // (login_status=401, api_down=1), set before the constructor ran. With CONN_RECOVER=1 the scenario clears api_down
     // after the first report and waits (up to `dur`) for the rest; otherwise it waits the whole `dur` so a spurious
     // extra report is caught too.

@@ -61,9 +61,9 @@ struct and drives it as Kodi's PVR manager does: `ctor_dtor`, `dtor_busy`, `func
 including a 5.1, all four timer types; an EPG-based timer's recording must carry the programme the fake's search returned, and still be created when the search answers 404; series rules created under each `series_rule_title_mode` must reach the server with the matching `title_mode`, or none for Exact and for a value outside the list; a manual timer's typed name must be stored on the server, and one carrying the channel's name must not), `surface <ms>` (four threads on lists and EPG, timer add/update/delete
 cycles, stream cycles with a `GetStreamTimes` thread, settings changes including the dialog-open dropped-write
 case, `OnSystemWake`), and `connection_state <ms> <states>`: what the addon tells Kodi through `ConnectionStateChange`, in order, as a
-comma-separated list of `connected`, `denied`, `unreachable` (empty for none), against a fault set with `CTL` before the constructor
-runs (`login_status=401` a rejected login, `429` a throttled one, `502` a proxy error; `api_down=1` a server down at start). In CI for
-healthy, 401, 429, down at start and 502. With `CONN_RECOVER=1` it clears the fault after the first report and waits for the rest
+comma-separated list of `connected`, `denied`, `unreachable`, `mismatch` (empty for none), against a fault set with `CTL` before the constructor
+runs (`login_status=401` a rejected login, `429` a throttled one, `502` a proxy error, `404` or `405` no such route, `200` an answer with no token; `api_down=1` a server down at start). In CI for
+healthy, 401, 429, down at start, 502, and 404, 405 or a 200 without a token (`mismatch`). With `CONN_RECOVER=1` it clears the fault after the first report and waits for the rest
 (`CTL="api_down=1" CONN_RECOVER=1 ... connection_state 170000 unreachable,connected`, about a minute: the login cooldown plus the
 background thread's one-minute retry).
 `connection_loss` is a server that goes away mid-session with the token still valid (so only `LinkHealth`'s run of failed requests can notice): connected, then `lost` about eleven seconds after the fake starts dropping connections, nothing more while it stays down, `connected` again when a request succeeds. `connection_blip` is five seconds of failures, which must report nothing. Both use `AddTimer` once a second as their traffic and are in CI.

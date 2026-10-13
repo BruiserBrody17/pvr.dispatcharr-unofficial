@@ -874,6 +874,9 @@ void PVRDispatcharr::ReportConnectionToKodi()
     case dispatcharr::ConnectionReport::kAccessDenied:
       state = PVR_CONNECTION_STATE_ACCESS_DENIED;
       break;
+    case dispatcharr::ConnectionReport::kServerMismatch:
+      state = PVR_CONNECTION_STATE_SERVER_MISMATCH;
+      break;
     case dispatcharr::ConnectionReport::kDisconnected:
       state = PVR_CONNECTION_STATE_DISCONNECTED;
       break;
@@ -883,10 +886,11 @@ void PVRDispatcharr::ReportConnectionToKodi()
     std::string connection;
     GetConnectionString(connection);
     kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: telling Kodi the connection is now %s",
-              state == PVR_CONNECTION_STATE_CONNECTED       ? "connected"
-              : state == PVR_CONNECTION_STATE_ACCESS_DENIED ? "access denied"
-              : state == PVR_CONNECTION_STATE_DISCONNECTED  ? "lost"
-                                                            : "unreachable");
+              state == PVR_CONNECTION_STATE_CONNECTED         ? "connected"
+              : state == PVR_CONNECTION_STATE_ACCESS_DENIED   ? "access denied"
+              : state == PVR_CONNECTION_STATE_DISCONNECTED    ? "lost"
+              : state == PVR_CONNECTION_STATE_SERVER_MISMATCH ? "not Dispatcharr (server mismatch)"
+                                                              : "unreachable");
     // An empty message makes Kodi use its own localized text for the state.
     ConnectionStateChange(connection, state, "");
   }
