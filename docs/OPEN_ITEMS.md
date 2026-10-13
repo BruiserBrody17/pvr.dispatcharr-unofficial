@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**8 open, 304 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Five open items came from the
+**7 open, 305 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Four open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other three
 are open from user reports.
@@ -14,13 +14,13 @@ are open from user reports.
 | Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 1 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 5 |
+| Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 266 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 29 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 30 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
@@ -58,21 +58,6 @@ The decision between them is on hold (2026-10-13); the workaround is not in the 
 #### Let a series rule's description filter be set from Kodi
 
 **Opened 2026-10-10, from the pvr.hts comparison; narrowed 2026-10-13 when the title half was done (`docs/CLOSED_ITEMS.md`, "Let a series rule made in Kodi match the title loosely").** What is left is the rest of the original item. pvr.hts searches the full EPG text per rule (`PVR_TIMER_TYPE_SUPPORTS_FULLTEXT_EPG_MATCH`, Kodi's "Fulltext EPG search" checkbox); Dispatcharr's series rule has `description` and `description_mode` (`contains` by default, or `search` or `regex`; `docs/DISPATCHARR_SOURCE_REVIEW.md`), and `AddTimer()` still creates every rule with them blank, so a rule made from Kodi never filters on the description, and an edit from Kodi keeps whatever the rule had. Decisions: whether the full-text flag maps to "also match the description", with the search string as `description` (the checkbox means that in Kodi, and the title filter would then be what, the same string or blank?), which `description_mode` it uses (a second setting, or follow the title setting), and whether regex is ever offered (the addon cannot evaluate PostgreSQL regexes, so a regex rule is left unlinked from its recordings, `docs/CLOSED_ITEMS.md`). Nobody has asked for it; the title setting covered the case the reporter-style requests had in mind. Confirm live by creating a rule from Kodi with the flag set and checking what Dispatcharr stores and which programmes it schedules.
-
-#### List the two plugins in Dispatcharr's Plugin Hub
-
-**Opened 2026-10-10, from the Dispatcharr source review; a decision about publishing, so it waits for the maintainer.**
-Since Dispatcharr 0.23.0 an admin can browse, install and update plugins from repositories inside Dispatcharr, and the
-official catalogue (the Plugins repository) accepts external plugins: a PR to its `main` branch adding
-`plugins/<slug>/plugin.json` with `source_type: "external"`, a `source_url` that is an HTTPS link to a zip and contains
-a `{version}` placeholder, `repo_url`, an OSI license (GPL-2.0-or-later qualifies) and `author` equal to the submitting
-GitHub account; each version bump is another PR, reviewed by the catalogue's maintainers. Today both plugins install by
-zip import only, and their zips are attached to addon-version releases, so no URL exists that is templated on the
-plugin's own version. Options: per-plugin GitHub releases or tags cut by the release gate (satisfies the catalogue's
-rule; Clapparr does this); a self-hosted repository manifest with absolute `latest_url`s, updated by the gate (the flat
-format in Dispatcharr's `Plugin_repo.md`; users add its URL once; the name must not contain "official" or
-"dispatcharr"); or staying with zip import. Either hosted option means the release gate also writes a manifest and
-checksums, and the privacy gate must cover what it publishes. Decide first; the mechanics follow.
 
 #### Use Dispatcharr's event hooks in the plugins
 
