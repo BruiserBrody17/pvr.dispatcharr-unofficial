@@ -2530,7 +2530,7 @@ pins one teardown and its `abort_if`; others pin a remaining viewer, a never-reg
 integer-id tests moved onto `_stale_viewers()`. The first and last of those fail against the previous plugin code.
 
 2026-10-09: `WebSocketClient` gained a test for a stop during a blocked send (a server that floods pings and never reads fills the
-client's pong sends until one blocks; the stop must end it within a slice; skipped on a kernel whose buffers absorb the flood).
+client's pong sends until one blocks; the stop must end it within a slice; skipped on a kernel whose buffers absorb the flood). 2026-10-13: the test failed on CI (the 64-bit and 32-bit jobs of one push) and, reproduced, in about 3% of runs with twelve copies running on eight cores: the jam is real and the stop is honoured within a tenth of a second, but the client has momentarily drained its receive buffer and the loop that sees the stop is its read wait, so the error reads "read abandoned" instead of "send abandoned". The test now accepts either shutdown message and keeps the time bound; with the stop check removed from `SendAll()` it still fails (3 of 3, the client stays blocked until the 60 s deadline), and with the change 180 of 180 loaded runs pass.
 `DecideRedirectStep()` (`RedirectPolicy.h`) and `DecideAuthGate()` (`AuthBackoff.h`) were extracted from
 `PerformWithSafeRedirects()` and `EnsureAuthenticated()` with table tests that pin the order of the checks: an unsafe redirect
 target is refused before the hop limit is looked at, a redirect without a Location is handed back even at the limit, and the

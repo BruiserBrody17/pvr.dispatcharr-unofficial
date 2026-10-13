@@ -669,7 +669,13 @@ TEST_CASE("a stop request ends a pong send that is blocked on a full send buffer
   if (!wasJammed)
     SKIP("this kernel's socket buffers absorbed the whole flood, so no send ever blocked");
   CHECK(result == -1);
-  CHECK(error == "WebSocket send abandoned: shutting down");
+  // The stop is normally seen by the blocked send. On a heavily loaded machine (about 3% of runs with twelve copies of
+  // this test on eight cores, and twice on CI) the client has momentarily drained its receive buffer when the stop
+  // arrives and sees it in its read wait instead: the jam is real (the server saw nothing accepted for more than two
+  // seconds) and the stop is honoured at once, only the loop that noticed differs. The property is that the stop ends
+  // the call promptly with a shutdown error; with the stop check removed from SendAll() the client stays blocked in the
+  // send and the call runs to its 60 s deadline, which the time check below fails.
+  CHECK((error == "WebSocket send abandoned: shutting down" || error == "WebSocket read abandoned: shutting down"));
   CHECK(afterStop < 2.0); // one 500 ms slice, with room for a loaded runner
 }
 
