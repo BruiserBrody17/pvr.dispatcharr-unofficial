@@ -3484,3 +3484,51 @@ Every wait is bounded, by a count times a request timeout at worst; none is unbo
 Dispatcharr 0.32.0's `channel_failover`, `channel_reconnect`, `channel_error` and `stream_switch` system events name the
 active stream, so "the server is already failing over" is knowable rather than inferred from starvation. Whether the
 plugin should subscribe belongs to the event-hooks open item, not here.
+
+## An on-demand live buffer: what it would take (analysis, 2026-10-13; nothing built)
+
+Written for the open item on watching live while a recording runs (`docs/OPEN_ITEMS.md`), where Tvheadend's optional
+"on-demand" timeshift (buffer only from the first pause, rewind or fast-forward; `docs/PVR_HTS_COMPARISON.md`) came up
+as the closest thing to what the reporter wants. The idea: Server-side live mode would read the channel directly and
+start the plugin's buffer only when the viewer first pauses or seeks, so a viewer who never pauses costs no ffmpeg and
+no disk. This is what was measured and read to see what that would involve. No code was changed.
+
+**What the plugin can already do (measured on the lab server, one healthy channel, six start-to-first-manifest runs).**
+`start_buffer` itself returns in 0.3 to 0.4 s. The first manifest with a segment arrived 2.9 to 4.1 s after the call
+(the lab's segments were 2.5 s long; the plugin's `segment_seconds` default is 2 and ffmpeg's HLS muxer closes a segment at the next keyframe, the likely reason, not checked). By 15 s
+the buffer held 22 to 26 s of content for 12 s of running, so a buffer started late **begins with roughly 10 s or more of
+the channel's recent past**, which is consistent with Dispatcharr's proxy sending a new client a backlog when it
+connects (the mechanism was not read from Dispatcharr's source; the measurement is the evidence). The plugin needs no
+change to be started late: its ffmpeg is `-c copy` into an HLS playlist, a remux and no transcode. So the cost of waiting to start it is a few seconds of latency and a short backlog, not a
+different plugin.
+
+**What the addon would need, none of which exists today.**
+1. **A direct live reader.** Server-side mode serves every byte of a live channel from the buffer's manifest
+   (`OpenLiveTimeshiftStream()`, `ReadLiveTimeshiftStream()`); there is no code that streams the channel's own URL through
+   the addon's callbacks. Off and Local modes hand Kodi the URL and read nothing in the addon. A third stream path would
+   be a long-lived curl read of `/proxy/ts/stream/<uuid>` with its own reconnect, stall and end-of-stream handling, next
+   to the two stream paths (live buffer and in-progress recording) that each have a long incident history in this file.
+2. **A trigger.** The addon does not implement `PauseStream()` at all (no override in `PVRDispatcharr.h`), so it is never
+   told about a pause today; a rewind or fast-forward reaches it as `SeekLiveStream()`. The first of either would start the
+   buffer. `CanPauseStream()` and `CanSeekStream()` would have to answer true from the start, since Kodi hides the controls
+   otherwise.
+3. **A splice from the direct reader to the buffer.** This is the hard part. Kodi has already read ahead of the playback
+   position (its demux queue), and the direct stream keeps arriving while the viewer is paused; the buffer starts about
+   10 s before the call and 3 to 4 s of latency after it. Resuming has to continue from the right place in a different
+   source with a different byte address space, so it needs either a content alignment (parsing PTS out of the transport
+   stream on both sides) or an accepted jump or repeat of a few seconds at the first pause, which Kodi's demuxer treats as
+   a discontinuity. Neither is cheap to get right and neither can be unit-tested without a real Kodi; the glue harness's
+   fake could model the two sources but not Kodi's queue behavior.
+
+**What it saves and what it gives up.** It saves one `-c copy` ffmpeg and its rolling segment files per live viewer for as
+long as they do not pause. That cost was not measured on the server (there is no shell on the Dispatcharr host, only its
+HTTP API); a stream copy is light, and the plugin's own disk window is the larger part. It gives up the first rewind:
+before the first pause the viewer can go back only about 10 s, as with Tvheadend's on-demand option ("because there is
+no buffer on the first request rewinding is not possible at that point").
+
+**Against the reporter's actual wish.** They want the in-progress recording to serve as the pause and rewind source, which
+reaches back to the start of the recording (minutes to hours). An on-demand buffer reaches back about 10 s at first and then
+only as far as the pause point, so it does not give them that; it only removes the cost they noticed. If that cost is the
+whole concern, the on-demand route trades a large piece of new code (a third stream path and a splice) for a modest saving;
+if pause and rewind into the recording is the wish, delegating to the recording (with a handover at its end, see the open
+item) is the route that delivers it. Neither was built.

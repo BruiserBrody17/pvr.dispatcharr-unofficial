@@ -57,6 +57,7 @@ docs/OPEN_ITEMS.md|function|GetRecordedStreamTimes
 docs/OPEN_ITEMS.md|function|IsRecordedStreamRealTime
 docs/OPEN_ITEMS.md|function|NextPVRStream
 docs/OPEN_ITEMS.md|function|PauseRecordedStream
+docs/OPEN_ITEMS.md|function|PauseStream
 docs/OPEN_ITEMS.md|function|SwitchToChannel
 docs/OPEN_ITEMS.md|function|log_system_event
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
@@ -114,6 +115,7 @@ docs/TIMESHIFT.md|function|Install
 docs/TIMESHIFT.md|function|InstallFromZip
 docs/TIMESHIFT.md|function|IsPVRChannel
 docs/TIMESHIFT.md|function|OpenPVRStream
+docs/TIMESHIFT.md|function|PauseStream
 docs/TIMESHIFT.md|function|SeekTimeRelative
 docs/TIMESHIFT.md|function|UpdatePlayState
 docs/TIMESHIFT.md|function|UpdateTimeshiftProgressData
