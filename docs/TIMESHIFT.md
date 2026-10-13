@@ -3428,7 +3428,7 @@ Both recording paths keep their stall handling in tested decision functions (`Re
 | Open | Waits for | Gives up on |
 |---|---|---|
 | Live, `start_buffer` | Up to 20 tries 500 ms apart, only while the plugin answers "retryable" (a buffer mid-teardown) | Anything else at once |
-| Live, first manifest | Up to 30 tries 500 ms apart, any non-fatal failure retries, each request taking the full `timeout`; also ends once 15 s plus one `timeout` have passed (`ColdStartWallClockBudgetMs()`: 45 s, so about 60 s against a silent server) | A fatal answer from the plugin; on failure the viewer it registered is deregistered |
+| Live, first manifest | Up to 30 tries 500 ms apart, any non-fatal failure retries, each request taking the full `timeout`; also ends once 15 s plus one `timeout` have passed (`ColdStartWallClockBudgetMs()`: 45 s, so about 60 s against a silent server). While the plugin itself keeps answering "live playlist not found" without `fatal` (its ffmpeg is alive, the channel is still starting) the limit is 60 tries, about 30 s (`ColdStartTryLimit()`); a try that got no answer from the plugin never earns the extension | A fatal answer from the plugin; on failure the viewer it registered is deregistered |
 | In-progress recording, first manifest | Up to 90 tries 500 ms apart, but only a 404 "playlist not created yet" retries; also ends once 45 s plus one `timeout` have passed (75 s) | Any other failure at once |
 | Completed recording | One one-byte ranged GET (two with an API-key refresh), 4 MB cap | The first failure |
 

@@ -103,3 +103,20 @@ TEST_CASE("ColdStartWallClockBudgetMs grows with a raised timeout and never drop
   CHECK(ColdStartWallClockBudgetMs(30, 500, 5) == 20000);
   CHECK(ColdStartWallClockBudgetMs(30, 500, 5) >= 30 * 500);
 }
+
+TEST_CASE("ColdStartTryLimit keeps the base count when the plugin gave no answer", "[RequestTimeout]")
+{
+  // A timeout or a refused connection is the stalled-server case: it must not earn the longer wait.
+  CHECK(ColdStartTryLimit(false, 30, 60) == 30);
+}
+
+TEST_CASE("ColdStartTryLimit extends only for a plugin answer of not ready", "[RequestTimeout]")
+{
+  CHECK(ColdStartTryLimit(true, 30, 60) == 60);
+}
+
+TEST_CASE("ColdStartTryLimit never shortens the base count", "[RequestTimeout]")
+{
+  CHECK(ColdStartTryLimit(true, 30, 30) == 30);
+  CHECK(ColdStartTryLimit(true, 30, 10) == 30);
+}

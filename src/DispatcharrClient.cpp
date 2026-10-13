@@ -3957,10 +3957,13 @@ void DispatcharrClient::CloseRecordingStream()
   m_recordingStream = RecordingStreamState();
 }
 
-bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool* fatalOut, bool coldStart)
+bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool* fatalOut, bool coldStart,
+                                            bool* pluginAnsweredNotReadyOut)
 {
   if (fatalOut)
     *fatalOut = false;
+  if (pluginAnsweredNotReadyOut)
+    *pluginAnsweredNotReadyOut = false;
 
   // One refresh at a time (see m_liveRefreshMutex). Two overlapping refreshes both merged the same new
   // segments, splicing a repeated chunk into the byte stream -- reproduced live with a second thread forcing
@@ -4028,8 +4031,13 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
     // result is still populated (empty json() if the outer envelope itself
     // failed) -- FieldOr() on that safely yields false either way, matching
     // this function's own pre-set default.
+    const bool fatal = FieldOr(result, "fatal", false);
     if (fatalOut)
-      *fatalOut = FieldOr(result, "fatal", false);
+      *fatalOut = fatal;
+    // An inner {"status": "error"} without `fatal` is the plugin itself saying the playlist is not there yet, which
+    // it only does while ffmpeg is alive; an envelope failure leaves `result` empty and is not that.
+    if (pluginAnsweredNotReadyOut)
+      *pluginAnsweredNotReadyOut = !fatal && FieldOr<std::string>(result, "status", "") == "error";
     return false;
   }
 
@@ -4295,30 +4303,41 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   // still took the full ~15s to fail instead of a couple hundred
   // milliseconds, with no indication in the error of why.
   constexpr int kColdStartMaxAttempts = 30;
+  // 30 s in all, for a channel whose plugin keeps answering "not ready" (see ColdStartTryLimit()).
+  constexpr int kColdStartExtendedAttempts = 60;
   constexpr int kColdStartSleepMs = 500;
   bool manifestReady = false;
   const auto coldStartBegan = std::chrono::steady_clock::now();
   const std::chrono::milliseconds coldStartBudget{
       ColdStartWallClockBudgetMs(kColdStartMaxAttempts, kColdStartSleepMs, m_config.timeoutSeconds)};
-  for (int attempt = 0; attempt < kColdStartMaxAttempts; ++attempt)
+  const std::chrono::milliseconds coldStartExtendedBudget{
+      ColdStartWallClockBudgetMs(kColdStartExtendedAttempts, kColdStartSleepMs, m_config.timeoutSeconds)};
+  for (int attempt = 0; attempt < kColdStartExtendedAttempts; ++attempt)
   {
     bool fatal = false;
-    if (RefreshLiveManifest(/*force=*/true, error, &fatal, /*coldStart=*/true))
+    bool pluginAnsweredNotReady = false;
+    if (RefreshLiveManifest(/*force=*/true, error, &fatal, /*coldStart=*/true, &pluginAnsweredNotReady))
     {
       manifestReady = true;
       break;
     }
     if (fatal)
       break;
+    const int tryLimit = ColdStartTryLimit(pluginAnsweredNotReady, kColdStartMaxAttempts, kColdStartExtendedAttempts);
+    const auto waited =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - coldStartBegan);
     // A server that stopped answering makes every try take the whole timeout: see ColdStartWallClockBudgetMs().
-    if (!ShouldKeepRetryingTransientRead(
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - coldStartBegan),
-            coldStartBudget))
+    const bool outOfTries = attempt + 1 >= tryLimit;
+    const bool outOfTime =
+        !ShouldKeepRetryingTransientRead(waited, pluginAnsweredNotReady ? coldStartExtendedBudget : coldStartBudget);
+    if (outOfTries || outOfTime)
     {
+      // Logged for either reason: the give-up after the last try used to say nothing, so a "no live playlist" failure
+      // left no line in the log to ask a user for.
       kodi::Log(ADDON_LOG_WARNING,
                 "pvr.dispatcharr-unofficial: OpenLiveTimeshiftStream: no live playlist after %d tries and %llds, "
                 "giving up: %s",
-                attempt + 1, static_cast<long long>(coldStartBudget.count() / 1000), error.c_str());
+                attempt + 1, static_cast<long long>(waited.count() / 1000), error.c_str());
       break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(kColdStartSleepMs));

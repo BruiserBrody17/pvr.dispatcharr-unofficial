@@ -26,6 +26,7 @@ run "live (hung API, close)"     TMO=30 T=120 -- live_blackhole_close
 run "live (hung API, 60 s timeout)" TMO=60 T=200 -- live_blackhole_close
 run "live (silent server at open)" TMO=5 T=120 -- live_silent_open
 run "live (file server unreachable)" TMO=30 T=120 -- live_fileserver_unreachable
+run "live (first segment after 25 s)" TMO=30 T=120 -- live_late_start
 run "live (6 s API latency)"     TMO=30 T=300 -- live_slow_open
 run "completed recording"        TMO=30 T=120 -- rec
 run "recording, Range dropped"   TMO=30 T=120 -- rec_range_dropped

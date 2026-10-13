@@ -615,6 +615,19 @@ class H(BaseHTTPRequestHandler):
                     return self.J(
                         200, {"success": True, "result": {"status": "error", "fatal": True, "message": "dead"}}
                     )
+                # A channel whose provider is slow to deliver its first segment: the plugin answers "not there yet",
+                # without `fatal`, for this many ms after the buffer started.
+                if T0["live"] is not None and (time.time() - T0["live"]) * 1000 < ctl_int("manifest_not_ready_ms", 0):
+                    return self.J(
+                        200,
+                        {
+                            "success": True,
+                            "result": {
+                                "status": "error",
+                                "message": "live playlist not found -- the buffer may not have produced any segments",
+                            },
+                        },
+                    )
                 if CTL["manifest_500"] == "1":
                     return self.J(500, {"detail": "x"})
                 n = live_count()

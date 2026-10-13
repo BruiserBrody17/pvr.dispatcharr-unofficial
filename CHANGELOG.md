@@ -36,6 +36,11 @@ compare against.
 
 ### Fixed
 
+- **A channel that is slow to start no longer fails the first open (Server-side live mode)**: the addon gave up on a
+  channel's first segment after about 15 seconds, so a channel whose provider was slow to start showed a playback error
+  and played at once on the second try. It now keeps waiting, up to about 30 seconds, for as long as the timeshift buffer
+  plugin reports its stream is running but has produced nothing yet; a buffer whose stream has failed, or a server that
+  stops answering, still fails as quickly as before. The log now also says when it gives up.
 - **Recordings made from Kodi's guide keep their title and description**: a recording made from the guide could come out
   named "Recording <number>", with no description, when Dispatcharr's pre/post padding
   was large for the programme (a short show, or a few minutes of padding on a half-hour one) or when it spanned two

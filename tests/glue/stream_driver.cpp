@@ -920,6 +920,28 @@ static void silent_open(DispatcharrClient& cl, bool inProgress)
     FAIL("the open took %ld ms against a silent server (budget %ld ms): the loop is not bounded by it", took, budgetMs);
 }
 
+// A channel whose provider is slow to deliver its first segment: the plugin keeps answering "live playlist not found"
+// (ffmpeg alive, no `fatal`) for 25 s, longer than the 15 s the cold-start loop used to wait. The open must wait it out
+// (ColdStartTryLimit()) instead of failing with a playback error and succeeding on the viewer's second try.
+static void live_late_start(DispatcharrClient& cl)
+{
+  ctl("manifest_not_ready_ms=25000");
+  std::string err;
+  const long t0 = ms();
+  const bool ok = cl.OpenLiveTimeshiftStream("uuid", err);
+  const long took = ms() - t0;
+  INFO("late start ok=%d in %ld ms err=%s", ok, took, err.c_str());
+  ctl("manifest_not_ready_ms=0");
+  if (!ok)
+    FAIL("a channel that took 25 s to produce its first segment could not be opened: %s", err.c_str());
+  else
+  {
+    if (took < 24000)
+      FAIL("the open returned after %ld ms, before the fake's first segment could exist", took);
+    cl.CloseLiveTimeshiftStream();
+  }
+}
+
 // The buffer starts and its manifest comes back through the API port, but the plugin's file server (a different port
 // the container has to publish) cannot be reached: the open used to succeed and every segment read then failed until
 // Kodi gave the stream up, a spinner for about 30 s and a channel that exited with nothing saying why. The open now
@@ -1145,6 +1167,8 @@ int main(int argc, char** argv)
       live_fileserver_unreachable(*cl);
     else if (what == "live_slow_open")
       live_slow_open(*cl);
+    else if (what == "live_late_start")
+      live_late_start(*cl);
     else if (what == "ip_cascade")
       ip_cascade(*cl);
     else if (what == "live_reopen")

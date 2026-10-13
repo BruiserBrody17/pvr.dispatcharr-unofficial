@@ -47,6 +47,18 @@ constexpr long ColdStartWallClockBudgetMs(int maxTries, int sleepMs, int timeout
   return static_cast<long>(maxTries) * sleepMs + static_cast<long>(timeoutSeconds) * 1000;
 }
 
+// How many tries the live cold-start loop (OpenLiveTimeshiftStream()) is allowed, given what its last failed try was.
+// The base count (30 tries of 500 ms, 15 s) is the whole allowance for a try that got no answer from the plugin
+// (a timeout, a refused connection, an HTTP error): that is the stalled-server case ColdStartWallClockBudgetMs()
+// bounds. A try the plugin did answer, with "live playlist not found" and no `fatal` flag, is positive evidence that
+// its ffmpeg is alive and the channel is still coming up (the plugin answers `fatal` once ffmpeg has exited), so the
+// loop may wait out the longer count for a channel whose provider is slow to deliver its first full segment (a user's
+// two slow channels gave up at 15 s and played at once on the second try, docs/OPEN_ITEMS.md).
+constexpr int ColdStartTryLimit(bool pluginAnsweredNotReady, int baseTries, int extendedTries)
+{
+  return pluginAnsweredNotReady && extendedTries > baseTries ? extendedTries : baseTries;
+}
+
 // Whether an in-progress recording's manifest refresh is in steady state, where its requests get the short bound: it
 // already has segments AND is not the cold-start loop of an open. A reopened recording is seeded from the segment cache
 // and so already "has segments", but it is a cold start all the same: a slow server must get the configured timeout,

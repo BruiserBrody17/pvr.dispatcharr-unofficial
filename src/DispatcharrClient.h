@@ -1638,7 +1638,11 @@ private:
   // instead of the short bound steady-state refreshes get: Open is allowed to take a full timeout, and with the
   // short bound an API that merely answers slowly (6 s per request) could never start a stream -- live check,
   // docs/CLOSED_ITEMS.md's "The unresponsive-server timeout changes".
-  bool RefreshLiveManifest(bool force, std::string& error, bool* fatalOut = nullptr, bool coldStart = false);
+  // `pluginAnsweredNotReadyOut`, if non-null, is set true when the plugin itself answered "not ready" without `fatal`
+  // (its ffmpeg is alive and has not produced a segment yet), as opposed to a transport or HTTP failure: only that
+  // earns the cold-start loop the longer wait (ColdStartTryLimit()).
+  bool RefreshLiveManifest(bool force, std::string& error, bool* fatalOut = nullptr, bool coldStart = false,
+                           bool* pluginAnsweredNotReadyOut = nullptr);
 
   // Shared give-up-or-retry handling for ReadLiveTimeshiftStream()'s
   // segment-body fetch, called after a failure (a transport-level curl
