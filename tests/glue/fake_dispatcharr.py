@@ -182,7 +182,16 @@ def pvr_route(h, method, p, q, body):
     if p == "/api/core/version/":
         return h.J(200, {"version": "0.31.0"})
     if p == "/api/accounts/users/me/":
-        return h.J(200, {"id": 1, "username": "u", "user_level": 10, "custom_properties": {"catchup_enabled": True}})
+        # user_level 1 with no custom_properties.dvr_access is Dispatcharr's view-only default.
+        return h.J(
+            200,
+            {
+                "id": 1,
+                "username": "u",
+                "user_level": ctl_int("user_level", 10),
+                "custom_properties": {"catchup_enabled": True},
+            },
+        )
     if p == "/api/core/timezones/":
         return h.J(200, {"timezones": ["UTC", "Europe/London", "Asia/Tokyo"]})
     if p == "/api/core/settings/":

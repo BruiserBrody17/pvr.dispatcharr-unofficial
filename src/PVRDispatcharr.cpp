@@ -475,9 +475,10 @@ bool PVRDispatcharr::SyncDvrAccessFromDispatcharr()
   // stays authoritative either way, and a false "view-only" would strand a real
   // admin with no explanation. Retried by the background thread until it answers.
   //
-  // Kodi reads capabilities once per instance, so a level learned only on a later
-  // retry (Dispatcharr unreachable at startup) cannot change what is offered until
-  // the next restart; the user is told so rather than left with actions that fail.
+  // A level learned only on a later retry (Dispatcharr unreachable at startup) still
+  // reaches Kodi: the connection report is held until the level is known, and Kodi
+  // re-reads GetCapabilities() when the state becomes CONNECTED (confirmed live
+  // 2026-10-13: Record, Edit and Delete left the menus with no restart).
   DvrAccess access = DvrAccess::kManage;
   std::string accessError;
   if (!m_client.GetCurrentUserDvrAccess(access, accessError))
@@ -490,19 +491,13 @@ bool PVRDispatcharr::SyncDvrAccessFromDispatcharr()
     return false;
   }
   const bool canManage = dispatcharr::CanManageDvr(access);
-  const bool wasAllowed = m_dvrManageAllowed.exchange(canManage);
+  m_dvrManageAllowed = canManage;
   if (!canManage)
   {
     kodi::Log(ADDON_LOG_INFO,
               "pvr.dispatcharr-unofficial: this account's DVR access is %s -- recording, deleting and renaming are "
               "not offered",
               access == DvrAccess::kNone ? "none" : "view-only");
-    if (wasAllowed && m_capabilitiesRead)
-    {
-      kodi::QueueNotification(QUEUE_WARNING, "",
-                              "This Dispatcharr account can't manage recordings (view-only). Restart Kodi to "
-                              "hide the record, delete and rename actions.");
-    }
   }
   return true;
 }
@@ -2019,7 +2014,6 @@ PVR_ERROR PVRDispatcharr::GetCapabilities(kodi::addon::PVRCapabilities& capabili
   capabilities.SetSupportsRadio(true);
   capabilities.SetSupportsEPG(true);
   capabilities.SetSupportsChannelGroups(true);
-  m_capabilitiesRead = true;
   // Recording, deleting and renaming need DVR "manage" access; a view-only account
   // would be offered all of them and fail every time -- see
   // SyncDvrAccessFromDispatcharr(). Playback and the recordings list stay.

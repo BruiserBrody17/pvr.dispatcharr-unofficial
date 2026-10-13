@@ -43,9 +43,15 @@ static void my_free_arr(const KODI_ADDON_BACKEND_HDL, char** a, int n)
     free(a[i]);
   free(a);
 }
+std::mutex g_notifyMu;
+std::vector<std::string> g_notifyMessages;
 static bool my_notify(void*, int, const char* h, const char* m, const char*, unsigned int, bool, unsigned int)
 {
   g_notifyCount++;
+  {
+    std::lock_guard<std::mutex> lock(g_notifyMu);
+    g_notifyMessages.push_back(m ? m : "");
+  }
   if (getenv("SHOW_NOTIFY"))
     fprintf(stderr, "[notify] %s: %s\n", h, m);
   return true;

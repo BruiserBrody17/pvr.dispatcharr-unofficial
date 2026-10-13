@@ -349,8 +349,8 @@ private:
   std::atomic<bool> m_catchupFlagsChecked{false};
   // Whether the account may manage the DVR (create/delete/rename/stop). Fails
   // open until the account's access level has been read, and is only consulted by
-  // GetCapabilities(), which Kodi reads once per instance -- see
-  // SyncDvrAccessFromDispatcharr().
+  // GetCapabilities(); Kodi re-reads that on CONNECTED, which is why the connection
+  // report waits for m_dvrAccessChecked -- see SyncDvrAccessFromDispatcharr().
   std::atomic<bool> m_dvrManageAllowed{true};
   std::atomic<bool> m_dvrAccessChecked{false};
   // What the login layer last learned about the link to Dispatcharr, waiting to be told to Kodi through
@@ -363,9 +363,6 @@ private:
   void OnConnectionObserved(dispatcharr::ConnectionReport report);
   void ScheduleConnectionReport();
   void ReportConnectionToKodi();
-  // Set by GetCapabilities(): from then on a changed access level can no longer
-  // reach what Kodi offers.
-  std::atomic<bool> m_capabilitiesRead{false};
   // A DVR padding edit that couldn't be pushed to Dispatcharr yet, per side.
   // While either is set, RetryDeferredServerSyncs() resends it instead of
   // syncing the padding FROM Dispatcharr, which would revert the edit. The

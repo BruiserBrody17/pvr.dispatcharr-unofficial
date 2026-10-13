@@ -19,11 +19,14 @@ docs/CLOSED_ITEMS.md|function|DeleteFromClient
 docs/CLOSED_ITEMS.md|function|DemuxAbort
 docs/CLOSED_ITEMS.md|function|FetchContent_Declare
 docs/CLOSED_ITEMS.md|function|FindLatestPendingTitleForChannel
+docs/CLOSED_ITEMS.md|function|GetAddonProperties
+docs/CLOSED_ITEMS.md|function|GetClientCapabilities
 docs/CLOSED_ITEMS.md|function|GetText
 docs/CLOSED_ITEMS.md|function|GetTimezoneBias
 docs/CLOSED_ITEMS.md|function|IsApiKeyValidFor
 docs/CLOSED_ITEMS.md|function|MatchDayOfWeek
 docs/CLOSED_ITEMS.md|function|PlatformSupportsAddon
+docs/CLOSED_ITEMS.md|function|SetConnectionState
 docs/CLOSED_ITEMS.md|function|SetFirstDayFromLocalTime
 docs/CLOSED_ITEMS.md|function|_add_and_verify_timer
 docs/CLOSED_ITEMS.md|function|_authenticate

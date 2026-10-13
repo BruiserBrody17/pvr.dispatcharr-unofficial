@@ -22,6 +22,8 @@ extern std::atomic<bool> g_dropSetSetting;
 extern std::atomic<long> g_setCount, g_notifyCount, g_triggerCount;
 extern std::string g_userPath;
 extern std::mutex g_connMu;
+extern std::mutex g_notifyMu;
+extern std::vector<std::string> g_notifyMessages;
 extern std::vector<int> g_connCalls;
 extern std::vector<std::string> g_connMessages;
 extern AddonInstance_PVR g_pvr;
@@ -979,6 +981,58 @@ int main(int argc, char** argv)
       for (const auto& m : g_connMessages)
         if (!m.empty())
           FAIL("a report carried the message '%s'; an empty one makes Kodi use its own localized text", m.c_str());
+    }
+  }
+  else if (what == "dvr_access")
+  {
+    // A view-only account (the fake's user_level=1, set through CTL before the constructor ran) must lose the Record,
+    // delete and rename actions, and the addon must not tell the user to restart Kodi. argv[4] "late" starts the fake
+    // with api_down=1 (CTL) and lifts it after the first capabilities read, which is a server that is unreachable when
+    // Kodi starts: Kodi's first read sees the fail-open answer, and the level is learned on the background thread's
+    // retry (about a minute later). The addon reports CONNECTED only once the level is known, and Kodi re-reads the
+    // capabilities on that report (CPVRClient::SetConnectionState), which this scenario does by hand; the second read
+    // must be the restricted one.
+    const bool late = argc > 4 && std::string(argv[4]) == "late";
+    auto readCaps = []
+    {
+      PVR_ADDON_CAPABILITIES caps{};
+      A()->GetCapabilities(I(), &caps);
+      return caps;
+    };
+    const PVR_ADDON_CAPABILITIES first = readCaps();
+    if (late && !first.bSupportsTimers)
+      FAIL("the first capabilities read, taken before the level was known, already hid the timers; the late path was "
+           "not exercised");
+    if (!first.bSupportsRecordings)
+      FAIL("the first capabilities read did not offer recordings");
+    if (late)
+      ctl("api_down=0");
+    const long began = ms();
+    bool connected = false;
+    while (ms() - began < dur && !connected)
+    {
+      for (const auto& state : ConnSnapshot())
+        connected = connected || state == "connected";
+      if (!connected)
+        sleep_ms(100);
+    }
+    INFO("connected=%d after %ld ms", connected ? 1 : 0, ms() - began);
+    if (!connected)
+      FAIL("the addon never reported CONNECTED, so Kodi would never re-read the capabilities");
+    const PVR_ADDON_CAPABILITIES second = readCaps();
+    if (second.bSupportsTimers || second.bSupportsRecordingsDelete || second.bSupportsRecordingsRename)
+      FAIL("a view-only account is still offered timers=%d delete=%d rename=%d after CONNECTED", second.bSupportsTimers,
+           second.bSupportsRecordingsDelete, second.bSupportsRecordingsRename);
+    if (!second.bSupportsRecordings)
+      FAIL("a view-only account lost the recordings list");
+    {
+      // Other notifications are legitimate here (the harness runs Server-side live mode, which a non-admin account
+      // cannot use); only the old "restart Kodi" advice is wrong.
+      std::lock_guard<std::mutex> lock(g_notifyMu);
+      for (const auto& m : g_notifyMessages)
+        if (m.find("Restart Kodi") != std::string::npos || m.find("view-only") != std::string::npos)
+          FAIL("the addon told the user '%s'; Kodi re-reads the capabilities on CONNECTED, so no restart is needed",
+               m.c_str());
     }
   }
   else if (what == "connection_loss")

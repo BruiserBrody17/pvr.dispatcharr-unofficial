@@ -8,7 +8,7 @@ plugin's `run/` endpoint and file server, completed recordings with `Range`, and
 recording). Every byte the fake serves encodes its own position, so the drivers verify each byte they read,
 across seeks, from several threads, under AddressSanitizer + UndefinedBehaviorSanitizer (or ThreadSanitizer).
 
-The scenarios in `ci.sh` (every stream path and the PVR surface, about three minutes under ASan + UBSan) run in CI as
+The scenarios in `ci.sh` (every stream path and the PVR surface, about five minutes under ASan + UBSan) run in CI as
 the `glue-harness` job, which fetches only the dev-kit headers of the pinned Kodi commit. The rest stays by hand: the
 TSan variant, `ip_chaos`, the plugin integration run and the longer fault matrices. The harness is not part of the
 Catch2 build. It is also for running after touching the stream paths, the auth code or the shared curl handles, and
@@ -67,6 +67,7 @@ healthy, 401, 429, down at start and 502. With `CONN_RECOVER=1` it clears the fa
 (`CTL="api_down=1" CONN_RECOVER=1 ... connection_state 170000 unreachable,connected`, about a minute: the login cooldown plus the
 background thread's one-minute retry).
 `connection_loss` is a server that goes away mid-session with the token still valid (so only `LinkHealth`'s run of failed requests can notice): connected, then `lost` about eleven seconds after the fake starts dropping connections, nothing more while it stays down, `connected` again when a request succeeds. `connection_blip` is five seconds of failures, which must report nothing. Both use `AddTimer` once a second as their traffic and are in CI.
+`dvr_access` is a view-only account (`CTL="user_level=1"`): after the connection report, the capabilities Kodi re-reads must hide timers, recording delete and rename and keep the recordings list. With `late` (`CTL="user_level=1&api_down=1"`, about a minute) the fake is unreachable until after Kodi's first read, so the level is learned on the background thread's retry; the addon must not tell the user to restart Kodi. Both are in CI.
 
 ## Plugin integration (`plugin_integration/`)
 

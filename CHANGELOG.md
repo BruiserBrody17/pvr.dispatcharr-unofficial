@@ -41,6 +41,10 @@ compare against.
 
 ### Fixed
 
+- **No more "Restart Kodi" advice for an account that cannot manage recordings**: if Kodi started while Dispatcharr was
+  unreachable and the addon's account turned out to be view-only, the addon said to restart Kodi to hide the Record,
+  delete and rename actions. Kodi hides them on its own once the connection is established, so the message was wrong
+  and is gone.
 - **A name you type for a manual timer is kept**: a timer made with "Add timer..." (not from the guide) and a name you
   typed showed that name for about three minutes and then fell back to the channel's name. The addon now stores the name
   on the server when it creates the timer, so it stays after that, after a restart of Kodi, on other Kodi devices and in
