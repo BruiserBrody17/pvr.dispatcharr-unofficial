@@ -59,6 +59,11 @@ docs/OPEN_ITEMS.md|function|NextPVRStream
 docs/OPEN_ITEMS.md|function|PauseRecordedStream
 docs/OPEN_ITEMS.md|function|SwitchToChannel
 docs/OPEN_ITEMS.md|function|log_system_event
+docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
+docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
+docs/PVR_HTS_COMPARISON.md|function|profile_chain_work
+docs/PVR_HTS_COMPARISON.md|function|timeshift_create
+docs/PVR_HTS_COMPARISON.md|setting|htsp_method_subscribe
 docs/RECORDINGS.md|function|AnnounceReminder
 docs/RECORDINGS.md|function|CallRecordingMenuHook
 docs/RECORDINGS.md|function|CloseFile

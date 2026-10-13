@@ -46,6 +46,32 @@ Dispatcharr can back and what it cannot.
 | Separate connect and response timeouts ("connect_timeout", "response_timeout") | One `timeout` setting | Not needed | **Not adopted**; nothing observed so far needed the split |
 | Translations in about seventy languages through Weblate | `en_gb` only | Not applicable | **Project-level gap**, accepted for an unofficial, single-maintainer addon; a translation would be taken as a contribution |
 
+## Watching live while a recording runs on the channel (read 2026-10-13)
+
+Checked for the open item on a second buffer, because a user remembered Tvheadend using the recording instead of starting
+timeshift when they chose to watch live. Sources read, nothing run (no Tvheadend server was available): pvr.hts default
+branch at commit `9f4ffc0` (2026-09-28) and Tvheadend at commit `a87be59` (2026-10-08), plus Kodi 21's
+`CPVRGUIActionsPlayback::SwitchToChannel()`.
+
+- **The prompt is Kodi's, not pvr.hts's.** When the channel's current programme is being recorded, Kodi asks "Play
+  recording" or "Switch to channel". The choice is made before any addon call, so an addon cannot tell the two apart
+  afterwards except by what Kodi then asks it to open.
+- **"Switch to channel" in pvr.hts gets timeshift as usual.** `Subscription::SendSubscribe()` puts `timeshiftPeriod = ~0`
+  (the maximum) in every `subscribe`, with no look at the DVR state; `GetChannelStreamProperties()` does the same
+  unconditionally when its HTTP-streaming setting is off. On the server, `htsp_method_subscribe` passes that period to
+  `profile_chain_work()`, which inserts `timeshift_create()` into the subscription's own chain. Neither the timeshift
+  code (`src/timeshift.c`, `src/timeshift/`) nor the subscription code mentions DVR or recordings: the buffer is per
+  subscription, and a recording running on the same service changes nothing about it. So the source shows **no**
+  "use the recording instead" behavior on the live path.
+- **Two things that can look like it.** Tvheadend's timeshift has an "On-demand (no first rewind)" option (`ondemand`,
+  expert level): the buffer is written only from the first pause, rewind or fast-forward request, so with it on nothing
+  is buffered during plain viewing and the first pause cannot rewind. And "Play recording" opens the in-progress file
+  through HTSP file reads (`HTSPVFS`) with pause and seek, and flips `IsRealTimeStream` within about 10 s of the file's
+  end, which feels like live viewing with rewind. At the recording's end its reads return 0, retried for about 500 ms, then
+  Kodi ends playback (`CInputStreamPVRBase::Read()`), the same as this addon's in-progress recording today.
+- **Unverified:** the behavior of the user's own Tvheadend version and settings, and whether an older Tvheadend differed.
+  The finding is that the current source has no such behavior, not that the user's memory is wrong about what they saw.
+
 ## What pvr.hts does not have
 
 pvr.hts has no unit tests (its CI builds and packages; there is no test target in its `CMakeLists.txt`), no equivalent of
