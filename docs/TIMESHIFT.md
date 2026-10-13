@@ -3483,7 +3483,42 @@ Every wait is bounded, by a count times a request timeout at worst; none is unbo
 
 Dispatcharr 0.32.0's `channel_failover`, `channel_reconnect`, `channel_error` and `stream_switch` system events name the
 active stream, so "the server is already failing over" is knowable rather than inferred from starvation. Whether the
-plugin should subscribe belongs to the event-hooks open item, not here.
+plugin should subscribe belongs to the event-hooks open item, not here; it was measured on 2026-10-13 (the section
+"Upstream failover on a buffered channel: measured" below) and the events turned out to arrive too late to help.
+
+## Upstream failover on a buffered channel: measured (2026-10-13)
+
+Written for the event-hooks open item, which asked whether a `channel_failover`, `channel_error` or `stream_switch` hook would
+tell the plugin or the addon anything the poll does not. **Setup:** a disposable channel with two streams on the lab
+server (Dispatcharr 0.32.0), both served from a small HTTP server that relays one synthetic live MPEG-TS (a test
+pattern, H.264 and AAC at about 0.8 Mbit/s) and can, per stream, close its connections and refuse new ones ("drop") or keep
+them open and send nothing ("stall"). The plugin's buffer was started on the channel with `start_buffer`, polled once a
+second with `get_live_manifest`, with `/proxy/ts/status` and `/api/core/system-events/` read alongside. Real Kodi (Linux,
+Server-side live mode) then played the same channel. The channel and both streams were deleted afterward (204, then 404).
+
+| Failure of the first stream | What Dispatcharr did | The buffer | A Kodi viewer |
+|---|---|---|---|
+| **Connection dropped** | `channel_reconnect` attempts 2 and 3 at 0.4 s and 1.0 s, `channel_error` (`connection_failed`), then `stream_switch` (`max_retries_exceeded`) at 1.2 s; the second stream was requested at 1.1 s | the same ffmpeg stayed the proxy's one client, never exited, never flagged `ended`; no segment for about 5 to 7 s (normal cadence 2 s), then growth resumed | playback never stopped (position advanced steadily for the 40 s after the drop) |
+| **Connection kept open, nothing sent** | `channel_reconnect` attempt 2 at 27.7 s, `stream_switch` (`health_monitor`) at 57.9 s, the second stream requested at 57.9 s; no `channel_error` | no segment for about 60 s (last at 0.7 s after the stall began, next 62 s after), then growth resumed; the ffmpeg survived again | **playback ended 10.4 s after the stall began** (position stopped, `Player.GetActivePlayers` empty) |
+
+**Why the viewer's playback ends at 10 s and not later.** At the live tail `ReadLiveTimeshiftStream()` waits for a new
+segment in slices of one to two seconds, handing the read back (`-1`) each time so a stop can land, up to a budget of three
+segment durations (6.25 s here, "waited 5537ms of ~6250ms at the live tail"); a refused tail wait is then the end of the
+stream and Kodi closes it. The "0 after about 25 s" in the stalled-streams table above is the failed-fetch path, not this
+one: a stall that sends no error is the tail wait, and it is short by design (the longest legitimate gap is about three
+segments).
+
+**What this says about hooks.** (1) A dropped connection fails over in about a second with the buffer and the viewer
+undisturbed; no event is needed and none would add anything. (2) A silent stall is the case where the viewer is hurt, and
+the first event of it (`channel_reconnect`) arrives 28 s in, 18 s after Kodi has already ended playback, with the switch
+itself at 58 s; a hook is told about the stall after the point where the addon would have had to act, and never announces
+a failover before it happens. (3) The plugin's dead-ffmpeg detection is untouched by failover, since the ffmpeg survives
+both. So the open item's candidate, the plugin reacting to failover events, has no case on this evidence. What the
+measurement does show is a separate question that needs no hook: a silent stall on a channel that has a second stream ends
+playback about 48 s before Dispatcharr heals it, because the tail wait is about three segments (filed as its own open
+item). Not measured: a stall on a channel with no second stream (nothing to fail over to; the same ending), Dispatcharr's
+`channel_buffering` event (never fired here), a different Dispatcharr version, and a real provider's failure modes, which
+are more varied than these two.
 
 ## An on-demand live buffer: what it would take (analysis, 2026-10-13; nothing built)
 

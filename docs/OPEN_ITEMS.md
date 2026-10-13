@@ -72,6 +72,7 @@ today, `docs/TIMESHIFT.md`), and `recording_edl` running its sidecar scrub on `r
 Decide per plugin whether an event hook adds anything a poll does not, keeping in mind the handler cannot block and the
 event may arrive on a different worker than the one holding the buffer's state (Redis is the shared state, as today).
 Confirm live by watching the plugin log while a stream fails over on a buffered channel and while a recording finishes.
+**Measured 2026-10-13 (`docs/TIMESHIFT.md`, "Upstream failover on a buffered channel: measured"; a disposable two-stream channel on the lab server, one stream dropped or stalled mid-playback).** A dropped connection fails over in about a second, the buffer's ffmpeg survives and Kodi playback does not stop, so no event is needed. A silent stall is the case that hurts: Kodi ends playback 10 s in (the tail wait is about three segments), Dispatcharr's first event for it (`channel_reconnect`) comes at 28 s and its switch at 58 s, so a hook would be told after the addon had to act. The recording-end half has no case either (the scrub is a destructive cleanup the plugin gates behind a confirm, and comskip finishes after `recording_end`). Recommendation: close this item without a change, and file the stall behaviour (playback ending 48 s before Dispatcharr heals) as its own design item.
 
 ### Release, CI and manual testing
 
