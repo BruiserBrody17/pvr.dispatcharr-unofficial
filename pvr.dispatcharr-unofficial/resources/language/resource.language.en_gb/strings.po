@@ -74,7 +74,7 @@ msgid "EPG refresh interval (hours)"
 msgstr ""
 
 msgctxt "#30022"
-msgid "How often to re-download the XMLTV guide from Dispatcharr."
+msgid "How often the addon downloads the whole guide from Dispatcharr; this is the step that costs the server something. Kodi's own Guide > Update interval is separate: it only sets how often Kodi re-reads the guide from the addon (no server traffic), and the addon tells Kodi to re-read right after each download, so that setting does not delay new data."
 msgstr ""
 
 msgctxt "#30023"

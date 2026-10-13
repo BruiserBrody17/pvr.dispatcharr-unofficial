@@ -116,6 +116,12 @@ incompatible credentials can also trigger Dispatcharr's own request
 rate-limiting -- if you see "too many requests," wait a few minutes
 before retrying with corrected credentials.
 
+Two settings look alike but are not: this addon's "EPG refresh interval" is how often it downloads the whole
+guide from Dispatcharr (the costly step, 4 hours by default), while Kodi's own Settings > PVR & Live TV > Guide >
+"Update interval" only sets how often Kodi re-reads the guide from the addon, with no server traffic. Neither
+overrides the other, and the addon tells Kodi to re-read right after each download, so Kodi's interval does not delay
+new data.
+
 Most settings take effect immediately after saving. Connection settings
 (host/port/HTTPS/username/password) need a Kodi restart -- Kodi will tell
 you when one does.

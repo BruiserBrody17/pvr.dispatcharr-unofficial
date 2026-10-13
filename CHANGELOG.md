@@ -90,6 +90,9 @@ compare against.
 
 ### Changed
 
+- **Clearer help for "EPG refresh interval"**: the setting's help text and the README now say what it is (how often the
+  addon downloads the whole guide from Dispatcharr) and how it differs from Kodi's own Guide "Update interval" (how
+  often Kodi re-reads the guide from the addon). Neither overrides the other. Nothing about how they behave changed.
 - **Guide requests name the channel-id source**: the guide is now asked for with `tvg_id_source=channel_number`,
   Dispatcharr's own default, so a later Dispatcharr release that changed that default could not mismatch channels and
   their guides. The guide you get is identical.
