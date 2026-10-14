@@ -183,6 +183,10 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   `Omega` rather than preserving every individual commit from the
   branch. Keeps `Omega`'s history readable as "one commit = one logical
   change" instead of a trail of in-progress "wip"/"fix typo" commits.
+  When `Omega` has not moved since the branch was cut and the squash commit's tree equals the PR head's
+  (`git rev-parse HEAD^{tree}` against `git rev-parse <branch>^{tree}`), put `[skip ci]` on its own line in the squash
+  commit's message: the PR's CI run already tested exactly that tree and the push run would repeat it. If `Omega`
+  moved or the trees differ, leave it off, so the push run tests the real result. A tag push always builds everything.
 - **Code formatting/linting, as of 2026-09-07**: `.clang-format`
   (C++, `src/` and `tests/`) and `ruff.toml` (Python, `dispatcharr-plugin/`, `tests/glue/`
   and `tools/`). Run `clang-format -i src/*.cpp src/*.h tests/*.cpp tests/glue/*.cpp` and
