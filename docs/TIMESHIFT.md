@@ -3483,12 +3483,12 @@ Every wait is bounded, by a count times a request timeout at worst; none is unbo
 
 Dispatcharr 0.32.0's `channel_failover`, `channel_reconnect`, `channel_error` and `stream_switch` system events name the
 active stream, so "the server is already failing over" is knowable rather than inferred from starvation. Whether the
-plugin should subscribe belongs to the event-hooks open item, not here; it was measured on 2026-10-13 (the section
+plugin should subscribe belonged to the event-hooks item, not here (closed 2026-10-13, `docs/CLOSED_ITEMS.md`); it was measured on 2026-10-13 (the section
 "Upstream failover on a buffered channel: measured" below) and the events turned out to arrive too late to help.
 
 ## Upstream failover on a buffered channel: measured (2026-10-13)
 
-Written for the event-hooks open item, which asked whether a `channel_failover`, `channel_error` or `stream_switch` hook would
+Written for the event-hooks item, which asked whether a `channel_failover`, `channel_error` or `stream_switch` hook would
 tell the plugin or the addon anything the poll does not. **Setup:** a disposable channel with two streams on the lab
 server (Dispatcharr 0.32.0), both served from a small HTTP server that relays one synthetic live MPEG-TS (a test
 pattern, H.264 and AAC at about 0.8 Mbit/s) and can, per stream, close its connections and refuse new ones ("drop") or keep
@@ -3516,7 +3516,7 @@ a failover before it happens. (3) The plugin's dead-ffmpeg detection is untouche
 both. So the open item's candidate, the plugin reacting to failover events, has no case on this evidence. What the
 measurement does show is a separate question that needs no hook: a silent stall on a channel that has a second stream ends
 playback about 48 s before Dispatcharr heals it, because the tail wait is about three segments (filed as its own open
-item). Not measured: a stall on a channel with no second stream (nothing to fail over to; the same ending), Dispatcharr's
+item, `docs/OPEN_ITEMS.md`, "A silent upstream stall ends playback about 48 s before Dispatcharr heals it"). Not measured: a stall on a channel with no second stream (nothing to fail over to; the same ending), Dispatcharr's
 `channel_buffering` event (never fired here), a different Dispatcharr version, and a real provider's failure modes, which
 are more varied than these two.
 

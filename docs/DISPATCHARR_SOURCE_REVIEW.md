@@ -128,7 +128,8 @@ event names (`core/models.py`, `SystemEvent.event_type`): `channel_start`, `chan
 `channel_failover`, `channel_reconnect`, `channel_error`, `client_connect`, `client_disconnect`, `recording_start`,
 `recording_end`, `stream_switch`, `epg_refresh`, `epg_download`, `epg_error`, `epg_blocked`, `login_success`,
 `login_failed`, `logout`, `vod_start`, `vod_stop`. Neither plugin subscribes to any. Handlers must stay short (the
-platform docs say to defer heavy work to Celery). Open item: "Use Dispatcharr's event hooks in the plugins".
+platform docs say to defer heavy work to Celery). This was an open item; it was measured and closed without a change on
+2026-10-13 (`docs/CLOSED_ITEMS.md`, "Use Dispatcharr's event hooks in the plugins").
 
 ### Database connections from plugin threads
 

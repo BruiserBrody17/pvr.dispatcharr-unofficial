@@ -48,6 +48,7 @@ docs/CLOSED_ITEMS.md|function|client_duration_to_window
 docs/CLOSED_ITEMS.md|function|discover_plugins
 docs/CLOSED_ITEMS.md|function|future_recordings_for_series
 docs/CLOSED_ITEMS.md|function|get_id
+docs/CLOSED_ITEMS.md|function|log_system_event
 docs/CLOSED_ITEMS.md|function|run_action
 docs/CLOSED_ITEMS.md|possessive|Not expected to risk killing a real, actively-watched session, including a paused one|docs/TIMESHIFT.md
 docs/CLOSED_ITEMS.md|possessive|Scoped to times only|docs/RECORDINGS.md
@@ -64,8 +65,9 @@ docs/OPEN_ITEMS.md|function|NextPVRStream
 docs/OPEN_ITEMS.md|function|PauseRecordedStream
 docs/OPEN_ITEMS.md|function|PauseStream
 docs/OPEN_ITEMS.md|function|SwitchToChannel
-docs/OPEN_ITEMS.md|function|log_system_event
+docs/OPEN_ITEMS.md|setting|channel_reconnect
 docs/OPEN_ITEMS.md|setting|description_mode
+docs/OPEN_ITEMS.md|setting|health_monitor
 docs/OPEN_ITEMS.md|setting|started_at
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel

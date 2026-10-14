@@ -4,10 +4,10 @@
 
 ## Status at a glance
 
-**7 open, 305 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Four open items came from the
+**7 open, 306 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Three open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other three
-are open from user reports.
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); three are open from
+user reports and one from a live measurement.
 
 | Section | Entries |
 |---|---|
@@ -20,7 +20,7 @@ are open from user reports.
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 266 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 30 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 31 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
@@ -59,20 +59,9 @@ The decision between them is on hold (2026-10-13); the workaround is not in the 
 
 **Opened 2026-10-10, from the pvr.hts comparison; narrowed 2026-10-13 when the title half was done (`docs/CLOSED_ITEMS.md`, "Let a series rule made in Kodi match the title loosely").** What is left is the rest of the original item. pvr.hts searches the full EPG text per rule (`PVR_TIMER_TYPE_SUPPORTS_FULLTEXT_EPG_MATCH`, Kodi's "Fulltext EPG search" checkbox); Dispatcharr's series rule has `description` and `description_mode` (`contains` by default, or `search` or `regex`; `docs/DISPATCHARR_SOURCE_REVIEW.md`), and `AddTimer()` still creates every rule with them blank, so a rule made from Kodi never filters on the description, and an edit from Kodi keeps whatever the rule had. Decisions: whether the full-text flag maps to "also match the description", with the search string as `description` (the checkbox means that in Kodi, and the title filter would then be what, the same string or blank?), which `description_mode` it uses (a second setting, or follow the title setting), and whether regex is ever offered (the addon cannot evaluate PostgreSQL regexes, so a regex rule is left unlinked from its recordings, `docs/CLOSED_ITEMS.md`). Nobody has asked for it; the title setting covered the case the reporter-style requests had in mind. Confirm live by creating a rule from Kodi with the flag set and checking what Dispatcharr stores and which programmes it schedules.
 
-#### Use Dispatcharr's event hooks in the plugins
+#### A silent upstream stall ends playback about 48 s before Dispatcharr heals it
 
-**Opened 2026-10-10, from the Dispatcharr source review.** An action whose definition carries an `"events": [...]` list
-is run by `log_system_event()` when one of those system events fires (`iter_actions_for_event` in
-`apps/plugins/loader.py`); the names are `channel_start`, `channel_stop`, `channel_buffering`, `channel_failover`,
-`channel_reconnect`, `channel_error`, `client_connect`, `client_disconnect`, `recording_start`, `recording_end`,
-`stream_switch`, the `epg_*` and login events, `vod_start` and `vod_stop`. Handlers run on a gevent greenlet under uWSGI
-and must stay short. Neither plugin subscribes to anything. Candidates: `timeshift_buffer` reacting to
-`channel_failover`, `channel_error` or `stream_switch` on a channel it is buffering (its dead-ffmpeg handling is a poll
-today, `docs/TIMESHIFT.md`), and `recording_edl` running its sidecar scrub on `recording_end` instead of only on demand.
-Decide per plugin whether an event hook adds anything a poll does not, keeping in mind the handler cannot block and the
-event may arrive on a different worker than the one holding the buffer's state (Redis is the shared state, as today).
-Confirm live by watching the plugin log while a stream fails over on a buffered channel and while a recording finishes.
-**Measured 2026-10-13 (`docs/TIMESHIFT.md`, "Upstream failover on a buffered channel: measured"; a disposable two-stream channel on the lab server, one stream dropped or stalled mid-playback).** A dropped connection fails over in about a second, the buffer's ffmpeg survives and Kodi playback does not stop, so no event is needed. A silent stall is the case that hurts: Kodi ends playback 10 s in (the tail wait is about three segments), Dispatcharr's first event for it (`channel_reconnect`) comes at 28 s and its switch at 58 s, so a hook would be told after the addon had to act. The recording-end half has no case either (the scrub is a destructive cleanup the plugin gates behind a confirm, and comskip finishes after `recording_end`). Recommendation: close this item without a change, and file the stall behaviour (playback ending 48 s before Dispatcharr heals) as its own design item.
+**Opened 2026-10-13, from the measurements for the event-hooks item (`docs/TIMESHIFT.md`, "Upstream failover on a buffered channel: measured").** On a channel with a second stream, a first stream that keeps its connection open and sends nothing makes Dispatcharr raise `channel_reconnect` at about 28 s and switch streams at about 58 s (reason `health_monitor`, the buffer's ffmpeg surviving), but a Kodi viewer in Server-side mode loses playback 10.4 s after the stall began: at the live tail `ReadLiveTimeshiftStream()` waits for a new segment up to a budget of about three segment durations (6.25 s with 2 s segments), handing the read back every one to two seconds so a Stop can land, and then ends the stream. A dropped connection is not affected (failover in about a second, playback never stopped). A viewer who re-tunes at once rejoins the same buffer, which has no new data until the switch, so nothing is gained before 58 s. The short wait is deliberate and is bounded by Kodi, not only by the addon: the stalled-streams review (`docs/CLOSED_ITEMS.md`, "One stated stalled-stream rule per read path, with one threshold") found that Kodi tolerates only a few zero-byte reads in five or six seconds and ends playback on a read that keeps failing, and a read that blocks for a minute makes a Stop hold Kodi's UI for that minute (the opposite of the 2026-10-13 fix that cut a stalled open to its first timed-out try). Options: (a) leave it, since a stall is the provider's failure and the viewer learns of it quickly; (b) block the tail wait longer in Server-side mode (say 60 to 70 s) and accept a Stop that takes that long, which is a step back from the open-time work; (c) keep Kodi fed during the wait (the addon controls the bytes `ReadLiveStream()` returns, but nothing it could send is valid video for the gap, and a splice at the end has the discontinuity questions of the on-demand-buffer analysis); (d) document that Dispatcharr's own stall detection (its proxy settings; which setting and how low it can go were not checked) decides how long a silent stall lasts, so a user who wants the failover inside Kodi's patience can shorten it on the server, with no code change. Not measured: a stall with no second stream (the same ending, with nothing to heal it), a real provider's stalls, and what Kodi does when the tail wait returns zero bytes instead of `-1` for longer. Decide the intent first (is a stall with a backup stream expected to be survived?), then confirm live with the same two-stream test channel (the drop-and-stall source used for the measurement is a few lines of Python behind an ffmpeg test pattern).
 
 ### Release, CI and manual testing
 
