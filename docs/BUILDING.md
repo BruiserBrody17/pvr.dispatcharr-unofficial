@@ -384,8 +384,8 @@ called out inline so a future rebuild doesn't have to rediscover them.
    `Incorrect checksum calculated on downloaded file` once the repo was
    made public and the real tarball could finally be fetched, until the
    checksum was recomputed against the real content).
-   **When the tag is not yet in the public repository, so the archive URL above does not exist, stage the source yourself
-   instead of letting the build fetch it** (done for `0.13.0`, 2026-10-14). The build skips any source it finds already
+   **When the tag has not been pushed yet, so the archive URL above does not exist, stage the source yourself
+   instead of letting the build fetch it** (done for `0.13.0`). The build skips any source it finds already
    staged with a matching checksum, so nothing has to be fetched:
    ```bash
    S=CoreELEC/sources/pvr.dispatcharr-unofficial
@@ -394,7 +394,7 @@ called out inline so a future rebuild doesn't have to rediscover them.
    echo "https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/archive/<v>.tar.gz" > $S/pvr.dispatcharr-unofficial-<v>.tar.gz.url
    ```
    then copy `package.mk` into the CoreELEC tree (step 3) with `PKG_SHA256` set to that tarball's checksum. Only the tree's
-   copy gets it: the repository's `package.mk` keeps the all-zeros placeholder until the public archive of the tag exists,
+   copy gets it: the repository's `package.mk` keeps the all-zeros placeholder until the tag's source archive exists,
    whose checksum (a different gzip, so a different hash) is the one anyone else's build needs. The zip's contents do not
    depend on which tarball the sources came from.
 3. On a Debian/Ubuntu-based Linux build machine (not the N2+ itself --
