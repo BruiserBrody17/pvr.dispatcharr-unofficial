@@ -25,6 +25,7 @@ docs/CLOSED_ITEMS.md|function|GetText
 docs/CLOSED_ITEMS.md|function|GetTimezoneBias
 docs/CLOSED_ITEMS.md|function|IsApiKeyValidFor
 docs/CLOSED_ITEMS.md|function|MatchDayOfWeek
+docs/CLOSED_ITEMS.md|function|PauseStream
 docs/CLOSED_ITEMS.md|function|PlatformSupportsAddon
 docs/CLOSED_ITEMS.md|function|SetConnectionState
 docs/CLOSED_ITEMS.md|function|SetFirstDayFromLocalTime
@@ -60,13 +61,9 @@ docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
 docs/OPEN_ITEMS.md|function|GetRecordedStreamTimes
 docs/OPEN_ITEMS.md|function|IsRecordedStreamRealTime
-docs/OPEN_ITEMS.md|function|NextPVRStream
 docs/OPEN_ITEMS.md|function|PauseRecordedStream
-docs/OPEN_ITEMS.md|function|PauseStream
-docs/OPEN_ITEMS.md|function|SwitchToChannel
 docs/OPEN_ITEMS.md|setting|channel_reconnect
 docs/OPEN_ITEMS.md|setting|health_monitor
-docs/OPEN_ITEMS.md|setting|started_at
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work

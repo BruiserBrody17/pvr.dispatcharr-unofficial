@@ -35,6 +35,20 @@ never another device's earlier viewing. See
 [docs/TIMESHIFT.md](../../docs/TIMESHIFT.md)'s "Concurrent viewers"
 section for why.
 
+## Disk use, and watching live while a recording runs
+
+Each buffered channel writes a rolling window of the stream to `storage_path`: the **Buffer length (minutes)** setting,
+60 by default. At 10 Mbit/s that is about 4.5 GB per channel while someone is watching it, deleted as soon as the last
+viewer stops; lower the setting to shrink it (15 minutes is about a quarter of that, and rewind depth shrinks to match).
+The buffer is one `ffmpeg` that copies the stream without re-encoding.
+
+If Dispatcharr is also recording that channel, the recording and the buffer share the channel's one connection to your
+provider (no second slot is used), but each keeps its own copy of the data. To watch without a buffer while a
+recording of the current programme runs, answer **Play recording** at Kodi's "Play recording / Switch to channel"
+prompt: Kodi then opens the recording itself, with pause, seek and rewind, and no buffer is started. It ends when the
+recording ends. Kodi shows that prompt only when a recording matches the programme on air, so a recording started
+without guide data has none; open it from Kodi's Recordings list instead.
+
 ## Installing
 
 1. Download `timeshift_buffer.zip` from the

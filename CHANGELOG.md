@@ -96,6 +96,10 @@ compare against.
 
 ### Changed
 
+- **`timeshift_buffer` README explains its disk use**: a short section says how much a buffered channel writes (about 4.5 GB
+  an hour at 10 Mbit/s with the default 60-minute buffer length, and how to lower it), that a recording and the buffer on
+  the same channel share one provider connection, and that answering "Play recording" at Kodi's prompt watches a
+  running recording with pause and rewind and no buffer. Documentation only; the plugin itself is unchanged.
 - **Clearer help for "EPG refresh interval"**: the setting's help text and the README now say what it is (how often the
   addon downloads the whole guide from Dispatcharr) and how it differs from Kodi's own Guide "Update interval" (how
   often Kodi re-reads the guide from the addon). Neither overrides the other. Nothing about how they behave changed.

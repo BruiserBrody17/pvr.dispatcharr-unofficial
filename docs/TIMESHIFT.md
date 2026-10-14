@@ -3522,7 +3522,7 @@ are more varied than these two.
 
 ## An on-demand live buffer: what it would take (analysis, 2026-10-13; nothing built)
 
-Written for the open item on watching live while a recording runs (`docs/OPEN_ITEMS.md`), where Tvheadend's optional
+Written for the item on watching live while a recording runs (closed 2026-10-13, `docs/CLOSED_ITEMS.md`), where Tvheadend's optional
 "on-demand" timeshift (buffer only from the first pause, rewind or fast-forward; `docs/PVR_HTS_COMPARISON.md`) came up
 as the closest thing to what the reporter wants. The idea: Server-side live mode would read the channel directly and
 start the plugin's buffer only when the viewer first pauses or seeks, so a viewer who never pauses costs no ffmpeg and
