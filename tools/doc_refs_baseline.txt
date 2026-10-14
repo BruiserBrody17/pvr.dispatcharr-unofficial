@@ -70,6 +70,8 @@ docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
 docs/OPEN_ITEMS.md|function|GetRecordedStreamTimes
 docs/OPEN_ITEMS.md|function|IsRecordedStreamRealTime
 docs/OPEN_ITEMS.md|function|PauseRecordedStream
+docs/OPEN_ITEMS.md|function|SwitchToChannel
+docs/OPEN_ITEMS.md|setting|m_lowspeedtime
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work
