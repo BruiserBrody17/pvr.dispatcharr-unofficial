@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**7 open, 306 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Three open items came from the
+**8 open, 306 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Three open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); three are open from
 user reports and one from a live measurement.
@@ -12,7 +12,7 @@ user reports and one from a live measurement.
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 1 |
+| Open: Fix known, not yet done | 2 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 4 |
 | Open: Release, CI and manual testing | 0 |
@@ -28,6 +28,10 @@ user reports and one from a live measurement.
 ### Needs a live check
 
 ### Fix known, not yet done
+
+#### Deleting a series rule that has no title from Kodi purges every upcoming recording on its channel
+
+**Found 2026-10-13 while designing the description filter; confirmed live the same day.** Dispatcharr accepts a series rule with an empty title and only a description (`SeriesRulesAPIView.post`: "A title or description is required"), which is easy to make in its web interface. The addon keeps such a rule (`TimerRuleParser` takes `title` as it comes) and Kodi lists it as a series timer with an empty name. Deleting it from Kodi sends `DELETE /api/channels/series-rules/?title=&tvg_id=<channel's tvg_id>`, and the server's delete then calls `future_recordings_for_series(tvg_id, title="")`, whose `if title:` filter is skipped, so it removes **every future recording carrying that tvg_id, whichever rule or timer made it**; a channel-less rule (empty tvg_id) skips both filters and would remove every future recording on the server (read from source, deliberately not run live). **Confirmed live on disposable data** (a disposable channel, two future recordings under a made-up tvg_id with unrelated titles, and a description-only rule on that tvg_id): the delete answered `removed: 2` and both recordings were gone (404). `UpdateTimer()` has the same exposure: an edit that changes the rule's channel or search text creates the new rule and then deletes the old one with `DeleteSeriesRule(oldTitle, ...)`. Fix: refuse both from Kodi for a rule whose title is empty, with an error that says to delete it in Dispatcharr (the addon cannot narrow the purge; it is inside the server's delete), keep sending nothing for it, and cover the guard with a unit test and a glue scenario (a cached empty-title rule: `DeleteTimer()` and an identity-changing `UpdateTimer()` must not send a DELETE). Confirm live with a disposable description-only rule and a disposable recording on its tvg_id that the delete is refused and the recording survives. A behaviour change (a refusal where there was a delete), so it waits for a go-ahead before merging.
 
 #### Support Kodi 22 (Piers): the addon is refused by Kodi 22 RC1
 
