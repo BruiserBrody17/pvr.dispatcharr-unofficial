@@ -29,6 +29,7 @@ docs/CLOSED_ITEMS.md|function|PauseStream
 docs/CLOSED_ITEMS.md|function|PlatformSupportsAddon
 docs/CLOSED_ITEMS.md|function|SetConnectionState
 docs/CLOSED_ITEMS.md|function|SetFirstDayFromLocalTime
+docs/CLOSED_ITEMS.md|function|SwitchToChannel
 docs/CLOSED_ITEMS.md|function|_add_and_verify_timer
 docs/CLOSED_ITEMS.md|function|_authenticate
 docs/CLOSED_ITEMS.md|function|_compute_forward_seek_target
@@ -59,6 +60,7 @@ docs/CLOSED_ITEMS.md|setting|channel_client_wait_period
 docs/CLOSED_ITEMS.md|setting|channel_init_grace_period
 docs/CLOSED_ITEMS.md|setting|channel_shutdown_delay
 docs/CLOSED_ITEMS.md|setting|dvr_settings
+docs/CLOSED_ITEMS.md|setting|m_lowspeedtime
 docs/CLOSED_ITEMS.md|setting|new_client_behind_seconds
 docs/CLOSED_ITEMS.md|setting|redis_chunk_ttl
 docs/CLOSED_ITEMS.md|setting|system_settings
@@ -70,8 +72,6 @@ docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
 docs/OPEN_ITEMS.md|function|GetRecordedStreamTimes
 docs/OPEN_ITEMS.md|function|IsRecordedStreamRealTime
 docs/OPEN_ITEMS.md|function|PauseRecordedStream
-docs/OPEN_ITEMS.md|function|SwitchToChannel
-docs/OPEN_ITEMS.md|setting|m_lowspeedtime
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work
