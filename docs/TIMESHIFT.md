@@ -3520,6 +3520,16 @@ item, `docs/OPEN_ITEMS.md`, "A silent upstream stall ends playback about 48 s be
 `channel_buffering` event (never fired here), a different Dispatcharr version, and a real provider's failure modes, which
 are more varied than these two.
 
+**Follow-up: a longer tail wait survives the stall (2026-10-13, throwaway build, not kept).** The tail budget was stretched
+twelvefold (about 6 s to about 75 s) and the silent stall repeated under Kodi. The picture froze 8 to 11 s after the stall
+began, Kodi kept retrying the `-1` reads, and playback resumed 63 s after the stall began, when Dispatcharr switched to the
+second stream, then played on (past two minutes). A Stop sent 20 s into the wait ended playback 3.5 s later, including a
+1.5 s polling interval: the wait is taken in one-second slices that each hand the read back, so a longer total budget does
+not delay a stop. This corrects two beliefs in the stalled-streams table above (that Kodi ends playback on a few
+consecutive failing reads on this path, and that a longer wait costs Stop latency); it is why the stall item in
+`docs/OPEN_ITEMS.md` now offers a longer live tail wait as a real option. Not measured: a failover to a stream with
+different timestamps, a channel whose only stream stalls, and an A/V check of the resumed picture.
+
 ## An on-demand live buffer: what it would take (analysis, 2026-10-13; nothing built)
 
 Written for the item on watching live while a recording runs (closed 2026-10-13, `docs/CLOSED_ITEMS.md`), where Tvheadend's optional

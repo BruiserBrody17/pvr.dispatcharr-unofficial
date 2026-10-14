@@ -62,8 +62,14 @@ docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
 docs/OPEN_ITEMS.md|function|GetRecordedStreamTimes
 docs/OPEN_ITEMS.md|function|IsRecordedStreamRealTime
 docs/OPEN_ITEMS.md|function|PauseRecordedStream
-docs/OPEN_ITEMS.md|setting|channel_reconnect
-docs/OPEN_ITEMS.md|setting|health_monitor
+docs/OPEN_ITEMS.md|setting|buffering_speed
+docs/OPEN_ITEMS.md|setting|buffering_timeout
+docs/OPEN_ITEMS.md|setting|channel_client_wait_period
+docs/OPEN_ITEMS.md|setting|channel_init_grace_period
+docs/OPEN_ITEMS.md|setting|channel_shutdown_delay
+docs/OPEN_ITEMS.md|setting|new_client_behind_seconds
+docs/OPEN_ITEMS.md|setting|redis_chunk_ttl
+docs/OPEN_ITEMS.md|setting|validate_redirect_urls
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work
