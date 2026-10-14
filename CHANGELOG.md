@@ -10,7 +10,14 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased] -- addon
+## [0.13.0] - 2026-10-14
+
+Addon changes since `0.12.0`. This release bundles `timeshift_buffer` `0.8.14` and `recording_edl` `0.2.3` as they
+were in `0.12.0` (only the `timeshift_buffer` README gained a section on disk use), so there is nothing to redeploy to
+Dispatcharr if you already run them. It carries the same eight downloads as `0.12.0`: Windows, Linux, macOS (Apple
+silicon), Android (64-bit and 32-bit ARM), CoreELEC and the two Dispatcharr plugins. This list is the user-visible
+part; the reasoning for each change is in `docs/CLOSED_ITEMS.md`'s Fixed entries. A short guide to common problems
+is now in `docs/TROUBLESHOOTING.md`.
 
 ### Added
 
