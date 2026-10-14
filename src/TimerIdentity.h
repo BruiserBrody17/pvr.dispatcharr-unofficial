@@ -310,6 +310,21 @@ inline bool ShouldReplaceSeriesRuleOnEdit(const std::string& oldTitle, const std
   return oldSource > 0 && oldSource != newSource;
 }
 
+// Whether a series rule may be deleted by this addon. Dispatcharr's delete removes the rule and then every
+// upcoming recording that `future_recordings_for_series(tvg_id, title)` returns, and that function filters on the
+// title only `if title:`: a rule with an empty title (a description-only rule, which Dispatcharr's web interface can
+// make) removes every future recording carrying its tvg_id, whichever rule or timer made it, and a channel-less one
+// (empty tvg_id as well) every future recording on the server. Confirmed live 2026-10-13 on disposable data: the
+// delete of an empty-title rule answered `removed: 2` and two recordings it had nothing to do with were gone. The
+// addon cannot narrow that purge, it is inside the server's delete, so such a rule is only ever deleted in
+// Dispatcharr's own interface. A title that is only whitespace is truthy to the server and filters to nothing, so it
+// is safe; only the empty one is refused. It also stops an edit that changes a rule's identity from deleting the old
+// one afterwards (see ShouldReplaceSeriesRuleOnEdit()).
+inline bool IsSeriesRuleSafeToDeleteFromKodi(const std::string& title)
+{
+  return !title.empty();
+}
+
 // Fix for a real, confirmed bug: PVRDispatcharr::UpdateTimer()/DeleteTimer()'s
 // own series-rule branches used to re-derive tvgId from the channel's
 // own *current* state (ResolveSeriesRuleTvgId(ch->epgDataId, ch->tvgId))

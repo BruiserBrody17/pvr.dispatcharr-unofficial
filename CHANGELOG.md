@@ -48,6 +48,12 @@ compare against.
 
 ### Fixed
 
+- **A series rule with no title can no longer be deleted from Kodi, which could remove other recordings**: a series rule
+  made in Dispatcharr's web interface with only a description filter (no title) shows in Kodi with an empty name.
+  Dispatcharr's own delete of such a rule removes every upcoming recording on its channel (every one on the server for a
+  rule with no channel), whichever rule or timer made them. Kodi's "Delete timer rule" on it now does nothing except
+  say to delete it in Dispatcharr, and an edit that would change such a rule's channel or search text is refused the
+  same way. Editing it in a way that keeps its identity, and deleting or editing any rule that has a title, work as before.
 - **No more "Restart Kodi" advice for an account that cannot manage recordings**: if Kodi started while Dispatcharr was
   unreachable and the addon's account turned out to be view-only, the addon said to restart Kodi to hide the Record,
   delete and rename actions. Kodi hides them on its own once the connection is established, so the message was wrong

@@ -5052,9 +5052,29 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
     // editing "Search guide for" alone used to be silently dropped, and
     // editing "Name" alone silently changed the match rule instead.
     const std::string newTitle = dispatcharr::ResolveSeriesRuleMatchTitle(timer.GetEPGSearchString(), timer.GetTitle());
-    ok = m_client.CreateSeriesRule(static_cast<int>(timer.GetClientChannelUid()), tvgId, newTitle,
-                                   timer.GetPreventDuplicateEpisodes() != 0, titleMode, description, descriptionMode,
-                                   untaggedIsNew, epgSourceId, error);
+    // Refused before the create, not after: an edit that changes the identity of a rule with no title would create
+    // the replacement and then have to delete the original, and that delete removes every upcoming recording on the
+    // channel (see IsSeriesRuleSafeToDeleteFromKodi()). An edit that keeps the identity is an in-place upsert and
+    // goes through.
+    if (foundOldRule &&
+        dispatcharr::ShouldReplaceSeriesRuleOnEdit(oldTitle, oldTvgId, oldEpgSourceId, newTitle, tvgId, epgSourceId) &&
+        !dispatcharr::IsSeriesRuleSafeToDeleteFromKodi(oldTitle))
+    {
+      kodi::Log(ADDON_LOG_WARNING,
+                "pvr.dispatcharr-unofficial: not editing a series rule that has no title in a way that changes its "
+                "identity: the old rule could not be deleted afterwards without removing other recordings");
+      kodi::QueueNotification(QUEUE_WARNING, "",
+                              "This series rule has no title filter (it matches on the description), so its search "
+                              "text or channel cannot be changed from Kodi. Change it in Dispatcharr.");
+      ok = false;
+      error = "a series rule with no title can only be re-keyed in Dispatcharr";
+    }
+    else
+    {
+      ok = m_client.CreateSeriesRule(static_cast<int>(timer.GetClientChannelUid()), tvgId, newTitle,
+                                     timer.GetPreventDuplicateEpisodes() != 0, titleMode, description, descriptionMode,
+                                     untaggedIsNew, epgSourceId, error);
+    }
     // A new search pattern or channel is a new identity, which Dispatcharr stores as
     // a second rule beside the original. Replace rather than duplicate: create
     // first, delete the old one only once that succeeded, so a failed create never
@@ -5670,6 +5690,21 @@ PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool f
                 "(already deleted, or the list could not be loaded)");
       ok = false;
       error = "the series rule was not found on the server";
+    }
+    else if (!dispatcharr::IsSeriesRuleSafeToDeleteFromKodi(title))
+    {
+      // See IsSeriesRuleSafeToDeleteFromKodi(): the server's delete of a rule with no title also removes every
+      // upcoming recording on the rule's channel (all of them, for a channel-less rule), whichever rule or timer
+      // made them, and this addon cannot narrow that.
+      kodi::Log(ADDON_LOG_WARNING,
+                "pvr.dispatcharr-unofficial: not deleting a series rule that has no title: Dispatcharr's delete "
+                "would also remove every upcoming recording on its channel");
+      kodi::QueueNotification(QUEUE_WARNING, "",
+                              "This series rule has no title filter (it matches on the description). Deleting it "
+                              "from Kodi could remove other upcoming recordings, so it was left in place -- delete "
+                              "it in Dispatcharr.");
+      ok = false;
+      error = "a series rule with no title can only be deleted in Dispatcharr";
     }
     else if (epgSourceId <= 0 && siblingPinned)
     {

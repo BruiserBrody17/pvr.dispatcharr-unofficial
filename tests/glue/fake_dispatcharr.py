@@ -522,6 +522,19 @@ class H(BaseHTTPRequestHandler):
                 if k == "ws_push":
                     with lock:
                         WS_PUSHED.append(v[0])
+                if k == "seed_empty_title_rule":
+                    # A description-only, channel-less series rule, as Dispatcharr's web interface can make one.
+                    with DBL:
+                        DB["series"].append(
+                            {
+                                "tvg_id": "",
+                                "mode": "all",
+                                "title": "",
+                                "title_mode": "exact",
+                                "description": "zzz description filter",
+                                "description_mode": "contains",
+                            }
+                        )
                 if k == "seed_offset_check":
                     # A recurring rule at 19:30 local and the occurrence the server materialized for it tomorrow at
                     # 11:30 UTC: UTC+8, while the table says UTC+9 for the server's zone. The dates follow the clock

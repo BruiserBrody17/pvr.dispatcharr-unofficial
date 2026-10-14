@@ -548,3 +548,33 @@ TEST_CASE("ShouldReplaceSeriesRuleOnEdit does not replace for an unsourced old r
   CHECK(ShouldReplaceSeriesRuleOnEdit("T", "v", 5, "T", "v", 6));
   CHECK_FALSE(ShouldReplaceSeriesRuleOnEdit("T", "v", 5, "T", "v", 5));
 }
+
+TEST_CASE("A series rule with no title is never deleted from Kodi", "[TimerIdentity]")
+{
+  // Dispatcharr's delete purges every upcoming recording of the rule's tvg_id when the title is empty (its
+  // title filter is skipped `if title:`), whichever rule or timer made them; confirmed live 2026-10-13, where such a
+  // delete answered removed: 2 for two recordings the rule had nothing to do with.
+  CHECK_FALSE(IsSeriesRuleSafeToDeleteFromKodi(""));
+}
+
+TEST_CASE("A series rule with any title is safe to delete from Kodi", "[TimerIdentity]")
+{
+  CHECK(IsSeriesRuleSafeToDeleteFromKodi("Evening News"));
+  CHECK(IsSeriesRuleSafeToDeleteFromKodi("x"));
+  // The server tests the title for truthiness, so a title that is only whitespace is truthy there and filters on the
+  // exact string, which matches no recording: nothing extra is purged, and refusing it would only strand the rule.
+  CHECK(IsSeriesRuleSafeToDeleteFromKodi(" "));
+  CHECK(IsSeriesRuleSafeToDeleteFromKodi("\xC2\xA0"));
+}
+
+TEST_CASE("The refusal applies to the old title of an edit that changes a rule's identity", "[TimerIdentity]")
+{
+  // An edit of a rule with no title that gives it a search text is a new identity, so the old rule would have to be
+  // deleted afterwards; the same edit of a titled rule is safe to complete.
+  CHECK(ShouldReplaceSeriesRuleOnEdit("", "tvg", 0, "Typed", "tvg", 0));
+  CHECK_FALSE(IsSeriesRuleSafeToDeleteFromKodi(""));
+  CHECK(ShouldReplaceSeriesRuleOnEdit("Old", "tvg", 0, "New", "tvg", 0));
+  CHECK(IsSeriesRuleSafeToDeleteFromKodi("Old"));
+  // An edit that keeps the identity (same empty title, same tvg_id) replaces nothing, so there is nothing to refuse.
+  CHECK_FALSE(ShouldReplaceSeriesRuleOnEdit("", "tvg", 0, "", "tvg", 0));
+}

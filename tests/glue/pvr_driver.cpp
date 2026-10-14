@@ -800,6 +800,76 @@ int main(int argc, char** argv)
       check("Show 3-4", "");
       check("Show 3-5", "");
     }
+    // A series rule with no title (a description-only rule) must never be deleted from Kodi, nor re-keyed by an edit
+    // that would have to delete it afterwards: Dispatcharr's delete of such a rule also removes every upcoming
+    // recording on its channel (every one, for a channel-less rule), confirmed live. The rule is seeded straight into
+    // the fake, as Dispatcharr's web interface can make one. A titled rule still deletes, and an edit that keeps the
+    // rule's identity still goes through.
+    {
+      auto stat = [&](const char* key) -> long
+      {
+        const std::string s = http("/__stats");
+        const std::string k = std::string("\"") + key + "\": ";
+        const size_t at = s.find(k);
+        return at == std::string::npos ? 0 : atol(s.c_str() + at + k.size());
+      };
+      ctl("seed_empty_title_rule=1");
+      Collected got;
+      A()->GetTimers(I(), (PVR_HANDLE)&got);
+      const PVR_TIMER* bare = nullptr;
+      const PVR_TIMER* titled = nullptr;
+      for (const auto& x : got.timers)
+      {
+        if (x.iTimerType != 2)
+          continue;
+        if (x.strTitle[0] == 0)
+          bare = &x;
+        else if (std::string(x.strTitle) == "Show 3-5")
+          titled = &x;
+      }
+      if (!bare)
+        FAIL("the seeded series rule with no title was not listed as a timer");
+      else
+      {
+        const long deletes = stat("DELETE /api/channels/series-rules/");
+        const long posts = stat("POST /api/channels/series-rules/");
+        PVR_TIMER rekey = *bare;
+        snprintf(rekey.strTitle, sizeof rekey.strTitle, "Re-keyed");
+        snprintf(rekey.strEpgSearchString, sizeof rekey.strEpgSearchString, "Re-keyed");
+        if (A()->UpdateTimer(I(), &rekey) == PVR_ERROR_NO_ERROR)
+          FAIL("an edit that re-keys a series rule with no title was accepted");
+        PVR_TIMER del = *bare;
+        if (A()->DeleteTimer(I(), &del, false) == PVR_ERROR_NO_ERROR)
+          FAIL("a series rule with no title was deleted from Kodi");
+        if (stat("DELETE /api/channels/series-rules/") != deletes)
+          FAIL("a DELETE for the series rule with no title reached the server (it purges the channel's recordings)");
+        if (stat("POST /api/channels/series-rules/") != posts)
+          FAIL("the refused re-keying still posted a series rule");
+        const std::string db = http("/__db");
+        if (db.find("zzz description filter") == std::string::npos)
+          FAIL("the series rule with no title is gone from the server: %s", db.c_str());
+        if (db.find("Re-keyed") != std::string::npos)
+          FAIL("the refused re-keying left a rule behind: %s", db.c_str());
+        // An edit that keeps the rule's identity (same empty title, same channel) is an in-place upsert.
+        PVR_TIMER same = *bare;
+        same.iPreventDuplicateEpisodes = 1;
+        if (A()->UpdateTimer(I(), &same) != PVR_ERROR_NO_ERROR)
+          FAIL("an edit that keeps a series rule's identity was refused");
+        if (stat("POST /api/channels/series-rules/") != posts + 1)
+          FAIL("the identity-keeping edit of a series rule with no title was not posted");
+      }
+      if (!titled)
+        FAIL("the control series rule 'Show 3-5' was not listed as a timer");
+      else
+      {
+        const long deletes = stat("DELETE /api/channels/series-rules/");
+        PVR_TIMER del = *titled;
+        if (A()->DeleteTimer(I(), &del, false) != PVR_ERROR_NO_ERROR)
+          FAIL("a titled series rule could not be deleted");
+        if (stat("DELETE /api/channels/series-rules/") != deletes + 1)
+          FAIL("deleting a titled series rule did not reach the server");
+      }
+    }
     // A manual timer's typed name is written to the server (it would otherwise give way to the channel's name once the
     // pending-title cache expires); a manual timer that carries the channel's name, which is what Kodi's dialog sends
     // for an empty or default name, and a guide timer are not (writing marks the recording user_edited, which stops
