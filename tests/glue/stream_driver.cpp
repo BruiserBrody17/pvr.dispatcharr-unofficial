@@ -419,8 +419,11 @@ static void live_tail_close(DispatcharrClient& cl)
 // A reader parked at the live tail has to hand control back to Kodi often: Kodi acts on a close request only between
 // reads, so one read that blocks for the whole catch-up budget (4 to 6 s measured on three devices) delays every
 // close and channel change by that long. The wait is therefore taken in slices; a slice that finds nothing returns -1,
-// which Kodi's demuxer retries (a 0 would end playback), and 0 comes only once the whole budget has been used. This
-// freezes the live buffer and times each read at the tail, then lets it grow again and requires the stream to resume.
+// which Kodi's demuxer retries (a 0 would end playback), and 0 comes only once the whole budget has been used. The
+// budget on a plugin that keeps answering is about 70 s (kLiveStallWaitBudgetMs: Dispatcharr switches a stalled channel
+// to its next stream at about 58 s), so this freezes the live buffer for 20 s, times each read at the tail and requires
+// no 0, then lets it grow again and requires the stream to resume. The end of the budget is live_tail_giveup (by
+// hand, it runs 70 s) and the unit tests; an ffmpeg that exits ends the wait at once, live_tail_ended.
 static void live_tail_bound(DispatcharrClient& cl)
 {
   std::string err;
@@ -458,14 +461,15 @@ static void live_tail_bound(DispatcharrClient& cl)
   INFO("tail bound: max read at the tail %ld ms, %ld retries (-1) before the first 0, waited %ld ms in all, "
        "bytes before the tail %ld",
        maxTailReadMs, minusOnes, waitBeforeFirstZero, bytes);
-  if (!sawZero)
-    FAIL("no read ever returned 0 in 20 s: the budget never ended");
+  if (sawZero)
+    FAIL(
+        "the stream gave up (0) after %ld ms at the tail; a quiet buffer on an answering plugin is waited on for about "
+        "a minute (a silent stall that Dispatcharr heals by switching streams)",
+        waitBeforeFirstZero);
   if (maxTailReadMs > 1800)
     FAIL("one read at the live tail blocked for %ld ms; Kodi cannot act on a close for that long", maxTailReadMs);
-  if (waitBeforeFirstZero >= 0 && waitBeforeFirstZero < 3000)
-    FAIL("the stream gave up (0) after only %ld ms at the tail; the budget must not shrink", waitBeforeFirstZero);
-  if (minusOnes < 1)
-    FAIL("no -1 was returned while waiting, so the wait was not handed back in slices");
+  if (minusOnes < 10)
+    FAIL("only %ld -1 returns in 20 s at the tail, so the wait was not handed back in slices", minusOnes);
   if (!cl.IsLiveTimeshiftStreamOpen())
     FAIL("the stream closed itself while waiting at the tail");
 
@@ -482,6 +486,84 @@ static void live_tail_bound(DispatcharrClient& cl)
   INFO("tail bound: after the buffer grew again %ld bytes arrived within %ld ms", resumed, ms() - phase2);
   if (resumed == 0)
     FAIL("the stream did not resume once new segments arrived");
+}
+
+// The ffmpeg behind a stalled buffer exits (Dispatcharr gave up on the channel, or the buffer died): the plugin's
+// manifest then says `ended`, and the wait must stop at once instead of running on to the stall budget (about 70 s).
+// The buffer is frozen so the reader parks at the tail, `live_ended` is set after a few seconds, and the next read at
+// the tail must return 0 within a couple of slices.
+static void live_tail_ended(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  ctl("live_freeze=1");
+  std::vector<uint8_t> buf(1 << 20);
+  long tailStart = -1, endedSetAt = -1, zeroAt = -1;
+  const long phaseStart = ms();
+  while (ms() - phaseStart < 30000 && zeroAt < 0)
+  {
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n > 0)
+      continue;
+    if (tailStart < 0)
+      tailStart = ms();
+    if (n == 0)
+      zeroAt = ms();
+    else if (endedSetAt < 0 && ms() - tailStart >= 3000)
+    {
+      ctl("live_ended=1");
+      endedSetAt = ms();
+    }
+  }
+  ctl("live_ended=0");
+  ctl("live_freeze=0");
+  INFO("tail ended: tail reached at +%ld ms, ended set at +%ld ms, first 0 at +%ld ms", tailStart - phaseStart,
+       endedSetAt - phaseStart, zeroAt - phaseStart);
+  if (tailStart < 0)
+    FAIL("the reader never reached the live tail");
+  else if (zeroAt < 0)
+    FAIL("the wait did not end within 30 s of an ended buffer");
+  else if (endedSetAt < 0)
+    FAIL("the stream returned 0 (after %ld ms at the tail) before the buffer was marked ended", zeroAt - tailStart);
+  else if (zeroAt - endedSetAt > 4000)
+    FAIL("the wait ran %ld ms past the buffer being marked ended; it must stop at once", zeroAt - endedSetAt);
+}
+
+// The end of the stall budget itself, by hand because it runs about 70 s: a quiet buffer on an answering plugin is
+// waited on, returning -1 slices, until about kLiveStallWaitBudgetMs of waiting has gone by, then the read returns 0.
+static void live_tail_giveup(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  ctl("live_freeze=1");
+  std::vector<uint8_t> buf(1 << 20);
+  long tailStart = -1, zeroAt = -1;
+  const long phaseStart = ms();
+  while (ms() - phaseStart < 120000 && zeroAt < 0)
+  {
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n > 0)
+      continue;
+    if (tailStart < 0)
+      tailStart = ms();
+    if (n == 0)
+      zeroAt = ms();
+  }
+  ctl("live_freeze=0");
+  const long waited = zeroAt - tailStart;
+  INFO("tail give-up: waited %ld ms at the tail before the first 0", waited);
+  if (tailStart < 0 || zeroAt < 0)
+    FAIL("no 0 within 120 s: the stall budget never ended");
+  else if (waited < 60000 || waited > 90000)
+    FAIL("gave up after %ld ms at the tail; the stall budget is about 70000 ms", waited);
 }
 
 // ---------------------------------------------------------------- completed recording
@@ -1156,6 +1238,10 @@ int main(int argc, char** argv)
       live_tail_close(*cl);
     else if (what == "live_tail_bound")
       live_tail_bound(*cl);
+    else if (what == "live_tail_ended")
+      live_tail_ended(*cl);
+    else if (what == "live_tail_giveup")
+      live_tail_giveup(*cl);
     else if (what == "live_blackhole_close")
       live_blackhole(*cl, false);
     else if (what == "live_blackhole_read")

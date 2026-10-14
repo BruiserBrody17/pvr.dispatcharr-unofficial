@@ -3395,7 +3395,7 @@ stream ended), **-1** is a read error that Kodi retries at once and eventually g
 |---|---|---|
 | A segment fetch fails (server unreachable, gateway error, 401/403/5xx) | Retried inside one `Read()` with a delay doubling from 250 ms to 2 s, for up to 25 s (`kOutageReadBudget`); the failure streak carries across calls | 0 when the 25 s is used up |
 | The same failures keep going | Four in a row and 30 s since the first (`kMaxConsecutiveSegmentFetchFailures`, `kMinSegmentFetchFailureStreak`), or at once when a manifest refresh reports the buffer gone | -1 on this and every later call, stream marked fatal, logged at error level |
-| Reader at the live tail, no new segment yet (normal for up to a segment's length) | One-second slices (`kLiveTailWaitSliceMs`) so a close can land between reads; budget 3 times the estimated segment length (mean of the last five, 6 s with no samples, floor 1.5 s, cap 60 s), counted across the slices of one episode at one position; a call is also capped at twice the budget's own sleep time, at most 120 s | -1 per slice, 0 once the budget is used up; a seek probe gets one attempt, then 0 |
+| Reader at the live tail, no new segment yet (normal for up to a segment's length) | One-second slices (`kLiveTailWaitSliceMs`) so a close can land between reads; budget 3 times the estimated segment length (mean of the last five, 6 s with no samples, floor 1.5 s, cap 60 s), counted across the slices of one episode at one position, **or 70 s (`kLiveStallWaitBudgetMs`) while the plugin keeps answering** (the last forced refresh got a manifest, so the ffmpeg is alive and a silent stall may be healed by Dispatcharr switching streams; since 2026-10-13, see "Upstream failover on a buffered channel: measured"), with the refresh pause slowing from 250 ms to one per slice once the ordinary budget is spent; a call is also capped at twice the budget's own sleep time, at most 120 s | -1 per slice, 0 once the budget is used up, at once when the plugin reports the ffmpeg ended, and after the ordinary budget when a refresh fails; a seek probe gets one attempt, then 0 |
 | The buffer's ffmpeg has exited | Not a wait: the reader keeps playing what is on disk | 0 at the tail (`IsAtEndedTail`) |
 | A manifest refresh during the wait says the buffer is dead | - | -1, fatal |
 | The segment was recycled, or the read sits in a gap | - | 0 |
@@ -3440,8 +3440,10 @@ rules apply to them and they are out of scope here.
 - `pvr.hts` has one stream of packets to watch. Here the data arrives as separate segment fetches from the buffer's file
   server, and the addon never sees "no packet": it sees a manifest with nothing new (normal for a segment's length), a
   fetch that failed (a fault between the addon and the server), or a dead encoder. They need different answers, and one
-  number would have to exceed the longest legitimate gap (about three segments) while staying under what Kodi tolerates
-  (a few zero-byte reads in five or six seconds), which is the pair of limits the present constants already sit between.
+  number would have to exceed the longest legitimate gap (about three segments) while staying under what Kodi tolerates.
+  The second limit was believed to be a few failing reads in five or six seconds; measured 2026-10-13 it is not, for the
+  live tail wait: Kodi retried the one-second `-1` slices for over a minute and played on (see the follow-up in "Upstream
+  failover on a buffered channel: measured"), which is why the live tail wait is now 70 s while the plugin answers.
 - The one user-facing knob, the request timeout, scales every per-request bound. A second setting interacting with the
   25 s, 30 s and 20 s constants would be harder to reason about than the constants are.
 - Every path ends playback cleanly within about 25 to 40 s of a sustained outage, which is what a user can see and
@@ -3501,7 +3503,7 @@ Server-side live mode) then played the same channel. The channel and both stream
 | **Connection dropped** | `channel_reconnect` attempts 2 and 3 at 0.4 s and 1.0 s, `channel_error` (`connection_failed`), then `stream_switch` (`max_retries_exceeded`) at 1.2 s; the second stream was requested at 1.1 s | the same ffmpeg stayed the proxy's one client, never exited, never flagged `ended`; no segment for about 5 to 7 s (normal cadence 2 s), then growth resumed | playback never stopped (position advanced steadily for the 40 s after the drop) |
 | **Connection kept open, nothing sent** | `channel_reconnect` attempt 2 at 27.7 s, `stream_switch` (`health_monitor`) at 57.9 s, the second stream requested at 57.9 s; no `channel_error` | no segment for about 60 s (last at 0.7 s after the stall began, next 62 s after), then growth resumed; the ffmpeg survived again | **playback ended 10.4 s after the stall began** (position stopped, `Player.GetActivePlayers` empty) |
 
-**Why the viewer's playback ends at 10 s and not later.** At the live tail `ReadLiveTimeshiftStream()` waits for a new
+**Why the viewer's playback ended at 10 s (before the longer wait below).** At the live tail `ReadLiveTimeshiftStream()` waits for a new
 segment in slices of one to two seconds, handing the read back (`-1`) each time so a stop can land, up to a budget of three
 segment durations (6.25 s here, "waited 5537ms of ~6250ms at the live tail"); a refused tail wait is then the end of the
 stream and Kodi closes it. The "0 after about 25 s" in the stalled-streams table above is the failed-fetch path, not this
@@ -3515,20 +3517,28 @@ itself at 58 s; a hook is told about the stall after the point where the addon w
 a failover before it happens. (3) The plugin's dead-ffmpeg detection is untouched by failover, since the ffmpeg survives
 both. So the open item's candidate, the plugin reacting to failover events, has no case on this evidence. What the
 measurement does show is a separate question that needs no hook: a silent stall on a channel that has a second stream ends
-playback about 48 s before Dispatcharr heals it, because the tail wait is about three segments (filed as its own open
-item, `docs/OPEN_ITEMS.md`, "A silent upstream stall ends playback about 48 s before Dispatcharr heals it"). Not measured: a stall on a channel with no second stream (nothing to fail over to; the same ending), Dispatcharr's
+playback about 48 s before Dispatcharr heals it, because the tail wait is about three segments (filed as its own item and
+fixed the same day, `docs/CLOSED_ITEMS.md`, "A silent upstream stall ended playback about 48 s before Dispatcharr healed it"). Not measured: a stall on a channel with no second stream (nothing to fail over to; the same ending), Dispatcharr's
 `channel_buffering` event (never fired here), a different Dispatcharr version, and a real provider's failure modes, which
 are more varied than these two.
 
-**Follow-up: a longer tail wait survives the stall (2026-10-13, throwaway build, not kept).** The tail budget was stretched
-twelvefold (about 6 s to about 75 s) and the silent stall repeated under Kodi. The picture froze 8 to 11 s after the stall
-began, Kodi kept retrying the `-1` reads, and playback resumed 63 s after the stall began, when Dispatcharr switched to the
-second stream, then played on (past two minutes). A Stop sent 20 s into the wait ended playback 3.5 s later, including a
-1.5 s polling interval: the wait is taken in one-second slices that each hand the read back, so a longer total budget does
-not delay a stop. This corrects two beliefs in the stalled-streams table above (that Kodi ends playback on a few
-consecutive failing reads on this path, and that a longer wait costs Stop latency); it is why the stall item in
-`docs/OPEN_ITEMS.md` now offers a longer live tail wait as a real option. Not measured: a failover to a stream with
-different timestamps, a channel whose only stream stalls, and an A/V check of the resumed picture.
+**Follow-up: a longer tail wait survives the stall (2026-10-13), and is now what the addon does.** The tail budget was first
+stretched twelvefold on a throwaway build and the silent stall repeated under Kodi: the picture froze 8 to 11 s after the
+stall began, Kodi kept retrying the `-1` reads, and playback resumed 63 s after the stall began, when Dispatcharr switched
+to the second stream, then played on (past two minutes). A Stop sent 20 s into the wait ended playback 3.5 s later,
+including a 1.5 s polling interval: the wait is taken in one-second slices that each hand the read back, so a longer total
+budget does not delay a stop. The shipped version (`ComputeLiveTailWaitBudgetMs()` and `ComputeTailWaitSleepMs()`,
+`CatchUpUtil.h`, live read only) gives a quiet buffer 70 s while the plugin keeps answering, keeps the ordinary three-segment
+budget when a refresh fails (an outage ends as fast as before), and stops the wait at once when the plugin reports the
+ffmpeg ended. **Checked live with the shipped build** (two disposable channels on the lab server, synthetic streams
+served from the VM): (1) a channel with a backup stream whose timestamps were shifted by an hour: the picture froze at
+10.8 s, playback advanced again at 61.3 s and was still playing at two minutes, a screenshot after the resume showed
+the test pattern with its running clock, and Kodi's log held no decoder or discontinuity message (141 slices were handed
+back during the wait); (2) a channel whose only stream stalled: the picture froze at 8.7 s and **playback ended at 71.8 s**,
+the whole budget with nothing to heal it (Dispatcharr did not stop the channel earlier), against 10 s before; (3) a Stop
+sent 20 s into that wait ended playback 3.6 s later. So the price of surviving a failover is about a minute of frozen
+picture on a channel that is simply dead. Not measured: a real provider's stall, and the A/V sync of the resumed picture
+beyond a still frame and a clean log.
 
 ## An on-demand live buffer: what it would take (analysis, 2026-10-13; nothing built)
 

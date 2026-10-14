@@ -298,3 +298,42 @@ TEST_CASE("DecideTailWaitOutcome gives up only with the whole budget used, or fo
   // a likely seek probe never waits in slices: the quick "not there" answer is the point
   CHECK(DecideTailWaitOutcome(true, 0, 250) == TailWaitOutcome::kGiveUp);
 }
+
+TEST_CASE("A live tail wait on an answering plugin may run to the stall budget", "[CatchUpUtil]")
+{
+  // Dispatcharr heals a silent stall by switching streams at about 58 s (measured 2026-10-13); the wait outlasts it.
+  CHECK(kLiveStallWaitBudgetMs == 70000);
+  CHECK(ComputeLiveTailWaitBudgetMs(false, 6250, true) == 70000);
+  CHECK(ComputeLiveTailWaitBudgetMs(false, 1, true) == 70000);
+}
+
+TEST_CASE("A live tail wait keeps the ordinary budget when the plugin is not answering", "[CatchUpUtil]")
+{
+  // The last refresh failed: Dispatcharr or the network is down, which a longer wait cannot heal, so an outage ends as
+  // fast as before.
+  CHECK(ComputeLiveTailWaitBudgetMs(false, 6250, false) == 6250);
+}
+
+TEST_CASE("A seek probe never gets the stall budget", "[CatchUpUtil]")
+{
+  CHECK(ComputeLiveTailWaitBudgetMs(true, 250, true) == 250);
+  CHECK(ComputeLiveTailWaitBudgetMs(true, 250, false) == 250);
+}
+
+TEST_CASE("An ordinary budget longer than the stall budget is kept", "[CatchUpUtil]")
+{
+  // Segments so long that three of them exceed 70 s (the segment estimate is capped at 60 s, so 180 s at most).
+  CHECK(ComputeLiveTailWaitBudgetMs(false, 180000, true) == 180000);
+  CHECK(ComputeLiveTailWaitBudgetMs(false, 70000, true) == 70000);
+  CHECK(ComputeLiveTailWaitBudgetMs(false, 70001, true) == 70001);
+}
+
+TEST_CASE("The refresh pause slows to one per slice once the ordinary budget is spent", "[CatchUpUtil]")
+{
+  CHECK(ComputeTailWaitSleepMs(0, 6250, 250) == 250);
+  CHECK(ComputeTailWaitSleepMs(6249, 6250, 250) == 250);
+  CHECK(ComputeTailWaitSleepMs(6250, 6250, 250) == 1000);
+  CHECK(ComputeTailWaitSleepMs(60000, 6250, 250) == 1000);
+  // A base pause already longer than a slice is never shortened.
+  CHECK(ComputeTailWaitSleepMs(60000, 6250, 2000) == 2000);
+}

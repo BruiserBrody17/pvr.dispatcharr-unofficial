@@ -22,6 +22,7 @@ run "live (chaos seeker)"        TMO=30 T=120 -- live_chaos
 run "live (reopen x5)"           TMO=30 T=120 -- live_reopen
 run "live (close at the tail)"   TMO=30 T=120 -- live_tail_close
 run "live (tail wait in slices)"  TMO=30 T=120 -- live_tail_bound
+run "live (stalled buffer, ffmpeg gone)" TMO=30 T=120 -- live_tail_ended
 run "live (hung API, close)"     TMO=30 T=120 -- live_blackhole_close
 run "live (hung API, 60 s timeout)" TMO=60 T=200 -- live_blackhole_close
 run "live (silent server at open)" TMO=5 T=120 -- live_silent_open

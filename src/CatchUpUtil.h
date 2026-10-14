@@ -217,4 +217,38 @@ inline TailWaitOutcome DecideTailWaitOutcome(bool likelySeekProbe, int64_t waite
   return (likelySeekProbe || waitedMs >= budgetMs) ? TailWaitOutcome::kGiveUp : TailWaitOutcome::kRetry;
 }
 
+// ---- How long a live read waits at the tail while the plugin answers and nothing arrives (a silent stall) ----
+//
+// A channel whose current stream keeps its connection open and sends nothing is healed by Dispatcharr switching to the
+// channel's next stream, measured 2026-10-13 (docs/TIMESHIFT.md, "Upstream failover on a buffered channel: measured")
+// at about 58 s after the stall began, the first new segment about five seconds later. The plugin's ffmpeg survives
+// that (it is the proxy's client, not the provider's), and so does the manifest: it keeps answering, with nothing new.
+// The tail wait used to end after three segment durations (6 s), so Kodi ended playback 10 s into a stall that
+// Dispatcharr would have healed at 58 s. Stretching it to this budget was tried on a throwaway build and Kodi kept
+// retrying the -1 slices for 63 s and then played on, with a Stop sent mid-wait ending playback in 3.5 s (the wait is
+// taken in kLiveTailWaitSliceMs slices, each returning -1, so a stop never waits for the budget).
+constexpr int64_t kLiveStallWaitBudgetMs = 70000;
+
+// The budget for one tail-wait episode on the live buffer. Only a plugin that is answering (the last refresh got a
+// manifest, so the buffer is alive and ended would have stopped the wait) earns the long one; a refresh that failed
+// (Dispatcharr or the network is down) keeps the short budget, so an outage still ends as fast as before. A likely seek
+// probe never waits at all (DecideTailWaitOutcome()). A buffer whose segments are so long that the ordinary budget
+// already exceeds this keeps the ordinary one.
+inline int64_t ComputeLiveTailWaitBudgetMs(bool likelySeekProbe, int64_t normalBudgetMs, bool lastRefreshAnswered)
+{
+  if (likelySeekProbe || !lastRefreshAnswered)
+    return normalBudgetMs;
+  return normalBudgetMs > kLiveStallWaitBudgetMs ? normalBudgetMs : kLiveStallWaitBudgetMs;
+}
+
+// The pause between forced manifest refreshes while waiting at the tail. The ordinary budget polls four times a second
+// (a new segment is wanted the moment it closes); past it the wait is a stall, where nothing is gained by asking the
+// plugin's endpoint (a Django request each) that often for a minute, so it slows to once per slice.
+inline int ComputeTailWaitSleepMs(int64_t waitedMs, int64_t normalBudgetMs, int baseSleepMs)
+{
+  if (waitedMs < normalBudgetMs)
+    return baseSleepMs;
+  return baseSleepMs > static_cast<int>(kLiveTailWaitSliceMs) ? baseSleepMs : static_cast<int>(kLiveTailWaitSliceMs);
+}
+
 } // namespace dispatcharr

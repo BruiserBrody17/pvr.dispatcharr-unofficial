@@ -48,6 +48,12 @@ compare against.
 
 ### Fixed
 
+- **Server-side live TV survives a stalled stream when Dispatcharr has a backup**: if a channel's stream stopped sending
+  data without closing the connection, playback ended after about 10 seconds, although Dispatcharr switches to the
+  channel's next stream after about a minute. In Server-side mode the addon now waits up to 70 seconds for it (the
+  picture freezes, then resumes by itself), and Stop still takes effect within a few seconds. The wait is short as before
+  when Dispatcharr or the network is down, and it ends at once when the buffer's ffmpeg has stopped. The price: a channel
+  whose only stream stalls now shows a frozen picture for about a minute before playback ends, instead of 10 seconds.
 - **A series rule with no title can no longer be deleted from Kodi, which could remove other recordings**: a series rule
   made in Dispatcharr's web interface with only a description filter (no title) shows in Kodi with an empty name.
   Dispatcharr's own delete of such a rule removes every upcoming recording on its channel (every one on the server for a

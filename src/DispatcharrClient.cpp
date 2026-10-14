@@ -4704,6 +4704,9 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
     // episode at this position began, across the calls (TailWaitEpisode, CatchUpUtil.h).
     m_liveTimeshiftStream.tailWait.Enter(m_liveTimeshiftStream.position, catchUpStart);
     int attemptsUsed = 0;
+    // Whether the last forced refresh got a manifest from the plugin: only then is a quiet buffer a stall that
+    // Dispatcharr may heal (ComputeLiveTailWaitBudgetMs()), not an outage.
+    bool lastRefreshAnswered = true;
     for (int attempt = 0;
          attempt < catchUpAttempts && m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes; ++attempt)
     {
@@ -4716,7 +4719,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
       // not just one that never started, retried forever with no
       // indication anything was actually wrong).
       stateLock.unlock();
-      RefreshLiveManifest(/*force=*/true, refreshError, &refreshFatal);
+      lastRefreshAnswered = RefreshLiveManifest(/*force=*/true, refreshError, &refreshFatal);
       stateLock.lock();
       if (!stillSameStream())
         return -1;
@@ -4747,8 +4750,11 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
       // paying a pointless 250ms before reporting it.
       if (attempt + 1 < catchUpAttempts)
       {
+        const int sleepMs =
+            ComputeTailWaitSleepMs(m_liveTimeshiftStream.tailWait.WaitedMs(std::chrono::steady_clock::now()),
+                                   catchUpAttempts * kCatchUpSleepMs, kCatchUpSleepMs);
         stateLock.unlock();
-        std::this_thread::sleep_for(std::chrono::milliseconds(kCatchUpSleepMs));
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
         stateLock.lock();
         if (!stillSameStream())
           return -1;
@@ -4765,15 +4771,17 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
       // which Kodi's demuxer retries at once after checking whether it has been asked to stop, and which does not
       // touch lastShortGiveUpPosition (this is not a give-up).
       const auto afterWait = std::chrono::steady_clock::now();
-      if (DecideTailWaitOutcome(likelySeekProbe, m_liveTimeshiftStream.tailWait.WaitedMs(afterWait),
-                                catchUpAttempts * kCatchUpSleepMs) == TailWaitOutcome::kRetry)
+      const int64_t tailBudgetMs =
+          ComputeLiveTailWaitBudgetMs(likelySeekProbe, catchUpAttempts * kCatchUpSleepMs, lastRefreshAnswered);
+      if (DecideTailWaitOutcome(likelySeekProbe, m_liveTimeshiftStream.tailWait.WaitedMs(afterWait), tailBudgetMs) ==
+          TailWaitOutcome::kRetry)
       {
         m_liveTimeshiftStream.tailWait.Touch(afterWait);
         kodi::Log(ADDON_LOG_DEBUG,
                   "pvr.dispatcharr-unofficial: ReadLiveTimeshiftStream: waited %lldms of ~%dms at the live tail, "
                   "handing the read back (-1) so a stop can land",
                   static_cast<long long>(m_liveTimeshiftStream.tailWait.WaitedMs(afterWait)),
-                  catchUpAttempts * kCatchUpSleepMs);
+                  static_cast<int>(tailBudgetMs));
         return -1;
       }
     }
