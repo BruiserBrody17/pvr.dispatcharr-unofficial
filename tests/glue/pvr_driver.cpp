@@ -1,6 +1,7 @@
 // Drives PVRDispatcharr through Kodi's real C function table (the KodiToAddonFuncTable_PVR the
 // dev-kit's CInstancePVRClient fills in), against fake_dispatcharr.py, from several threads.
 #include "PVRDispatcharr.h"
+#include "kodi_abi.h"
 #include <kodi/addon-instance/PVR.h>
 #include <atomic>
 #include <chrono>
@@ -108,12 +109,10 @@ static PVR_ERROR all_lists(Collected& c, bool withEpg)
 {
   int n = 0;
   PVR_ERROR e;
-  PVR_ADDON_CAPABILITIES caps{};
-  A()->GetCapabilities(I(), &caps);
-  char buf[256];
-  A()->GetBackendName(I(), buf, sizeof buf);
-  A()->GetBackendVersion(I(), buf, sizeof buf);
-  A()->GetConnectionString(I(), buf, sizeof buf);
+  abi::ReadCaps(I());
+  abi::BackendName(I());
+  abi::BackendVersion(I());
+  abi::ConnectionString(I());
   A()->GetChannelGroupsAmount(I(), &n);
   e = A()->GetChannelGroups(I(), (PVR_HANDLE)&c, false);
   std::vector<PVR_CHANNEL_GROUP> groups;
@@ -133,9 +132,7 @@ static PVR_ERROR all_lists(Collected& c, bool withEpg)
   if (withEpg)
     for (auto& ch : chans)
       A()->GetEPGForChannel(I(), (PVR_HANDLE)&c, (int)ch.iUniqueId, time(nullptr) - 86400, time(nullptr) + 2 * 86400);
-  static thread_local std::vector<PVR_TIMER_TYPE> types(32);
-  int nt = 32;
-  A()->GetTimerTypes(I(), types.data(), &nt);
+  abi::TimerTypeCount(I());
   A()->GetTimersAmount(I(), &n);
   A()->GetTimers(I(), (PVR_HANDLE)&c);
   A()->GetRecordingsAmount(I(), false, &n);
@@ -191,7 +188,7 @@ static PVR_ERROR ConnTraffic(const std::vector<PVR_CHANNEL>& chans)
   t.startTime = time(nullptr) + 7200;
   t.endTime = t.startTime + 1800;
   t.iEpgUid = PVR_TIMER_NO_EPG_UID;
-  snprintf(t.strTitle, sizeof t.strTitle, "loss probe");
+  abi::setf(t.strTitle, "loss probe");
   return A()->AddTimer(I(), &t);
 }
 
@@ -220,15 +217,15 @@ static int timer_cycle(std::mt19937& rng, const std::vector<PVR_CHANNEL>& chans,
     t.iTimerType = 1;
     t.iEpgUid = PVR_TIMER_NO_EPG_UID;
   }
-  snprintf(t.strTitle, sizeof t.strTitle, "T%u", (unsigned)rng());
+  abi::setf(t.strTitle, "T%u", (unsigned)rng());
   if (A()->AddTimer(I(), &t) != PVR_ERROR_NO_ERROR)
     fails++;
   // series
   PVR_TIMER s{};
   s.iTimerType = 2;
   s.iClientChannelUid = (int)ch.iUniqueId;
-  snprintf(s.strTitle, sizeof s.strTitle, "Show %u-1", ch.iChannelNumber);
-  snprintf(s.strEpgSearchString, sizeof s.strEpgSearchString, "Show %u-1", ch.iChannelNumber);
+  abi::setf(s.strTitle, "Show %u-1", ch.iChannelNumber);
+  abi::setf(s.strEpgSearchString, "Show %u-1", ch.iChannelNumber);
   s.state = PVR_TIMER_STATE_SCHEDULED;
   s.bStartAnyTime = true;
   s.bEndAnyTime = true;
@@ -238,7 +235,7 @@ static int timer_cycle(std::mt19937& rng, const std::vector<PVR_CHANNEL>& chans,
   PVR_TIMER r{};
   r.iTimerType = 4;
   r.iClientChannelUid = (int)ch.iUniqueId;
-  snprintf(r.strTitle, sizeof r.strTitle, "Rec %u", (unsigned)rng());
+  abi::setf(r.strTitle, "Rec %u", (unsigned)rng());
   r.startTime = now + 3600;
   r.endTime = now + 5400;
   r.firstDay = now;
@@ -254,7 +251,7 @@ static int timer_cycle(std::mt19937& rng, const std::vector<PVR_CHANNEL>& chans,
     if (x.state != PVR_TIMER_STATE_SCHEDULED)
       continue;
     PVR_TIMER u = x;
-    snprintf(u.strTitle, sizeof u.strTitle, "%s!", x.strTitle);
+    abi::setf(u.strTitle, "%s!", abi::str(x.strTitle).c_str());
     if (u.iTimerType == 1 || u.iTimerType == 3)
     {
       u.startTime += 60;
@@ -273,9 +270,7 @@ static void stream_cycle(std::mt19937& rng, const std::vector<PVR_CHANNEL>& chan
   if (rng() % 2 && !chans.empty())
   {
     PVR_CHANNEL ch = chans[rng() % chans.size()];
-    PVR_NAMED_VALUE props[40];
-    unsigned int np = 0;
-    A()->GetChannelStreamProperties(I(), &ch, props, &np);
+    abi::ChannelStreamPropertyCount(I(), &ch);
     if (A()->OpenLiveStream(I(), &ch))
     {
       std::atomic<bool> stop{false};
@@ -306,10 +301,9 @@ static void stream_cycle(std::mt19937& rng, const std::vector<PVR_CHANNEL>& chan
   else if (!recs.empty())
   {
     PVR_RECORDING r = recs[rng() % recs.size()];
-    PVR_NAMED_VALUE props[40];
-    unsigned int np = 0;
-    A()->GetRecordingStreamProperties(I(), &r, props, &np);
-    if (A()->OpenRecordedStream(I(), &r))
+    abi::RecordingStreamPropertyCount(I(), &r);
+    abi::RecordedStream stream;
+    if (abi::OpenRecorded(I(), &r, stream))
     {
       std::atomic<bool> stop{false};
       std::thread times(
@@ -318,24 +312,22 @@ static void stream_cycle(std::mt19937& rng, const std::vector<PVR_CHANNEL>& chan
             while (!stop)
             {
               PVR_STREAM_TIMES st{};
-              A()->GetStreamTimes(I(), &st);
-              A()->LengthRecordedStream(I());
+              abi::RecordedStreamTimes(I(), stream, st);
+              abi::LengthRecorded(I(), stream);
               sleep_ms(50);
             }
           });
       for (int i = 0; i < 15; i++)
       {
-        A()->ReadRecordedStream(I(), buf.data(), (unsigned)buf.size());
+        abi::ReadRecorded(I(), stream, buf.data(), (unsigned)buf.size());
         if (i == 7)
-          A()->SeekRecordedStream(I(), 0, SEEK_SET);
+          abi::SeekRecorded(I(), stream, 0, SEEK_SET);
       }
       stop = true;
       times.join();
-      A()->CloseRecordedStream(I());
+      abi::CloseRecorded(I(), stream);
     }
-    PVR_EDL_ENTRY edl[PVR_ADDON_EDL_LENGTH];
-    int ne = PVR_ADDON_EDL_LENGTH;
-    A()->GetRecordingEdl(I(), &r, edl, &ne);
+    abi::RecordingEdl(I(), &r);
   }
 }
 
@@ -507,17 +499,15 @@ int main(int argc, char** argv)
       FAIL("no channels were listed");
     // The backend hostname is the configured host alone: no scheme, port or brackets (the connection string has those).
     {
-      char host[256] = {};
-      PVR_ERROR he = A()->GetBackendHostname(I(), host, sizeof host);
-      if (he != PVR_ERROR_NO_ERROR || std::string(host) != "127.0.0.1")
-        FAIL("the backend hostname was '%s' (err %d), expected the bare configured host", host, (int)he);
+      std::string host;
+      PVR_ERROR he = abi::BackendHostname(I(), host);
+      if (he != PVR_ERROR_NO_ERROR || host != "127.0.0.1")
+        FAIL("the backend hostname was '%s' (err %d), expected the bare configured host", host.c_str(), (int)he);
     }
     // Radio: the fake's one radio channel (id 7, group 2, which also holds TV channels) is in the radio list only,
     // and the group is listed under both kinds with the members split the same way.
     {
-      PVR_ADDON_CAPABILITIES caps{};
-      A()->GetCapabilities(I(), &caps);
-      if (!caps.bSupportsRadio)
+      if (!abi::ReadCaps(I()).radio)
         FAIL("radio support was not declared");
       Collected r;
       A()->GetChannels(I(), (PVR_HANDLE)&r, true);
@@ -602,21 +592,21 @@ int main(int argc, char** argv)
       const PVR_RECORDING* plain = nullptr;
       for (const auto& rec : artRecs.recordings)
       {
-        if (std::string(rec.strRecordingId) == "908")
+        if (abi::str(rec.strRecordingId) == "908")
           enriched = &rec;
-        else if (std::string(rec.strRecordingId) == "909")
+        else if (abi::str(rec.strRecordingId) == "909")
           plain = &rec;
       }
       if (!enriched || !plain)
         FAIL("the enriched or the plain recording is missing from the list");
       else
       {
-        const std::string thumb = enriched->strThumbnailPath;
+        const std::string thumb = abi::str(enriched->strThumbnailPath);
         if (thumb.find("/api/channels/logos/31/cache/") == std::string::npos)
           FAIL("a recording with a poster has the thumbnail '%s'", thumb.c_str());
         if (enriched->iSeriesNumber != 4 || enriched->iEpisodeNumber != 44)
           FAIL("a recording with season 4 episode 44 shows %d / %d", enriched->iSeriesNumber, enriched->iEpisodeNumber);
-        if (plain->strThumbnailPath[0] != '\0')
+        if (!abi::str(plain->strThumbnailPath).empty())
           FAIL("a recording with only the channel's logo has the thumbnail '%s'", plain->strThumbnailPath);
         if (plain->iSeriesNumber != PVR_RECORDING_INVALID_SERIES_EPISODE ||
             plain->iEpisodeNumber != PVR_RECORDING_INVALID_SERIES_EPISODE)
@@ -630,10 +620,10 @@ int main(int argc, char** argv)
       std::string untitled, titled;
       for (const auto& rec : titleRecs.recordings)
       {
-        if (std::string(rec.strRecordingId) == "910")
-          untitled = rec.strTitle;
-        else if (std::string(rec.strRecordingId) == "908")
-          titled = rec.strTitle;
+        if (abi::str(rec.strRecordingId) == "910")
+          untitled = abi::str(rec.strTitle);
+        else if (abi::str(rec.strRecordingId) == "908")
+          titled = abi::str(rec.strTitle);
       }
       if (untitled != "Channel 1")
         FAIL("a recording with no title shows '%s', expected its channel's name", untitled.c_str());
@@ -651,10 +641,9 @@ int main(int argc, char** argv)
       auto edlFor = [&](int rid, int& n) -> PVR_EDL_ENTRY
       {
         PVR_RECORDING rec{};
-        snprintf(rec.strRecordingId, sizeof rec.strRecordingId, "%d", rid);
-        PVR_EDL_ENTRY entries[PVR_ADDON_EDL_LENGTH];
-        n = PVR_ADDON_EDL_LENGTH;
-        A()->GetRecordingEdl(I(), &rec, entries, &n);
+        abi::setf(rec.strRecordingId, "%d", rid);
+        const std::vector<PVR_EDL_ENTRY> entries = abi::RecordingEdl(I(), &rec);
+        n = (int)entries.size();
         return n > 0 ? entries[0] : PVR_EDL_ENTRY{};
       };
       int n905 = -1, n906 = -1, n907 = -1;
@@ -682,7 +671,7 @@ int main(int argc, char** argv)
         t.startTime = c.epg[i].startTime;
         t.endTime = c.epg[i].endTime;
         t.iEpgUid = c.epg[i].iUniqueBroadcastId;
-        snprintf(t.strTitle, sizeof t.strTitle, "%s", c.epgTitles[i].c_str());
+        abi::setf(t.strTitle, "%s", c.epgTitles[i].c_str());
         break;
       }
     auto mustAdd = [&](const char* what2, PVR_TIMER* timer)
@@ -714,7 +703,7 @@ int main(int argc, char** argv)
           later.startTime = c.epg[i].startTime;
           later.endTime = c.epg[i].endTime;
           later.iEpgUid = c.epg[i].iUniqueBroadcastId;
-          snprintf(later.strTitle, sizeof later.strTitle, "%s", c.epgTitles[i].c_str());
+          abi::setf(later.strTitle, "%s", c.epgTitles[i].c_str());
           break;
         }
       if (!later.startTime)
@@ -738,12 +727,12 @@ int main(int argc, char** argv)
     inst.startTime = 0;
     inst.endTime = now + 1800;
     inst.iEpgUid = PVR_TIMER_NO_EPG_UID;
-    snprintf(inst.strTitle, sizeof inst.strTitle, "Channel 2");
+    abi::setf(inst.strTitle, "Channel 2");
     mustAdd("instant", &inst);
     PVR_TIMER r{};
     r.iTimerType = 4;
     r.iClientChannelUid = 1;
-    snprintf(r.strTitle, sizeof r.strTitle, "Daily");
+    abi::setf(r.strTitle, "Daily");
     r.startTime = now + 3600;
     r.endTime = now + 5400;
     r.firstDay = now;
@@ -752,8 +741,8 @@ int main(int argc, char** argv)
     PVR_TIMER s{};
     s.iTimerType = 2;
     s.iClientChannelUid = 3;
-    snprintf(s.strTitle, sizeof s.strTitle, "Show 3-1");
-    snprintf(s.strEpgSearchString, sizeof s.strEpgSearchString, "Show 3-1");
+    abi::setf(s.strTitle, "Show 3-1");
+    abi::setf(s.strEpgSearchString, "Show 3-1");
     s.bStartAnyTime = s.bEndAnyTime = true;
     mustAdd("series", &s);
     // series_rule_title_mode: a rule created under the default (Exact) sends no title_mode at all, which is exactly
@@ -774,8 +763,8 @@ int main(int argc, char** argv)
         PVR_TIMER x{};
         x.iTimerType = 2;
         x.iClientChannelUid = 3;
-        snprintf(x.strTitle, sizeof x.strTitle, "%s", title);
-        snprintf(x.strEpgSearchString, sizeof x.strEpgSearchString, "%s", title);
+        abi::setf(x.strTitle, "%s", title);
+        abi::setf(x.strEpgSearchString, "%s", title);
         x.bStartAnyTime = x.bEndAnyTime = true;
         mustAdd(title, &x);
       };
@@ -822,9 +811,9 @@ int main(int argc, char** argv)
       {
         if (x.iTimerType != 2)
           continue;
-        if (x.strTitle[0] == 0)
+        if (abi::str(x.strTitle).empty())
           bare = &x;
-        else if (std::string(x.strTitle) == "Show 3-5")
+        else if (abi::str(x.strTitle) == "Show 3-5")
           titled = &x;
       }
       if (!bare)
@@ -834,8 +823,8 @@ int main(int argc, char** argv)
         const long deletes = stat("DELETE /api/channels/series-rules/");
         const long posts = stat("POST /api/channels/series-rules/");
         PVR_TIMER rekey = *bare;
-        snprintf(rekey.strTitle, sizeof rekey.strTitle, "Re-keyed");
-        snprintf(rekey.strEpgSearchString, sizeof rekey.strEpgSearchString, "Re-keyed");
+        abi::setf(rekey.strTitle, "Re-keyed");
+        abi::setf(rekey.strEpgSearchString, "Re-keyed");
         if (A()->UpdateTimer(I(), &rekey) == PVR_ERROR_NO_ERROR)
           FAIL("an edit that re-keys a series rule with no title was accepted");
         PVR_TIMER del = *bare;
@@ -884,7 +873,7 @@ int main(int argc, char** argv)
         m.startTime = now + 10800;
         m.endTime = m.startTime + 1800;
         m.iEpgUid = PVR_TIMER_NO_EPG_UID;
-        snprintf(m.strTitle, sizeof m.strTitle, "%s", title);
+        abi::setf(m.strTitle, "%s", title);
         mustAdd(title, &m);
       };
       addManual("Typed manual name");
@@ -981,7 +970,7 @@ int main(int argc, char** argv)
       A()->GetTimers(I(), (PVR_HANDLE)&tt);
       for (auto& x : tt.timers)
         // the rule itself (a repeating timer), not the occurrence listed under it, which has the same title
-        if (x.iTimerType == 4 && std::string(x.strTitle) == "ZZZ offset rule")
+        if (x.iTimerType == 4 && abi::str(x.strTitle) == "ZZZ offset rule")
           return (long)x.startTime;
       return -1;
     };
@@ -1065,17 +1054,12 @@ int main(int argc, char** argv)
     // capabilities on that report (CPVRClient::SetConnectionState), which this scenario does by hand; the second read
     // must be the restricted one.
     const bool late = argc > 4 && std::string(argv[4]) == "late";
-    auto readCaps = []
-    {
-      PVR_ADDON_CAPABILITIES caps{};
-      A()->GetCapabilities(I(), &caps);
-      return caps;
-    };
-    const PVR_ADDON_CAPABILITIES first = readCaps();
-    if (late && !first.bSupportsTimers)
+    auto readCaps = [] { return abi::ReadCaps(I()); };
+    const abi::Caps first = readCaps();
+    if (late && !first.timers)
       FAIL("the first capabilities read, taken before the level was known, already hid the timers; the late path was "
            "not exercised");
-    if (!first.bSupportsRecordings)
+    if (!first.recordings)
       FAIL("the first capabilities read did not offer recordings");
     if (late)
       ctl("api_down=0");
@@ -1091,11 +1075,11 @@ int main(int argc, char** argv)
     INFO("connected=%d after %ld ms", connected ? 1 : 0, ms() - began);
     if (!connected)
       FAIL("the addon never reported CONNECTED, so Kodi would never re-read the capabilities");
-    const PVR_ADDON_CAPABILITIES second = readCaps();
-    if (second.bSupportsTimers || second.bSupportsRecordingsDelete || second.bSupportsRecordingsRename)
-      FAIL("a view-only account is still offered timers=%d delete=%d rename=%d after CONNECTED", second.bSupportsTimers,
-           second.bSupportsRecordingsDelete, second.bSupportsRecordingsRename);
-    if (!second.bSupportsRecordings)
+    const abi::Caps second = readCaps();
+    if (second.timers || second.recordingsDelete || second.recordingsRename)
+      FAIL("a view-only account is still offered timers=%d delete=%d rename=%d after CONNECTED", second.timers,
+           second.recordingsDelete, second.recordingsRename);
+    if (!second.recordings)
       FAIL("a view-only account lost the recordings list");
     {
       // Other notifications are legitimate here (the harness runs Server-side live mode, which a non-admin account

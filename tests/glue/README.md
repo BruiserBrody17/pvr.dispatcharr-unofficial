@@ -57,7 +57,7 @@ false mismatches (identical on builds before and after any change); run it with 
 hang stress. Fault knobs and counters (`api_down`, `api_hang`, `api_delay_ms`, ...) are documented at the top of `fake_dispatcharr.py` (`/__ctl`, `/__stats`).
 
 `pvr_harness` (`pvr_driver.cpp`, `pvr_stub.cpp`) builds a real `CInstancePVRClient` from a hand-made instance
-struct and drives it as Kodi's PVR manager does: `ctor_dtor`, `dtor_busy`, `functional` (the radio lists, EPG on six channels
+struct and drives it as Kodi's PVR manager does (everything in the driver that depends on the shape of Kodi's PVR C ABI -- struct string fields, backend strings, properties, EDL and timer-type out-parameters, the recorded-stream calls -- lives in `kodi_abi.h`, so a branch built against another Kodi release swaps that one header): `ctor_dtor`, `dtor_busy`, `functional` (the radio lists, EPG on six channels
 including a 5.1, all four timer types; an EPG-based timer's recording must carry the programme the fake's search returned, and still be created when the search answers 404; series rules created under each `series_rule_title_mode` must reach the server with the matching `title_mode`, or none for Exact and for a value outside the list; a manual timer's typed name must be stored on the server, and one carrying the channel's name must not), `surface <ms>` (four threads on lists and EPG, timer add/update/delete
 cycles, stream cycles with a `GetStreamTimes` thread, settings changes including the dialog-open dropped-write
 case, `OnSystemWake`), and `connection_state <ms> <states>`: what the addon tells Kodi through `ConnectionStateChange`, in order, as a
