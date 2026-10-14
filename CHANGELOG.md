@@ -102,6 +102,10 @@ compare against.
 
 ### Changed
 
+- **A readable troubleshooting guide**: `docs/TROUBLESHOOTING.md` is rewritten as a short, symptom-first guide (what you
+  see, why, what to do), linked from the README. New in it: slow channel starts on HLS sources (Dispatcharr's default
+  FFmpeg stream profile opens every quality level first; the built-in Streamlink profile starts much sooner) and Kodi's
+  own 20-second limit. The long investigations moved unchanged to `docs/TROUBLESHOOTING_DETAIL.md`. Documentation only.
 - **`timeshift_buffer` README explains its disk use**: a short section says how much a buffered channel writes (about 4.5 GB
   an hour at 10 Mbit/s with the default 60-minute buffer length, and how to lower it), that a recording and the buffer on
   the same channel share one provider connection, and that answering "Play recording" at Kodi's prompt watches a

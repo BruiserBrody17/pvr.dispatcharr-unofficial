@@ -189,9 +189,12 @@ the same "confirmed live, not just assumed" standard as this one.
   timer rules, backed by Dispatcharr's own RecurringRecordingRule model,
   and the timezone-offset setting bridging Kodi's UTC timers against
   Dispatcharr's own configured system timezone
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) -- known Kodi-core quirks
-  that aren't this addon's bug, multi-client limitations, and what's
-  still unconfirmed
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) -- the short, user-facing
+  guide: what you see, why, and what to do (slow channel starts, empty
+  guide, multi-client limitations, Kodi-core quirks that aren't this
+  addon's bug)
+- [TROUBLESHOOTING_DETAIL.md](TROUBLESHOOTING_DETAIL.md) -- the full
+  accounts behind it: root causes, how each was confirmed, what was tried
 - [PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md) -- what the Tvheadend
   addon (pvr.hts) does that this one does not, which of it Dispatcharr
   can back, and what was decided about each (2026-10-10)

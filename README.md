@@ -126,6 +126,9 @@ Most settings take effect immediately after saving. Connection settings
 (host/port/HTTPS/username/password) need a Kodi restart -- Kodi will tell
 you when one does.
 
+If something doesn't work as expected -- a channel that is slow to start, an empty guide, a recording that doesn't
+show up on another device -- see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
 ## Building
 
 See [docs/BUILDING.md](docs/BUILDING.md). This addon builds through
@@ -142,7 +145,8 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed release to release.
 The `docs/` directory holds engineering notes -- how each feature was
 built, root causes for bugs that were found and fixed, and decisions that
 were tried and reverted -- kept as project history rather than user
-documentation. Start at [docs/API_NOTES.md](docs/API_NOTES.md) if you
+documentation; the exception is [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md),
+written for users. Start at [docs/API_NOTES.md](docs/API_NOTES.md) if you
 want it.
 
 ## License

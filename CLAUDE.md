@@ -81,7 +81,8 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   are concise and user-facing -- install/configure/use only. `docs/*.md`
   holds the "why" (investigations, root causes, API behavior confirmed
   against a live Dispatcharr instance, reverted approaches) and is never
-  meant to be read by an end user. `CHANGELOG.md` is user-facing
+  meant to be read by an end user, except `docs/TROUBLESHOOTING.md`: the short, symptom-first guide for users
+  (what you see, why, what to do), with the long accounts in `docs/TROUBLESHOOTING_DETAIL.md`. `CHANGELOG.md` is user-facing
   what-changed, not why. When you learn something new about Dispatcharr's
   API or fix a non-obvious bug, the explanation belongs in `docs/`, not
   buried in a commit message.

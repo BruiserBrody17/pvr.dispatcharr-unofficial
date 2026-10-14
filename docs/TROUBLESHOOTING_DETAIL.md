@@ -1,0 +1,481 @@
+# Troubleshooting: the full accounts
+
+*(part of the pvr.dispatcharr-unofficial notes -- see [API_NOTES.md](API_NOTES.md) for the index)*
+
+The short, symptom-first version of this file is [TROUBLESHOOTING.md](TROUBLESHOOTING.md); read that first. This file
+keeps the investigations behind it in full (root causes, how each was confirmed, what was tried), as engineering
+history. Entries here are kept as written, including dated confirmations.
+
+## Known Kodi-core quirks (confirmed not this addon's bug)
+
+- **A completed recording's duration/"runtime" can be permanently wrong in
+  Kodi's recordings list and info panel -- stuck at some small value from
+  early in the recording, even though this addon reports the correct
+  final duration on every single call.** Confirmed this addon is not the
+  cause: added a temporary diagnostic log directly in
+  `PVRDispatcharr::GetRecordings()` and confirmed, in the same Kodi
+  session that displayed the wrong value, that this addon computed and
+  handed Kodi the exact correct duration (matching Dispatcharr's live API
+  exactly) on every call -- Kodi's own JSON-RPC `runtime` property still
+  reported the old, wrong number regardless.
+  Root cause, confirmed by reading Kodi's own source
+  (`xbmc/video/VideoInfoTag.cpp`): `CVideoInfoTag::GetDuration()` --
+  inherited by `CPVRRecording`, since a PVR recording *is* a video
+  library item -- doesn't just return the duration this addon sets via
+  `SetDuration()`. It prefers a separately-tracked, *stream-probed*
+  duration (`m_streamDetails.GetVideoDuration()`, populated by Kodi's own
+  player/library code when it actually opens and reads the file's real
+  media streams) unless that probed value is under 60% of the tag's own
+  duration. If Kodi probed this recording's file early -- while it was
+  still being written, so only a couple of minutes existed on disk -- and
+  persisted that small probed duration, it can keep winning over this
+  addon's correct value indefinitely.
+  This explains why a full Kodi restart doesn't fix it, unlike a plain
+  "phantom recording" (see below): recordings themselves are **not**
+  persisted locally (confirmed: Kodi's own PVR database, `TV46.db`, has
+  no `recordings` table at all -- the in-memory list is rebuilt fresh
+  from this addon every session), but the *stream-probed* duration lives
+  in Kodi's separate, persistent video library database, keyed by the
+  recording's synthetic file path, which survives every restart.
+  **Confirmed (not just plausible) to be the exact same root cause as a
+  related symptom**: Kodi's Home screen "Recent recordings" widget shows
+  full media flags (resolution/codec/audio format, e.g. `H.264` `1080 HD`
+  `DOLBY` `5.1`) for the affected recording but only bare runtime for an
+  unaffected one -- reproduced side by side on the same install, same
+  widget, hovering each item in turn. Both symptoms come from the same
+  `m_streamDetails` field: populated, the media flags show *and* the
+  small probed duration can win; empty, neither happens.
+  Narrowed down further which playback path actually populates it: the
+  one affected recording here was specifically played through this
+  addon's **in-progress playback feature** while it was still being
+  written (at the time, gated behind the now-removed
+  `enable_inprogress_playback` setting and routed through the separate
+  `inputstream.ffmpegdirect` addon -- see `docs/RECORDINGS.md` for the
+  native-demuxer mechanism, unconditional and no longer routed through
+  ffmpegdirect at all, that later replaced it); the unaffected one was
+  only ever played through this addon's native completed-recording path
+  (`OpenRecordedStream()`/`CInputStreamPVRRecording`). That's a real,
+  mechanistic difference, not a coincidence, for the mechanism as it
+  existed at the time: it means **using the in-progress playback feature
+  to check in on a recording early has a lasting side effect on how Kodi
+  displays it later, once it's completed** -- a permanently wrong
+  duration in the library view, even though the recording itself and its
+  actual playback are both completely fine. Not fixable from this addon's
+  side (see above), but worth knowing before using that feature on a
+  recording you also plan to watch normally once it's done.
+  **Re-verified against the current native-demuxer in-progress mechanism
+  and confirmed no longer reproducing.** Recorded a fresh 3-minute
+  recording, opened it via `Player.Open` 8 seconds after it started
+  (`canseek: false`, `time`/`totaltime` both `0` at that point -- as early
+  as this can realistically be caught), played roughly 15-20 real seconds
+  of it, then stopped. `kodi.log` confirmed
+  `CSaveFileState::DoWork - Saving file state for video item pvr://...`
+  fired on that stop -- the same file-state/stream-details-writing
+  machinery the original finding was rooted in, so this genuinely
+  exercised the mechanism rather than missing it. Stopped the underlying
+  Dispatcharr recording early (`POST .../stop/`, real recorded length
+  ~54s) and restarted Kodi fresh to force a clean re-fetch.
+  `PVR.GetRecordingDetails`' `runtime` showed `175` (this addon's own
+  `end_time - start_time` value, matching the already-documented -- and
+  separate -- "stopping early doesn't rewrite `end_time`" quirk noted
+  elsewhere in this file, not a stuck small value), and opening the
+  completed file for actual playback showed a live `totaltime` of `1:01`,
+  closely matching its real recorded length -- both numbers internally
+  consistent with a correctly-probed file, not a leftover small value
+  from the early session (which would have looked like something under
+  ~20-30s, not either of these). Repeated once more (fresh recording,
+  same method) with the same result. Reran with the exact same
+  reproduction steps that caught the original bug, and it's gone --
+  whether that's because the current mechanism routes through
+  `CInputStreamPVRRecording`'s own native demuxer (the same class the
+  always-unaffected completed-recording path uses) rather than a separate
+  inputstream addon's differently-behaved reporting, as originally
+  guessed above, wasn't traced further in Kodi-core source to confirm as
+  the actual mechanism -- but the observed behavior itself is confirmed
+  live, twice, not just plausible.
+  Not something this addon can fix or work around: there's no PVR client
+  API to tell Kodi "forget the stream details/library metadata you
+  cached for this file," and this addon doesn't (and shouldn't) touch
+  Kodi's video library database directly. Actual playback is unaffected
+  either way -- confirmed separately that the real file plays with its
+  correct, full-length duration once actually opened; this is purely a
+  library/metadata display quirk for an item Kodi has cached stream
+  details for.
+
+- **The TV Guide/EPG grid's visible time window can jump to an unrelated
+  time of day after switching channel-group tabs a few times -- reported
+  live (2026-09-10), e.g. going from a window centered near the current
+  time to one showing mid-morning hours after switching between two channel groups.** Confirmed via Kodi's own source (`xbmc/pvr/guilib/
+  GUIEPGGridContainer.cpp`, checked against the `Omega` branch matching
+  the exact Kodi version this was reproduced on, `21.3`) that this is
+  entirely Kodi-core grid-widget behavior -- this addon only supplies
+  channel/EPG data through the standard `GetChannels()`/
+  `GetChannelGroups()`/`GetEPGForChannel()` PVR API and never touches the
+  grid's own rendering, scrolling, or selection state.
+  `CGUIEPGGridContainer::UpdateItems()` tries to preserve the current
+  selection across any grid-model rebuild, including a channel-group
+  switch (which changes the visible channel list): it remembers the
+  previously-selected programme's channel+broadcast id and tries to
+  relocate that *same* programme in the new group's grid via
+  `FindChannelAndBlockIndex()`. Switching to an unrelated group (a
+  different channel lineup entirely) means that lookup fails every time.
+  The fallback only re-centers on "now" (`GoToNow()`) if the block index
+  carried over from the *old* selection's position arithmetic ends up
+  literally out of bounds in the new grid -- if it happens to still be a
+  valid block position (likely, since different groups' grids usually
+  span a similar overall time range), Kodi silently keeps that stale,
+  unrelated position instead, landing on whatever time-of-day block it
+  happens to be rather than "now" or the old selection. Because each
+  switch chains off the (now wrong) previous selection, this can drift
+  further with repeated switching, matching the reported symptom.
+  Not something this addon can influence: Kodi's own grid widget owns
+  100% of this selection-preservation logic, with no PVR client API to
+  opt out of it or request a specific scroll position after a group
+  switch. If you hit this, switching to a genuinely different date/time
+  (e.g. paging a day forward and back) or reopening the Guide window
+  re-centers the grid correctly.
+
+- **A stale resume bookmark from an earlier test silently blocks all
+  further JSON-RPC calls during recorded-playback testing.** Driving
+  playback via `Player.Open` with a `recordingid` (rather than through
+  Kodi's own GUI) triggers Kodi's "Resume from X / Play from beginning"
+  dialog whenever a prior resume bookmark exists for that recording --
+  `{"resume": false}` in the `Player.Open` params does **not** suppress
+  this for a PVR recording item. Confirmed independently on Windows,
+  macOS, CoreELEC/ODROID N2+, and Linux (Kodi Flatpak) hardware.
+  The dialog itself isn't the real trap: it runs in a modal GUI loop that
+  blocks Kodi's main thread, silently stalling *all* further JSON-RPC
+  calls (`Player.GetActivePlayers` just returns `[]` with no error, no
+  timeout, no indication anything is wrong) until the dialog is
+  dismissed -- this looks exactly like a hung JSON-RPC connection or a
+  stalled addon if you don't already know the real cause. Entirely
+  Kodi-core GUI behavior, nothing this addon's own PVR API surface can
+  suppress or opt out of.
+  Workaround: prefer a fresh recording/clip with no prior resume
+  bookmark when testing via JSON-RPC (avoids the dialog entirely). If a
+  bookmark already exists, check `GUI.GetProperties` (`currentwindow`)
+  for a stuck dialog window whenever `Player.GetActivePlayers`
+  unexpectedly returns empty right after `Player.Open`, then send
+  `Input.Down` + `Input.Select` (or take a screenshot to confirm which
+  option is highlighted) to choose "Play from beginning" before
+  expecting playback state to update again. Don't try to clear the
+  bookmark by touching Kodi's own database directly -- recording a fresh
+  short test clip is simpler and lower-risk.
+  **The "check `GUI.GetProperties` first" step above is not optional,
+  confirmed live (2026-09-15) the hard way:** `tools/kodi_smoke_test.py`
+  used to skip straight to blindly sending `Input.Down` + `Input.Select`
+  whenever a playback attempt stalled, on the assumption a stall always
+  meant this exact resume dialog. It didn't -- on one real run, Kodi's
+  focus was actually on its own power menu (`DialogButtonMenu.xml`) when
+  the same blind keystrokes fired, and they selected "Power Off,"
+  shutting down the real Windows machine the test was running on
+  mid-run (root-caused via `kodi.log`'s own `Window Init
+  (DialogButtonMenu.xml)` immediately followed by Windows Event
+  Viewer's `kodi.exe...has initiated the power off`). Fixed in
+  `tools/kodi_smoke_test.py` by removing the blind input entirely --
+  it now only waits and reports Kodi's current window as a read-only
+  diagnostic on failure, never acts on a guess. A test script that can
+  accidentally power off the machine it's testing against is not an
+  acceptable risk on any platform, this addon's own manual testing
+  included.
+
+- **`PVR.AddTimer` against a broadcast whose time *window* merely
+  overlaps an existing timer on the same channel -- even by a couple
+  minutes at the boundary, not a full duplicate -- fails immediately
+  with a JSON-RPC `-32100 "Failed to execute method."` error, confirmed
+  live (2026-09-15) on Windows against a real, actively-scheduled
+  account.** Direct reproduction: the exact same `broadcastid` failed
+  every time picked, while a neighboring broadcast an hour later (no
+  overlap) succeeded immediately. This is Kodi-core rejecting the
+  request before it ever reaches this addon's own `AddTimer()` --
+  confirmed via `kodi.log` showing zero addon-side log activity for the
+  failed attempt at all. Kodi *does* still surface this to a real user,
+  just asynchronously: navigating back to a normal window afterward
+  reveals a queued, single-button `"Information: The PVR backend does
+  not allow to record this event."` dialog (see `docs/TIMESHIFT.md`'s
+  AddonSettings-dialog entry for where this was actually found, mid
+  unrelated investigation). `tools/kodi_smoke_test.py`'s own
+  `_add_and_verify_timer()` used to only avoid an exact `starttime`
+  match against existing timers on the channel -- too narrow a check
+  against a real account with its own already-scheduled recordings;
+  fixed to check for genuine time-range overlap instead.
+
+- **`Player.Seek`'s own JSON-RPC response returns almost instantly but
+  with stale, pre-seek `Player.GetProperties` state -- confirmed live
+  (2026-09-15, macOS) via a dedicated standalone repro against a
+  recorded item.** The `Player.Seek` HTTP round-trip completed in ~1ms;
+  an immediate `Player.GetProperties` poll issued right after it
+  returned still read the exact pre-seek position, and the real seek
+  only landed on Kodi's playback thread ~150-300ms later (confirmed
+  reproducible across two independent real runs plus the dedicated
+  repro). Entirely Kodi-core JSON-RPC/playback-thread behavior, nothing
+  this addon's own PVR API surface is involved in --
+  `tools/kodi_smoke_test.py`'s `_seek_within_recording_and_verify()`
+  used to read the post-seek position with a single immediate call,
+  which reliably reported the seek as having silently failed (landed
+  back at the pre-seek position) even though the underlying seek always
+  actually succeeded. Fixed by polling `Player.GetProperties` in a short
+  retry loop (`RECORDING_SEEK_SETTLE_TIMEOUT_SECONDS`/
+  `RECORDING_SEEK_SETTLE_POLL_INTERVAL_SECONDS`) until the reported
+  `"time"` changes from the pre-seek value before comparing it against
+  the expected target. `check_live_timeshift_seek()`'s own post-seek
+  check is unaffected: it never compares `"time"` before/after a seek at
+  all (see that function's own docstring for why), only that the seek
+  call itself doesn't error and playback keeps progressing afterward.
+
+- **Editing an existing timer's title (or any other single field, short
+  of the timer being added/deleted) doesn't update Kodi's Timers window
+  in place -- the new value only shows up once the window is left and
+  re-entered, confirmed by reading Kodi-core's own source (2026-09-19),
+  not just observed.** A real user report against that change's one-time-timer
+  rename fix: the server-side rename itself was confirmed correct
+  (visible immediately once the Timers window was re-opened), but the
+  already-open window kept showing the old title. Traced through
+  `xbmc/pvr/`: a plain field edit (not an add/delete) makes
+  `CPVRTimers::UpdateEntries()` fire a `PVREvent::Timers` event
+  (`PVRTimers.cpp`'s `NotifyTimersEvent(bAddedOrDeleted)` call, with
+  `bAddedOrDeleted=false`) -- correctly reflecting the change in Kodi's
+  own in-memory timer object (`CPVRTimerInfoTag::UpdateEntry()`
+  unconditionally overwrites every field, including title, and always
+  reports "changed"). But `CGUIWindowPVRTimersBase::OnMessage()`
+  handles a plain `PVREvent::Timers` with only `SetInvalid()` -- a bare
+  repaint of the *already-built* on-screen list, not a requery. Only
+  `PVREvent::TimersInvalidated` (fired solely for an add/delete) calls
+  `Refresh(true)`, which is the one path that actually re-fetches the
+  timer list and rebuilds the displayed items' label text from the
+  updated data. So a same-window in-place edit is correct at the data
+  layer immediately, but cosmetically stale until something else forces
+  a real `Refresh()` (leaving and re-entering the window, or any other
+  add/delete elsewhere that happens to trigger one). Not fixable from
+  this addon's side -- `TriggerTimerUpdate()` is the only signal this
+  addon can send, and Kodi-core itself is what chooses `SetInvalid()`
+  over `Refresh(true)` for a non-add/delete change. Not specific to a
+  title edit either: the same would apply to any other single-field
+  timer edit (e.g. adjusting a one-time timer's start/end time alone).
+
+## A channel group the addon stops listing stays in Kodi as an empty group
+
+Confirmed live (2026-10-10) and against Kodi's own source: Kodi's group sync (`CPVRChannelGroups::UpdateFromClients()`)
+only adds and updates the groups a client reports; it never removes one the client has stopped reporting. If every channel
+leaves a group (it was emptied or deleted on the Dispatcharr side, or its last channel moved to another group or switched
+between TV and radio), Kodi keeps showing the group, empty, in its TV or Radio group list, even after a restart. The addon
+is no longer listing it: the group lists are built from the groups that still hold a channel of that kind
+(`FilterChannelGroupsByKind()`, and `FilterChannelGroupsWithChannels()` before it). Not the addon's bug, and not fixable
+from it; an empty group can be deleted in Kodi's own group manager.
+
+## Known limitations with more than one Kodi client
+
+Not bugs in this addon -- inherent to running multiple, fully independent
+Kodi installations (e.g. one on Windows, one on macOS) against the same
+Dispatcharr server, worth writing down since it's easy to mistake for one:
+
+- **A recording created on one Kodi instance doesn't appear on another
+  until that other instance happens to refresh.** This addon has no
+  push/notification channel from Dispatcharr (it's a plain REST poller),
+  and `TriggerTimerUpdate()`/`TriggerRecordingUpdate()` only tell *that
+  specific running addon instance's* Kodi to re-fetch -- they have no way
+  to reach a separate Kodi installation's separate addon instance.
+  Originally confirmed with no fix at all: a recording created via one
+  Kodi's guide didn't appear on a second, independently-running Kodi until
+  that second instance was restarted. Substantially mitigated now (see the
+  periodic recordings/timers refresh below) -- every install triggers on
+  its own schedule regardless of the others' activity, so the wait is
+  bounded by `recording_refresh_minutes` instead of "until next restart."
+  Not eliminated: still a poll, not a push, so there's still up to that
+  many minutes of lag, and two installs mid-refresh-cycle can briefly
+  disagree.
+- **Playback resume position doesn't carry over between Kodi
+  instances.** Kodi's "resume from where you left off" bookmark is
+  stored in that Kodi installation's own local video database, not
+  anywhere this addon controls or Dispatcharr is aware of -- watching
+  partway through a recording on one device has no way to inform a
+  different device's Kodi where to resume. Kodi's PVR API does have
+  purpose-built hooks for exactly this
+  (`GetRecordingLastPlayedPosition`/`SetRecordingLastPlayedPosition`,
+  meant for backends that track resume position server-side instead of
+  relying on Kodi's local database), which this addon doesn't currently
+  implement. It's a real, legitimate feature to add if cross-device
+  resume matters, but not attempted here yet -- it would need a place to
+  actually store the position server-side, and `custom_properties` is the
+  only candidate on the `Recording` object, whose write semantics
+  (whether a `PATCH` merges or replaces the field) need to be verified
+  against a **disposable test recording** before ever touching a real
+  one -- `custom_properties` is already confirmed to be fully replaced
+  rather than merged on `POST` create (see [RECORDINGS.md](RECORDINGS.md)'s
+  first entry), and `PATCH` needs the same verification before assuming
+  otherwise.
+- **One install's addon can silently invalidate another install's stored
+  API key, breaking recording playback with no obvious cause.** Dispatcharr
+  keeps exactly one active API key per account; if two Kodi installs
+  share an account and each generates its own key once, whichever
+  install last regenerated invalidates the other's stored copy.
+  Confirmed end-to-end (Windows + macOS installs against the
+  same account, same recording): the macOS side got `CCurlFile ... Failed:
+  HTTP returned code 401` on a key that was valid when it was generated,
+  while a fresh `generate/` call from either side proved the account only
+  keeps one key alive at a time. Fixed by making `OpenRecordingStream()`/
+  `ReadRecordingStream()` treat a 401 as "this key was invalidated
+  elsewhere," not a hard failure: they call `GenerateApiKey()` and retry
+  once before giving up, and `PVRDispatcharr` re-persists the new key to
+  the addon's settings if it changed. This doesn't stop the two installs
+  from continuing to invalidate each other's cached key -- it just makes
+  that invisible, since whichever side needs the key next self-heals
+  within one HTTP round-trip instead of failing outright. Verified by
+  deliberately corrupting a live install's stored key and confirming
+  playback still succeeded, with the corrected key written back to
+  `settings.xml` automatically.
+
+  **Update (2026-09-27, a 44th-pass audit): this self-heal is far less
+  invisible than it looks once both installs are actively playing back
+  at the same time, not just regenerating once per restart -- see
+  `docs/OPEN_ITEMS.md`'s own entry on the sharper failure mode (settings-
+  file write storms, and a real chance of a read failure ending playback
+  outright), logged for a future pass rather than fixed here.**
+
+  **Fixed (2026-09-30): the addon no longer generates a key when the
+  account already has one.** Every "I need a key" path -- first run, a
+  stored key belonging to a different account, and each 401 recovery --
+  now reads the account's existing key first (`GET /api/accounts/api-keys/`)
+  and adopts it, only calling `generate/` when the account genuinely has
+  none. Several Kodi installs, and any script or automation tool using
+  the same account's key, now converge on the one shared key instead of
+  revoking each other's; see `docs/OPEN_ITEMS.md`'s own entries for the
+  live confirmation. This also closes a sharper symptom this entry
+  didn't describe: simply enabling the addon with an empty `api_key`
+  setting used to replace the account's existing key, so every *other*
+  client of that account (a script, another app) started
+  getting `401 Invalid API key` -- with nothing logged by this addon,
+  since from its side the generate call succeeded. Note the one case that
+  can't avoid it: an account with *no* key yet still gets one generated
+  on first use (nothing exists to adopt), and a Dispatcharr too old to
+  report its key falls back to the previous generate-on-need behavior.
+
+## Two PVR client addons enabled in the same Kodi against the same backend
+
+Not the "more than one Kodi client" scenario above (separate installs) --
+this is two *different addons* (e.g. this project's own earlier
+`pvr.dispatcharr`/`pvr.dispatcharrai` ids, still installed and enabled
+alongside a freshly-deployed `pvr.dispatcharr-unofficial` after following
+this project's own addon-id-change migration steps -- see
+[CHANGELOG.md](../CHANGELOG.md)'s `0.10.0` entry) both enabled in the
+*same* running Kodi, both pointed at the same real Dispatcharr account.
+
+Confirmed live (2026-09-15, real ODROID N2+/CoreELEC hardware): with
+both enabled, every `PVR.*` JSON-RPC method (`GetChannelGroups`,
+`GetChannels`, `GetTimers`, `GetRecordings`) failed immediately with
+`-32100 "Failed to execute method."`, and `kodi.log` showed **zero**
+`AddOnLog: pvr.dispatcharr-unofficial` activity at all -- the new
+addon's own PVR client instance never even started, despite
+`Addons.GetAddonDetails` reporting it `enabled: true`. Kodi's PVR
+manager appears to get stuck initializing when multiple PVR client
+addons are enabled at once, at least in this exact combination (the
+same addon lineage's three id generations, all valid `kodi.pvrclient`
+type addons). Fixed by disabling the older addon
+(`Addons.SetAddonEnabled` with `enabled: false`) -- no Kodi restart
+needed, the new addon's PVR client instance started and began
+refreshing channels/groups within seconds of the old one being
+disabled. This is exactly what this project's own migration guidance
+already recommends ("disable the old addon once the new one is
+confirmed working") -- this is confirmation of *why* that step isn't
+just cleanup, it's load-bearing.
+
+## A freshly-installed PVR addon can silently not start on a cold Kodi reboot
+
+Confirmed live and reproduced twice in the same session (2026-09-15,
+real ODROID N2+/CoreELEC hardware): after a full `systemctl restart
+kodi` with `pvr.dispatcharr-unofficial` already `enabled: true` in
+Kodi's own addon database (not toggled during this boot -- it was left
+enabled from before), `kodi.log` showed **zero** `AddOnLog:
+pvr.dispatcharr-unofficial` activity at all, and every `PVR.*` JSON-RPC
+method failed with `-32100 "Failed to execute method."` indefinitely
+(confirmed well past this project's usual few-seconds PVR-manager
+startup transient -- waited 2+ minutes with no change). Kodi's own
+process was alive and responding to other JSON-RPC calls the whole
+time, so this isn't a crash or a hang at the process level -- Kodi's
+PVR manager itself simply never instantiated this addon's PVR client
+on this particular boot.
+
+**Fix, confirmed reliable both times it was needed:** a live
+`Addons.SetAddonEnabled` toggle -- `false` then `true` a few seconds
+apart -- immediately triggers `"creating PVR client instance"` in
+`kodi.log` and normal operation resumes within seconds. A plain restart
+of Kodi itself does *not* reliably reproduce this fix; it has to be the
+enable-state *transition* while Kodi is already running. Not yet
+root-caused against Kodi's own PVR-manager source (this addon has no
+control over when Kodi decides to start a PVR client), and not
+reproduced on any of the Linux/Windows testing this project
+has done -- worth watching for on other real hardware, and a live
+disable/re-enable toggle is the known, confirmed workaround if
+`PVR.GetChannels`/etc. keep failing with `-32100` well past the normal
+startup window with no addon-side log activity at all.
+
+## Empty EPG guide, but channels/playback/recordings all work fine
+
+Flagged from a 24th-pass audit (2026-09-26), confirmed against
+Dispatcharr's own real current upstream source (cloned into a
+scratchpad, never committed to this repo -- stronger than the API shape
+alone, not the same standard as a live test), not reproduced live.
+
+If `kodi.log` shows `Dispatcharr returned HTTP 403 for /output/epg`
+while every other feature (login, channel list, live playback,
+recordings) works normally, this is almost always Dispatcharr's own
+**Network Access** setting, not a login/permission problem with this
+addon. Dispatcharr's `/output/epg` endpoint is the *one* endpoint whose
+own "M3U / EPG Endpoints" network-access restriction defaults to
+**local-network-only** IP ranges (127.0.0.1/8, 10.0.0.0/8,
+172.16.0.0/12, 192.168.0.0/16, plus the IPv6 equivalents) -- every other
+endpoint this addon calls defaults to allow-all instead. A Kodi client
+that reaches Dispatcharr from outside those ranges gets denied here
+specifically:
+
+- A Tailscale or other CGNAT-range client address.
+- A remote/off-LAN Kodi install.
+- A dual-stack LAN where Dispatcharr's own configured host setting
+  resolves to a global IPv6 address rather than a private IPv4 one --
+  realistic on an ordinary home network, not just an exotic setup.
+
+**Fix:** on the Dispatcharr server, go to Settings -> Network Access ->
+"M3U / EPG Endpoints" and add the Kodi client's own actual source IP
+(or range) to the allowed list.
+
+## Server timeshift: spinner for about 30 s, then the channel exits (buffer files are on the server)
+
+The timeshift buffer plugin serves the buffer's segments from its own file server, on its `http_port` setting (default
+9192), not on Dispatcharr's port. Starting the buffer and listing it go through Dispatcharr's own port, so a buffer
+starts and its files appear on disk even when Kodi cannot reach the file server; "Start Test Buffer" in the plugin's
+page runs entirely inside the container and succeeds too. The port has to be published by the container
+(`-p 9192:9192`, or whatever number the setting holds, the same number on both sides) and reachable from the Kodi
+device. Since the open-time probe (2026-10-11) the addon says so: a notification names the port, and the log has
+`ProbeTimeshiftFileServer: ... unreachable`. On an older build the same cause showed as a spinner that ended the channel
+after about 30 s, with `giving up after N consecutive segment fetch failure(s)` in the debug log. To check by hand from
+the Kodi device: `curl -i http://<dispatcharr-host>:<http_port>/` answers `403 Forbidden` when the file server is
+reachable (a connection refused or a hang means it is not). Confirmed live (`docs/CLOSED_ITEMS.md`, "Say why a
+server-timeshift open fails when the buffer's file server cannot be reached"); first met in a Docker install where
+the number in the plugin's setting and the published port differed.
+
+## Stalls or slow channel starts that come from the stream itself
+
+Some playback problems start upstream of the addon: a provider CDN that pauses, a timestamp break in the stream, or a
+proxy prebuffer that takes a while to fill. A client cannot repair those, so if the addon's own log shows nothing wrong
+and the same stall or delay shows in another player, look at the server. Dispatcharr's plugin catalogue (the plugin hub
+in its web UI) has plugins aimed at this, read from the catalogue's own descriptions
+([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); none was tested with this addon:
+
+- **Reservoarr**, **Profilarr** and **Segmentarr** are stream profiles that absorb CDN gaps and timestamp breaks before
+  the stream reaches any client.
+- **Audio Buffer Tuner** lowers the proxy's prebuffer for chosen channel groups, which shortens channel start.
+
+This is a pointer, not a recommendation: whether one of them helps, or interacts with `timeshift_buffer`, is
+unconfirmed.
+
+## Still unconfirmed (verify before relying on in production)
+
+- The account used to verify this (a standard, non-admin test account)
+  initially got "You do not have permission to perform this action"
+  trying to create a recording or
+  series rule -- same account that could log in, browse channels, and
+  stream fine. Raising that account's role in Dispatcharr's admin UI
+  resolved it. If you hit the same error, that's a Dispatcharr-side
+  permissions setting, not an addon bug -- check the account's role before
+  assuming otherwise.
+

@@ -122,7 +122,7 @@
 
 #### Point the troubleshooting notes at the server-side stream-profile plugins
 
-**Opened 2026-10-10 from the Dispatcharr source review; fixed 2026-10-10.** Dispatcharr's plugin catalogue has three stream profiles that absorb CDN gaps and timestamp breaks (Reservoarr, Profilarr, Segmentarr) and one that lowers the proxy prebuffer per channel group (Audio Buffer Tuner), and `docs/TROUBLESHOOTING.md` did not say a server-side remedy exists. Added a "Stalls or slow channel starts that come from the stream itself" section there that names them and what each addresses, without recommending one. Confirmed by reading only (the catalogue's own descriptions, as recorded in `docs/DISPATCHARR_SOURCE_REVIEW.md`); none was tested with this addon, and the section says so. The README has no troubleshooting pointer, so there was no line to add there.
+**Opened 2026-10-10 from the Dispatcharr source review; fixed 2026-10-10.** Dispatcharr's plugin catalogue has three stream profiles that absorb CDN gaps and timestamp breaks (Reservoarr, Profilarr, Segmentarr) and one that lowers the proxy prebuffer per channel group (Audio Buffer Tuner), and `docs/TROUBLESHOOTING_DETAIL.md` (then `docs/TROUBLESHOOTING.md`) did not say a server-side remedy exists. Added a "Stalls or slow channel starts that come from the stream itself" section there that names them and what each addresses, without recommending one. Confirmed by reading only (the catalogue's own descriptions, as recorded in `docs/DISPATCHARR_SOURCE_REVIEW.md`); none was tested with this addon, and the section says so. The README has no troubleshooting pointer, so there was no line to add there.
 
 #### `stop_buffer` dropped other viewers by comparing two stamps, so a host clock step could end a buffer under a viewer
 
@@ -1482,7 +1482,7 @@ notification question is unchanged and still unconfirmed either way.
 
 #### Concurrent playback on two installs regenerating the API key
 
-**A bigger, sharper version of `docs/TROUBLESHOOTING.md`'s own
+**A bigger, sharper version of `docs/TROUBLESHOOTING_DETAIL.md`'s own
 "One install's addon can silently invalidate another install's stored API key" entry --
 concurrent *active playback* on two installs sharing one Dispatcharr
 account could regenerate the key several times a second, flagged from
@@ -6614,7 +6614,7 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 #### The citation checker missed the backtick form and did not read CLAUDE.md
 
-**Fixed 2026-10-05 (the tenth hardening sweep), reproduced.** The possessive-citation check needed `docs/X.md's` with nothing between `.md` and `'s`, so the backtick form `` `docs/X.md`'s "Title" `` (59 of the 83 citations of this kind, mostly in this file) matched nothing; `CLAUDE.md` and `CONTRIBUTING.md` were never scanned for citations (`EXTRA_CITING_FILES`, read only by that check). its heading reader also read a bold lead that wraps across lines ("- **One install's addon can ... stored" / "API key, ...**") as no heading at all, and the title normalizer now ignores quote characters, so a title that contains quotes is matched whichever kind the citation uses. The newly visible findings were triaged: one paraphrased citation was corrected in place (`docs/TROUBLESHOOTING.md`'s "One install's addon can silently invalidate another install's stored API key"), five that cite a phrase inside an entry or a section since removed rather than a heading were baselined, as the earlier ones are.
+**Fixed 2026-10-05 (the tenth hardening sweep), reproduced.** The possessive-citation check needed `docs/X.md's` with nothing between `.md` and `'s`, so the backtick form `` `docs/X.md`'s "Title" `` (59 of the 83 citations of this kind, mostly in this file) matched nothing; `CLAUDE.md` and `CONTRIBUTING.md` were never scanned for citations (`EXTRA_CITING_FILES`, read only by that check). its heading reader also read a bold lead that wraps across lines ("- **One install's addon can ... stored" / "API key, ...**") as no heading at all, and the title normalizer now ignores quote characters, so a title that contains quotes is matched whichever kind the citation uses. The newly visible findings were triaged: one paraphrased citation was corrected in place (`docs/TROUBLESHOOTING_DETAIL.md`'s "One install's addon can silently invalidate another install's stored API key"), five that cite a phrase inside an entry or a section since removed rather than a heading were baselined, as the earlier ones are.
 
 #### The documented hand rebuild of a plugin zip would have put tests/ back
 
