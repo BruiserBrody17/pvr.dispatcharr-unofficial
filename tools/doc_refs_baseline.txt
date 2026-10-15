@@ -69,6 +69,7 @@ docs/CLOSED_ITEMS.md|setting|user_edited
 docs/CLOSED_ITEMS.md|setting|validate_redirect_urls
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
+docs/OPEN_ITEMS.md|function|OnPreparePlayback
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work
