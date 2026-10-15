@@ -354,7 +354,7 @@ int main(int argc, char** argv)
   set("username", "u");
   set("password", "p");
   set("timeout", getenv("TMO") ? getenv("TMO") : "5");
-  set("live_timeshift_mode", "2");
+  set("live_timeshift_mode", what == "warm_up" ? "0" : "2");
   set("api_key", "");
   set("enable_realtime_updates", getenv("RT") || what == "refresh_events" ? "true" : "false");
   if (what == "offset_cross_check")
@@ -1265,6 +1265,173 @@ int main(int argc, char** argv)
     abi::CloseRecorded(I(), d);
     INFO("streams2: ids %lld..%lld", (long long)a.id, (long long)e.id);
   }
+  else if (what == "warm_up")
+  {
+    // Off mode hands Kodi the proxy URL, and Kodi 22 plays it while Dispatcharr is still starting a channel nobody is
+    // watching, which the proxy answers with 503. The addon therefore starts the channel itself, in the background, and
+    // stays attached while Kodi starts (StreamWarmUp.h). It must not wait for the channel: GetChannelStreamProperties()
+    // runs on Kodi's main thread. The fake's proxy answers as measured: HEAD 405, a first GET that waits for the
+    // "provider", 503 + Retry-After while a channel comes up, and it reports the clients attached (proxy_open_now).
+    for (int i = 0; i < 50; i++)
+    {
+      Collected probe;
+      A()->GetChannels(I(), (PVR_HANDLE)&probe, false);
+      if (!probe.channels.empty())
+        break;
+      sleep_ms(100);
+    }
+    Collected c;
+    A()->GetChannels(I(), (PVR_HANDLE)&c, false);
+    if (c.channels.empty())
+    {
+      FAIL("no channels were listed");
+    }
+    else
+    {
+      PVR_CHANNEL ch = c.channels[0];
+      auto statValue = [](const char* key, size_t keyLen)
+      {
+        const std::string stats = http("/__stats");
+        const size_t at = stats.find(key);
+        return at == std::string::npos ? -1 : atoi(stats.c_str() + at + keyLen);
+      };
+      auto proxyGets = [&] { return std::max(0, statValue("\"GET /proxy/ts/stream\": ", 24)); };
+      auto proxyOpenNow = [&] { return statValue("\"proxy_open_now\": ", 18); };
+      // Waits up to `ms` for `fn()` to equal `want`; returns the last value.
+      auto settle = [&](auto fn, int want, int ms)
+      {
+        int v = fn();
+        for (int waited = 0; v != want && waited < ms; waited += 100)
+        {
+          sleep_ms(100);
+          v = fn();
+        }
+        return v;
+      };
+      auto streamUrl = [](const std::vector<std::pair<std::string, std::string>>& props)
+      {
+        for (const auto& p : props)
+          if (p.first == "streamurl")
+            return p.second;
+        return std::string();
+      };
+      auto timed = [&](long& tookMs)
+      {
+        const long t0 = ms();
+        auto props = abi::ChannelStreamProperties(I(), &ch);
+        tookMs = ms() - t0;
+        return props;
+      };
+      long took = 0;
+
+      // 1. A channel that takes 1.5 s to deliver its first bytes. The call does NOT wait for them (it runs on Kodi's
+      // main thread) and returns the URL, with Kodi's own option suffix, which is not part of what the warm-up asked.
+      ctl("proxy_reset=1&proxy_init_ms=1500");
+      int before = proxyGets();
+      auto props = timed(took);
+      const std::string url = streamUrl(props);
+      INFO("warm_up: call took %ld ms, url %s", took, url.c_str());
+      if (took > 300)
+        FAIL("the call took %ld ms: it must not wait for the channel (it runs on Kodi's main thread)", took);
+      if (url.find("/proxy/ts/stream/") == std::string::npos || url.find("|Connection=close") == std::string::npos)
+        FAIL("the stream URL was '%s'", url.c_str());
+      // ...and the channel does get started, and the connection stays attached once it is up.
+      if (settle(proxyOpenNow, 1, 4000) != 1)
+        FAIL("%d client(s) attached 4 s after the call, expected the warm-up's one", proxyOpenNow());
+      if (proxyGets() - before != 1)
+        FAIL("the warm-up made %d request(s), expected 1", proxyGets() - before);
+      sleep_ms(1500);
+      if (proxyOpenNow() != 1)
+        FAIL("the warm-up did not stay attached (%d client(s) 1.5 s after the first bytes)", proxyOpenNow());
+
+      // 2. A second call replaces the first connection (one hold at a time), so one client is attached, not two.
+      before = proxyGets();
+      props = timed(took);
+      if (took > 300)
+        FAIL("a second call took %ld ms", took);
+      if (settle(proxyGets, before + 1, 3000) != before + 1)
+        FAIL("a second call made %d request(s)", proxyGets() - before);
+      sleep_ms(1000);
+      if (proxyOpenNow() != 1)
+        FAIL("%d client(s) attached after a second call, expected exactly one (the old hold must be released)",
+             proxyOpenNow());
+
+      // 3. A channel the server does not have (404): one request, no retries, the URL still returned at once, and the
+      // previous channel's connection released even though the new channel could not be started.
+      ctl("proxy_reset=1&proxy_init_ms=0&proxy_status=404");
+      before = proxyGets();
+      props = timed(took);
+      if (took > 300)
+        FAIL("a call for a channel that will 404 took %ld ms", took);
+      if (streamUrl(props).empty())
+        FAIL("no stream URL for a channel that will 404");
+      sleep_ms(2500);
+      if (proxyGets() - before != 1)
+        FAIL("a 404 was asked about %d times, expected once", proxyGets() - before);
+      if (settle(proxyOpenNow, 0, 3000) != 0)
+        FAIL("%d client(s) still attached after a call for a channel that could not be started", proxyOpenNow());
+
+      // 4. A channel still coming up (two 503s, each with Retry-After: 1): retried in the background until it answers.
+      ctl("proxy_reset=1&proxy_status=0&proxy_503_first=2");
+      before = proxyGets();
+      props = timed(took);
+      if (took > 300)
+        FAIL("a call for a channel that is coming up took %ld ms", took);
+      if (settle(proxyOpenNow, 1, 8000) != 1)
+        FAIL("the warm-up never attached after two 503s (%d client(s))", proxyOpenNow());
+      INFO("warm_up: two 503s then success took %d request(s)", proxyGets() - before);
+      if (proxyGets() - before != 3)
+        FAIL("two 503s then success took %d requests, expected 3", proxyGets() - before);
+
+      // 5. A proxy that keeps refusing keeps being asked, one second apart, within the budget; it attaches as soon as
+      // the proxy lets it, and the call never waited for any of that.
+      ctl("proxy_reset=1&proxy_503_first=0&proxy_status=503");
+      before = proxyGets();
+      props = timed(took);
+      if (took > 300)
+        FAIL("a call for a refusing proxy took %ld ms", took);
+      if (streamUrl(props).empty())
+        FAIL("no stream URL for a refusing proxy");
+      sleep_ms(3500);
+      if (proxyGets() - before < 3)
+        FAIL("a refusing proxy was asked %d time(s) in 3.5 s, expected the retries one second apart",
+             proxyGets() - before);
+      if (proxyOpenNow() != 0)
+        FAIL("%d client(s) attached to a proxy that refuses", proxyOpenNow());
+      // A plain 500 (seen once in a live run, answered at once while the proxy set a channel up) is retried the same
+      // way.
+      ctl("proxy_status=500");
+      sleep_ms(500);
+      before = proxyGets();
+      sleep_ms(2500);
+      if (proxyGets() - before < 2)
+        FAIL("a proxy answering 500 was asked %d time(s) in 2.5 s, expected the retries one second apart",
+             proxyGets() - before);
+      ctl("proxy_status=0");
+      if (settle(proxyOpenNow, 1, 4000) != 1)
+        FAIL("the warm-up did not attach once the proxy stopped refusing (%d client(s))", proxyOpenNow());
+
+      // 6. Server-side timeshift reads through the addon's own callbacks: no URL, and nothing to start.
+      ctl("proxy_reset=1&proxy_status=0");
+      set("live_timeshift_mode", "2");
+      pvr->OnAddonSettingChanged("live_timeshift_mode", kodi::addon::CSettingValue("2"));
+      before = proxyGets();
+      props = timed(took);
+      sleep_ms(500);
+      if (proxyGets() != before)
+        FAIL("server-side mode made %d proxy request(s)", proxyGets() - before);
+      if (!streamUrl(props).empty())
+        FAIL("server-side mode returned a stream URL");
+
+      // 7. Off mode again, and the client destroyed while the warm-up is still attached: its destructor must release
+      // the connection (checked after the delete below), not leave a thread holding the curl share.
+      set("live_timeshift_mode", "0");
+      pvr->OnAddonSettingChanged("live_timeshift_mode", kodi::addon::CSettingValue("0"));
+      props = timed(took);
+      if (settle(proxyOpenNow, 1, 4000) != 1)
+        FAIL("%d client(s) attached before the destroy, expected the warm-up's one", proxyOpenNow());
+    }
+  }
   else if (what == "dtor_busy")
   {
     // destroy while Kodi-facing calls are idle but the addon's own threads are mid-fetch (slow server)
@@ -1279,6 +1446,21 @@ int main(int argc, char** argv)
   long d0 = ms();
   delete pvr;
   INFO("destroyed in %ld ms", ms() - d0);
+  if (what == "warm_up")
+  {
+    int open = -1;
+    for (int waited = 0; waited <= 3000; waited += 100)
+    {
+      const std::string stats = http("/__stats");
+      const size_t at = stats.find("\"proxy_open_now\": ");
+      open = at == std::string::npos ? -1 : atoi(stats.c_str() + at + 18);
+      if (open == 0)
+        break;
+      sleep_ms(100);
+    }
+    if (open != 0)
+      FAIL("%d client(s) still attached to the proxy after the client was destroyed", open);
+  }
   printf("stats=%s\n", http("/__stats").c_str());
   printf("RESULT fails=%d\n", (int)g_fail);
   curl_global_cleanup();

@@ -49,6 +49,7 @@ run "destroy with recorded streams open" TMO=30 T=120 -- multi_dtor
 run "destroy with streams open"  TMO=30 T=120 -- dtor_inflight
 run "PVR surface: functional"    BIN=pvr_harness T=180 -- functional
 run "PVR: several recorded streams" BIN=pvr_harness T=60 -- streams2
+run "PVR: Off mode starts the channel first" BIN=pvr_harness T=90 TMO=5 -- warm_up
 run "PVR: M3U refresh event"       BIN=pvr_harness T=60 -- refresh_events
 run "PVR: server offset vs table"   BIN=pvr_harness T=60 -- offset_cross_check
 run "PVR surface: threads"       BIN=pvr_harness T=180 -- surface 6000

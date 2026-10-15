@@ -13,6 +13,7 @@
 #include <deque>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace abi
@@ -140,6 +141,23 @@ inline unsigned ChannelStreamPropertyCount(const AddonInstance_PVR* inst, const 
   if (props)
     inst->toAddon->FreeProperties(inst, props, n);
   return n;
+}
+
+// The name/value pairs the addon hands back for a channel.
+inline std::vector<std::pair<std::string, std::string>> ChannelStreamProperties(const AddonInstance_PVR* inst,
+                                                                                const PVR_CHANNEL* channel)
+{
+  PVR_NAMED_VALUE** props = nullptr;
+  unsigned n = 0;
+  inst->toAddon->GetChannelStreamProperties(inst, channel, DEFAULT, &props, &n);
+  std::vector<std::pair<std::string, std::string>> out;
+  if (props)
+  {
+    for (unsigned i = 0; i < n; i++)
+      out.emplace_back(str(props[i]->strName), str(props[i]->strValue));
+    inst->toAddon->FreeProperties(inst, props, n);
+  }
+  return out;
 }
 
 inline unsigned RecordingStreamPropertyCount(const AddonInstance_PVR* inst, const PVR_RECORDING* recording)

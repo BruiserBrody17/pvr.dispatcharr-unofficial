@@ -34,6 +34,14 @@ eight downloads.
 - Pause, seek and live-edge state of a recording are answered per recording by Kodi 22; the live-television answers are
   unchanged.
 
+### Fixed
+
+- **A channel nobody was watching failed to play the first time in Off and Local mode (Kodi 22)**: Kodi 22 asks
+  Dispatcharr about a stream (twice) before it plays it, and Dispatcharr answered the real request with "service
+  unavailable" while it was still starting the channel, so the first attempt gave an error and the second one worked.
+  The addon now starts the channel itself in the background and stays connected while Kodi starts, so Kodi finds it
+  running; nothing waits for it, and server-side timeshift is not affected. Kodi 21 never needed this.
+
 ## [0.13.0] - 2026-10-14
 
 Addon changes since `0.12.0`. This release bundles `timeshift_buffer` `0.8.14` and `recording_edl` `0.2.3` as they

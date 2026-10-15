@@ -113,6 +113,7 @@ add_executable(pvr_dispatcharr_tests
   test_api_key_recovery.cpp
   test_in_progress_segment_cache.cpp
   test_recorded_stream_registry.cpp
+  test_stream_warm_up.cpp
   test_epg_program_match.cpp
   test_timer_request_builder.cpp
   test_segment_fetch_failure.cpp

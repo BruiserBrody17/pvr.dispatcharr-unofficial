@@ -30,6 +30,7 @@
 #include "SegmentLookup.h"
 #include "Staleness.h"
 #include "StreamSeek.h"
+#include "StreamWarmUp.h"
 #include "StringUtil.h"
 #include "TimeUtil.h"
 #include "TimerRequestBuilder.h"
@@ -239,6 +240,8 @@ DispatcharrClient::DispatcharrClient(Config config) : m_config(std::move(config)
 
 DispatcharrClient::~DispatcharrClient()
 {
+  // The warm-up connection first: its worker thread uses the curl share freed below.
+  ReleaseWarmHold();
   // The persistent stream handles first: a handle still attached to a share when the share is cleaned up leaves
   // curl_share_cleanup() failing with CURLSHE_IN_USE, so both the handle and the share leaked. Only freed here, no
   // network (the stop request of a live Close is the caller's to make, and ~PVRDispatcharr() aborts what is in flight).
@@ -925,6 +928,178 @@ std::string DispatcharrClient::GetLiveStreamUrl(const Channel& channel) const
   // route to the host in that environment), but it's harmless to leave
   // in place and does prevent connection reuse in general.
   return BaseUrl() + "/proxy/ts/stream/" + channel.uuid + "|Connection=close";
+}
+
+namespace
+{
+// What the warm-up transfer's callbacks need, kept free of DispatcharrClient's types: the hold's stop flag, the
+// client-wide abort flag, and the place to announce the first bytes.
+struct WarmUpContext
+{
+  CURL* curl = nullptr;
+  const std::atomic<bool>* stop = nullptr;
+  const std::atomic<bool>* abort = nullptr;
+  bool gotData = false;
+  std::chrono::steady_clock::time_point readyAt;
+};
+
+long WarmHeldMs(const WarmUpContext& ctx)
+{
+  return static_cast<long>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - ctx.readyAt).count());
+}
+
+// Discards what the proxy sends (the connection has to be read or the proxy stalls its client). Returning 0 makes
+// libcurl end the transfer, which closes the connection and so releases the client the proxy counted for it: that is
+// how a stop, an abort or the end of the hold takes effect.
+size_t WarmUpWriteCallback(char* /*ptr*/, size_t size, size_t nmemb, void* userdata)
+{
+  auto* ctx = static_cast<WarmUpContext*>(userdata);
+  if (size * nmemb == 0 || ctx->stop->load() || ctx->abort->load())
+    return 0;
+  // Only a 200 is the channel's stream: a 503 or 404 carries a small error body that is not "the first bytes".
+  long httpCode = 0;
+  curl_easy_getinfo(ctx->curl, CURLINFO_RESPONSE_CODE, &httpCode);
+  if (httpCode != 200)
+    return size * nmemb;
+  if (!ctx->gotData)
+  {
+    ctx->gotData = true;
+    ctx->readyAt = std::chrono::steady_clock::now();
+  }
+  return dispatcharr::ShouldKeepWarmHold(false, WarmHeldMs(*ctx)) ? size * nmemb : 0;
+}
+
+// Called about once a second whether or not data flows, so a stalled stream still notices a stop or the end of the
+// hold.
+int WarmUpProgressCallback(void* userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+  auto* ctx = static_cast<WarmUpContext*>(userdata);
+  if (ctx->stop->load() || ctx->abort->load())
+    return 1;
+  return ctx->gotData && !dispatcharr::ShouldKeepWarmHold(false, WarmHeldMs(*ctx)) ? 1 : 0;
+}
+} // namespace
+
+void DispatcharrClient::RunWarmHold(WarmHold& hold, const std::string& url, long budgetMs)
+{
+  const auto began = std::chrono::steady_clock::now();
+  std::string lastError = "no answer";
+  for (;;)
+  {
+    const long elapsedBefore = static_cast<long>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count());
+    long remainingMs = budgetMs - elapsedBefore;
+    if (remainingMs < 1000)
+      remainingMs = 1000;
+
+    WarmUpContext ctx;
+    ctx.stop = &hold.stop;
+    ctx.abort = &m_abortRequests;
+    CURL* curl = curl_easy_init();
+    if (!curl)
+    {
+      lastError = "Failed to initialise libcurl";
+      break;
+    }
+    ctx.curl = curl;
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WarmUpWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    ApplyStandardCurlOptions(curl, GetCurlShare());
+    // After the standard options, which install their own progress callback (the client-wide abort flag); this one
+    // checks that flag too, and the hold's stop and end.
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, WarmUpProgressCallback);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
+    // The whole transfer, hold included: the last resort if the callbacks never run.
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, remainingMs + dispatcharr::kWarmHoldMs + 5000L);
+    const CURLcode res = curl_easy_perform(curl);
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+    curl_easy_cleanup(curl);
+
+    if (ctx.gotData)
+    {
+      kodi::Log(ADDON_LOG_DEBUG,
+                "pvr.dispatcharr-unofficial: WarmLiveStream: attached for %ld ms after the first bytes",
+                WarmHeldMs(ctx));
+      lastError = "attached";
+      break;
+    }
+    const long elapsedMs = static_cast<long>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count());
+    const bool transferFailed = res != CURLE_OK;
+    lastError =
+        "HTTP " + std::to_string(httpCode) + (transferFailed ? std::string(", ") + curl_easy_strerror(res) : "");
+    if (hold.stop.load() || m_abortRequests.load() ||
+        DecideWarmStreamStep(transferFailed, httpCode, false, elapsedMs, budgetMs) != WarmStreamStep::kRetry)
+      break;
+    // The proxy asks for a second (Retry-After: 1); a transport failure gets the same pause rather than a tight loop.
+    for (int i = 0; i < 10 && !hold.stop.load() && !m_abortRequests.load(); ++i)
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  if (lastError != "attached")
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: WarmLiveStream: not attached (%s)", lastError.c_str());
+  hold.finished = true;
+}
+
+bool DispatcharrClient::StartLiveStreamWarmUp(const std::string& streamUrl)
+{
+  const std::string url = StreamUrlWithoutKodiOptions(streamUrl);
+  if (url.empty())
+    return false;
+  // Only a URL on the configured server: it came from GetLiveStreamUrl(), which builds it from the configured address,
+  // but the request is one this addon makes itself, so it checks like the other requests the addon makes to a URL.
+  if (!IsOnConfiguredServer(url))
+    return false;
+
+  const long budgetMs = WarmStreamBudgetMs(m_config.timeoutSeconds);
+  auto hold = std::make_shared<WarmHold>();
+  hold->worker = std::thread([this, hold, url, budgetMs] { RunWarmHold(*hold, url, budgetMs); });
+  std::lock_guard<std::mutex> lock(m_warmHoldMutex);
+  // The previous channel is being left; its connection must not keep a provider slot while this one starts.
+  RetireWarmHoldLocked(std::move(m_warmHold));
+  ReapWarmHoldsLocked();
+  m_warmHold = std::move(hold);
+  return true;
+}
+
+void DispatcharrClient::RetireWarmHoldLocked(std::shared_ptr<WarmHold> hold)
+{
+  if (!hold)
+    return;
+  hold->stop = true;
+  m_retiredWarmHolds.push_back(std::move(hold));
+}
+
+void DispatcharrClient::ReapWarmHoldsLocked()
+{
+  for (auto it = m_retiredWarmHolds.begin(); it != m_retiredWarmHolds.end();)
+  {
+    if ((*it)->finished)
+    {
+      if ((*it)->worker.joinable())
+        (*it)->worker.join();
+      it = m_retiredWarmHolds.erase(it);
+    }
+    else
+      ++it;
+  }
+}
+
+void DispatcharrClient::ReleaseWarmHold()
+{
+  std::vector<std::shared_ptr<WarmHold>> holds;
+  {
+    std::lock_guard<std::mutex> lock(m_warmHoldMutex);
+    RetireWarmHoldLocked(std::move(m_warmHold));
+    holds.swap(m_retiredWarmHolds);
+  }
+  // Only the destructor reaches here with a reason to wait: each worker notices its stop flag within about a second.
+  for (auto& hold : holds)
+    if (hold->worker.joinable())
+      hold->worker.join();
 }
 
 std::string DispatcharrClient::GetChannelLogoUrl(int logoId) const

@@ -86,6 +86,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <nlohmann/json_fwd.hpp>
@@ -406,6 +407,19 @@ public:
   // Plain live-stream URL passthrough for live_timeshift_mode's "Off"
   // setting -- no server-side buffering, no admin-account requirement.
   std::string GetLiveStreamUrl(const Channel& channel) const;
+  // Starts `streamUrl` (what GetLiveStreamUrl() returned) on Dispatcharr's proxy in the background and returns at once;
+  // the connection stays attached, draining the stream, until dispatcharr::kWarmHoldMs after its first bytes. Kodi 22
+  // probes the URL and then plays it, and Dispatcharr answers its real request with 503 while the channel is still
+  // starting or has just seen its last client leave (dispatcharr::ShouldWarmLiveStream()); a client of the addon's own
+  // that is there throughout keeps the channel from ever being empty. It must not wait: the caller,
+  // GetChannelStreamProperties(), runs on Kodi's main thread, and waiting for a channel to start would freeze the
+  // interface for the whole start-up (2 to 7 s, up to dispatcharr::WarmStreamBudgetMs()). Retries in the background
+  // while the proxy says the channel is not ready, and gives up on a final answer or when the budget is spent; failing
+  // is harmless, Kodi then makes its request unwarmed as it did without this. One hold at a time: a new call stops the
+  // previous channel's. Returns whether a warm-up was started.
+  bool StartLiveStreamWarmUp(const std::string& streamUrl);
+  // Ends the warm-up connection, if there is one. Does not wait for its thread (joined later, or at destruction).
+  void ReleaseWarmHold();
   // logoId is a Logo object's own id (Channel::logoId), not the channel's id.
   std::string GetChannelLogoUrl(int logoId) const;
 
@@ -1229,6 +1243,23 @@ private:
   // one started afterwards, then ends at once instead of running to its timeout.
   // Mutable because ApplyStandardCurlOptions() is const and hands libcurl its address.
   mutable std::atomic<bool> m_abortRequests{false};
+
+  // The warm-up connection StartLiveStreamWarmUp() keeps attached while Kodi starts a plain-URL channel. The worker
+  // thread owns its curl handle; the owner only sets `stop` and joins.
+  struct WarmHold
+  {
+    std::atomic<bool> stop{false};
+    std::atomic<bool> finished{false}; // the worker has returned and can be joined without waiting
+    std::thread worker;
+  };
+  void RunWarmHold(WarmHold& hold, const std::string& url, long budgetMs);
+  // Stops `hold` and parks it to be joined; callers hold m_warmHoldMutex.
+  void RetireWarmHoldLocked(std::shared_ptr<WarmHold> hold);
+  // Joins the parked holds whose worker has returned; callers hold m_warmHoldMutex.
+  void ReapWarmHoldsLocked();
+  std::mutex m_warmHoldMutex;
+  std::shared_ptr<WarmHold> m_warmHold;
+  std::vector<std::shared_ptr<WarmHold>> m_retiredWarmHolds;
   std::function<void(ConnectionReport)> m_connectionObserver;
   void NotifyConnection(ConnectionReport report)
   {

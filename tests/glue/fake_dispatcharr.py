@@ -26,6 +26,11 @@ CTL.update({"seg_ms": "300", "window": "12", "ip_seg_ms": "300"})
 T0 = {"live": None, "ip": time.time()}
 LIVE_FROZEN_AT = {"n": None}
 IP_FROZEN_AT = {"n": None}
+PROXY = {
+    "n": 0,
+    "started": set(),
+    "open": 0,
+}  # Dispatcharr's /proxy/ts/stream/<uuid>: requests so far, channels started
 TOKEN = {"v": "tok1"}
 WS_PUSHED = []  # realtime messages pushed through /__ctl?ws_push= (every connected client gets all of them)
 REC_SIZE = 3 * 1024 * 1024 + 5
@@ -501,12 +506,16 @@ class H(BaseHTTPRequestHandler):
             key = method + " /tsbuf/seg"
         if "/hls/seg_" in p:
             key = method + " /hls/seg"
+        if p.startswith("/proxy/ts/stream/"):
+            key = method + " /proxy/ts/stream"
         with lock:
             counts[key] += 1
         if p == "/ws/" and self.headers.get("Upgrade", "").lower() == "websocket":
             return self.websocket()
+        if p.startswith("/proxy/ts/stream/"):
+            return self.proxy_stream(method, p)
         if p == "/__stats":
-            return self.J(200, dict(counts))
+            return self.J(200, dict(counts, proxy_open_now=PROXY["open"]))
         if p == "/__epgquery":
             return self.J(200, LAST_EPG_QUERY["q"])
         if p == "/__ctl":
@@ -518,6 +527,9 @@ class H(BaseHTTPRequestHandler):
                         pass
                 if k == "ip_freeze":
                     IP_FROZEN_AT["n"] = ip_count() if v[0] == "1" else None
+                if k == "proxy_reset":
+                    PROXY["n"] = 0
+                    PROXY["started"].clear()
                 if k == "ip_reset":
                     T0["ip"] = time.time() - float(v[0] if v[0] not in ("", "1") else 0)
                     IP_FROZEN_AT["n"] = None
@@ -853,6 +865,48 @@ class H(BaseHTTPRequestHandler):
             jb = {}
         if pvr_route(self, method, p, q, jb) is None:
             return self.J(404, {"detail": "nf"})
+
+    def proxy_stream(self, method, p):
+        """Dispatcharr's MPEG-TS proxy for a plain stream URL (what Off and Local modes hand to Kodi). GET only (HEAD
+        is 405, as measured). Knobs: proxy_init_ms (a channel's first request waits that long for its first bytes, the
+        provider connecting), proxy_503_first=N (the first N requests are refused with 503 + Retry-After: 1, a channel
+        still coming up), proxy_status=N (every request answers N). proxy_reset=1 forgets the started channels. A served
+        request streams until the client closes it; /__stats reports proxy_open_now, the clients attached right now."""
+        uuid = p.rsplit("/", 1)[1]
+        if method != "GET":
+            return self.send(405, b'{"detail":"Method not allowed."}', "application/json", {"Allow": "GET, OPTIONS"})
+        with lock:
+            PROXY["n"] += 1
+            n = PROXY["n"]
+            cold = uuid not in PROXY["started"]
+            PROXY["started"].add(uuid)
+        st = ctl_int("proxy_status")
+        if st:
+            return self.send(st, b'{"detail":"refused"}', "application/json", {"Retry-After": "1"})
+        if n <= ctl_int("proxy_503_first"):
+            return self.send(503, b'{"detail":"channel not ready"}', "application/json", {"Retry-After": "1"})
+        if cold and ctl_int("proxy_init_ms"):
+            time.sleep(ctl_int("proxy_init_ms") / 1000.0)
+        self.send_response(200)
+        self.send_header("Content-Type", "video/mp2t")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        with lock:
+            PROXY["open"] += 1
+        try:
+            # A live channel: data until the client leaves (40 s at most, so a stuck client cannot hang a run).
+            for _ in range(200):
+                chunk = bytes(188 * 7)
+                self.wfile.write(b"%x\r\n" % len(chunk) + chunk + b"\r\n")
+                self.wfile.flush()
+                time.sleep(0.2)
+            self.wfile.write(b"0\r\n\r\n")
+        except OSError:
+            pass  # the client ended the transfer, as Kodi's probe does once it has the headers
+        finally:
+            with lock:
+                PROXY["open"] -= 1
+        return True
 
     def do_GET(self):
         self.handle_any("GET")

@@ -21,6 +21,7 @@
 #include "ServerOffsetCrossCheck.h"
 #include "Staleness.h"
 #include "StreamPropertyUtil.h"
+#include "StreamWarmUp.h"
 #include "StringUtil.h"
 #include "TimeUtil.h"
 #include "TimeZoneUtil.h"
@@ -3069,6 +3070,15 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
     if (liveTimeshiftMode != kLiveTimeshiftServer)
       streamUrl = m_client.GetLiveStreamUrl(*ch);
   }
+
+  // Off and Local hand Kodi the proxy URL itself. Kodi 22 probes it and then plays it while Dispatcharr is still
+  // starting a channel nobody is watching, which Dispatcharr answers with 503, so start the channel in the
+  // background and stay attached to it while Kodi starts (StreamWarmUp.h). This must not wait for the channel: this
+  // runs on Kodi's main thread, where a wait of the channel's start-up (2 to 7 s, a slow one more) freezes the whole
+  // interface. A warm-up that fails is not an error; Kodi then makes its request unwarmed, as it did before this
+  // existed.
+  if (dispatcharr::ShouldWarmLiveStream(liveTimeshiftMode, streamUrl))
+    m_client.StartLiveStreamWarmUp(streamUrl);
 
   // Live pause/rewind ("timeshift") is opt-in via live_timeshift_mode --
   // see docs/TIMESHIFT.md for the full history: an earlier local
