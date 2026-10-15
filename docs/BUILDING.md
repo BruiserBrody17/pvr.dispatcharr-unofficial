@@ -16,11 +16,28 @@ deliberately not part of that automation; see its own note in the
 "Linux / macOS (x86_64)" section below for why, and how to build/release
 it by hand instead.
 
+## Which Kodi, which branch
+
+This repository has one branch per Kodi release ([BRANCHES.md](BRANCHES.md)): **`Omega` builds against Kodi 21 and
+`Piers` against Kodi 22**, and the steps below are the same for both except for the Kodi tree to clone. The sections
+were written and verified live against Kodi 21 (`Omega`); on `Piers` they have been run by CI on Linux and Windows
+only, against the Kodi commit `KODI_COMMIT` pins (`22.0rc1-Piers`), and the first Windows generator / dependency layout
+that CI found for Kodi 22 is the one `.github/workflows/build.yml` uses. Nothing else has been built by hand for Kodi 22
+yet. What is known to differ, from Kodi's own documentation at that commit:
+
+- **Android:** NDK `28.2.13676358` (Kodi 21: `21.4.7075529`), `platforms;android-37.0` (`android-34`) and
+  `build-tools;37.0.0` (`33.0.1`); the "Android" section's version strings, `--with-ndk-path`, the worktree names and the
+  Kodi APK file name all change with them. Confirm each against Kodi's `docs/README.Android.md` at the commit you build.
+- **CoreELEC:** the `coreelec-22` branch (tag `22.0-Piers_rc1` exists) instead of `coreelec-21`; its `Amlogic-ng`
+  device, image and 32-bit userland facts in the CoreELEC section are Kodi 21's and unverified for Kodi 22.
+- **The built `addon.xml`** should declare `kodi.binary.global.main` 2.0.3 and the PVR instance API 9.2.0 (it is generated
+  from the Kodi tree; `addon.xml.in` hard-codes neither): check it on the first Windows hand build.
+
 ## Linux / macOS (x86_64)
 
-1. Clone a Kodi source tree matching your target Kodi major version (e.g.
-   the `Omega` branch for Kodi 21.x, since that's roughly what CoreELEC on
-   an ODROID N2+ ships):
+1. Clone a Kodi source tree matching your target Kodi major version (the
+   `Omega` branch for Kodi 21.x, which is roughly what CoreELEC on an ODROID N2+
+   ships, or `Piers` for Kodi 22):
    ```bash
    git clone --branch Omega --depth 1 https://github.com/xbmc/xbmc.git kodi-source
    ```
@@ -403,6 +420,8 @@ called out inline so a future rebuild doesn't have to rediscover them.
    sha256sum $S/pvr.dispatcharr-unofficial-<v>.tar.gz | cut -d' ' -f1 > $S/pvr.dispatcharr-unofficial-<v>.tar.gz.sha256
    echo "https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/archive/<v>.tar.gz" > $S/pvr.dispatcharr-unofficial-<v>.tar.gz.url
    ```
+   (`<v>` here is the package's `PKG_VERSION` exactly as `package.mk` spells it: on `Piers` that is the tag name with
+   its suffix, `0.14.0-Piers`, which is also the directory name the tarball must unpack into.)
    then copy `package.mk` into the CoreELEC tree (step 3) with `PKG_SHA256` set to that tarball's checksum. Only the tree's
    copy gets it: the repository's `package.mk` keeps the all-zeros placeholder until the tag's source archive exists,
    whose checksum (a different gzip, so a different hash) is the one anyone else's build needs. The zip's contents do not
@@ -414,8 +433,9 @@ called out inline so a future rebuild doesn't have to rediscover them.
    source), clone CoreELEC at the branch matching your device's installed
    CoreELEC major version -- **use the branch matching CoreELEC's current
    *stable* release, not whatever branch happens to be default/newest**:
-   `coreelec-22` tracks Kodi 22 "Piers", which as of this writing is still
-   a beta (`22.0b2`) with a materially different PVR addon API (the
+   `coreelec-22` tracks Kodi 22 "Piers" (on the `Piers` branch of this repository, use
+   it, with the caveat in "Which Kodi, which branch" above; this paragraph is the `Omega` branch's
+   account, from when `coreelec-22` was still a beta, `22.0b2`) with a materially different PVR addon API (the
    recorded-stream methods gained a `streamId` parameter for
    concurrent-stream support) -- confirmed live by actually
    cross-compiling against it, which failed with `override` mismatches on
@@ -878,6 +898,9 @@ privacy gate passes on all of them together.**
 | `addon-pvr.dispatcharr-unofficial-<v>-osx-arm64.zip` | by hand on the Mac ("Linux / macOS" above) |
 | `addon-pvr.dispatcharr-unofficial-<v>-android-aarch64.zip`, `...-android-armv7.zip` | by hand ("Android" above) |
 | `addon-pvr.dispatcharr-unofficial-<v>-coreelec-armv7.zip` (the CoreELEC package, renamed from CoreELEC's `pvr.dispatcharr-unofficial-<v>.1.zip`; the `.1` is its own revision suffix and stays inside the zip's `addon.xml`) | by hand ("CoreELEC" below) |
+
+The tag is `<version>-<Branch>` (`0.14.0-Piers`, `0.13.1-Omega`; [BRANCHES.md](BRANCHES.md)) and is the only place the
+branch appears: the zips' names, `--expect-release` and the CHANGELOG heading use the plain version.
 
 Cutting a release, in order:
 

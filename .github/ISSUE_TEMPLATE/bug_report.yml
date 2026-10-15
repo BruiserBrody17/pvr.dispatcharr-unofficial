@@ -53,7 +53,7 @@ body:
     attributes:
       label: Platform
       description: Where Kodi is running, and its version.
-      placeholder: "e.g. Windows 11, Kodi 21.2 / CoreELEC on an ODROID N2+"
+      placeholder: "e.g. Windows 11 with Kodi 22 RC1, or CoreELEC (ODROID N2+) with Kodi 21.2"
     validations:
       required: true
 

@@ -119,8 +119,9 @@ handled here.
   to review with no test suite backing it up.
 - Don't worry about crafting a clean commit history on your own
   branch -- accepted PRs get squash-merged into one commit, so your
-  branch's intermediate commits don't end up in `Omega`'s history
-  either way.
+  branch's intermediate commits don't end up in the release branch's history
+  either way. Open the PR against the branch for your Kodi version: `Omega` for Kodi 21, `Piers` for Kodi 22
+  (see [docs/BRANCHES.md](docs/BRANCHES.md)); the maintainer ports a fix to the other when it applies to both.
 
 ## Versioning
 

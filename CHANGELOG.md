@@ -10,6 +10,30 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [0.14.0] - unreleased
+
+The first release for Kodi 22 ("Piers"), built against Kodi 22.0 RC1. **It works with Kodi 22 only**: Kodi 22 refuses a
+binary addon built for Kodi 21 ("not supported"), and this one is refused by Kodi 21 the other way round. Kodi 21 stays on the
+`0.13.x` line, kept on the project's `Omega` branch. The release tags carry the branch they were cut from (`0.14.0-Piers`,
+`0.13.1-Omega`); the addon version itself is the plain number. It bundles `timeshift_buffer` `0.8.14` and `recording_edl`
+`0.2.3` as they were in `0.13.0`, so there is nothing to redeploy to Dispatcharr if you already run them, and carries the same
+eight downloads.
+
+### Added
+
+- **Kodi 22 support**: the addon is rebuilt against Kodi 22's addon interface, which changed how recordings are played and
+  how a guide entry can be played as live television.
+- **Several recordings can be open at once**: Kodi 22 opens the next recording before it closes the previous one, and this
+  addon now keeps each one's playback state separate, so starting a second recording while the first is still shutting down
+  no longer replaces the first. Two viewers of the same recording each have their own position. A paused recording
+  that is behind the end of one still being recorded keeps telling the server it is watching, so the server keeps that
+  recording's playlist, which can hold back the end of the recording for another viewer who has reached it.
+
+### Changed
+
+- Pause, seek and live-edge state of a recording are answered per recording by Kodi 22; the live-television answers are
+  unchanged.
+
 ## [0.13.0] - 2026-10-14
 
 Addon changes since `0.12.0`. This release bundles `timeshift_buffer` `0.8.14` and `recording_edl` `0.2.3` as they

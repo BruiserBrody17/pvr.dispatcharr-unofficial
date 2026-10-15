@@ -146,17 +146,20 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   change". Move to `1.0.0` on this project's own track record (testing beyond one person, no more playback-breaking bugs),
   not when Dispatcharr's version does.
 - **Branch for anything nontrivial, as of 2026-09-07.** The dividing line is behavioural risk, not size: a trivial,
-  low-risk fix (including a docs-only pass) goes straight to `Omega`; a bug investigation, feature or risky refactor gets a
-  short-lived branch, merged once verified, then deleted. Not GitFlow: one maintainer, and the point is a known-good `Omega`
-  and a diff to review. A branch that lives a while gets `git merge Omega` along the way; a dependency whose *behaviour*
-  changed without its signature fails nothing at compile time, so re-test after syncing.
-- **The main branch is named after the Kodi release it targets, as of 2026-10-05: `Omega`
-  (Kodi 21), not `master`.** Kodi's own addons (e.g. `pvr.hts`) name branches after the Kodi
-  release they build against (`Matrix`, `Nexus`, `Omega`, `Piers`...), so this follows the same
-  convention; `KODI_BRANCH` in `.github/workflows/build.yml` is the matching Kodi tree. When a
-  later Kodi release (Piers, Kodi 22) changes the PVR API enough that the addon needs separate
-  per-Kodi versions, branch `Piers` off `Omega` at that point and keep `Omega` as the
-  maintenance branch for Kodi 21, rather than renaming again. Older text in `docs/` and in this
+  low-risk fix (including a docs-only pass) goes straight to the release branch it belongs to (`Omega` or `Piers`, below); a
+  bug investigation, feature or risky refactor gets a short-lived branch, merged once verified, then deleted. Not GitFlow:
+  one maintainer, and the point is a known-good release branch and a diff to review. A branch that lives a while gets its
+  base merged in along the way; a dependency whose *behaviour* changed without its signature fails nothing at compile time,
+  so re-test after syncing.
+- **Branches are named after the Kodi release they target, as of 2026-10-05: `Omega` (Kodi 21) and, since 2026-10-14,
+  `Piers` (Kodi 22), not `master`.** Kodi's own addons (e.g. `pvr.hts`) do the same, and `KODI_BRANCH` in
+  `.github/workflows/build.yml` is each branch's Kodi tree. Kodi 22 refuses a Kodi 21 build, so the two release
+  separately: `Omega` is the Kodi 21 maintenance branch, `Piers` takes new work. One shared `0.x` version line (Omega
+  `0.13.x`, Piers from `0.14.0`); the addon version stays plain numeric and only the git tag and release name carry the
+  branch (`0.14.0-Piers`). `Omega` fixes are ported to `Piers` by hand from here on, not merged: the recorded-stream
+  state differs. [docs/BRANCHES.md](docs/BRANCHES.md) has the tag rules, what differs, and the list of what has been
+  ported. A change to the glue harness's Kodi ABI shape goes in `tests/glue/kodi_abi.h`, which each branch has its own
+  copy of. Older text in `docs/` and in this
   file that says `master` describes the branch as it was then and is left as written. The links to
   the public GitHub repo that still say `master` are tracked in `docs/CLOSED_ITEMS.md`'s "Links to the
   public GitHub repo still name the master branch" entry.
@@ -202,7 +205,8 @@ everything); lint and every unit-test job run on every push, since the cross-fil
 - **Three independent version numbers, decoupled since 1.0.1**: the addon and each plugin version separately. Bump only the
   piece whose files changed, and move all of that piece's version locations together:
   - Addon: `pvr.dispatcharr-unofficial/addon.xml.in` (`<addon version="...">`) and
-    `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk` (`PKG_VERSION`, with `PKG_SHA256` reset to the all-zeros
+    `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk` (`PKG_VERSION`, which is the tag name: the version plus
+    `-Piers`; with `PKG_SHA256` reset to the all-zeros
     placeholder until the tag exists and the real checksum can be computed). CoreELEC packages the addon only, so this
     pair moves only with the addon's version.
   - Each plugin: `plugin.json` **and** the `Plugin` class `version` attribute in its `plugin.py`. `plugin.json` is only the
@@ -211,7 +215,8 @@ everything); lint and every unit-test job run on every push, since the cross-fil
 
   A tag/release is addon-version-scoped (it triggers CI, which builds and publishes nothing) and carries both plugin zips whether or not their version moved.
   `CHANGELOG.md` says which piece(s) moved in an entry.
-- **Releasing, as of 2026-10-07 (every platform, one gate).** A tag is the moment history becomes something a stranger can
+- **Releasing, as of 2026-10-07 (every platform, one gate).** The tag is `<version>-<Branch>` (`0.14.0-Piers`), everything
+  else uses the plain version. A tag is the moment history becomes something a stranger can
   clone, so before tagging run a data-hardening audit (an Opus subagent sweep over code, docs, full history and every
   hosting-side surface: release assets, issues/PRs) and resolve any real finding with a `git-filter-repo` rewrite, never a
   plain commit. The local pre-push and commit hooks are a backstop, not a substitute, and they do not see release assets.

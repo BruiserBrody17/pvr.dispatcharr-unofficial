@@ -102,6 +102,7 @@ def test_a_pull_request_is_judged_the_same_way():
     "event,ref,base,head",
     [
         ("push", "refs/tags/0.12.0", "a" * 40, "b" * 40),  # a release builds everything
+        ("push", "refs/tags/0.14.0-Piers", "a" * 40, "b" * 40),  # so does a release tag carrying its branch
         ("workflow_dispatch", "refs/heads/Omega", "", ""),
         ("push", "refs/heads/Omega", "0" * 40, "b" * 40),  # a new branch has no base
         ("push", "refs/heads/Omega", "", "b" * 40),
