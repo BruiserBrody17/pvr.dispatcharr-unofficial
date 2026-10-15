@@ -2,6 +2,7 @@
 // filesystem, notifications, logging, and the PVR "to Kodi" callbacks (collecting transferred entries).
 #include <kodi/AddonBase.h>
 #include <kodi/General.h>
+#include "collected.h"
 #include <kodi/addon-instance/PVR.h>
 #include <kodi/Filesystem.h>
 #include <atomic>
@@ -236,34 +237,29 @@ void InitKodiStub()
 }
 
 // ---------------- PVR callbacks
-struct Collected
-{
-  std::mutex mu;
-  std::vector<PVR_CHANNEL> channels;
-  std::vector<PVR_CHANNEL_GROUP> groups;
-  std::vector<PVR_CHANNEL_GROUP_MEMBER> members;
-  std::vector<EPG_TAG> epg;
-  std::vector<std::string> epgTitles;
-  std::vector<PVR_RECORDING> recordings;
-  std::vector<PVR_TIMER> timers;
-};
 static void t_chan(void*, const PVR_HANDLE h, const PVR_CHANNEL* c)
 {
   auto* r = (Collected*)h;
   std::lock_guard<std::mutex> g(r->mu);
   r->channels.push_back(*c);
+  PVR_CHANNEL& o = r->channels.back();
+  o.strChannelName = r->Own(o.strChannelName);
+  o.strMimeType = r->Own(o.strMimeType);
+  o.strIconPath = r->Own(o.strIconPath);
 }
 static void t_group(void*, const PVR_HANDLE h, const PVR_CHANNEL_GROUP* c)
 {
   auto* r = (Collected*)h;
   std::lock_guard<std::mutex> g(r->mu);
   r->groups.push_back(*c);
+  r->groups.back().strGroupName = r->Own(r->groups.back().strGroupName);
 }
 static void t_member(void*, const PVR_HANDLE h, const PVR_CHANNEL_GROUP_MEMBER* c)
 {
   auto* r = (Collected*)h;
   std::lock_guard<std::mutex> g(r->mu);
   r->members.push_back(*c);
+  r->members.back().strGroupName = r->Own(r->members.back().strGroupName);
 }
 static void t_epg(void*, const PVR_HANDLE h, const EPG_TAG* c)
 {
@@ -292,12 +288,36 @@ static void t_rec(void*, const PVR_HANDLE h, const PVR_RECORDING* c)
   auto* r = (Collected*)h;
   std::lock_guard<std::mutex> g(r->mu);
   r->recordings.push_back(*c);
+  PVR_RECORDING& o = r->recordings.back();
+  o.strRecordingId = r->Own(o.strRecordingId);
+  o.strTitle = r->Own(o.strTitle);
+  o.strTitleExtraInfo = r->Own(o.strTitleExtraInfo);
+  o.strEpisodeName = r->Own(o.strEpisodeName);
+  o.strDirectory = r->Own(o.strDirectory);
+  o.strPlotOutline = r->Own(o.strPlotOutline);
+  o.strPlot = r->Own(o.strPlot);
+  o.strGenreDescription = r->Own(o.strGenreDescription);
+  o.strChannelName = r->Own(o.strChannelName);
+  o.strIconPath = r->Own(o.strIconPath);
+  o.strThumbnailPath = r->Own(o.strThumbnailPath);
+  o.strFanartPath = r->Own(o.strFanartPath);
+  o.strFirstAired = r->Own(o.strFirstAired);
+  o.strProviderName = r->Own(o.strProviderName);
+  o.strParentalRatingCode = r->Own(o.strParentalRatingCode);
+  o.strParentalRatingIcon = r->Own(o.strParentalRatingIcon);
+  o.strParentalRatingSource = r->Own(o.strParentalRatingSource);
 }
 static void t_timer(void*, const PVR_HANDLE h, const PVR_TIMER* c)
 {
   auto* r = (Collected*)h;
   std::lock_guard<std::mutex> g(r->mu);
   r->timers.push_back(*c);
+  PVR_TIMER& o = r->timers.back();
+  o.strTitle = r->Own(o.strTitle);
+  o.strEpgSearchString = r->Own(o.strEpgSearchString);
+  o.strDirectory = r->Own(o.strDirectory);
+  o.strSummary = r->Own(o.strSummary);
+  o.strSeriesLink = r->Own(o.strSeriesLink);
 }
 static void t_trigger(void*)
 {
@@ -366,7 +386,7 @@ KODI_ADDON_INSTANCE_STRUCT* MakePvrInstanceStruct()
   memset(&g_info, 0, sizeof g_info);
   g_info.type = ADDON_INSTANCE_PVR;
   g_info.id = "pvr";
-  g_info.version = "9.0.0";
+  g_info.version = ADDON_INSTANCE_VERSION_PVR;
   g_info.first_instance = true;
   memset(&g_instFuncsCb, 0, sizeof g_instFuncsCb);
   g_info.functions = &g_instFuncsCb;

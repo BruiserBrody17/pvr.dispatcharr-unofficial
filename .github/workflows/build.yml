@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [Omega]
+    branches: [Piers]
     # No "v" prefix: matches this project's own tagging convention
     # (0.4.0, 1.0.0-beta.1, ...), confirmed against actual tag pushes --
     # "v*" here previously matched none of them. A tag builds everything
@@ -21,12 +21,13 @@ permissions:
   contents: read
 
 env:
-  KODI_BRANCH: Omega # the Kodi release line this build targets (names the line; the commit below is what is built)
-  # The exact Kodi commit every job builds against: the head of KODI_BRANCH when it was last verified (the same tree
-  # the by-hand and glue builds use). A moving branch meant a release build could pick up whatever Kodi pushed that
-  # day. To move it: set this to a newer head of KODI_BRANCH, run the workflow, and update docs/BUILDING.md's step 1
-  # if the checkout changes shape; tools/tests/test_dependency_pins.py checks it stays a full commit SHA.
-  KODI_COMMIT: f8815ee40f49a700c047982d752be4b2a61420e2
+  KODI_BRANCH: Piers # the Kodi release line this build targets (names the line; the commit below is what is built)
+  # The exact Kodi commit every job builds against: the 22.0 RC1 tag (22.0rc1-Piers), not the head of KODI_BRANCH.
+  # Piers' PVR headers are the same at the head, but its kodi.binary.global.main API is 2.0.4 there against RC1's
+  # 2.0.3, and an addon built against the newer one would declare a minimum that RC1 refuses. To move it: set this to
+  # the 22.0 final tag once that is verified, run the workflow, and update docs/BUILDING.md's step 1 if the checkout
+  # changes shape; tools/tests/test_dependency_pins.py checks it stays a full commit SHA.
+  KODI_COMMIT: 28ea2eac1eb7af8fdcbd2672d933ce87f594be79
 
 jobs:
   # Whether the compile-and-package jobs below (build-unix, build-windows, glue-harness) have anything to do: a push

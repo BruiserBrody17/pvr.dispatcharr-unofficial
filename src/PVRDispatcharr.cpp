@@ -3024,9 +3024,17 @@ PVR_ERROR PVRDispatcharr::GetChannels(bool radio, kodi::addon::PVRChannelsResult
   return PVR_ERROR_NO_ERROR;
 }
 
-PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChannel& channel,
+PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChannel& channel, PVR_SOURCE source,
                                                      std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
+  // Kodi 22 passes PVR_SOURCE_EPG_AS_LIVE only for a guide entry the addon
+  // marked PVR_STREAM_PROPERTY_EPGPLAYBACKASLIVE in GetEPGTagStreamProperties(),
+  // which this addon deliberately never does (see the note there), so this is
+  // always the plain live source here; log anything else rather than guess at
+  // a different behaviour for it. (The unprefixed enumerator for the plain
+  // source is called DEFAULT, so compare against the prefixed one.)
+  if (source == PVR_SOURCE_EPG_AS_LIVE)
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: GetChannelStreamProperties: guide entry played as live");
   // Read once into a local, not twice from the atomic member (fixed
   // 2026-09-27, a 61st-pass audit, fixing a real, confirmed gap found
   // via a project-wide review, not itself independently reproduced,
@@ -4055,8 +4063,15 @@ PVR_ERROR PVRDispatcharr::GetRecordingEdl(const kodi::addon::PVRRecording& recor
   return PVR_ERROR_NO_ERROR;
 }
 
-bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recording)
+// Kodi 22 hands every recorded-stream call an id. This addon does not declare
+// SetSupportsMultipleRecordedStreams(), so Kodi closes the previous stream
+// before each open and the id can be ignored; one fixed id keeps the
+// single-slot state in DispatcharrClient unchanged.
+static constexpr int64_t kSingleRecordedStreamId = 1;
+
+bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recording, int64_t& streamId)
 {
+  streamId = kSingleRecordedStreamId;
   int id = std::atoi(recording.GetRecordingId().c_str());
   std::string error;
   std::string keyBefore = m_client.GetApiKey();
@@ -4161,7 +4176,7 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   return true;
 }
 
-void PVRDispatcharr::CloseRecordedStream()
+void PVRDispatcharr::CloseRecordedStream(int64_t /*streamId*/)
 {
   kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: CloseRecordedStream: isInProgressStreamOpen=%d",
             m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
@@ -4171,7 +4186,7 @@ void PVRDispatcharr::CloseRecordedStream()
     m_client.CloseRecordingStream();
 }
 
-int PVRDispatcharr::ReadRecordedStream(unsigned char* buffer, unsigned int size)
+int PVRDispatcharr::ReadRecordedStream(int64_t /*streamId*/, unsigned char* buffer, unsigned int size)
 {
   // Same self-heal persistence as the completed-recording branch below --
   // including updating m_lastAppliedConfig.apiKey first, for the same
@@ -4193,7 +4208,7 @@ int PVRDispatcharr::ReadRecordedStream(unsigned char* buffer, unsigned int size)
   return result;
 }
 
-int64_t PVRDispatcharr::SeekRecordedStream(int64_t position, int whence)
+int64_t PVRDispatcharr::SeekRecordedStream(int64_t /*streamId*/, int64_t position, int whence)
 {
   // Same self-heal persistence gap as ReadRecordedStream()/
   // LengthRecordedStream() above (see their own comment) --
@@ -4213,7 +4228,7 @@ int64_t PVRDispatcharr::SeekRecordedStream(int64_t position, int whence)
   return m_client.SeekRecordingStream(position, whence);
 }
 
-int64_t PVRDispatcharr::LengthRecordedStream()
+int64_t PVRDispatcharr::LengthRecordedStream(int64_t /*streamId*/)
 {
   // Same self-heal persistence gap as ReadRecordedStream() above --
   // GetInProgressRecordingStreamLength() also calls

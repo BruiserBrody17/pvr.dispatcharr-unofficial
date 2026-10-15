@@ -75,7 +75,7 @@ public:
   // --- Channels ---
   PVR_ERROR GetChannelsAmount(int& amount) override;
   PVR_ERROR GetChannels(bool radio, kodi::addon::PVRChannelsResultSet& results) override;
-  PVR_ERROR GetChannelStreamProperties(const kodi::addon::PVRChannel& channel,
+  PVR_ERROR GetChannelStreamProperties(const kodi::addon::PVRChannel& channel, PVR_SOURCE source,
                                        std::vector<kodi::addon::PVRStreamProperty>& properties) override;
 
   // Server-side timeshift's actual playback path: GetChannelStreamProperties()
@@ -131,11 +131,11 @@ public:
   // PVR_STREAM_PROPERTY_STREAMURL from GetRecordingStreamProperties() for
   // this path the way live channels and catch-up work. See
   // DispatcharrClient::OpenRecordingStream().
-  bool OpenRecordedStream(const kodi::addon::PVRRecording& recording) override;
-  void CloseRecordedStream() override;
-  int ReadRecordedStream(unsigned char* buffer, unsigned int size) override;
-  int64_t SeekRecordedStream(int64_t position, int whence) override;
-  int64_t LengthRecordedStream() override;
+  bool OpenRecordedStream(const kodi::addon::PVRRecording& recording, int64_t& streamId) override;
+  void CloseRecordedStream(int64_t streamId) override;
+  int ReadRecordedStream(int64_t streamId, unsigned char* buffer, unsigned int size) override;
+  int64_t SeekRecordedStream(int64_t streamId, int64_t position, int whence) override;
+  int64_t LengthRecordedStream(int64_t streamId) override;
 
   // --- Timers ---
   PVR_ERROR GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& types) override;

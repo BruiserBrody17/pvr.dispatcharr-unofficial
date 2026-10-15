@@ -85,6 +85,14 @@ def test_a_push_touching_source_builds():
     assert gate.decide("push", "refs/heads/Omega", "a" * 40, "b" * 40, _fake_git("docs/x.md\nsrc/PVRDispatcharr.cpp\n"))
 
 
+@pytest.mark.parametrize("branch", ["Omega", "Piers"])
+def test_the_gate_does_not_depend_on_which_kodi_branch_is_pushed(branch):
+    # One branch per Kodi release (CLAUDE.md), each running this same workflow.
+    ref = f"refs/heads/{branch}"
+    assert not gate.decide("push", ref, "a" * 40, "b" * 40, _fake_git("docs/x.md\n"))
+    assert gate.decide("push", ref, "a" * 40, "b" * 40, _fake_git("src/PVRDispatcharr.cpp\n"))
+
+
 def test_a_pull_request_is_judged_the_same_way():
     assert not gate.decide("pull_request", "refs/merge/3", "a" * 40, "b" * 40, _fake_git("README.md\n"))
     assert gate.decide("pull_request", "refs/merge/3", "a" * 40, "b" * 40, _fake_git("src/XmlTvParser.cpp\n"))

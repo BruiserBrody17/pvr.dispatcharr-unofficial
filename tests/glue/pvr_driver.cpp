@@ -1,6 +1,7 @@
 // Drives PVRDispatcharr through Kodi's real C function table (the KodiToAddonFuncTable_PVR the
 // dev-kit's CInstancePVRClient fills in), against fake_dispatcharr.py, from several threads.
 #include "PVRDispatcharr.h"
+#include "collected.h"
 #include "kodi_abi.h"
 #include <kodi/addon-instance/PVR.h>
 #include <atomic>
@@ -28,17 +29,6 @@ extern std::vector<std::string> g_notifyMessages;
 extern std::vector<int> g_connCalls;
 extern std::vector<std::string> g_connMessages;
 extern AddonInstance_PVR g_pvr;
-struct Collected
-{
-  std::mutex mu;
-  std::vector<PVR_CHANNEL> channels;
-  std::vector<PVR_CHANNEL_GROUP> groups;
-  std::vector<PVR_CHANNEL_GROUP_MEMBER> members;
-  std::vector<EPG_TAG> epg;
-  std::vector<std::string> epgTitles;
-  std::vector<PVR_RECORDING> recordings;
-  std::vector<PVR_TIMER> timers;
-};
 
 static int g_port;
 static std::atomic<int> g_fail{0};
