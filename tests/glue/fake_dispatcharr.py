@@ -29,6 +29,10 @@ IP_FROZEN_AT = {"n": None}
 TOKEN = {"v": "tok1"}
 WS_PUSHED = []  # realtime messages pushed through /__ctl?ws_push= (every connected client gets all of them)
 REC_SIZE = 3 * 1024 * 1024 + 5
+# Two completed and two in-progress recordings, each with its own byte pattern, so a driver that holds several
+# streams open at once can tell if one stream was ever served another's bytes.
+REC_TAGS = {5: 0xC0FFEE00, 6: 0xDEADBE00}
+IP_TAGS = {7: 0x1B000000, 8: 0x2C000000}
 
 
 def ctl_int(k, d=0):
@@ -48,12 +52,12 @@ def seg_bytes(tag, seq, size):
     return b"".join(struct.pack(">II", tag | (seq & 0xFFFF), k) for k in range(n))
 
 
-def rec_bytes(start, end):  # [start, end) of the completed recording
+def rec_bytes(start, end, tag=0xC0FFEE00):  # [start, end) of a completed recording
     out = bytearray()
     first = start // 8
     last = (end + 7) // 8
     for k in range(first, last):
-        out += struct.pack(">II", 0xC0FFEE00, k)
+        out += struct.pack(">II", tag, k)
     off = start - first * 8
     return bytes(out[off : off + (end - start)])
 
@@ -714,7 +718,7 @@ class H(BaseHTTPRequestHandler):
         if (
             p != "/api/channels/recordings/"
             and p.startswith("/api/channels/recordings/")
-            and p.split("/")[4:5] not in (["5"], ["7"])
+            and p.split("/")[4:5] not in [[str(i)] for i in (*REC_TAGS, *IP_TAGS)]
         ):
             r = pvr_route(self, method, p, q, json.loads(b) if b else {})
             if r is None:
@@ -728,7 +732,8 @@ class H(BaseHTTPRequestHandler):
                 with lock:
                     counts["401 " + key] += 1
                 return self.send(401, b'{"detail":"bad key"}')
-            if rid == 5:  # completed recording
+            if rid in REC_TAGS:  # completed recording
+                tag = REC_TAGS[rid]
                 if rest == ["file"]:
                     st = ctl_int("rec_status", 0)
                     if st:
@@ -748,14 +753,14 @@ class H(BaseHTTPRequestHandler):
                             )
                         return self.send(
                             206,
-                            rec_bytes(a, bb + 1),
+                            rec_bytes(a, bb + 1, tag),
                             "video/mp2t",
                             {"Content-Range": "bytes %d-%d/%d" % (a, bb, data_len)},
                             method == "HEAD",
                         )
                     if ign and ctl_int("rec_slow_ms") and method != "HEAD":
                         # a body that takes a while to arrive, as a multi-gigabyte file over a real link does
-                        body = rec_bytes(0, data_len)
+                        body = rec_bytes(0, data_len, tag)
                         self.send_response(200)
                         self.send_header("Content-Type", "video/mp2t")
                         self.send_header("Content-Length", str(len(body)))
@@ -768,17 +773,18 @@ class H(BaseHTTPRequestHandler):
                         except OSError:
                             pass  # the client ended the transfer
                         return True
-                    return self.send(200, rec_bytes(0, data_len), "video/mp2t", None, method == "HEAD")
+                    return self.send(200, rec_bytes(0, data_len, tag), "video/mp2t", None, method == "HEAD")
                 return self.J(
                     200,
                     {
-                        "id": 5,
+                        "id": rid,
                         "start_time": "2026-10-01T10:00:00Z",
                         "end_time": "2026-10-01T11:00:00Z",
                         "custom_properties": {"status": "completed"},
                     },
                 )
-            if rid == 7:  # in-progress recording
+            if rid in IP_TAGS:  # in-progress recording
+                tag = IP_TAGS[rid]
                 state = CTL["ip_state"] or "recording"
                 if rest == []:
                     if state == "deleted":
@@ -789,7 +795,7 @@ class H(BaseHTTPRequestHandler):
                     return self.J(
                         200,
                         {
-                            "id": 7,
+                            "id": rid,
                             "channel": 1,
                             "start_time": st,
                             "end_time": en,
@@ -799,10 +805,13 @@ class H(BaseHTTPRequestHandler):
                 if rest == ["file"]:
                     return self.J(404, {"detail": "nf"})
                 if rest == ["hls", "index.m3u8"]:
+                    if ctl_int("ip_manifest_delay_ms_%d" % rid):
+                        # a slow first playlist for one recording, so that its open takes a while
+                        time.sleep(ctl_int("ip_manifest_delay_ms_%d" % rid) / 1000.0)
                     if state == "deleted" or CTL["ip_nodir"] == "1":
                         return self.J(404, {"detail": "nf"})
                     if CTL["ip_dir_gone"] == "1":
-                        return self.send(302, b"", "text/html", {"Location": "/api/channels/recordings/7/file/"})
+                        return self.send(302, b"", "text/html", {"Location": "/api/channels/recordings/%d/file/" % rid})
                     n = ip_count()
                     host = CTL["ip_host"] or ("127.0.0.1:%d" % PORT)
                     lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:1", "#EXT-X-MEDIA-SEQUENCE:0"]
@@ -811,7 +820,7 @@ class H(BaseHTTPRequestHandler):
                         if CTL["ip_relative"] == "1":
                             lines.append("seg_%05d.ts" % s)
                         else:
-                            lines.append("http://%s/api/channels/recordings/7/hls/seg_%05d.ts" % (host, s))
+                            lines.append("http://%s/api/channels/recordings/%d/hls/seg_%05d.ts" % (host, rid, s))
                     if CTL["ip_endlist"] == "1":
                         lines.append("#EXT-X-ENDLIST")
                     return self.send(200, ("\n".join(lines) + "\n").encode(), "application/vnd.apple.mpegurl")
@@ -836,7 +845,7 @@ class H(BaseHTTPRequestHandler):
                         self.send_header("Content-Length", str(seg_size(s)))
                         self.end_headers()
                         return True
-                    return self.send(200, seg_bytes(0x1B000000, s, seg_size(s)), "video/mp2t", None, method == "HEAD")
+                    return self.send(200, seg_bytes(tag, s, seg_size(s)), "video/mp2t", None, method == "HEAD")
             return self.J(404, {"detail": "nf"})
         try:
             jb = json.loads(b) if b else {}

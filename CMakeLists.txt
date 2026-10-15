@@ -184,6 +184,7 @@ set(DISPATCHARR_HEADERS
     src/RecordingDirectory.h
     src/ChannelRenumbering.h
     src/InProgressSegmentCache.h
+    src/RecordedStreamRegistry.h
     src/HlsViewerKeepAlive.h
     src/EpgProgramMatch.h
     src/TimerRequestBuilder.h

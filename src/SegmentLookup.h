@@ -7,7 +7,7 @@
 namespace dispatcharr
 {
 
-// Shared by DispatcharrClient::ReadInProgressRecordingStream() and
+// Shared by DispatcharrClient::ReadInProgressRecordingStreamImpl() and
 // ReadLiveTimeshiftStream(): finds the segment whose [byteOffset,
 // byteOffset + byteSize) range contains `position` in that stream's own
 // cumulative, fixed-origin address space (see each segment type's own

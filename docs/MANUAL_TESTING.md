@@ -202,5 +202,11 @@ disk during a recording (both need the real conditions).
   removed through the plugin's own API while Kodi played (2 viewers, "buffer still
   active for other viewers", then none left once Kodi stopped); two real Kodi
   installs at once is the part to repeat by hand.
+- Several recorded streams in one Kodi 22 (`Piers` branch only; Kodi 21 keeps one). Kodi opens a second recorded
+  stream before it closes the first. With debug logging on, start a recording, then start another within a second
+  or two (JSON-RPC `Player.Open` twice in a loop does it): pass is the second plays while the first tears down,
+  `kodi.log` shows `OpenRecordedStream: ... streamId=` with different ids and `openStreams=` going 1, 2, 1, and
+  nothing logs an unknown id. Repeat with a completed and an in-progress recording, and the same in-progress
+  recording twice. Stop playback: `CloseRecordedStream: ... openStreams=0`.
 - Two installs sharing one account: neither should end up with a revoked key
   (`docs/CLOSED_ITEMS.md`, the two API-key entries).

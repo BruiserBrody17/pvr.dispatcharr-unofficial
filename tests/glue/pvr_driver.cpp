@@ -1165,6 +1165,106 @@ int main(int argc, char** argv)
         FAIL("a five-second outage reported [%s], expected only [connected]", Joined(ConnSnapshot()).c_str());
     }
   }
+  else if (what == "streams2")
+  {
+    // Kodi 22 with SetSupportsMultipleRecordedStreams(): several recorded streams open at once, each under its own id,
+    // driven through the C function table as the PVR manager does.
+    if (!abi::ReadCaps(I()).multipleRecordedStreams)
+      FAIL("the addon does not declare support for several recorded streams");
+    ctl("ip_reset=20");
+    auto make = [](int rid)
+    {
+      PVR_RECORDING r{};
+      abi::setf(r.strRecordingId, "%d", rid);
+      r.recordingTime = time(nullptr) - 600;
+      return r;
+    };
+    auto be32 = [](const unsigned char* p) -> uint32_t
+    { return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3]; };
+    // Opens without closing anything, as Kodi does with the capability set.
+    auto open = [&](int rid) -> abi::RecordedStream
+    {
+      PVR_RECORDING r = make(rid);
+      abi::RecordedStream st;
+      if (!abi::OpenRecorded(I(), &r, st))
+        FAIL("open of recording %d failed", rid);
+      return st;
+    };
+    std::vector<unsigned char> buf(4096);
+    // The first word of a completed recording's bytes is its recording's tag, of an in-progress one's, 0x1B/0x2C and a
+    // segment number: another recording's data on a stream shows here.
+    auto readsAs = [&](abi::RecordedStream& st, uint32_t tag, uint32_t mask, const char* label)
+    {
+      const int n = abi::ReadRecorded(I(), st, buf.data(), (unsigned)buf.size());
+      if (n <= 0)
+        FAIL("%s: read returned %d", label, n);
+      else if ((be32(buf.data()) & mask) != tag)
+        FAIL("%s: first word %08x is not this recording's (%08x)", label, be32(buf.data()), tag);
+    };
+
+    abi::RecordedStream a = open(5), b = open(7);
+    if (a.id == b.id || a.id <= 0 || b.id <= 0)
+      FAIL("two open streams have ids %lld and %lld", (long long)a.id, (long long)b.id);
+    bool rt = true;
+    if (abi::RecordedStreamRealTime(I(), a, rt) != PVR_ERROR_NO_ERROR || rt)
+      FAIL("a completed recording reports real-time=%d", (int)rt);
+    rt = false;
+    if (abi::RecordedStreamRealTime(I(), b, rt) != PVR_ERROR_NO_ERROR || !rt)
+      FAIL("an in-progress recording reports real-time=%d", (int)rt);
+    PVR_STREAM_TIMES ta{}, tb{};
+    if (abi::RecordedStreamTimes(I(), a, ta) != PVR_ERROR_NOT_IMPLEMENTED)
+      FAIL("a completed recording offered stream times (Kodi derives them from the container)");
+    if (abi::RecordedStreamTimes(I(), b, tb) != PVR_ERROR_NO_ERROR || tb.startTime == 0 || tb.ptsEnd <= 0)
+      FAIL("in-progress stream times: start %lld, ptsEnd %lld", (long long)tb.startTime, (long long)tb.ptsEnd);
+    if (abi::PauseRecorded(I(), a, true) != PVR_ERROR_NO_ERROR ||
+        abi::PauseRecorded(I(), b, true) != PVR_ERROR_NO_ERROR)
+      FAIL("pausing a known stream failed");
+    abi::PauseRecorded(I(), a, false);
+    abi::PauseRecorded(I(), b, false);
+    // Neither is a live channel, so the legacy per-addon answers stay "no".
+    if (A()->CanPauseStream(I()) || A()->CanSeekStream(I()) || A()->IsRealTimeStream(I()))
+      FAIL("the live-stream callbacks answered yes with no live stream open");
+    readsAs(a, 0xC0FFEE00u, 0xFFFFFF00u, "completed stream");
+    readsAs(b, 0x1B000000u, 0xFFFF0000u, "in-progress stream");
+
+    // An id that is not open (never issued, then closed) answers like the single-slot code did with nothing open.
+    abi::RecordedStream bogus{999};
+    if (abi::ReadRecorded(I(), bogus, buf.data(), (unsigned)buf.size()) != 0)
+      FAIL("a read on an unknown id did not return 0");
+    if (abi::SeekRecorded(I(), bogus, 0, SEEK_SET) != -1 || abi::LengthRecorded(I(), bogus) != -1)
+      FAIL("seek or length on an unknown id did not return -1");
+    PVR_STREAM_TIMES tx{};
+    bool rx = false;
+    if (abi::RecordedStreamTimes(I(), bogus, tx) != PVR_ERROR_INVALID_PARAMETERS ||
+        abi::RecordedStreamRealTime(I(), bogus, rx) != PVR_ERROR_INVALID_PARAMETERS ||
+        abi::PauseRecorded(I(), bogus, true) != PVR_ERROR_INVALID_PARAMETERS)
+      FAIL("times, real-time or pause on an unknown id did not report INVALID_PARAMETERS");
+    abi::CloseRecorded(I(), bogus);
+
+    // Close of the first, after the second is open: the second is unaffected, the first's id is dead and a repeat
+    // Close is harmless.
+    abi::CloseRecorded(I(), a);
+    abi::CloseRecorded(I(), a);
+    if (abi::ReadRecorded(I(), a, buf.data(), (unsigned)buf.size()) != 0)
+      FAIL("a read on a closed id did not return 0");
+    readsAs(b, 0x1B000000u, 0xFFFF0000u, "in-progress stream after the other closed");
+
+    // Open / close / open interleaved; ids only ever count up.
+    abi::RecordedStream c = open(5);
+    abi::CloseRecorded(I(), b);
+    abi::RecordedStream d = open(8);
+    abi::RecordedStream e = open(6);
+    if (!(a.id < b.id && b.id < c.id && c.id < d.id && d.id < e.id))
+      FAIL("ids %lld %lld %lld %lld %lld are not strictly increasing", (long long)a.id, (long long)b.id,
+           (long long)c.id, (long long)d.id, (long long)e.id);
+    readsAs(c, 0xC0FFEE00u, 0xFFFFFF00u, "third stream");
+    readsAs(d, 0x2C000000u, 0xFFFF0000u, "fourth stream");
+    readsAs(e, 0xDEADBE00u, 0xFFFFFF00u, "fifth stream");
+    abi::CloseRecorded(I(), c);
+    abi::CloseRecorded(I(), e);
+    abi::CloseRecorded(I(), d);
+    INFO("streams2: ids %lld..%lld", (long long)a.id, (long long)e.id);
+  }
   else if (what == "dtor_busy")
   {
     // destroy while Kodi-facing calls are idle but the addon's own threads are mid-fetch (slow server)

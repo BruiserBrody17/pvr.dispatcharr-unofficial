@@ -66,6 +66,13 @@ static void sleep_ms(int m)
 {
   std::this_thread::sleep_for(std::chrono::milliseconds(m));
 }
+// Every scenario that closes its recorded streams ends with none registered: a leak here is a handle and a cached
+// segment kept for the life of the client.
+static void expect_all_closed(DispatcharrClient& cl)
+{
+  if (cl.OpenRecordedStreamCount() != 0)
+    FAIL("%zu recorded stream(s) still registered after every Close", cl.OpenRecordedStreamCount());
+}
 
 static int64_t seg_size(int64_t seq)
 {
@@ -153,12 +160,17 @@ struct LiveVerifier
   }
 };
 
-// Completed recording: byte o is pack('>II', 0xC0FFEE00, o/8)[o%8]
+// Completed recording: byte o is pack('>II', tag, o/8)[o%8]. Each fake recording has its own tag (REC_TAGS in
+// fake_dispatcharr.py), so a stream served another recording's bytes shows up as a mismatch.
 static const int64_t REC_SIZE = 3 * 1024 * 1024 + 5;
-static uint8_t rec_byte(int64_t o)
+static uint32_t rec_tag(int id)
+{
+  return id == 6 ? 0xDEADBE00u : 0xC0FFEE00u;
+}
+static uint8_t rec_byte(int64_t o, uint32_t a = 0xC0FFEE00u)
 {
   uint8_t r[8];
-  uint32_t a = 0xC0FFEE00u, k = (uint32_t)(o / 8);
+  uint32_t k = (uint32_t)(o / 8);
   r[0] = a >> 24;
   r[1] = a >> 16;
   r[2] = a >> 8;
@@ -169,19 +181,29 @@ static uint8_t rec_byte(int64_t o)
   r[7] = k;
   return r[o % 8];
 }
-// In-progress: concatenation of seg_bytes(0x1B, s, seg_size(s)) from s=0
-static std::vector<int64_t> ipPrefix;
-static uint8_t ip_byte(int64_t o)
+// In-progress: concatenation of seg_bytes(tag, s, seg_size(s)) from s=0 (IP_TAGS in fake_dispatcharr.py)
+// Built once, on first use: several reader threads call ip_byte() at the same time.
+static const std::vector<int64_t>& ip_prefix()
 {
-  if (ipPrefix.empty())
+  static const std::vector<int64_t> prefix = []
   {
-    ipPrefix.push_back(0);
+    std::vector<int64_t> p{0};
     for (int s = 0; s < 20000; s++)
-      ipPrefix.push_back(ipPrefix.back() + seg_size(s));
-  }
+      p.push_back(p.back() + seg_size(s));
+    return p;
+  }();
+  return prefix;
+}
+static uint32_t ip_tag(int id)
+{
+  return id == 8 ? 0x2C000000u : 0x1B000000u;
+}
+static uint8_t ip_byte(int64_t o, uint32_t tag = 0x1B000000u)
+{
+  const std::vector<int64_t>& ipPrefix = ip_prefix();
   int64_t s = std::upper_bound(ipPrefix.begin(), ipPrefix.end(), o) - ipPrefix.begin() - 1;
   int64_t off = o - ipPrefix[s];
-  uint32_t a = 0x1B000000u | (uint32_t)(s & 0xFFFF), k = (uint32_t)(off / 8);
+  uint32_t a = tag | (uint32_t)(s & 0xFFFF), k = (uint32_t)(off / 8);
   uint8_t r[8] = {uint8_t(a >> 24), uint8_t(a >> 16), uint8_t(a >> 8), uint8_t(a),
                   uint8_t(k >> 24), uint8_t(k >> 16), uint8_t(k >> 8), uint8_t(k)};
   return r[off % 8];
@@ -570,12 +592,13 @@ static void live_tail_giveup(DispatcharrClient& cl)
 static void rec_play(DispatcharrClient& cl, const char* faults)
 {
   std::string err;
-  if (!cl.OpenRecordingStream(5, err))
+  int64_t sid = 0;
+  if (!cl.OpenRecordingStream(5, sid, err))
   {
     FAIL("rec open: %s", err.c_str());
     return;
   }
-  int64_t len = cl.GetRecordingStreamLength();
+  int64_t len = cl.GetRecordedStreamLength(sid);
   if (len != REC_SIZE)
     FAIL("rec length %lld", (long long)len);
   std::atomic<bool> stop{false};
@@ -584,7 +607,7 @@ static void rec_play(DispatcharrClient& cl, const char* faults)
       {
         while (!stop)
         {
-          cl.GetRecordingStreamLength();
+          cl.GetRecordedStreamLength(sid);
           sleep_ms(10);
         }
       });
@@ -617,19 +640,19 @@ static void rec_play(DispatcharrClient& cl, const char* faults)
     if (iter % 25 == 24)
     {
       int64_t t = rng() % REC_SIZE;
-      int64_t np = cl.SeekRecordingStream(t, SEEK_SET);
+      int64_t np = cl.SeekRecordedStream(sid, t, SEEK_SET);
       if (np != t)
         FAIL("seek to %lld got %lld", (long long)t, (long long)np);
       pos = np;
     }
     if (iter % 37 == 36)
     {
-      int64_t np = cl.SeekRecordingStream(-7, SEEK_END);
+      int64_t np = cl.SeekRecordedStream(sid, -7, SEEK_END);
       pos = np;
     }
     unsigned want = 1 + rng() % buf.size();
     long r0 = ms();
-    int n = cl.ReadRecordingStream(buf.data(), want);
+    int n = cl.ReadRecordedStream(sid, buf.data(), want);
     long dt = ms() - r0;
     if (dt > 1500)
       INFO("rec read took %ld ms -> %d", dt, n);
@@ -643,7 +666,7 @@ static void rec_play(DispatcharrClient& cl, const char* faults)
     {
       if (pos < REC_SIZE && !faults)
         FAIL("rec EOF at %lld", (long long)pos);
-      pos = cl.SeekRecordingStream(0, SEEK_SET);
+      pos = cl.SeekRecordedStream(sid, 0, SEEK_SET);
       continue;
     }
     for (int i = 0; i < n; i++)
@@ -660,7 +683,8 @@ static void rec_play(DispatcharrClient& cl, const char* faults)
   poller.join();
   if (faulter.joinable())
     faulter.join();
-  cl.CloseRecordingStream();
+  cl.CloseRecordedStream(sid);
+  expect_all_closed(cl);
   INFO("rec: reads=%ld bytes=%lld neg=%ld bad=%ld", n_reads, (long long)got, neg, bad);
   if (got == 0)
     FAIL("the recording delivered no bytes");
@@ -680,6 +704,7 @@ static void ip_play(DispatcharrClient& cl, int recordMs, const char* faults, boo
     (void)skip;
   }
   std::string err;
+  int64_t sid = 0;
   long t = ms();
   std::thread faultT;
   if (faults)
@@ -704,7 +729,7 @@ static void ip_play(DispatcharrClient& cl, int recordMs, const char* faults, boo
             p = semi + 1;
           }
         });
-  bool ok = cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, err);
+  bool ok = cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, sid, err);
   INFO("ip open ok=%d in %ld ms err=%s", ok, ms() - t, err.c_str());
   if (!ok)
   {
@@ -744,16 +769,16 @@ static void ip_play(DispatcharrClient& cl, int recordMs, const char* faults, boo
             int k = rng() % 3;
             int64_t np;
             if (k == 0)
-              np = cl.SeekInProgressRecordingStream(0, SEEK_SET);
+              np = cl.SeekRecordedStream(sid, 0, SEEK_SET);
             else if (k == 1)
-              np = cl.SeekInProgressRecordingStream(-(int64_t)(rng() % 500000), SEEK_CUR);
+              np = cl.SeekRecordedStream(sid, -(int64_t)(rng() % 500000), SEEK_CUR);
             else
-              np = cl.SeekInProgressRecordingStream(0, SEEK_END);
+              np = cl.SeekRecordedStream(sid, 0, SEEK_END);
             if (np >= 0)
               pos = np;
           }
           long r0 = ms();
-          int n = cl.ReadInProgressRecordingStream(buf.data(), (unsigned)buf.size());
+          int n = cl.ReadRecordedStream(sid, buf.data(), (unsigned)buf.size());
           long dt = ms() - r0;
           if (dt > maxRead)
             maxRead = dt;
@@ -761,8 +786,8 @@ static void ip_play(DispatcharrClient& cl, int recordMs, const char* faults, boo
           if (n < 0)
           {
             neg++;
-            pos = cl.SeekInProgressRecordingStream(0, SEEK_CUR);
-            if (!cl.IsInProgressRecordingStreamOpen())
+            pos = cl.SeekRecordedStream(sid, 0, SEEK_CUR);
+            if (!(cl.OpenRecordedStreamCount() > 0))
               break;
             continue;
           }
@@ -777,7 +802,7 @@ static void ip_play(DispatcharrClient& cl, int recordMs, const char* faults, boo
           consecutiveZero = 0;
           if (chaos)
           {
-            pos = cl.SeekInProgressRecordingStream(0, SEEK_CUR) - n;
+            pos = cl.SeekRecordedStream(sid, 0, SEEK_CUR) - n;
           }
           if (!getenv("IP_NOVERIFY"))
             for (int i = 0; i < n; i++)
@@ -798,9 +823,9 @@ static void ip_play(DispatcharrClient& cl, int recordMs, const char* faults, boo
       {
         while (!stop)
         {
-          cl.GetInProgressRecordingStreamLength();
-          cl.GetInProgressRecordingStreamDurationMs();
-          cl.GetInProgressRecordingStreamStartTime();
+          cl.GetRecordedStreamLength(sid);
+          DispatcharrClient::RecordedStreamTimes times;
+          cl.GetRecordedStreamTimes(sid, times);
           sleep_ms(getenv("POLL_MS") ? atoi(getenv("POLL_MS")) : 30);
         }
       });
@@ -812,7 +837,7 @@ static void ip_play(DispatcharrClient& cl, int recordMs, const char* faults, boo
           std::mt19937 r(9);
           while (!stop)
           {
-            cl.SeekInProgressRecordingStream(-(int64_t)(r() % 300000), SEEK_CUR);
+            cl.SeekRecordedStream(sid, -(int64_t)(r() % 300000), SEEK_CUR);
             sleep_ms(r() % 50);
           }
         });
@@ -838,7 +863,7 @@ static void ip_play(DispatcharrClient& cl, int recordMs, const char* faults, boo
     long end = ms() + 15000;
     while (ms() < end && reader.joinable())
     {
-      if (!cl.IsInProgressRecordingStreamOpen())
+      if (!(cl.OpenRecordedStreamCount() > 0))
         break;
       sleep_ms(50);
       if (zeros > 0 && finishedSet)
@@ -849,7 +874,8 @@ static void ip_play(DispatcharrClient& cl, int recordMs, const char* faults, boo
   INFO("stats before close=%s", http("/__stats").c_str());
   long c0 = ms();
   stop = true;
-  cl.CloseInProgressRecordingStream();
+  cl.CloseRecordedStream(sid);
+  expect_all_closed(cl);
   INFO("ip close took %ld ms", ms() - c0);
   reader.join();
   poller.join();
@@ -920,8 +946,9 @@ static void ip_cascade(DispatcharrClient& cl)
   ctl("ip_head_seq=200");
   ctl("ip_head_status=500");
   std::string err;
+  int64_t sid = 0;
   long t = ms();
-  bool ok = cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, err);
+  bool ok = cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, sid, err);
   INFO("cascade open ok=%d in %ld ms err=%s", ok, ms() - t, err.c_str());
   ctl("ip_head_status=0");
   ctl("ip_head_seq=");
@@ -937,7 +964,7 @@ static void ip_cascade(DispatcharrClient& cl)
   int64_t len = 0;
   while (ms() - t1 < 10000)
   {
-    len = cl.GetInProgressRecordingStreamLength();
+    len = cl.GetRecordedStreamLength(sid);
     if (len >= expect)
       break;
     sleep_ms(100);
@@ -945,7 +972,8 @@ static void ip_cascade(DispatcharrClient& cl)
   INFO("cascade: %lld of %lld bytes after %ld ms", (long long)len, (long long)expect, ms() - t1);
   if (len < expect)
     FAIL("only %lld of %lld bytes merged after %ld ms", (long long)len, (long long)expect, ms() - t1);
-  cl.CloseInProgressRecordingStream();
+  cl.CloseRecordedStream(sid);
+  expect_all_closed(cl);
 }
 
 // An API that answers every request slowly (above the 5 s bound steady-state refreshes get) must still be able to
@@ -978,6 +1006,7 @@ static void silent_open(DispatcharrClient& cl, bool inProgress)
   const long budgetMs = inProgress ? dispatcharr::ColdStartWallClockBudgetMs(90, 500, configuredTimeout())
                                    : dispatcharr::ColdStartWallClockBudgetMs(30, 500, configuredTimeout());
   std::string err;
+  int64_t sid = 0;
   if (inProgress)
   {
     ctl("ip_reset=3");
@@ -987,7 +1016,7 @@ static void silent_open(DispatcharrClient& cl, bool inProgress)
   else
     ctl("manifest_hang=1");
   const long t0 = ms();
-  const bool ok = inProgress ? cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, err)
+  const bool ok = inProgress ? cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, sid, err)
                              : cl.OpenLiveTimeshiftStream("uuid", err);
   const long took = ms() - t0;
   INFO("silent %s open: ok=%d in %ld ms (budget %ld ms, timeout %ld ms) err=%s", inProgress ? "in-progress" : "live",
@@ -1068,19 +1097,20 @@ static void live_fileserver_unreachable(DispatcharrClient& cl)
 static void rec_range_dropped(DispatcharrClient& cl)
 {
   std::string err;
-  if (!cl.OpenRecordingStream(5, err))
+  int64_t sid = 0;
+  if (!cl.OpenRecordingStream(5, sid, err))
   {
     FAIL("rec open: %s", err.c_str());
     return;
   }
   std::vector<uint8_t> buf(65536);
-  int n = cl.ReadRecordingStream(buf.data(), (unsigned)buf.size());
+  int n = cl.ReadRecordedStream(sid, buf.data(), (unsigned)buf.size());
   if (n <= 0)
     FAIL("first read returned %d", n);
   ctl("rec_norange=1");
   ctl("rec_slow_ms=250");
   const long t0 = ms();
-  n = cl.ReadRecordingStream(buf.data(), (unsigned)buf.size());
+  n = cl.ReadRecordedStream(sid, buf.data(), (unsigned)buf.size());
   const long took = ms() - t0;
   INFO("read at a non-zero offset against a Range-dropping server: ret=%d in %ld ms", n, took);
   if (n != 0)
@@ -1088,7 +1118,8 @@ static void rec_range_dropped(DispatcharrClient& cl)
   if (took > 3000)
     FAIL("the read took %ld ms: it kept receiving a body it was going to throw away", took);
   ctl("rec_norange=0");
-  cl.CloseRecordingStream();
+  cl.CloseRecordedStream(sid);
+  expect_all_closed(cl);
 }
 
 // Stop while a reader waits at the tail of an in-progress recording and the server stops answering altogether: Kodi
@@ -1099,7 +1130,8 @@ static void ip_blackhole_close(DispatcharrClient& cl, long limitMs)
 {
   ctl("ip_reset=3");
   std::string err;
-  if (!cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, err))
+  int64_t sid = 0;
+  if (!cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, sid, err))
   {
     FAIL("open: %s", err.c_str());
     return;
@@ -1115,7 +1147,7 @@ static void ip_blackhole_close(DispatcharrClient& cl, long limitMs)
         {
           const long r0 = ms();
           const bool during = hung;
-          int n = cl.ReadInProgressRecordingStream(buf.data(), (unsigned)buf.size());
+          int n = cl.ReadRecordedStream(sid, buf.data(), (unsigned)buf.size());
           const long took = ms() - r0;
           if ((during || hung) && took > worstAfterHang)
             worstAfterHang = took;
@@ -1129,7 +1161,8 @@ static void ip_blackhole_close(DispatcharrClient& cl, long limitMs)
   sleep_ms(45000);
   stop = true;
   const long c0 = ms();
-  cl.CloseInProgressRecordingStream();
+  cl.CloseRecordedStream(sid);
+  expect_all_closed(cl);
   reader.join();
   INFO("ip blackhole: worst single Read() after the hang %ld ms; Close and the reader's exit took %ld ms",
        (long)worstAfterHang, ms() - c0);
@@ -1148,7 +1181,8 @@ static void ip_tail_bound(DispatcharrClient& cl)
 {
   ctl("ip_reset=3");
   std::string err;
-  if (!cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, err))
+  int64_t sid = 0;
+  if (!cl.OpenInProgressRecordingStream(7, time(nullptr) - 600, sid, err))
   {
     FAIL("open: %s", err.c_str());
     return;
@@ -1161,7 +1195,7 @@ static void ip_tail_bound(DispatcharrClient& cl)
   while (ms() - phaseStart < 30000 && !sawZero)
   {
     const long t0 = ms();
-    const int n = cl.ReadInProgressRecordingStream(buf.data(), (unsigned)buf.size());
+    const int n = cl.ReadRecordedStream(sid, buf.data(), (unsigned)buf.size());
     const long took = ms() - t0;
     if (n > 0)
     {
@@ -1189,7 +1223,7 @@ static void ip_tail_bound(DispatcharrClient& cl)
     FAIL("the stream gave up (0) after only %ld ms at the tail; the budget must not shrink", waitBeforeFirstZero);
   if (minusOnes < 1)
     FAIL("no -1 was returned while waiting, so the wait was not handed back in slices");
-  if (!cl.IsInProgressRecordingStreamOpen())
+  if (!(cl.OpenRecordedStreamCount() > 0))
     FAIL("the stream closed itself while waiting at the tail");
 
   ctl("ip_freeze=0");
@@ -1197,7 +1231,7 @@ static void ip_tail_bound(DispatcharrClient& cl)
   const long phase2 = ms();
   while (ms() - phase2 < 20000 && resumed == 0)
   {
-    const int n = cl.ReadInProgressRecordingStream(buf.data(), (unsigned)buf.size());
+    const int n = cl.ReadRecordedStream(sid, buf.data(), (unsigned)buf.size());
     if (n > 0)
       resumed += n;
   }
@@ -1212,11 +1246,312 @@ static void rec_open_missing(DispatcharrClient& cl)
 {
   ctl("rec_status=404");
   std::string err;
-  const bool ok = cl.OpenRecordingStream(5, err);
+  int64_t sid = 0;
+  const bool ok = cl.OpenRecordingStream(5, sid, err);
   INFO("open of a recording with no file: ok=%d err=%s", ok, err.c_str());
   if (ok)
     FAIL("the open should have failed");
   ctl("rec_status=0");
+}
+
+// ---------------------------------------------------------------- several recorded streams at once
+// Kodi 22 keeps the previous recorded stream open until it closes it itself, so a second open arrives while the first
+// is playing and a Close for the old id can arrive after the next stream's open.
+struct OpenStream
+{
+  int recId = 0;
+  bool inProgress = false;
+  int64_t sid = 0;
+  int64_t pos = 0;
+  uint8_t byteAt(int64_t o) const
+  {
+    return inProgress ? ip_byte(o, ip_tag(recId)) : rec_byte(o, rec_tag(recId));
+  }
+};
+
+static bool open_stream(DispatcharrClient& cl, int recId, OpenStream& st)
+{
+  std::string err;
+  st.recId = recId;
+  st.inProgress = recId >= 7;
+  st.pos = 0;
+  const bool ok = st.inProgress ? cl.OpenInProgressRecordingStream(recId, time(nullptr) - 600, st.sid, err)
+                                : cl.OpenRecordingStream(recId, st.sid, err);
+  if (!ok)
+    FAIL("open of recording %d: %s", recId, err.c_str());
+  return ok;
+}
+
+// Reads `want` bytes from the stream's own position and checks each against its recording's pattern. A -1 is
+// retried (a wait at the tail of a growing recording is handed back in slices), a 0 before `want` is a failure.
+static int64_t read_verified(DispatcharrClient& cl, OpenStream& st, int64_t want)
+{
+  std::vector<uint8_t> buf(32768 + 3);
+  int64_t got = 0;
+  int retries = 0;
+  while (got < want)
+  {
+    const unsigned ask = (unsigned)std::min<int64_t>((int64_t)buf.size(), want - got);
+    const int n = cl.ReadRecordedStream(st.sid, buf.data(), ask);
+    if (n < 0)
+    {
+      if (++retries > 400)
+      {
+        FAIL("recording %d (stream %lld): reads kept failing at %lld", st.recId, (long long)st.sid, (long long)st.pos);
+        return got;
+      }
+      sleep_ms(20);
+      continue;
+    }
+    if (n == 0)
+    {
+      FAIL("recording %d (stream %lld): unexpected end at %lld after %lld of %lld bytes", st.recId, (long long)st.sid,
+           (long long)st.pos, (long long)got, (long long)want);
+      return got;
+    }
+    for (int i = 0; i < n; i++)
+      if (buf[i] != st.byteAt(st.pos + i))
+      {
+        FAIL("recording %d (stream %lld): byte mismatch at %lld (another stream's data, or a corrupted read)", st.recId,
+             (long long)st.sid, (long long)(st.pos + i));
+        return got;
+      }
+    st.pos += n;
+    got += n;
+  }
+  return got;
+}
+
+// Opens the streams in order without closing any, reads them side by side, then closes them: `closeFirst` first.
+static void multi_play(DispatcharrClient& cl, const std::vector<int>& recIds, size_t closeFirst)
+{
+  ctl("ip_reset=20");
+  std::vector<OpenStream> streams(recIds.size());
+  for (size_t i = 0; i < recIds.size(); i++)
+    if (!open_stream(cl, recIds[i], streams[i]))
+      return;
+  for (size_t i = 0; i < streams.size(); i++)
+    for (size_t j = i + 1; j < streams.size(); j++)
+      if (streams[i].sid == streams[j].sid)
+        FAIL("two open streams were given the same id %lld", (long long)streams[i].sid);
+  if (cl.OpenRecordedStreamCount() != streams.size())
+    FAIL("%zu streams open, the client counts %zu", streams.size(), cl.OpenRecordedStreamCount());
+
+  for (auto& st : streams)
+  {
+    bool realTime = false;
+    if (!cl.IsRecordedStreamRealTime(st.sid, realTime))
+      FAIL("stream %lld is open but IsRecordedStreamRealTime does not know it", (long long)st.sid);
+    else if (realTime != st.inProgress)
+      FAIL("recording %d: real-time is %d, expected %d", st.recId, (int)realTime, (int)st.inProgress);
+    DispatcharrClient::RecordedStreamTimes times;
+    const auto lookup = cl.GetRecordedStreamTimes(st.sid, times);
+    const auto want = st.inProgress ? DispatcharrClient::RecordedStreamLookup::kOk
+                                    : DispatcharrClient::RecordedStreamLookup::kNoTimes;
+    if (lookup != want)
+      FAIL("recording %d: times lookup %d, expected %d", st.recId, (int)lookup, (int)want);
+  }
+
+  // Phase 1: all streams read at once, each from its own thread, with a poller on every stream's times and length as
+  // Kodi does (it also keeps a paused stream's server-side key alive).
+  std::atomic<bool> stop{false};
+  std::thread poller(
+      [&]
+      {
+        while (!stop)
+        {
+          for (auto& st : streams)
+          {
+            DispatcharrClient::RecordedStreamTimes times;
+            cl.GetRecordedStreamTimes(st.sid, times);
+            cl.GetRecordedStreamLength(st.sid);
+          }
+          sleep_ms(30);
+        }
+      });
+  std::vector<std::thread> readers;
+  for (auto& st : streams)
+    readers.emplace_back([&cl, &st] { read_verified(cl, st, 200000); });
+  for (auto& t : readers)
+    t.join();
+
+  // Phase 2: one stream moves while the other is left where it was, then it is the other's turn. Positions are per
+  // stream: a seek or read on one must not move the other.
+  OpenStream& a = streams[0];
+  OpenStream& b = streams[streams.size() - 1];
+  const int64_t bPosBefore = b.pos;
+  const int64_t aSeek = cl.SeekRecordedStream(a.sid, 0, SEEK_SET);
+  if (aSeek != 0)
+    FAIL("seek on stream %lld returned %lld", (long long)a.sid, (long long)aSeek);
+  a.pos = 0;
+  read_verified(cl, a, 100000);
+  if (&a != &b)
+  {
+    if (cl.SeekRecordedStream(b.sid, 0, SEEK_CUR) != bPosBefore)
+      FAIL("a seek and reads on stream %lld moved stream %lld", (long long)a.sid, (long long)b.sid);
+    read_verified(cl, b, 100000);
+  }
+  stop = true;
+  poller.join();
+
+  // Phase 3: Close in the chosen order. The other stream keeps working, and the closed id answers like an unknown one.
+  OpenStream& first = streams[closeFirst % streams.size()];
+  cl.CloseRecordedStream(first.sid);
+  if (cl.OpenRecordedStreamCount() != streams.size() - 1)
+    FAIL("%zu streams registered after one Close, expected %zu", cl.OpenRecordedStreamCount(), streams.size() - 1);
+  std::vector<uint8_t> buf(1000);
+  if (cl.ReadRecordedStream(first.sid, buf.data(), 1000) != 0)
+    FAIL("a read on a closed id returned data or an error (Kodi retries -1 at once)");
+  if (cl.SeekRecordedStream(first.sid, 0, SEEK_SET) != -1 || cl.GetRecordedStreamLength(first.sid) != -1)
+    FAIL("seek or length on a closed id did not return -1");
+  cl.CloseRecordedStream(first.sid); // a second Close of the same id is harmless
+  bool unused = false;
+  if (cl.IsRecordedStreamRealTime(first.sid, unused))
+    FAIL("a closed id is still known");
+  for (auto& st : streams)
+  {
+    if (&st == &first)
+      continue;
+    read_verified(cl, st, 50000);
+    cl.CloseRecordedStream(st.sid);
+  }
+  expect_all_closed(cl);
+  INFO("multi: %zu streams played and closed", streams.size());
+}
+
+// A stream already playing must not wait for another stream's open: the second open's cold start (here a slow first
+// playlist) holds no lock the first stream's reads need.
+static void ip_open_while_playing(DispatcharrClient& cl)
+{
+  ctl("ip_reset=20");
+  OpenStream a;
+  if (!open_stream(cl, 7, a))
+    return;
+  std::atomic<bool> stop{false};
+  std::atomic<long> longestReadMs{0};
+  std::atomic<int64_t> bytes{0};
+  std::thread reader(
+      [&]
+      {
+        std::vector<uint8_t> buf(16384);
+        while (!stop)
+        {
+          const long t0 = ms();
+          const int n = cl.ReadRecordedStream(a.sid, buf.data(), (unsigned)buf.size());
+          const long dt = ms() - t0;
+          if (dt > longestReadMs)
+            longestReadMs = dt;
+          if (n > 0)
+          {
+            for (int i = 0; i < n; i++)
+              if (buf[i] != a.byteAt(a.pos + i))
+              {
+                FAIL("playing stream: byte mismatch at %lld while another stream opened", (long long)(a.pos + i));
+                return;
+              }
+            a.pos += n;
+            bytes += n;
+          }
+          else
+            sleep_ms(20);
+        }
+      });
+  sleep_ms(300);
+  ctl("ip_manifest_delay_ms_8=2500");
+  OpenStream b;
+  const long t0 = ms();
+  const bool ok = open_stream(cl, 8, b);
+  const long openMs = ms() - t0;
+  ctl("ip_manifest_delay_ms_8=0");
+  sleep_ms(300);
+  stop = true;
+  reader.join();
+  INFO("second open took %ld ms; the playing stream's longest read was %ld ms, %lld bytes read", openMs,
+       longestReadMs.load(), (long long)bytes.load());
+  if (openMs < 2000)
+    FAIL("the slow open finished in %ld ms; the delay on its playlist never applied, so this proves nothing", openMs);
+  if (longestReadMs > 1500)
+    FAIL("a read on the playing stream blocked for %ld ms while another stream opened", longestReadMs.load());
+  if (bytes < 100000)
+    FAIL("the playing stream read only %lld bytes while another stream opened", (long long)bytes.load());
+  if (ok)
+  {
+    read_verified(cl, b, 50000);
+    cl.CloseRecordedStream(b.sid);
+  }
+  cl.CloseRecordedStream(a.sid);
+  expect_all_closed(cl);
+}
+
+// Close on streams that readers are in the middle of, from another thread, in an arbitrary order.
+static void multi_close_race(DispatcharrClient& cl)
+{
+  ctl("ip_reset=20");
+  for (int round = 0; round < 4; round++)
+  {
+    std::vector<OpenStream> streams(4);
+    const int ids[4] = {5, 5, 7, 7};
+    for (int i = 0; i < 4; i++)
+      if (!open_stream(cl, ids[i], streams[i]))
+        return;
+    std::atomic<bool> stop{false};
+    std::vector<std::thread> readers;
+    for (auto& st : streams)
+      readers.emplace_back(
+          [&cl, &st, &stop]
+          {
+            std::vector<uint8_t> buf(8192);
+            while (!stop)
+            {
+              const int n = cl.ReadRecordedStream(st.sid, buf.data(), (unsigned)buf.size());
+              if (n < 0)
+              {
+                sleep_ms(10);
+                continue;
+              }
+              if (n == 0)
+              {
+                // End of a completed recording, or the id was closed under this reader: a seek tells which.
+                const int64_t np = cl.SeekRecordedStream(st.sid, 0, SEEK_SET);
+                if (np < 0)
+                  return;
+                st.pos = np;
+                continue;
+              }
+              for (int i = 0; i < n; i++)
+                if (buf[i] != st.byteAt(st.pos + i))
+                {
+                  FAIL("recording %d: byte mismatch at %lld during the close race", st.recId, (long long)(st.pos + i));
+                  return;
+                }
+              st.pos += n;
+            }
+          });
+    sleep_ms(200 + 50 * round);
+    const int order[4][4] = {{0, 1, 2, 3}, {3, 2, 1, 0}, {1, 3, 0, 2}, {2, 0, 3, 1}};
+    for (int k = 0; k < 4; k++)
+    {
+      cl.CloseRecordedStream(streams[order[round][k]].sid);
+      sleep_ms(30);
+    }
+    stop = true;
+    for (auto& t : readers)
+      t.join();
+    expect_all_closed(cl);
+  }
+}
+
+// Destroying the client with recorded streams still open: its destructor closes them all (no leaked handle, and the
+// curl share is released afterwards). The leak check stays on for this one, unlike dtor_inflight.
+static void multi_dtor(DispatcharrClient& cl)
+{
+  ctl("ip_reset=20");
+  std::vector<OpenStream> streams(4);
+  const int ids[4] = {5, 6, 7, 8};
+  for (int i = 0; i < 4; i++)
+    if (open_stream(cl, ids[i], streams[i]))
+      read_verified(cl, streams[i], 20000);
+  INFO("destroying the client with %zu recorded streams open", cl.OpenRecordedStreamCount());
 }
 
 int main(int argc, char** argv)
@@ -1280,17 +1615,40 @@ int main(int argc, char** argv)
     }
     else if (what == "ip_chaos")
       ip_play(*cl, 6000, nullptr, true);
+    else if (what == "rec_two_same")
+      multi_play(*cl, {5, 5}, 0);
+    else if (what == "rec_two_distinct")
+      multi_play(*cl, {5, 6}, 1);
+    else if (what == "ip_two_same")
+      multi_play(*cl, {7, 7}, 0);
+    else if (what == "ip_two_distinct")
+      multi_play(*cl, {7, 8}, 1);
+    else if (what == "mixed")
+    {
+      // Both close orders: the completed stream first, then the in-progress one first.
+      multi_play(*cl, {5, 7}, 0);
+      multi_play(*cl, {5, 7}, 1);
+      multi_play(*cl, {8, 6}, 0);
+    }
+    else if (what == "ip_open_while_playing")
+      ip_open_while_playing(*cl);
+    else if (what == "multi_close_race")
+      multi_close_race(*cl);
+    else if (what == "multi_dtor")
+      multi_dtor(*cl);
     else if (what == "dtor_inflight")
     {
       // a stream left open at destruction: does anything leak or fault?
       std::string err;
+      int64_t sid = 0;
       cl->OpenLiveTimeshiftStream("uuid", err);
       std::vector<uint8_t> b(65536);
       cl->ReadLiveTimeshiftStream(b.data(), 65536);
-      cl->OpenRecordingStream(5, err);
-      cl->ReadRecordingStream(b.data(), 1000);
-      cl->OpenInProgressRecordingStream(7, time(nullptr), err);
-      cl->ReadInProgressRecordingStream(b.data(), 1000);
+      cl->OpenRecordingStream(5, sid, err);
+      cl->ReadRecordedStream(sid, b.data(), 1000);
+      int64_t sid2 = 0;
+      cl->OpenInProgressRecordingStream(7, time(nullptr), sid2, err);
+      cl->ReadRecordedStream(sid2, b.data(), 1000);
       cl->AbortInFlightRequests();
     }
     else

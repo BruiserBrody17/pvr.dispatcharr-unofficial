@@ -13,6 +13,7 @@ docs/BUILDING.md|function|target_link_libraries
 docs/CATCHUP.md|setting|tv_archive_duration
 docs/CLOSED_ITEMS.md|function|AbortDemux
 docs/CLOSED_ITEMS.md|function|CloseFile
+docs/CLOSED_ITEMS.md|function|CloseInProgressRecordingStream
 docs/CLOSED_ITEMS.md|function|ClosePVRStream
 docs/CLOSED_ITEMS.md|function|ComputeSeriesRuleDisplayFields
 docs/CLOSED_ITEMS.md|function|DeleteFromClient
@@ -25,7 +26,6 @@ docs/CLOSED_ITEMS.md|function|GetText
 docs/CLOSED_ITEMS.md|function|GetTimezoneBias
 docs/CLOSED_ITEMS.md|function|IsApiKeyValidFor
 docs/CLOSED_ITEMS.md|function|MatchDayOfWeek
-docs/CLOSED_ITEMS.md|function|PauseStream
 docs/CLOSED_ITEMS.md|function|PlatformSupportsAddon
 docs/CLOSED_ITEMS.md|function|SetConnectionState
 docs/CLOSED_ITEMS.md|function|SetFirstDayFromLocalTime
@@ -69,9 +69,6 @@ docs/CLOSED_ITEMS.md|setting|user_edited
 docs/CLOSED_ITEMS.md|setting|validate_redirect_urls
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
-docs/OPEN_ITEMS.md|function|GetRecordedStreamTimes
-docs/OPEN_ITEMS.md|function|IsRecordedStreamRealTime
-docs/OPEN_ITEMS.md|function|PauseRecordedStream
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work
@@ -82,14 +79,18 @@ docs/PVR_HTS_COMPARISON.md|setting|title_mode
 docs/RECORDINGS.md|function|AnnounceReminder
 docs/RECORDINGS.md|function|CallRecordingMenuHook
 docs/RECORDINGS.md|function|CloseFile
+docs/RECORDINGS.md|function|CloseRecordingStream
 docs/RECORDINGS.md|function|Deserialize
 docs/RECORDINGS.md|function|FetchInProgressPlaylistSnapshot
 docs/RECORDINGS.md|function|FetchInProgressRecordingSeekableSnapshot
 docs/RECORDINGS.md|function|GetDuration
 docs/RECORDINGS.md|function|GetFFMpegOptionsFromInput
+docs/RECORDINGS.md|function|GetInProgressRecordingStreamDurationMs
 docs/RECORDINGS.md|function|GetInProgressRecordingStreamUrl
+docs/RECORDINGS.md|function|GetRecordingStreamLength
 docs/RECORDINGS.md|function|InitializeDefinitionsFromXml
 docs/RECORDINGS.md|function|IsApiKeyValidFor
+docs/RECORDINGS.md|function|IsInProgressRecordingStreamOpen
 docs/RECORDINGS.md|function|IsVisible
 docs/RECORDINGS.md|function|OnPlayBackError
 docs/RECORDINGS.md|function|OpenWithCURL
@@ -116,6 +117,7 @@ docs/RECURRING_RULES.md|setting|system_settings
 docs/TEST_COVERAGE.md|function|FindLatestPendingTitleForChannel
 docs/TEST_COVERAGE.md|function|GetTimezoneBias
 docs/TEST_COVERAGE.md|function|IsApiKeyValidFor
+docs/TEST_COVERAGE.md|function|ShouldReseedInProgressSegmentCache
 docs/TEST_COVERAGE.md|function|_time_to_seconds
 docs/TEST_COVERAGE.md|function|add_internal
 docs/TEST_COVERAGE.md|setting|dvr_settings
@@ -129,7 +131,6 @@ docs/TIMESHIFT.md|function|Install
 docs/TIMESHIFT.md|function|InstallFromZip
 docs/TIMESHIFT.md|function|IsPVRChannel
 docs/TIMESHIFT.md|function|OpenPVRStream
-docs/TIMESHIFT.md|function|PauseStream
 docs/TIMESHIFT.md|function|SeekTimeRelative
 docs/TIMESHIFT.md|function|UpdatePlayState
 docs/TIMESHIFT.md|function|UpdateTimeshiftProgressData

@@ -195,7 +195,7 @@ TEST_CASE("ResolveInProgressFinished stays not-finished when this cycle's own pr
   // cycle isInProgress first flips false; if that segment's byte-size
   // probe itself failed this cycle, it isn't merged yet (see
   // CountLeadingProbedSegments()'s own comment) -- marking finished here
-  // would strand it permanently, since ReadInProgressRecordingStream()
+  // would strand it permanently, since ReadInProgressRecordingStreamImpl()
   // never refreshes again once finished is true and its read position
   // has already reached the (now permanently short) totalBytes.
   CHECK_FALSE(ResolveInProgressFinished(/*lookupOk=*/true, /*isInProgress=*/false, /*previousFinished=*/false,

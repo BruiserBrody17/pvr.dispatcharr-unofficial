@@ -734,7 +734,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   else if (!m_client.HasApiKey() || !apiKeyBelongsToThisAccount)
   {
     // Recording playback needs an API key (see OpenRecordingStream()/
-    // ReadRecordingStream()) -- a JWT would work too, but expires after
+    // ReadRecordingStreamImpl()) -- a JWT would work too, but expires after
     // 30 minutes, which is shorter than most recordings. Obtain one once
     // and persist it so it isn't looked up again on every addon restart.
     // ObtainApiKey() adopts the account's EXISTING key and only generates
@@ -2054,6 +2054,12 @@ PVR_ERROR PVRDispatcharr::GetCapabilities(kodi::addon::PVRCapabilities& capabili
   // sets STREAMURL instead, and Kodi simply never calls these for a live
   // channel in that case.
   capabilities.SetHandlesInputStream(true);
+  // Kodi 22 closes the previous recorded stream before each open unless told otherwise, and answers pause, real-time
+  // and times for a recording through the legacy per-addon calls. With this set it keeps the old stream open until it
+  // closes it itself, and asks per stream id (IsRecordedStreamRealTime(), PauseRecordedStream(),
+  // GetRecordedStreamTimes()). DispatcharrClient keys every recorded stream's state by that id.
+  // StreamClosed() is deliberately not overridden: it is only called for addons that do not handle the input stream.
+  capabilities.SetSupportsMultipleRecordedStreams(true);
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -3159,80 +3165,33 @@ int64_t PVRDispatcharr::LengthLiveStream()
   return m_client.GetLiveTimeshiftStreamLength();
 }
 
+// Live channels only: Kodi 22 answers pause and seek for a recording itself (CInputStreamPVRRecording returns true for
+// both) and asks real-time, pause and times per stream id, see GetCapabilities().
 bool PVRDispatcharr::CanPauseStream()
 {
-  return m_client.IsLiveTimeshiftStreamOpen() || m_client.IsInProgressRecordingStreamOpen();
+  return m_client.IsLiveTimeshiftStreamOpen();
 }
 
 bool PVRDispatcharr::CanSeekStream()
 {
-  return m_client.IsLiveTimeshiftStreamOpen() || m_client.IsInProgressRecordingStreamOpen();
+  return m_client.IsLiveTimeshiftStreamOpen();
 }
 
 bool PVRDispatcharr::IsRealTimeStream()
 {
-  return m_client.IsLiveTimeshiftStreamOpen() || m_client.IsInProgressRecordingStreamOpen();
+  return m_client.IsLiveTimeshiftStreamOpen();
 }
 
 PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
 {
-  // Same self-heal persistence gap as ReadRecordedStream()/
-  // LengthRecordedStream() (see their own comment): both branches below
-  // can reach RefreshInProgressRecordingManifest()'s own proactive
-  // key-regeneration self-heal via GetInProgressRecordingStreamDurationMs()
-  // -- once via the debug-log line just below, unconditionally via the
-  // in-progress-recording branch further down. GetStreamTimes() is
-  // polled far more often than either of those two (Kodi calls it
-  // repeatedly during active playback), so it's plausibly the *first*
-  // place a stale key actually gets detected and regenerated in
-  // practice -- without this, that regeneration was silently never
-  // saved, only ever costing an extra 401-and-regenerate round trip on
-  // this install's next restart (self-healing, not data loss, hence
-  // low severity -- found via a project-wide review, not reproduced
-  // live).
-  std::string keyBefore = m_client.GetApiKey();
-  // Guarded by m_debugLogging, unlike a plain kodi::Log(ADDON_LOG_DEBUG,
-  // ...) call elsewhere -- a real, confirmed inefficiency found via a
-  // project-wide review, not reproduced live: kodi::Log()'s own
-  // arguments are always evaluated regardless of whether debug logging
-  // is enabled or the message ends up discarded, and
-  // GetInProgressRecordingStreamDurationMs() isn't a cheap read -- it
-  // triggers a (throttled, but still real) manifest refresh attempt as
-  // a side effect. That meant every single GetStreamTimes() call (Kodi
-  // calls this frequently during active playback to update seek-bar/
-  // stream-time displays) paid that cost purely to build a log line
-  // nobody would ever see with debug logging off.
-  if (m_debugLogging)
-  {
-    kodi::Log(ADDON_LOG_DEBUG,
-              "pvr.dispatcharr-unofficial: GetStreamTimes called: liveTimeshiftOpen=%d inProgressOpen=%d "
-              "durationMs=%lld",
-              m_client.IsLiveTimeshiftStreamOpen() ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0,
-              static_cast<long long>(m_client.GetInProgressRecordingStreamDurationMs()));
-  }
-  // startTime/ptsStart both zero: no meaningful wall-clock "show start" for
-  // a growing buffer/recording the way a scheduled EPG programme would
-  // have, so pts values here are purely self-relative rather than
-  // UTC-anchored -- see kodi-dev-kit's own PVRStreamTimes doc comments.
-  // ptsEnd is in microseconds and grows on every call as the growing
-  // source's own manifest gets refreshed -- that growth, reported live, is
-  // what gives real pause/rewind/live-follow instead of the
-  // fixed-duration-or-nothing ffmpegdirect route this replaced (see
-  // docs/TIMESHIFT.md and docs/RECORDINGS.md).
+  // Live channels only; a recording's times come from GetRecordedStreamTimes().
   //
-  // CInputStreamPVRRecording extends the same CInputStreamPVRBase as
-  // CInputStreamPVRChannel (confirmed in Kodi-core source), so this same
-  // callback drives both a live-timeshift channel and an in-progress
-  // recording -- only one of the two is ever open at once, so checking
-  // both here is safe and simplest. Checking the *setting*
-  // (m_liveTimeshiftMode == kLiveTimeshiftServer) here instead of actual
-  // open state was a real bug, not just imprecision: that setting doesn't
-  // change once a stream closes, so it stayed true while an in-progress
-  // recording was playing with server-side timeshift also enabled,
-  // permanently shadowing the recording branch below and reporting
-  // GetLiveTimeshiftStreamDurationMs()'s 0 (no live stream open) as ptsEnd
-  // instead -- confirmed live: canseek/totaltime stayed false/0 despite
-  // GetInProgressRecordingStreamDurationMs() correctly growing every call.
+  // ptsEnd is in microseconds and grows on every call as the growing source's own manifest gets refreshed -- that
+  // growth, reported live, is what gives real pause/rewind/live-follow instead of the fixed-duration-or-nothing
+  // ffmpegdirect route this replaced (see docs/TIMESHIFT.md). Checking the *setting*
+  // (m_liveTimeshiftMode == kLiveTimeshiftServer) here instead of actual open state was a real bug, not just
+  // imprecision: that setting doesn't change once a stream closes, so it kept reporting the live buffer's 0 (no live
+  // stream open) as ptsEnd -- confirmed live: canseek/totaltime stayed false/0.
   if (m_client.IsLiveTimeshiftStreamOpen())
   {
     // A real, non-zero startTime here is load-bearing, not cosmetic --
@@ -3250,20 +3209,6 @@ PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
     // segments, so the seek bar stops offering history that is gone.
     times.SetPTSBegin(m_client.GetLiveTimeshiftStreamBeginMs() * 1000);
     times.SetPTSEnd(m_client.GetLiveTimeshiftStreamDurationMs() * 1000);
-    return PVR_ERROR_NO_ERROR;
-  }
-  if (m_client.IsInProgressRecordingStreamOpen())
-  {
-    // Same root cause/mechanism as the live-timeshift branch above (see its
-    // comment and GetInProgressRecordingStreamStartTime()'s), fixed the same
-    // way -- a real, non-zero startTime here. Simpler than the live case:
-    // the recording's own actual start time, not something computed from a
-    // cold-start trim, since a recording always plays from true byte 0.
-    times.SetStartTime(m_client.GetInProgressRecordingStreamStartTime());
-    times.SetPTSStart(0);
-    times.SetPTSBegin(0);
-    times.SetPTSEnd(m_client.GetInProgressRecordingStreamDurationMs() * 1000);
-    PersistApiKeyIfChanged(keyBefore);
     return PVR_ERROR_NO_ERROR;
   }
   return PVR_ERROR_NOT_IMPLEMENTED;
@@ -4063,15 +4008,9 @@ PVR_ERROR PVRDispatcharr::GetRecordingEdl(const kodi::addon::PVRRecording& recor
   return PVR_ERROR_NO_ERROR;
 }
 
-// Kodi 22 hands every recorded-stream call an id. This addon does not declare
-// SetSupportsMultipleRecordedStreams(), so Kodi closes the previous stream
-// before each open and the id can be ignored; one fixed id keeps the
-// single-slot state in DispatcharrClient unchanged.
-static constexpr int64_t kSingleRecordedStreamId = 1;
-
 bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recording, int64_t& streamId)
 {
-  streamId = kSingleRecordedStreamId;
+  streamId = 0;
   int id = std::atoi(recording.GetRecordingId().c_str());
   std::string error;
   std::string keyBefore = m_client.GetApiKey();
@@ -4081,7 +4020,7 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   // source, not itself independently reproduced: an empty API key never
   // self-heals via any of the 401-triggered regenerate-and-retry paths
   // elsewhere in DispatcharrClient.cpp (OpenRecordingStream()/
-  // ReadRecordingStream()/FetchRawInProgressPlaylist()), because
+  // ReadRecordingStreamImpl()/FetchRawInProgressPlaylist()), because
   // Dispatcharr's own RecordingViewSet `file`/`hls` actions use
   // `AllowAny` at the DRF permission-class level specifically so an
   // unauthenticated request reaches `_user_can_play_recording()` at all --
@@ -4141,10 +4080,13 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
             "pvr.dispatcharr-unofficial: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d "
             "hlsDirStillPresent=%d",
             recording.GetRecordingId().c_str(), id, rec.isInProgress ? 1 : 0, rec.hlsDirStillPresent ? 1 : 0);
-  bool opened = useGrowingBuffer ? m_client.OpenInProgressRecordingStream(id, recording.GetRecordingTime(), error)
-                                 : m_client.OpenRecordingStream(id, error);
-  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: OpenRecordedStream: opened=%d isInProgressStreamOpen=%d",
-            opened ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
+  bool opened = useGrowingBuffer
+                    ? m_client.OpenInProgressRecordingStream(id, recording.GetRecordingTime(), streamId, error)
+                    : m_client.OpenRecordingStream(id, streamId, error);
+  kodi::Log(ADDON_LOG_DEBUG,
+            "pvr.dispatcharr-unofficial: OpenRecordedStream: opened=%d inProgress=%d streamId=%lld openStreams=%zu",
+            opened ? 1 : 0, useGrowingBuffer ? 1 : 0, static_cast<long long>(streamId),
+            m_client.OpenRecordedStreamCount());
   if (!opened)
   {
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to open recording %d: %s", id, error.c_str());
@@ -4176,17 +4118,14 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   return true;
 }
 
-void PVRDispatcharr::CloseRecordedStream(int64_t /*streamId*/)
+void PVRDispatcharr::CloseRecordedStream(int64_t streamId)
 {
-  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: CloseRecordedStream: isInProgressStreamOpen=%d",
-            m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
-  if (m_client.IsInProgressRecordingStreamOpen())
-    m_client.CloseInProgressRecordingStream();
-  else
-    m_client.CloseRecordingStream();
+  m_client.CloseRecordedStream(streamId);
+  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: CloseRecordedStream: streamId=%lld openStreams=%zu",
+            static_cast<long long>(streamId), m_client.OpenRecordedStreamCount());
 }
 
-int PVRDispatcharr::ReadRecordedStream(int64_t /*streamId*/, unsigned char* buffer, unsigned int size)
+int PVRDispatcharr::ReadRecordedStream(int64_t streamId, unsigned char* buffer, unsigned int size)
 {
   // Same self-heal persistence as the completed-recording branch below --
   // including updating m_lastAppliedConfig.apiKey first, for the same
@@ -4196,49 +4135,85 @@ int PVRDispatcharr::ReadRecordedStream(int64_t /*streamId*/, unsigned char* buff
   // gap this fixes (found via a project-wide review): this branch used
   // to return early with no key-persist wrapper at all, even though
   // FetchRawInProgressPlaylist()'s own 401 handling and
-  // ReadInProgressRecordingStream()'s own segment-fetch 401 handling
+  // ReadInProgressRecordingStreamImpl()'s own segment-fetch 401 handling
   // both independently regenerate the key from deep inside this same
   // call -- so a regeneration triggered during in-progress playback
   // specifically was silently never saved, unlike the identical
   // scenario during completed-recording playback.
   std::string keyBefore = m_client.GetApiKey();
-  int result = m_client.IsInProgressRecordingStreamOpen() ? m_client.ReadInProgressRecordingStream(buffer, size)
-                                                          : m_client.ReadRecordingStream(buffer, size);
+  int result = m_client.ReadRecordedStream(streamId, buffer, size);
   PersistApiKeyIfChanged(keyBefore);
   return result;
 }
 
-int64_t PVRDispatcharr::SeekRecordedStream(int64_t /*streamId*/, int64_t position, int whence)
+int64_t PVRDispatcharr::SeekRecordedStream(int64_t streamId, int64_t position, int whence)
 {
   // Same self-heal persistence gap as ReadRecordedStream()/
   // LengthRecordedStream() above (see their own comment) --
-  // SeekInProgressRecordingStream()'s own SEEK_END branch calls
+  // SeekInProgressRecordingStreamImpl()'s own SEEK_END branch calls
   // RefreshInProgressRecordingManifest() directly, which can trigger the
   // same proactive key-regeneration self-heal. Found via a project-wide
   // review, not reproduced live; low severity, same as GetStreamTimes()'s
   // own identical gap -- self-healing, just an extra round trip on this
   // install's next restart if left unpersisted.
-  if (m_client.IsInProgressRecordingStreamOpen())
-  {
-    std::string keyBefore = m_client.GetApiKey();
-    int64_t result = m_client.SeekInProgressRecordingStream(position, whence);
-    PersistApiKeyIfChanged(keyBefore);
-    return result;
-  }
-  return m_client.SeekRecordingStream(position, whence);
+  std::string keyBefore = m_client.GetApiKey();
+  int64_t result = m_client.SeekRecordedStream(streamId, position, whence);
+  PersistApiKeyIfChanged(keyBefore);
+  return result;
 }
 
-int64_t PVRDispatcharr::LengthRecordedStream(int64_t /*streamId*/)
+int64_t PVRDispatcharr::LengthRecordedStream(int64_t streamId)
 {
   // Same self-heal persistence gap as ReadRecordedStream() above --
   // GetInProgressRecordingStreamLength() also calls
   // RefreshInProgressRecordingManifest() internally, which can trigger
   // the same proactive key-regeneration self-heal.
   std::string keyBefore = m_client.GetApiKey();
-  int64_t result = m_client.IsInProgressRecordingStreamOpen() ? m_client.GetInProgressRecordingStreamLength()
-                                                              : m_client.GetRecordingStreamLength();
+  int64_t result = m_client.GetRecordedStreamLength(streamId);
   PersistApiKeyIfChanged(keyBefore);
   return result;
+}
+
+PVR_ERROR PVRDispatcharr::IsRecordedStreamRealTime(int64_t streamId, bool& isRealTime)
+{
+  // An in-progress recording is a growing source (the live edge is where it ends), a completed one a fixed file.
+  return m_client.IsRecordedStreamRealTime(streamId, isRealTime) ? PVR_ERROR_NO_ERROR : PVR_ERROR_INVALID_PARAMETERS;
+}
+
+PVR_ERROR PVRDispatcharr::PauseRecordedStream(int64_t streamId, bool /*paused*/)
+{
+  // Nothing to tell the server: a paused viewer's HLS key is kept alive by the poll of GetRecordedStreamTimes(), which
+  // Kodi keeps making through a pause (see HlsViewerKeepAlive.h), and reads simply stop arriving. Answering NO_ERROR
+  // for a known id is all this needs; the legacy PauseStream() is likewise unimplemented.
+  bool unused = false;
+  return m_client.IsRecordedStreamRealTime(streamId, unused) ? PVR_ERROR_NO_ERROR : PVR_ERROR_INVALID_PARAMETERS;
+}
+
+PVR_ERROR PVRDispatcharr::GetRecordedStreamTimes(int64_t streamId, kodi::addon::PVRStreamTimes& times)
+{
+  // The same self-heal persistence gap as ReadRecordedStream() (see its comment): the duration below can reach
+  // RefreshInProgressRecordingManifest()'s proactive key regeneration. Kodi polls this far more often than a read, so
+  // it is plausibly the first place a stale key is noticed.
+  std::string keyBefore = m_client.GetApiKey();
+  DispatcharrClient::RecordedStreamTimes recordedTimes;
+  const DispatcharrClient::RecordedStreamLookup lookup = m_client.GetRecordedStreamTimes(streamId, recordedTimes);
+  PersistApiKeyIfChanged(keyBefore);
+  switch (lookup)
+  {
+  case DispatcharrClient::RecordedStreamLookup::kUnknownStream:
+    return PVR_ERROR_INVALID_PARAMETERS;
+  case DispatcharrClient::RecordedStreamLookup::kNoTimes:
+    return PVR_ERROR_NOT_IMPLEMENTED;
+  case DispatcharrClient::RecordedStreamLookup::kOk:
+    break;
+  }
+  // The recording's real start time must not be 0/unset, see GetLiveTimeshiftStreamWallClockAnchor()'s comment for
+  // why. ptsEnd is in microseconds and grows as the recording does, which is what gives real seeking and live-follow.
+  times.SetStartTime(recordedTimes.startTime);
+  times.SetPTSStart(0);
+  times.SetPTSBegin(0);
+  times.SetPTSEnd(recordedTimes.durationMs * 1000);
+  return PVR_ERROR_NO_ERROR;
 }
 
 // ---------------------------------------------------------------------

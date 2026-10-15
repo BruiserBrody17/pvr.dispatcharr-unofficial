@@ -26,7 +26,7 @@ namespace dispatcharr
 bool IsInProgressHlsRedirect(const std::string& contentType, const std::string& resolvedUrl);
 
 // Whether a completed recording's own file appears to have been swapped
-// out from under an already-open ReadRecordingStream() -- confirmed
+// out from under an already-open ReadRecordingStreamImpl() -- confirmed
 // against Dispatcharr's own real current upstream source (a 22nd-pass
 // audit, cloned into a scratchpad, never committed to this repo --
 // stronger than the API shape alone, not the same standard as a live
@@ -38,7 +38,7 @@ bool IsInProgressHlsRedirect(const std::string& contentType, const std::string& 
 // mid-playback if it started watching the recording right after it
 // finished, before comskip (which can take minutes) is done.
 //
-// Without this check, `ReadRecordingStream()` kept using the length
+// Without this check, `ReadRecordingStreamImpl()` kept using the length
 // cached at open time against the new, shorter file's actual bytes at
 // the same offsets -- silently reading the wrong content with no error
 // anywhere (the live-timeshift read path already guards its own
@@ -95,9 +95,9 @@ inline std::string DescribeRecordingOpenFailure(long httpCode)
 }
 
 // What a ranged read of a completed recording's file turned out to be, in the order the checks must run
-// (ReadRecordingStream()). The order is the content: a 401 is tried once with a refreshed key before anything else; a
-// failure that may clear (no response, 502/503/504, 500) is retried inside the read; any other status ends the read; a
-// plain 200 past offset 0 means the server dropped Range; a Content-Range total that no longer matches the length
+// (ReadRecordingStreamImpl()). The order is the content: a 401 is tried once with a refreshed key before anything else;
+// a failure that may clear (no response, 502/503/504, 500) is retried inside the read; any other status ends the read;
+// a plain 200 past offset 0 means the server dropped Range; a Content-Range total that no longer matches the length
 // cached at open means the file was replaced. A mutation that moves any of these past another (the range check before
 // the status check, say) changes what a viewer is told.
 enum class RecordingReadOutcome
@@ -190,12 +190,12 @@ inline RecordingOpenOutcome ClassifyRecordingOpenResponse(bool transferOk, bool 
   return RecordingOpenOutcome::kOk;
 }
 
-// The same for one segment body of an in-progress recording (ReadInProgressRecordingStream()): a first 401 is retried
-// with a refreshed key; a failure that may clear (no response, 500/502/503/504) is retried inside the read's budget; a
-// 404 is a segment the playlist listed but the server no longer has, which the caller checks against the recording
-// itself (it may be gone) before treating it as one more failure that will not clear; any other status is such a
-// failure; only a 200 is a segment (the fetch asks for the whole body, never a range). The 401 comes first even when
-// the transfer failed.
+// The same for one segment body of an in-progress recording (ReadInProgressRecordingStreamImpl()): a first 401 is
+// retried with a refreshed key; a failure that may clear (no response, 500/502/503/504) is retried inside the read's
+// budget; a 404 is a segment the playlist listed but the server no longer has, which the caller checks against the
+// recording itself (it may be gone) before treating it as one more failure that will not clear; any other status is
+// such a failure; only a 200 is a segment (the fetch asks for the whole body, never a range). The 401 comes first even
+// when the transfer failed.
 enum class InProgressSegmentOutcome
 {
   kRefreshApiKeyAndRetry,

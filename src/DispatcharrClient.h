@@ -71,6 +71,7 @@
 #include "CatchUpUtil.h"
 #include "ConnectionReport.h"
 #include "DvrAccess.h"
+#include "RecordedStreamRegistry.h"
 #include "RecurringRuleEdit.h"
 #include "RequestTimeout.h"
 #include "SegmentFetchFailure.h"
@@ -81,6 +82,7 @@
 #include <functional>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -106,7 +108,7 @@ struct Config
   // stale, though: Dispatcharr keeps only one active key account-wide, so
   // any other client regenerating that account's key (another Kodi
   // install, a script) silently invalidates this one --
-  // OpenRecordingStream()/ReadRecordingStream() detect that (a 401) and
+  // OpenRecordingStream()/ReadRecordingStreamImpl() detect that (a 401) and
   // self-heal by re-reading the account's current key and retrying (see
   // ObtainApiKey()). If left empty, the account's existing key is read
   // and persisted back to the addon's own settings on first use -- a new
@@ -618,7 +620,7 @@ public:
   // (re)connecting.
   bool GetAccessToken(std::string& tokenOut, std::string& error);
   // Current API key, e.g. to re-persist it after OpenRecordingStream()/
-  // ReadRecordingStream() have silently swapped a stale one for the
+  // ReadRecordingStreamImpl() have silently swapped a stale one for the
   // account's current key (see ObtainApiKey()) -- this client has no
   // knowledge of Kodi's settings storage, so the caller must notice the
   // change and save it itself. Thread-safe (m_apiKeyMutex) --
@@ -633,7 +635,7 @@ public:
   }
   // Makes sure this client holds a working API key for the configured
   // account, storing it in this client's own config for immediate use by
-  // OpenRecordingStream()/ReadRecordingStream() -- the caller must persist
+  // OpenRecordingStream()/ReadRecordingStreamImpl() -- the caller must persist
   // it itself (see GetApiKey()). The one entry point for every "I need a
   // key" path: first-run setup, a stored key that belongs to a different
   // account, and every 401 self-heal.
@@ -984,11 +986,12 @@ public:
   // unset for a completed recording for that reason. Only supports a
   // completed recording (a real, Range-seekable file) -- an in-progress one
   // is instead served via OpenInProgressRecordingStream() below.
-  bool OpenRecordingStream(int recordingId, std::string& error);
-  int ReadRecordingStream(uint8_t* buffer, unsigned int size);
-  int64_t SeekRecordingStream(int64_t position, int whence);
-  int64_t GetRecordingStreamLength() const;
-  void CloseRecordingStream();
+  //
+  // Kodi 22 may hold several recorded streams open at once, each under the id the open returned in `streamIdOut`;
+  // every later call takes it. Ids are never reused and opening one stream closes nothing, so a Close for an old id
+  // can arrive after the next stream's open. An unknown id (already closed, or never issued) is a harmless no-op or
+  // an error value, never another stream's data.
+  bool OpenRecordingStream(int recordingId, int64_t& streamIdOut, std::string& error);
 
   // Growing, seekable byte-stream access to the server-side live timeshift
   // buffer -- the actual consumer of StartTimeshiftBuffer() above. Exposes
@@ -996,7 +999,7 @@ public:
   // (PVRCapabilities::SetHandlesInputStream), the same "one growing/
   // seekable byte source, Kodi's own internal demuxer does the actual
   // MPEG-TS parsing and PTS-based seek refinement" pattern already proven
-  // for completed recordings (OpenRecordingStream/ReadRecordingStream/
+  // for completed recordings (OpenRecordingStream/ReadRecordingStreamImpl/
   // SeekRecordingStream above), just against the companion plugin's
   // per-segment Range-served files instead of one Dispatcharr-served
   // recording file -- confirmed live: real pause/rewind/fast-forward/
@@ -1048,10 +1051,9 @@ public:
   // just "is server-side timeshift mode enabled in settings" -- the latter
   // doesn't change once a stream closes, so PVRDispatcharr's GetStreamTimes()/
   // CanPauseStream()/CanSeekStream()/IsRealTimeStream() need this to avoid
-  // misreporting live-timeshift state while an in-progress recording (or a
-  // plain completed recording) is what's actually open. See
-  // IsInProgressRecordingStreamOpen()'s own comment for why these callbacks
-  // need per-stream-flavour state at all.
+  // misreporting live-timeshift state after the stream has closed. (Recordings
+  // are asked about per stream id instead: IsRecordedStreamRealTime(),
+  // GetRecordedStreamTimes().)
   bool IsLiveTimeshiftStreamOpen() const;
 
   // Growing, seekable byte-stream access to an in-progress recording --
@@ -1080,27 +1082,38 @@ public:
   // than live-timeshift's own "anchor at the trim point" approach below,
   // since a recording always starts at true byte 0 with a genuinely known
   // start time, no cold-start trim to anchor instead.
-  bool OpenInProgressRecordingStream(int recordingId, time_t startTime, std::string& error);
-  int ReadInProgressRecordingStream(uint8_t* buffer, unsigned int size);
-  int64_t SeekInProgressRecordingStream(int64_t position, int whence);
-  int64_t GetInProgressRecordingStreamLength();
-  // Mirrors GetLiveTimeshiftStreamDurationMs() -- for GetStreamTimes()'s
-  // ptsEnd, which must grow as the recording does.
-  int64_t GetInProgressRecordingStreamDurationMs();
-  // Mirrors GetLiveTimeshiftStreamWallClockAnchor() -- for GetStreamTimes()'s
-  // startTime, same "must not be 0/unset" requirement (see that function's
-  // own comment for the Kodi-core mechanism). The value itself is simpler
-  // here: the recording's real start time, passed in at Open() time,
-  // rather than something computed from a cold-start trim.
-  time_t GetInProgressRecordingStreamStartTime();
-  void CloseInProgressRecordingStream();
-  // PVRDispatcharr uses this to tell which of OpenRecordedStream()'s two
-  // implementations (this one, or the plain completed-recording one) is
-  // the one currently open, since ReadRecordedStream()/SeekRecordedStream()/
-  // LengthRecordedStream()/GetStreamTimes()/CanPauseStream()/CanSeekStream()/
-  // IsRealTimeStream() are all shared Kodi PVR client callbacks with no
-  // parameter telling them which recording-stream flavour is active.
-  bool IsInProgressRecordingStreamOpen() const;
+  bool OpenInProgressRecordingStream(int recordingId, time_t startTime, int64_t& streamIdOut, std::string& error);
+
+  // The calls both kinds of recorded stream share, dispatched on the kind the id was opened as. Read returns 0 for an
+  // unknown id (Kodi retries a -1 at once, which would spin); Seek and Length return -1.
+  int ReadRecordedStream(int64_t streamId, uint8_t* buffer, unsigned int size);
+  int64_t SeekRecordedStream(int64_t streamId, int64_t position, int whence);
+  int64_t GetRecordedStreamLength(int64_t streamId);
+  void CloseRecordedStream(int64_t streamId);
+
+  struct RecordedStreamTimes
+  {
+    // The recording's own real start time (passed in at open) and how much of it exists so far, in ms. startTime must
+    // not be 0/unset, for the Kodi-core reason in GetLiveTimeshiftStreamWallClockAnchor()'s comment; here it is simply
+    // the recording's real start, since a recording always plays from true byte 0.
+    time_t startTime = 0;
+    int64_t durationMs = 0;
+  };
+  enum class RecordedStreamLookup
+  {
+    kOk,
+    kUnknownStream,
+    kNoTimes // a completed recording: Kodi works its times out from the container
+  };
+  // For GetRecordedStreamTimes()'s ptsEnd, which must grow as the recording does (the live-timeshift equivalent is
+  // GetLiveTimeshiftStreamDurationMs()). Triggers a throttled manifest refresh, which is also what keeps a paused
+  // viewer's HLS key alive.
+  RecordedStreamLookup GetRecordedStreamTimes(int64_t streamId, RecordedStreamTimes& out);
+  // Whether the id is open here and, if so, whether it reads a growing source. True for an in-progress stream even
+  // once it has finished, as the single-slot IsRealTimeStream() reported it before.
+  bool IsRecordedStreamRealTime(int64_t streamId, bool& realTimeOut) const;
+  // How many recorded streams are open; the glue harness asserts it returns to 0.
+  size_t OpenRecordedStreamCount() const;
 
 private:
   // SetDvrOffsetMinutes()'s GET-merge-PATCH; the caller holds m_dvrSettingsMutex.
@@ -1181,7 +1194,7 @@ private:
 
   // The CURLSH* behind m_curlShareState, or nullptr if it failed to
   // initialise -- pass to CURLOPT_SHARE on every easy handle this client
-  // creates (Request(), OpenRecordingStream()'s probe, ReadRecordingStream()'s
+  // creates (Request(), OpenRecordingStream()'s probe, ReadRecordingStreamImpl()'s
   // persistent handle) so they all pull from one connection/DNS/TLS-session
   // cache. Returns void* (actually CURLSH*) so this header doesn't need
   // <curl/curl.h>; defined in the .cpp, which does.
@@ -1393,7 +1406,7 @@ private:
   // in the .cpp) holding a CURLSH* and the mutexes that guard it. Every
   // curl_easy_init() this client does (Request(), the recording-stream
   // helpers) is still a fresh easy handle per call/open recording -- unlike
-  // ReadRecordingStream's single reused CURL*, a lone shared easy handle
+  // ReadRecordingStreamImpl's single reused CURL*, a lone shared easy handle
   // isn't safe here, since Kodi's PVR API can call into this client from
   // multiple threads at once (see the class comment above). A CURLSH share
   // object is libcurl's own answer to exactly that: a connection/DNS/
@@ -1452,14 +1465,40 @@ private:
   std::mutex m_catchupSessionCacheMutex;
   CatchupSessionCacheState m_catchupSessionCache;
 
-  // Kodi only ever has one recording open for playback at a time.
-  struct RecordingStreamState
+  // What every open recorded stream shares, so the registry can hold both kinds and a call can tell which it was given.
+  // Each state object owns its own locks: two streams must not wait on each other's reads, and a stream that Close
+  // removed stays valid for a read still running on it (the registry hands out shared_ptr).
+  struct RecordedStreamBase
   {
+    enum class Kind
+    {
+      kCompleted,
+      kInProgress
+    };
+    explicit RecordedStreamBase(Kind k) : kind(k)
+    {
+    }
+    virtual ~RecordedStreamBase() = default;
+    RecordedStreamBase(const RecordedStreamBase&) = delete;
+    RecordedStreamBase& operator=(const RecordedStreamBase&) = delete;
+    const Kind kind;
+  };
+
+  struct RecordingStreamState : RecordedStreamBase
+  {
+    RecordingStreamState() : RecordedStreamBase(Kind::kCompleted)
+    {
+    }
+    // Frees `curl` (a failed open's half-built state included).
+    ~RecordingStreamState() override;
+    // Held for a whole read, seek and Close. The completed path had no lock of its own and relied on Kodi never
+    // calling it from two threads; with several streams open, Close of one id can race a read on it.
+    std::mutex ioMutex;
     bool open = false;
     std::string url; // final URL after following any redirect
     int64_t length = -1;
     int64_t position = 0;
-    // Persistent libcurl easy handle, reused across every ReadRecordingStream()
+    // Persistent libcurl easy handle, reused across every ReadRecordingStreamImpl()
     // call for the current open recording so HTTP keep-alive actually applies
     // across sequential range reads -- a fresh curl_easy_init()/cleanup() per
     // read meant a brand-new TCP connection (and TLS handshake, over HTTPS)
@@ -1469,7 +1508,7 @@ private:
     // both against the same host) to starve playback on a
     // higher-latency/jittery link even with plenty of raw bandwidth for the
     // recording's bitrate. Created lazily on the first read, cleaned up in
-    // CloseRecordingStream(). Stored as void* rather than CURL* so this
+    // CloseRecordedStream(). Stored as void* rather than CURL* so this
     // header doesn't need <curl/curl.h>; CURL is itself just an opaque alias
     // for void in curl.h, so the cast back in the .cpp is exact.
     void* curl = nullptr;
@@ -1481,10 +1520,9 @@ private:
     // Consecutive reads that failed for a reason that will not clear, see RecordPermanentReadFailure().
     PermanentReadFailureTracker permanentReadFailures;
   };
-  RecordingStreamState m_recordingStream;
   // Counts a read of a completed recording that failed for a reason that will not clear: -1 until the run has
-  // lasted long enough (RecordPermanentReadFailure()), then 0 (end of stream) from then on.
-  int FailRecordingReadPermanently(long httpCode);
+  // lasted long enough (RecordPermanentReadFailure()), then 0 (end of stream) from then on. The caller holds ioMutex.
+  int FailRecordingReadPermanently(RecordingStreamState& st, long httpCode);
 
   struct LiveTimeshiftSegmentInfo
   {
@@ -1672,10 +1710,21 @@ private:
     int64_t timeOffsetMs = 0; // ditto, fixed-origin
   };
 
-  // Only one in-progress-recording stream open at a time, same as
-  // completed recordings and the live-timeshift buffer.
-  struct InProgressRecordingStreamState
+  struct InProgressRecordingStreamState : RecordedStreamBase
   {
+    InProgressRecordingStreamState() : RecordedStreamBase(Kind::kInProgress)
+    {
+    }
+    // Frees `curl` and the cached segment (a failed open's half-built state included).
+    ~InProgressRecordingStreamState() override;
+    // The same rules as the live-timeshift state's (see the block at m_liveStateMutex), one set per stream.
+    // stateMutex guards every other field here. curlMutex is held for a whole segment fetch and the copy out of
+    // `cachedSegmentBytes` that follows it, so Close, which takes it before clearing the state, never frees the handle
+    // or the cached bytes under a read. refreshMutex serialises manifest refreshes. Order: refresh, then curl, then
+    // state; the shared segment cache's own mutex (m_inProgressSegmentCacheMutex) is a leaf below all of them.
+    mutable std::mutex stateMutex;
+    std::mutex refreshMutex;
+    std::mutex curlMutex;
     bool open = false;
     int recordingId = -1;
     // Real UTC wall-clock start time of the underlying recording -- see
@@ -1693,7 +1742,7 @@ private:
     int64_t position = 0;
     // Set once Dispatcharr reports this recording as no longer in
     // progress (checked on every manifest refresh) -- lets
-    // ReadInProgressRecordingStream() treat "caught up to the known tail"
+    // ReadInProgressRecordingStreamImpl() treat "caught up to the known tail"
     // as genuine EOF instead of polling for more that will never come.
     bool finished = false;
     // When `finished` was first held back for want of an #EXT-X-ENDLIST --
@@ -1713,7 +1762,7 @@ private:
     // Where the current wait at the tail began (see TailWaitEpisode, CatchUpUtil.h).
     dispatcharr::TailWaitEpisode tailWait;
     void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
-    // Whole-segment cache for ReadInProgressRecordingStream() -- required,
+    // Whole-segment cache for ReadInProgressRecordingStreamImpl() -- required,
     // not just an optimisation: unlike the completed-recording `/file/`
     // endpoint, Dispatcharr's in-progress-recording HLS segment endpoint
     // ignores the Range header entirely and always serves the full segment
@@ -1755,16 +1804,19 @@ private:
     // Consecutive segment reads that failed for a reason that will not clear, see RecordPermanentReadFailure().
     PermanentReadFailureTracker permanentReadFailures;
   };
-  InProgressRecordingStreamState m_inProgressRecordingStream;
 
-  // The same rules as the live-timeshift state's (see the block at m_liveStateMutex). m_inProgressStateMutex
-  // guards every field of m_inProgressRecordingStream and m_inProgressSession. m_inProgressCurlMutex is held
-  // for a whole segment fetch and the copy out of `cachedSegmentBytes` that follows it, so Close, which takes it
-  // before resetting the state, never frees the handle or the cached bytes under a read.
-  mutable std::mutex m_inProgressStateMutex;
-  std::mutex m_inProgressRefreshMutex;
-  std::mutex m_inProgressCurlMutex;
-  uint64_t m_inProgressSession = 0;
+  // Every open recorded stream, completed or in progress, by the id Kodi was given. Opening never closes another entry.
+  dispatcharr::RecordedStreamRegistry<RecordedStreamBase> m_recordedStreams;
+
+  // The per-kind halves of the public Read/Seek/Length/Close/Times calls above.
+  int ReadRecordingStreamImpl(RecordingStreamState& st, uint8_t* buffer, unsigned int size);
+  int64_t SeekRecordingStreamImpl(RecordingStreamState& st, int64_t position, int whence);
+  void CloseRecordingStreamImpl(RecordingStreamState& st);
+  int ReadInProgressRecordingStreamImpl(InProgressRecordingStreamState& st, uint8_t* buffer, unsigned int size);
+  int64_t SeekInProgressRecordingStreamImpl(InProgressRecordingStreamState& st, int64_t position, int whence);
+  int64_t GetInProgressRecordingStreamLengthImpl(InProgressRecordingStreamState& st);
+  int64_t GetInProgressRecordingStreamDurationMsImpl(InProgressRecordingStreamState& st);
+  void CloseInProgressRecordingStreamImpl(InProgressRecordingStreamState& st);
 
   // Cross-open cache of already-probed segments for an in-progress
   // recording, keyed by recordingId. Dispatcharr's in-progress HLS output
@@ -1804,7 +1856,7 @@ private:
 
   // Fetches the recording's current HLS playlist (FetchRawInProgressPlaylist)
   // and merges any segments not already known into
-  // m_inProgressRecordingStream, extending its fixed-origin address space,
+  // `st`, extending its fixed-origin address space,
   // probing each newly-discovered segment's byte size with a tiny HEAD
   // request (HLS playlists carry durations via #EXTINF, never byte sizes) --
   // same pattern as RefreshLiveManifest(), adapted for a plain HLS text
@@ -1817,8 +1869,8 @@ private:
   // cold-start loop reads it.
   // `coldStart` is set by OpenInProgressRecordingStream()'s own loop: an open keeps the configured timeout even when
   // it was seeded with segments from a previous open of the same recording (dispatcharr::IsInProgressSteadyState()).
-  bool RefreshInProgressRecordingManifest(bool force, std::string& error, bool* coldStartRetryableOut = nullptr,
-                                          bool coldStart = false);
+  bool RefreshInProgressRecordingManifest(InProgressRecordingStreamState& st, bool force, std::string& error,
+                                          bool* coldStartRetryableOut = nullptr, bool coldStart = false);
 
   // Sends the periodic HEAD on the newest known segment that keeps
   // Dispatcharr from removing a finished recording's HLS directory out from
@@ -1827,7 +1879,7 @@ private:
   // stops once the reader has caught up to the tail. Cheap no-op unless one
   // is actually due; called from RefreshInProgressRecordingManifest(),
   // which GetStreamTimes()'s polling keeps reaching through a pause.
-  void MaybeSendInProgressHlsKeepAlive();
+  void MaybeSendInProgressHlsKeepAlive(InProgressRecordingStreamState& st);
 
   // A tiny HEAD request to learn one segment's total byte size via
   // Content-Length -- HLS playlists carry each segment's duration

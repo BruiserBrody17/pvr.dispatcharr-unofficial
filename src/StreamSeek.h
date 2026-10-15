@@ -8,8 +8,8 @@ namespace dispatcharr
 // Resolves a Kodi PVR seek request (position/whence, matching POSIX
 // SEEK_SET/SEEK_CUR/SEEK_END semantics) to an absolute byte position --
 // pulled out as a free function since the exact same switch/validation was
-// written three times: DispatcharrClient::SeekRecordingStream(),
-// SeekInProgressRecordingStream(), and SeekLiveTimeshiftStream(). See
+// written three times: DispatcharrClient::SeekRecordingStreamImpl(),
+// SeekInProgressRecordingStreamImpl(), and SeekLiveTimeshiftStream(). See
 // ../tests/test_stream_seek.cpp.
 //
 // currentPosition is the stream's own current byte position (used for
@@ -24,7 +24,7 @@ namespace dispatcharr
 // unrecognized whence value, a SEEK_END request against an unknown
 // referenceLength, or a computed position that would be negative.
 // Does NOT apply the separate live-edge-tail clamp
-// SeekInProgressRecordingStream()/SeekLiveTimeshiftStream() layer on top
+// SeekInProgressRecordingStreamImpl()/SeekLiveTimeshiftStream() layer on top
 // of this for a forward seek -- that's dispatcharr::ComputeLiveEdgeTailTarget()
 // in LiveEdgeMargin.h, a distinct concern (how far ahead of the buffer's
 // current tail a seek may land) from whence/position arithmetic itself.
@@ -43,11 +43,11 @@ namespace dispatcharr
 int64_t ResolveSeekPosition(int64_t position, int whence, int64_t currentPosition, int64_t referenceLength);
 
 // The inclusive end byte of a `size`-byte read starting at `position` --
-// ReadRecordingStream()'s own HTTP Range end -- or false when that can't
+// ReadRecordingStreamImpl()'s own HTTP Range end -- or false when that can't
 // be represented (a negative position, a zero size, or position + size
 // overflowing int64_t). Fix for a real UB gap (added 2026-09-27, a
 // 67th-pass audit, found via a project-wide review, confirmed with UBSan,
-// not reproduced live): ReadRecordingStream() computed
+// not reproduced live): ReadRecordingStreamImpl() computed
 // `position + size - 1` inline, and a SEEK_SET is accepted at any
 // non-negative position (ResolveSeekPosition() above, which has no
 // length to clamp against when the recording's own length isn't known --

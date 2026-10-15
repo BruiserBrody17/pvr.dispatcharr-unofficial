@@ -79,7 +79,7 @@ bool ShouldUseGrowingBufferPlayback(const Recording& rec);
 // `finished = !(GetRecordingById(...) && rec.isInProgress)` treated a
 // *failed* lookup (a transient network blip, an auth hiccup -- anything
 // that makes GetRecordingById() itself return false) identically to a
-// genuinely completed recording. ReadInProgressRecordingStream() then
+// genuinely completed recording. ReadInProgressRecordingStreamImpl() then
 // returned an immediate EOF at the tail for a recording that was still
 // actively being written, stopping playback outright over what should
 // have been a retry-worthy hiccup -- and the recording's own
@@ -103,7 +103,7 @@ bool ShouldUseGrowingBufferPlayback(const Recording& rec);
 // cycle isn't merged this round (see CountLeadingProbedSegments()'s own
 // comment -- only the leading, successfully-probed prefix is). If
 // `finished` were still allowed to flip true in that same cycle,
-// ReadInProgressRecordingStream() would short-circuit straight to EOF
+// ReadInProgressRecordingStreamImpl() would short-circuit straight to EOF
 // the moment its read position reaches the (now permanently short)
 // totalBytes, since it only calls RefreshInProgressRecordingManifest()
 // again while !finished. In practice that means this last segment's

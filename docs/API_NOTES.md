@@ -382,24 +382,37 @@ reasons:
    config for the whole addon). A no-op change in the single-instance
    case that's actually been observed in practice; a real fix if a
    second instance is ever requested.
-2. **Not fixed, deliberately**: even with instance-tracking hardened,
-   Kodi's `OpenRecordedStream(const kodi::addon::PVRRecording&)` API
-   itself (confirmed in Kodi's own `kodi-dev-kit/include/kodi/addon-
-   instance/PVR.h`) takes no stream-handle/id -- it's a single implicit
-   slot per instance. `RecordingStreamState`/`InProgressRecordingStreamState`
-   in `DispatcharrClient` are built around that same single-slot
-   assumption throughout (`OpenRecordingStream()` closes whatever's
-   already open before opening the new one). Supporting a second
-   *concurrent* stream on one instance would mean turning that single
-   state struct into a small collection keyed by some caller-supplied
-   identity Kodi doesn't actually provide at this API level -- a real
-   redesign, not a small fix, and not attempted here without a confirmed
-   live trigger. Whether Kodi's PVR manager ever actually requests this
-   for this addon's recordings specifically (network-streamed HLS, not
-   pvr.hts's local-file-like VFS) is unconfirmed -- no evidence either
-   way from this addon's own testing history. Worth revisiting if a real
-   symptom (e.g. thumbnail generation silently failing or interrupting
-   active playback) ever surfaces.
+2. **Kodi 21 (`Omega` branch): not fixed, deliberately.** Kodi 21's
+   `OpenRecordedStream(const kodi::addon::PVRRecording&)` (confirmed in
+   Kodi's own `kodi-dev-kit/include/kodi/addon-instance/PVR.h`) takes no
+   stream-handle/id -- it's a single implicit slot per instance, and
+   `RecordingStreamState`/`InProgressRecordingStreamState` in
+   `DispatcharrClient` are built around that single-slot assumption
+   (`OpenRecordingStream()` closes whatever's already open before opening
+   the new one). Whether Kodi 21's PVR manager ever actually requests a
+   second concurrent stream for this addon's recordings (network-streamed
+   HLS, not pvr.hts's local-file-like VFS) is unconfirmed -- no evidence
+   either way from this addon's own testing history.
+
+   **Kodi 22 (`Piers` branch): done (2026-10-14).** Kodi 22's
+   `OpenRecordedStream()` returns a stream id that every later call takes,
+   and with `PVRCapabilities::SetSupportsMultipleRecordedStreams(true)` Kodi
+   no longer closes the previous stream before an open, so a Close for an
+   old id can arrive after the next stream's open. `DispatcharrClient`
+   keeps one state object per open recorded stream in a
+   `RecordedStreamRegistry` (`src/RecordedStreamRegistry.h`), each with its
+   own mutexes: ids count up from 1 and are never reused, an unknown id
+   reads as end of stream (Read 0, Seek and Length -1, Close a no-op), and
+   `IsRecordedStreamRealTime()`, `PauseRecordedStream()` and
+   `GetRecordedStreamTimes()` are per id. What is shared is the
+   per-recording segment cache (`m_inProgressSegmentCache`), which several
+   streams of one in-progress recording fill and read, and which a stream
+   that is behind never shrinks (`PlanInProgressSegmentCacheUpdate()`).
+   Two consequences worth knowing: a stream paused behind the tail still
+   polls and keeps the server's HLS key for that recording alive, which can
+   delay the end of a recording for another viewer of it who is at the tail;
+   and two streams of one recording each poll its manifest (see
+   `docs/OPEN_ITEMS.md`).
 
 ## How to verify quickly
 

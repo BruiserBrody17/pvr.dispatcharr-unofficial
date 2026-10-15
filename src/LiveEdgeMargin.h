@@ -8,7 +8,7 @@
 namespace dispatcharr
 {
 
-// Shared by DispatcharrClient::SeekInProgressRecordingStream() (with
+// Shared by DispatcharrClient::SeekInProgressRecordingStreamImpl() (with
 // marginSegments=1) and SeekLiveTimeshiftStream() (with
 // marginSegments=kLiveEdgeSeekBackoffSegments, currently 3) -- computes
 // the clamp target for a forward/seek-to-live-edge seek, backed off from

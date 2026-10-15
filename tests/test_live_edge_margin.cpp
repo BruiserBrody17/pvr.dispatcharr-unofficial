@@ -32,7 +32,7 @@ TEST_CASE("ComputeLiveEdgeTailTarget backs off by the combined byteSize of the t
 
 TEST_CASE("ComputeLiveEdgeTailTarget matches the in-progress-recording margin-of-1 case exactly", "[LiveEdgeMargin]")
 {
-  // The exact invariant SeekInProgressRecordingStream() relies on: with
+  // The exact invariant SeekInProgressRecordingStreamImpl() relies on: with
   // marginSegments=1, this must equal totalBytes minus just the last
   // segment's own byteSize.
   std::vector<FakeSegment> segments = {{0, 50, 0}, {50, 70, 0}, {120, 30, 0}};

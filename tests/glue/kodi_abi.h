@@ -60,6 +60,7 @@ struct Caps
   bool recordings = false;
   bool recordingsDelete = false;
   bool recordingsRename = false;
+  bool multipleRecordedStreams = false;
 };
 
 inline Caps ReadCaps(const AddonInstance_PVR* inst)
@@ -72,6 +73,7 @@ inline Caps ReadCaps(const AddonInstance_PVR* inst)
   out.recordings = caps.bSupportsRecordings;
   out.recordingsDelete = caps.bSupportsRecordingsDelete;
   out.recordingsRename = caps.bSupportsRecordingsRename;
+  out.multipleRecordedStreams = caps.bSupportsMultipleRecordedStreams;
   inst->toAddon->FreeCapabilities(inst, &caps);
   return out;
 }
@@ -197,10 +199,21 @@ inline int64_t LengthRecorded(const AddonInstance_PVR* inst, RecordedStream& str
   return inst->toAddon->LengthRecordedStream(inst, stream.id);
 }
 
-// Without SetSupportsMultipleRecordedStreams() Kodi asks for a recording's times through the legacy call.
-inline PVR_ERROR RecordedStreamTimes(const AddonInstance_PVR* inst, RecordedStream&, PVR_STREAM_TIMES& times)
+// With SetSupportsMultipleRecordedStreams() Kodi asks for a recording's times, real-time state and pause per stream id
+// (without it, through the legacy per-addon calls).
+inline PVR_ERROR RecordedStreamTimes(const AddonInstance_PVR* inst, RecordedStream& stream, PVR_STREAM_TIMES& times)
 {
-  return inst->toAddon->GetStreamTimes(inst, &times);
+  return inst->toAddon->GetRecordedStreamTimes(inst, stream.id, &times);
+}
+
+inline PVR_ERROR RecordedStreamRealTime(const AddonInstance_PVR* inst, RecordedStream& stream, bool& realTime)
+{
+  return inst->toAddon->IsRecordedStreamRealTime(inst, stream.id, &realTime);
+}
+
+inline PVR_ERROR PauseRecorded(const AddonInstance_PVR* inst, RecordedStream& stream, bool paused)
+{
+  return inst->toAddon->PauseRecordedStream(inst, stream.id, paused);
 }
 
 } // namespace abi

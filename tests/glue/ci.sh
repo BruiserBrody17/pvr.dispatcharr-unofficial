@@ -38,8 +38,17 @@ run "in-progress (tail wait in slices)" TMO=30 T=120 -- ip_tail_bound
 run "in-progress, probe cascade" TMO=30 T=120 -- ip_cascade
 run "in-progress, hung API"      TMO=30 T=300 -- ip_blackhole_close
 run "in-progress, 500 blip"      TMO=30 T=120 IP_EXPECT_RESUME=1 -- ip 9000 "2000:ip_seg_status=500;5500:ip_seg_status=0"
+run "two completed recordings, same file" TMO=30 T=120 -- rec_two_same
+run "two completed recordings, different files" TMO=30 T=120 -- rec_two_distinct
+run "two in-progress streams, same recording" TMO=30 T=120 -- ip_two_same
+run "two in-progress recordings"  TMO=30 T=120 -- ip_two_distinct
+run "completed and in-progress at once" TMO=30 T=120 -- mixed
+run "in-progress stream while another opens" TMO=30 T=120 -- ip_open_while_playing
+run "close racing reads, four streams" TMO=30 T=120 -- multi_close_race
+run "destroy with recorded streams open" TMO=30 T=120 -- multi_dtor
 run "destroy with streams open"  TMO=30 T=120 -- dtor_inflight
 run "PVR surface: functional"    BIN=pvr_harness T=180 -- functional
+run "PVR: several recorded streams" BIN=pvr_harness T=60 -- streams2
 run "PVR: M3U refresh event"       BIN=pvr_harness T=60 -- refresh_events
 run "PVR: server offset vs table"   BIN=pvr_harness T=60 -- offset_cross_check
 run "PVR surface: threads"       BIN=pvr_harness T=180 -- surface 6000

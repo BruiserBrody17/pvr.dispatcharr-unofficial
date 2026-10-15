@@ -136,6 +136,9 @@ public:
   int ReadRecordedStream(int64_t streamId, unsigned char* buffer, unsigned int size) override;
   int64_t SeekRecordedStream(int64_t streamId, int64_t position, int whence) override;
   int64_t LengthRecordedStream(int64_t streamId) override;
+  PVR_ERROR IsRecordedStreamRealTime(int64_t streamId, bool& isRealTime) override;
+  PVR_ERROR PauseRecordedStream(int64_t streamId, bool paused) override;
+  PVR_ERROR GetRecordedStreamTimes(int64_t streamId, kodi::addon::PVRStreamTimes& times) override;
 
   // --- Timers ---
   PVR_ERROR GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& types) override;

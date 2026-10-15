@@ -8,7 +8,7 @@
 namespace dispatcharr
 {
 
-// Shared by DispatcharrClient::ReadInProgressRecordingStream() and
+// Shared by DispatcharrClient::ReadInProgressRecordingStreamImpl() and
 // ReadLiveTimeshiftStream()'s catch-up-to-tail wait, after the two
 // diverged once already: the live path got hardened against a confirmed
 // real crash (a lone segment's own duration is too noisy a sample to
@@ -111,7 +111,7 @@ inline bool HasCatchUpBudgetElapsed(std::chrono::milliseconds elapsed, int64_t b
   return elapsed.count() >= budgetMs;
 }
 
-// Also shared by ReadInProgressRecordingStream()/ReadLiveTimeshiftStream():
+// Also shared by ReadInProgressRecordingStreamImpl()/ReadLiveTimeshiftStream():
 // a read landing at the tail shortly after a seek is far more likely to be
 // one of ffmpeg's own internal seek probes (several in quick succession,
 // one commonly overshooting right up to the current tail while estimating)

@@ -26,7 +26,7 @@ TEST_CASE("ResolveSeekPosition SEEK_END is relative to the reference length", "[
 
 TEST_CASE("ResolveSeekPosition fails a SEEK_END request when the reference length isn't known yet", "[StreamSeek]")
 {
-  // Matches SeekRecordingStream()'s own pre-existing "length < 0" guard --
+  // Matches SeekRecordingStreamImpl()'s own pre-existing "length < 0" guard --
   // a recording whose real length hasn't been discovered yet can't
   // meaningfully honor a request relative to its end.
   CHECK(ResolveSeekPosition(0, SEEK_END, /*current=*/100, /*length=*/-1) == -1);
@@ -82,7 +82,7 @@ TEST_CASE("ComputeReadRangeEnd returns the inclusive last byte of an ordinary re
 
 TEST_CASE("ComputeReadRangeEnd fails instead of overflowing near INT64_MAX", "[StreamSeek]")
 {
-  // Regression: ReadRecordingStream() computed `position + size - 1`
+  // Regression: ReadRecordingStreamImpl() computed `position + size - 1`
   // inline -- signed overflow (confirmed with UBSan) for a SEEK_SET
   // within one read's size of INT64_MAX, reachable whenever the
   // recording's own length is unknown (no length to clamp a seek to).

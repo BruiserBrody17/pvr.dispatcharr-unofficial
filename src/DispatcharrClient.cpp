@@ -144,7 +144,7 @@ std::string GenerateViewerId()
 // Backs DispatcharrClient::m_curlShareState. A CURLSH connection/DNS/
 // TLS-session cache shared across every easy handle this client creates,
 // so short-lived per-call handles (Request(), the recording-stream probe)
-// still get keep-alive/connection reuse -- unlike ReadRecordingStream's
+// still get keep-alive/connection reuse -- unlike ReadRecordingStreamImpl's
 // single reused CURL*, a lone shared easy handle isn't safe here since
 // Kodi's PVR API can call into this client from multiple threads at once.
 // libcurl doesn't lock a share object internally; these mutexes back the
@@ -242,7 +242,13 @@ DispatcharrClient::~DispatcharrClient()
   // The persistent stream handles first: a handle still attached to a share when the share is cleaned up leaves
   // curl_share_cleanup() failing with CURLSHE_IN_USE, so both the handle and the share leaked. Only freed here, no
   // network (the stop request of a live Close is the caller's to make, and ~PVRDispatcharr() aborts what is in flight).
-  CloseRecordingStream();
+  for (const auto& stream : m_recordedStreams.TakeAll())
+  {
+    if (stream->kind == RecordedStreamBase::Kind::kInProgress)
+      CloseInProgressRecordingStreamImpl(static_cast<InProgressRecordingStreamState&>(*stream));
+    else
+      CloseRecordingStreamImpl(static_cast<RecordingStreamState&>(*stream));
+  }
   {
     std::lock_guard<std::mutex> curlLock(m_liveCurlMutex);
     std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
@@ -250,7 +256,6 @@ DispatcharrClient::~DispatcharrClient()
       curl_easy_cleanup(static_cast<CURL*>(m_liveTimeshiftStream.curl));
     m_liveTimeshiftStream.curl = nullptr;
   }
-  CloseInProgressRecordingStream();
   FreeCurlShareState(static_cast<CurlShareState*>(m_curlShareState));
   FreeCurlShareState(static_cast<CurlShareState*>(m_probeCurlShareState));
 }
@@ -2324,7 +2329,7 @@ namespace
 // not reproduced live -- escalates docs/OPEN_ITEMS.md's own 52nd-pass
 // entry on this same unbounded value, found to be a real crash, not just
 // a theoretical overflow-when-summed risk): this value flows straight
-// into ReadInProgressRecordingStream()'s own single-segment fetch for a
+// into ReadInProgressRecordingStreamImpl()'s own single-segment fetch for a
 // single segment, unsummed -- so a single absurd Content-Length response
 // (this addon's own configured Dispatcharr server misbehaving, or a
 // proxy in front of it) risked an unbounded allocation there, uncaught
@@ -2377,7 +2382,7 @@ namespace
 // unbounded one did -- worth noting since a 56th-pass audit's own fix
 // means up to two such buffers (the outgoing and incoming segment) can
 // be live at once transiently, not just one (see
-// ReadInProgressRecordingStream()'s own comment). 64 MiB remains a very
+// ReadInProgressRecordingStreamImpl()'s own comment). 64 MiB remains a very
 // generous multiple of any real segment's own actual size.
 // Halved on a 32-bit address space, where a 64 MiB zero-filled buffer (two can be live at once) is the
 // allocation that fails first -- the other three response ceilings are lowered there too, see
@@ -2439,16 +2444,15 @@ int64_t DispatcharrClient::ProbeSegmentByteSize(const std::string& segmentUrl, l
   return totalLength;
 }
 
-void DispatcharrClient::MaybeSendInProgressHlsKeepAlive()
+void DispatcharrClient::MaybeSendInProgressHlsKeepAlive(InProgressRecordingStreamState& st)
 {
   auto now = std::chrono::steady_clock::now();
-  uint64_t session;
   std::string segmentUrl;
   int64_t unreadBytes;
   {
-    // Decided and claimed under the state lock; the request itself runs without it (see m_inProgressStateMutex).
-    std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-    const auto& stream = m_inProgressRecordingStream;
+    // Decided and claimed under the state lock; the request itself runs without it (see st.stateMutex).
+    std::lock_guard<std::mutex> stateLock(st.stateMutex);
+    const auto& stream = st;
     // No segment known yet means nothing to point the request at, and also
     // nothing unread to protect.
     if (!stream.open || stream.segments.empty())
@@ -2458,9 +2462,8 @@ void DispatcharrClient::MaybeSendInProgressHlsKeepAlive()
       return;
 
     // Copied out, not held by reference across the blocking request below --
-    // same reasoning as ReadInProgressRecordingStream()'s own copy of a
+    // same reasoning as ReadInProgressRecordingStreamImpl()'s own copy of a
     // segment's fields.
-    session = m_inProgressSession;
     segmentUrl = stream.segments.back().url;
     // Never to another origin; see ProbeSegmentByteSize().
     if (!IsOnConfiguredServer(segmentUrl))
@@ -2468,7 +2471,7 @@ void DispatcharrClient::MaybeSendInProgressHlsKeepAlive()
     unreadBytes = stream.totalBytes - stream.position;
     // Claimed before the request, so a second thread arriving meanwhile does not send one too (and so a handle
     // that cannot be created retries shortly); the outcome below replaces it.
-    m_inProgressRecordingStream.nextHlsKeepAliveAt = NextHlsKeepAliveDueAt(now, HlsKeepAliveOutcome::kRetryLater);
+    st.nextHlsKeepAliveAt = NextHlsKeepAliveDueAt(now, HlsKeepAliveOutcome::kRetryLater);
   }
 
   CURL* curl = curl_easy_init();
@@ -2498,12 +2501,12 @@ void DispatcharrClient::MaybeSendInProgressHlsKeepAlive()
   // measuring from before a slow round trip would schedule the next one
   // too late by however long this one took.
   {
-    std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-    if (m_inProgressRecordingStream.open && m_inProgressSession == session)
+    std::lock_guard<std::mutex> stateLock(st.stateMutex);
+    if (st.open)
     {
-      m_inProgressRecordingStream.nextHlsKeepAliveAt = NextHlsKeepAliveDueAt(std::chrono::steady_clock::now(), outcome);
+      st.nextHlsKeepAliveAt = NextHlsKeepAliveDueAt(std::chrono::steady_clock::now(), outcome);
       if (outcome == HlsKeepAliveOutcome::kGone)
-        m_inProgressRecordingStream.hlsKeepAliveGone = true;
+        st.hlsKeepAliveGone = true;
     }
   }
 
@@ -2518,25 +2521,26 @@ void DispatcharrClient::MaybeSendInProgressHlsKeepAlive()
                        : "will retry shortly"));
 }
 
-bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::string& error, bool* coldStartRetryableOut,
+bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingStreamState& st, bool force,
+                                                           std::string& error, bool* coldStartRetryableOut,
                                                            bool coldStart)
 {
   if (coldStartRetryableOut)
     *coldStartRetryableOut = false;
 
-  // One refresh at a time, exactly as in RefreshLiveManifest() (see m_inProgressRefreshMutex): two overlapping
+  // One refresh at a time, exactly as in RefreshLiveManifest() (see st.refreshMutex): two overlapping
   // refreshes both appended the same new segments to the recording's byte stream -- reproduced live with a
   // second thread forcing refreshes, a segment listed twice.
-  std::unique_lock<std::mutex> refreshLock(m_inProgressRefreshMutex, std::defer_lock);
+  std::unique_lock<std::mutex> refreshLock(st.refreshMutex, std::defer_lock);
   if (force)
     refreshLock.lock();
   else if (!refreshLock.try_lock())
     return true;
 
   // Held for the state reads and writes below, released around every network call (see
-  // m_inProgressStateMutex), and the stream is re-checked after each re-lock.
-  std::unique_lock<std::mutex> stateLock(m_inProgressStateMutex);
-  if (!m_inProgressRecordingStream.open)
+  // st.stateMutex), and the stream is re-checked after each re-lock.
+  std::unique_lock<std::mutex> stateLock(st.stateMutex);
+  if (!st.open)
   {
     error = "no in-progress recording stream is open";
     return false;
@@ -2548,7 +2552,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // Checked before anything else, including the throttle -- the failure
   // paths below never update lastManifestFetch, so the throttle alone never
   // slowed this down.
-  if (m_inProgressRecordingStream.contentGone)
+  if (st.contentGone)
   {
     error = "this recording's HLS content is gone on the server";
     return false;
@@ -2560,16 +2564,16 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // HlsViewerKeepAlive.h. It keeps its own schedule, so running it ahead
   // of the throttle costs nothing on a call where none is due.
   stateLock.unlock();
-  MaybeSendInProgressHlsKeepAlive();
+  MaybeSendInProgressHlsKeepAlive(st);
   stateLock.lock();
-  if (!m_inProgressRecordingStream.open)
+  if (!st.open)
   {
     error = "no in-progress recording stream is open";
     return false;
   }
-  const uint64_t session = m_inProgressSession;
-  const int recordingId = m_inProgressRecordingStream.recordingId;
-  auto stillSameStream = [&]() { return m_inProgressRecordingStream.open && m_inProgressSession == session; };
+  const int recordingId = st.recordingId;
+  // A stream's state object is never reused for another open, so "still the same stream" is just "not closed since".
+  auto stillSameStream = [&]() { return st.open; };
 
   // Throttle for the same reason as RefreshLiveManifest(): a tight
   // catch-up-loop/demux-read cycle can call this far more often than the
@@ -2579,7 +2583,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // The throttle check itself lives in dispatcharr::ShouldThrottleRefresh()
   // (Staleness.h) so it's unit-testable standalone -- see that function's
   // own comment.
-  if (ShouldThrottleRefresh(force, m_inProgressRecordingStream.lastManifestFetch, now, kMinRefreshInterval))
+  if (ShouldThrottleRefresh(force, st.lastManifestFetch, now, kMinRefreshInterval))
     return true;
 
   // Timing breakdown for diagnosing "seek to live took ~10s"-type reports:
@@ -2592,7 +2596,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   auto refreshStart = std::chrono::steady_clock::now();
 
   // Fresh in-progress check every call, not just at open -- this is what
-  // lets ReadInProgressRecordingStream() eventually stop waiting for a
+  // lets ReadInProgressRecordingStreamImpl() eventually stop waiting for a
   // recording that's actually finished, and CanPauseStream()/
   // IsRealTimeStream() reflect current reality rather than whatever was
   // true when the stream was opened. Deliberately BEFORE the playlist
@@ -2608,7 +2612,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // allProbesSucceeded is also true, there being no failed probe for a
   // segment nobody yet knew existed -- stranding whatever Dispatcharr
   // wrote after the snapshot as far as THIS read is concerned:
-  // ReadInProgressRecordingStream() itself never calls this function
+  // ReadInProgressRecordingStreamImpl() itself never calls this function
   // again once finished is true (see its own EOF short-circuit) --
   // although GetInProgressRecordingStreamLength()/DurationMs() do keep
   // calling this unconditionally regardless of `finished` for as long as
@@ -2628,8 +2632,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   long lookupHttpStatus = 0;
   // A stream that already has segments is in steady state: its requests get the short bound, a cold start the
   // configured timeout (ShortRequestTimeoutMs()).
-  const bool steadyState =
-      dispatcharr::IsInProgressSteadyState(coldStart, !m_inProgressRecordingStream.segments.empty());
+  const bool steadyState = dispatcharr::IsInProgressSteadyState(coldStart, !st.segments.empty());
   const long requestTimeoutMs = steadyState ? ShortRequestTimeoutMs() : 0;
   stateLock.unlock();
   bool lookupAuthenticationNotCompleted = false;
@@ -2681,7 +2684,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
     // probe batch had a failure, deliberately holding `finished` at false
     // for a retry -- see ResolveInProgressFinished()'s own comment) never
     // became `finished` again, since every later refresh hit exactly this
-    // early return forever. ReadInProgressRecordingStream() then looped
+    // early return forever. ReadInProgressRecordingStreamImpl() then looped
     // its full catch-up budget and returned 0 on every read indefinitely
     // instead of EOF -- confirmed by code reading to be the *only* path to
     // `finished` for a naturally-completed recording before the 3xx case
@@ -2702,27 +2705,25 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
     // GetRecordingById() itself (lookupOk false, not just the playlist),
     // so this same stuck-forever symptom happened there.
     if (playlistWasNotFound)
-      m_inProgressRecordingStream.finished = ResolveInProgressFinished(
-          lookupOk, rec.isInProgress, m_inProgressRecordingStream.finished, /*allProbesSucceeded=*/true);
+      st.finished = ResolveInProgressFinished(lookupOk, rec.isInProgress, st.finished, /*allProbesSucceeded=*/true);
     // The gap the paragraph above documents as still open -- a recording
     // *deleted* outright, where the lookup itself 404s too -- is closed
     // here: both endpoints agreeing the recording doesn't exist is a
     // definitive "gone", unlike a lookup that merely failed. See
     // dispatcharr::IsInProgressContentGone() for the exact conditions.
-    if (IsInProgressContentGone(!m_inProgressRecordingStream.segments.empty(), playlistWasNotFound, lookupOk,
-                                lookupHttpStatus, rec.isInProgress))
+    if (IsInProgressContentGone(!st.segments.empty(), playlistWasNotFound, lookupOk, lookupHttpStatus,
+                                rec.isInProgress))
     {
       kodi::Log(ADDON_LOG_INFO,
                 "pvr.dispatcharr-unofficial: in-progress recording %d is gone on the server (%s) -- ending "
                 "playback instead of polling it",
-                m_inProgressRecordingStream.recordingId,
-                lookupOk ? "finished, and its HLS directory has been removed" : "deleted");
-      m_inProgressRecordingStream.contentGone = true;
-      m_inProgressRecordingStream.finished = true;
+                st.recordingId, lookupOk ? "finished, and its HLS directory has been removed" : "deleted");
+      st.contentGone = true;
+      st.finished = true;
       // Its cross-open segment cache entry is dead weight now too, the
       // same as for any other finished recording (see below).
       std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
-      m_inProgressSegmentCache.erase(m_inProgressRecordingStream.recordingId);
+      m_inProgressSegmentCache.erase(st.recordingId);
     }
     // A young recording has no HLS directory yet -- the caller's cold-start
     // loop can wait that out. Decided from the same lookup, taken before
@@ -2751,14 +2752,13 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // The parse itself (including the non-finite #EXTINF-duration UB guard)
   // lives in dispatcharr::ParseNewM3u8SegmentEntries() (M3u8SegmentParser.{h,cpp})
   // so it's unit-testable standalone -- see that function's own comment.
-  size_t alreadyKnown = m_inProgressRecordingStream.segments.size();
+  size_t alreadyKnown = st.segments.size();
   std::vector<M3u8SegmentEntry> pending = ParseNewM3u8SegmentEntries(playlistText, baseDir, alreadyKnown);
   // Segment URLs are absolute and name whatever address Dispatcharr thought it was
   // reached on; behind a reverse proxy that is not what this addon can reach. Use
   // the configured address -- see dispatcharr::RebaseRecordingSegmentUrl().
   {
-    const std::string segmentPathPrefix =
-        std::string(kRecordingsPath) + std::to_string(m_inProgressRecordingStream.recordingId) + "/hls/";
+    const std::string segmentPathPrefix = std::string(kRecordingsPath) + std::to_string(st.recordingId) + "/hls/";
     const std::string configuredBase = BaseUrl();
     for (auto& entry : pending)
       entry.url = RebaseRecordingSegmentUrl(entry.url, configuredBase, segmentPathPrefix);
@@ -2777,7 +2777,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // refresh (only to discard the sizes) is what flooded the server -- see
   // UnprobeableSegment.h.
   const bool probeOnlyLeading =
-      !pending.empty() && ShouldProbeOnlyLeadingSegment(m_inProgressRecordingStream.unprobeableSegment, pending[0].url);
+      !pending.empty() && ShouldProbeOnlyLeadingSegment(st.unprobeableSegment, pending[0].url);
   const size_t probeCount = probeOnlyLeading ? 1 : pending.size();
   stateLock.unlock(); // the probes are network calls
   constexpr size_t kMaxConcurrentProbes = 16;
@@ -2816,17 +2816,16 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   bool gaveUpOnLeadingSegment = false;
   if (!pending.empty())
   {
-    gaveUpOnLeadingSegment = UpdateUnprobeableSegmentTracker(
-                                 m_inProgressRecordingStream.unprobeableSegment, pending[0].url, probedSizes[0] <= 0,
-                                 std::chrono::steady_clock::now()) == UnprobeableSegmentAction::kGiveUp;
+    gaveUpOnLeadingSegment =
+        UpdateUnprobeableSegmentTracker(st.unprobeableSegment, pending[0].url, probedSizes[0] <= 0,
+                                        std::chrono::steady_clock::now()) == UnprobeableSegmentAction::kGiveUp;
     if (gaveUpOnLeadingSegment)
     {
       probedSizes[0] = 0;
       kodi::Log(ADDON_LOG_WARNING,
                 "pvr.dispatcharr-unofficial: in-progress recording %d: segment %s could not be sized for "
                 "%lld seconds; continuing past it as an empty segment (a few seconds of picture will be missing)",
-                m_inProgressRecordingStream.recordingId, pending[0].url.c_str(),
-                static_cast<long long>(kUnprobeableSegmentMinWait.count()));
+                st.recordingId, pending[0].url.c_str(), static_cast<long long>(kUnprobeableSegmentMinWait.count()));
     }
   }
   size_t mergedCount = CountMergeableSegments(probedSizes, gaveUpOnLeadingSegment);
@@ -2841,7 +2840,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   {
     const size_t armIndex = IndexToArmTrackerAfterMerge(probedSizes, mergedCount, gaveUpOnLeadingSegment, probeCount);
     if (armIndex < pending.size())
-      UpdateUnprobeableSegmentTracker(m_inProgressRecordingStream.unprobeableSegment, pending[armIndex].url,
+      UpdateUnprobeableSegmentTracker(st.unprobeableSegment, pending[armIndex].url,
                                       /*leadingFailed=*/true, std::chrono::steady_clock::now());
   }
   for (size_t i = 0; i < mergedCount; ++i)
@@ -2850,20 +2849,17 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
     info.url = std::move(pending[i].url);
     info.byteSize = probedSizes[i];
     int64_t durationMs = static_cast<int64_t>(pending[i].durationSec * 1000 + 0.5);
-    SegmentAppendOffsets offsets =
-        AppendSegmentOffsets(probedSizes[i], durationMs, m_inProgressRecordingStream.totalBytes,
-                             m_inProgressRecordingStream.totalDurationMs);
+    SegmentAppendOffsets offsets = AppendSegmentOffsets(probedSizes[i], durationMs, st.totalBytes, st.totalDurationMs);
     info.byteOffset = offsets.byteOffset;
     info.timeOffsetMs = offsets.timeOffsetMs;
-    m_inProgressRecordingStream.segments.push_back(std::move(info));
+    st.segments.push_back(std::move(info));
   }
   size_t newSegmentsProbed = mergedCount;
   size_t newSegmentsProbeFailed = failedProbeCount;
   // A probe is a HEAD on a `.ts` URL, which refreshes the server's viewer
   // key just as a keep-alive would -- see HlsViewerKeepAlive.h.
   if (mergedCount > 0)
-    m_inProgressRecordingStream.nextHlsKeepAliveAt =
-        NextHlsKeepAliveDueAt(std::chrono::steady_clock::now(), HlsKeepAliveOutcome::kRefreshed);
+    st.nextHlsKeepAliveAt = NextHlsKeepAliveDueAt(std::chrono::steady_clock::now(), HlsKeepAliveOutcome::kRefreshed);
 
   // lookupOk/rec.isInProgress were captured *before* the playlist fetch
   // above -- see that fetch's own comment for why this ordering matters.
@@ -2882,57 +2878,55 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // true in the exact cycle where the recording's final segment failed
   // its byte-size probe, which would otherwise strand that segment
   // permanently.
-  const bool statusFinished = ResolveInProgressFinished(
-      lookupOk, rec.isInProgress, m_inProgressRecordingStream.finished, /*allProbesSucceeded=*/failedProbeCount == 0);
+  const bool statusFinished =
+      ResolveInProgressFinished(lookupOk, rec.isInProgress, st.finished, /*allProbesSucceeded=*/failedProbeCount == 0);
   // Not finished until the playlist says nothing more is coming: a user Stop
   // flips the status about three seconds before the final segment and the
   // ENDLIST tag appear -- see dispatcharr::GateFinishedOnEndList().
-  m_inProgressRecordingStream.finished =
-      GateFinishedOnEndList(statusFinished, M3u8HasEndList(playlistText),
-                            m_inProgressRecordingStream.endListWaitingSince, now, kEndListGrace);
-  if (statusFinished && !m_inProgressRecordingStream.finished)
+  st.finished =
+      GateFinishedOnEndList(statusFinished, M3u8HasEndList(playlistText), st.endListWaitingSince, now, kEndListGrace);
+  if (statusFinished && !st.finished)
   {
     kodi::Log(ADDON_LOG_DEBUG,
               "pvr.dispatcharr-unofficial: in-progress recording %d no longer recording, but its playlist has no "
               "#EXT-X-ENDLIST yet -- waiting for the final segment",
-              m_inProgressRecordingStream.recordingId);
+              st.recordingId);
   }
 
   // Keep the cross-open cache (m_inProgressSegmentCache) in step. A
   // finished recording won't be opened through this path again -- it plays
   // back as a completed recording instead -- so its entry is just dead
-  // weight once that happens. Otherwise, append only the segments this
-  // call newly probed rather than recopying the whole vector: this refresh
-  // runs roughly every 500ms during active playback of a long recording,
-  // and m_inProgressRecordingStream.segments is always exactly this cache
-  // entry's own prefix (seeded from it verbatim on open, append-only since)
-  // plus whatever's new here, so the two stay in lockstep without a full
-  // copy each time.
-  if (newSegmentsProbed > 0 || m_inProgressRecordingStream.finished)
+  // weight once that happens. Otherwise, append only what the entry lacks
+  // rather than recopying the whole vector: this refresh runs roughly every
+  // 500ms during active playback of a long recording, and st.segments is
+  // always exactly this entry's own prefix (seeded from it verbatim on open,
+  // append-only since) plus whatever's new here. Several streams of one
+  // recording share the entry, so the plan also covers a stream that is
+  // behind another: it never shrinks the entry.
+  if (newSegmentsProbed > 0 || st.finished)
   {
     std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
-    if (m_inProgressRecordingStream.finished)
+    if (st.finished)
     {
-      m_inProgressSegmentCache.erase(m_inProgressRecordingStream.recordingId);
+      m_inProgressSegmentCache.erase(st.recordingId);
     }
     else
     {
-      auto& cacheEntry = m_inProgressSegmentCache[m_inProgressRecordingStream.recordingId];
-      // Only a genuine prefix of the current stream state can be safely
-      // appended to; reseed from the full current segment list instead
-      // whenever it isn't. The decision itself lives in
-      // dispatcharr::ShouldReseedInProgressSegmentCache()
-      // (InProgressSegmentCache.h) so it's unit-testable standalone --
-      // see that function's own comment for the exact gap this fixes.
-      if (ShouldReseedInProgressSegmentCache(cacheEntry.segments.size(), newSegmentsProbed,
-                                             m_inProgressRecordingStream.segments.size()))
-        cacheEntry.segments = m_inProgressRecordingStream.segments;
-      else
-        cacheEntry.segments.insert(cacheEntry.segments.end(),
-                                   m_inProgressRecordingStream.segments.end() - newSegmentsProbed,
-                                   m_inProgressRecordingStream.segments.end());
-      cacheEntry.totalBytes = m_inProgressRecordingStream.totalBytes;
-      cacheEntry.totalDurationMs = m_inProgressRecordingStream.totalDurationMs;
+      auto& cacheEntry = m_inProgressSegmentCache[st.recordingId];
+      // The decision itself lives in dispatcharr::PlanInProgressSegmentCacheUpdate() (InProgressSegmentCache.h) so
+      // it's unit-testable standalone -- see that function's own comment, including the gap the reseed fixes.
+      const SegmentCachePlan plan =
+          PlanInProgressSegmentCacheUpdate(cacheEntry.segments.size(), st.segments.size(), newSegmentsProbed);
+      if (plan.action == SegmentCacheAction::kReseed)
+        cacheEntry.segments = st.segments;
+      else if (plan.action == SegmentCacheAction::kAppend)
+        cacheEntry.segments.insert(cacheEntry.segments.end(), st.segments.begin() + plan.appendFrom, st.segments.end());
+      if (plan.action != SegmentCacheAction::kNone)
+      {
+        // The totals describe the segments the entry now holds, which are exactly this stream's.
+        cacheEntry.totalBytes = st.totalBytes;
+        cacheEntry.totalDurationMs = st.totalDurationMs;
+      }
       cacheEntry.lastUpdated = now;
     }
 
@@ -2966,37 +2960,37 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
             "%.3fs, %zu new segment probe(s) %.3fs [%zu failed], GetRecordingById %.3fs), "
             "totalBytes=%lld totalDurationMs=%lld finished=%d",
             totalSec, fetchPlaylistSec, newSegmentsProbed, probeSegmentsSec, newSegmentsProbeFailed, getRecordingsSec,
-            static_cast<long long>(m_inProgressRecordingStream.totalBytes),
-            static_cast<long long>(m_inProgressRecordingStream.totalDurationMs),
-            m_inProgressRecordingStream.finished ? 1 : 0);
+            static_cast<long long>(st.totalBytes), static_cast<long long>(st.totalDurationMs), st.finished ? 1 : 0);
 
-  m_inProgressRecordingStream.lastManifestFetch = now;
+  st.lastManifestFetch = now;
   return true;
 }
 
-bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t startTime, std::string& error)
+bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t startTime, int64_t& streamIdOut,
+                                                      std::string& error)
 {
-  CloseInProgressRecordingStream();
-
-  // Opened and seeded in one state-locked scope: a refresh from another thread (GetStreamTimes() polling) that sees the
-  // stream open between two separate scopes would find no segments yet, merge the whole playlist, and then the seed
-  // would add the cached copies again -- every segment twice in the byte stream. Reopening the same still-recording
-  // (channel switch and back, resuming after a pause) shouldn't re-probe segments already sized on a previous open
-  // anyway -- see m_inProgressSegmentCache's own comment. State lock before the cache lock, the order everywhere both
-  // are held.
+  streamIdOut = 0;
+  // Built on a private object and registered only once it has its first segment, so nothing else can reach a half-open
+  // stream (a refresh from a GetRecordedStreamTimes() poll would otherwise find no segments yet, merge the whole
+  // playlist, and the seed below would add the cached copies again -- every segment twice in the byte stream), and so
+  // this open's cold start (up to ~45 s) holds no lock another open stream needs. Nothing is closed here: Kodi 22 keeps
+  // the previous stream open until it closes it itself.
+  auto stream = std::make_shared<InProgressRecordingStreamState>();
+  InProgressRecordingStreamState& st = *stream;
+  // Reopening the same still-recording (channel switch and back, resuming after a pause, a second viewer) shouldn't
+  // re-probe segments already sized on a previous open anyway -- see m_inProgressSegmentCache's own comment.
   {
-    std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
+    std::lock_guard<std::mutex> stateLock(st.stateMutex);
     std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
-    m_inProgressRecordingStream.open = true;
-    m_inProgressRecordingStream.recordingId = recordingId;
-    m_inProgressRecordingStream.startTime = startTime;
-    ++m_inProgressSession;
+    st.open = true;
+    st.recordingId = recordingId;
+    st.startTime = startTime;
     auto cacheIt = m_inProgressSegmentCache.find(recordingId);
     if (cacheIt != m_inProgressSegmentCache.end())
     {
-      m_inProgressRecordingStream.segments = cacheIt->second.segments;
-      m_inProgressRecordingStream.totalBytes = cacheIt->second.totalBytes;
-      m_inProgressRecordingStream.totalDurationMs = cacheIt->second.totalDurationMs;
+      st.segments = cacheIt->second.segments;
+      st.totalBytes = cacheIt->second.totalBytes;
+      st.totalDurationMs = cacheIt->second.totalDurationMs;
     }
   }
 
@@ -3004,7 +2998,7 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
   // Dispatcharr's own DVR ffmpeg needs a real few seconds to connect to
   // the live proxy and produce a full first HLS segment before there's
   // anything to report -- confirmed live this addon's own
-  // ReadInProgressRecordingStream() catch-up loop wasn't a substitute for
+  // ReadInProgressRecordingStreamImpl() catch-up loop wasn't a substitute for
   // this: Kodi's own CDVDDemuxFFmpeg::Open() format probe gave up after
   // ~38s with "error probing input format" rather than retrying patiently
   // the way this addon's own reads do, so Open() itself needs to already
@@ -3026,12 +3020,13 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
     kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: OpenInProgressRecordingStream: cold-start attempt=%d",
               attempt);
     bool retryable = false;
-    const bool refreshOk = RefreshInProgressRecordingManifest(/*force=*/true, error, &retryable, /*coldStart=*/true);
+    const bool refreshOk =
+        RefreshInProgressRecordingManifest(st, /*force=*/true, error, &retryable, /*coldStart=*/true);
     bool haveSegments = false, finished = false;
     {
-      std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-      haveSegments = !m_inProgressRecordingStream.segments.empty();
-      finished = m_inProgressRecordingStream.finished;
+      std::lock_guard<std::mutex> stateLock(st.stateMutex);
+      haveSegments = !st.segments.empty();
+      finished = st.finished;
     }
     // A recording opened within its first ~3s has no HLS directory yet and the
     // playlist answers 404 -- confirmed live to fail every time (6 of 6) when this
@@ -3051,12 +3046,7 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
       stopWaiting = true; // finished with literally zero segments -- nothing to wait for
       break;
     case InProgressColdStartStep::kFail:
-    {
-      std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-      m_inProgressRecordingStream = InProgressRecordingStreamState();
-      ++m_inProgressSession;
       return false;
-    }
     case InProgressColdStartStep::kWait:
       if (!refreshOk)
         kodi::Log(ADDON_LOG_DEBUG,
@@ -3082,17 +3072,12 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
   }
   bool finishedNow;
   {
-    std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-    finishedNow = m_inProgressRecordingStream.finished;
+    std::lock_guard<std::mutex> stateLock(st.stateMutex);
+    finishedNow = st.finished;
   }
   if (!haveSegment && !finishedNow)
   {
     error = "recording hasn't produced any segments yet";
-    {
-      std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-      m_inProgressRecordingStream = InProgressRecordingStreamState();
-      ++m_inProgressSession;
-    }
     return false;
   }
   // Unlike live-timeshift, always start at true byte 0: there's no
@@ -3102,32 +3087,34 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
   // so "play a recording" naturally means "from the start", matching
   // every other recording/VOD convention (and the existing
   // completed-recording behaviour).
-  std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-  m_inProgressRecordingStream.position = 0;
-  // The first read's own segment GET follows immediately, so nothing is
-  // owed for the first interval -- see HlsViewerKeepAlive.h. Without this,
-  // the zero "due now" default would send a needless request on the very
-  // first poll after every open.
-  m_inProgressRecordingStream.nextHlsKeepAliveAt =
-      NextHlsKeepAliveDueAt(std::chrono::steady_clock::now(), HlsKeepAliveOutcome::kRefreshed);
+  {
+    std::lock_guard<std::mutex> stateLock(st.stateMutex);
+    st.position = 0;
+    // The first read's own segment GET follows immediately, so nothing is
+    // owed for the first interval -- see HlsViewerKeepAlive.h. Without this,
+    // the zero "due now" default would send a needless request on the very
+    // first poll after every open.
+    st.nextHlsKeepAliveAt = NextHlsKeepAliveDueAt(std::chrono::steady_clock::now(), HlsKeepAliveOutcome::kRefreshed);
+  }
+  streamIdOut = m_recordedStreams.Add(stream);
   return true;
 }
 
-int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned int size)
+int DispatcharrClient::ReadInProgressRecordingStreamImpl(InProgressRecordingStreamState& st, uint8_t* buffer,
+                                                         unsigned int size)
 {
   // Held for the state reads and writes below and released around every network call and sleep (see
-  // m_inProgressStateMutex); after each re-lock the stream is checked to still be the one this call started on.
-  std::unique_lock<std::mutex> stateLock(m_inProgressStateMutex);
-  if (!m_inProgressRecordingStream.open || size == 0)
+  // st.stateMutex); after each re-lock the stream is checked to still be the one this call started on.
+  std::unique_lock<std::mutex> stateLock(st.stateMutex);
+  if (!st.open || size == 0)
     return 0;
-  if (m_inProgressRecordingStream.permanentReadFailures.ended)
+  if (st.permanentReadFailures.ended)
     return 0;
-  const uint64_t session = m_inProgressSession;
-  auto stillSameStream = [&]() { return m_inProgressRecordingStream.open && m_inProgressSession == session; };
+  auto stillSameStream = [&]() { return st.open; };
 
-  if (m_inProgressRecordingStream.position >= m_inProgressRecordingStream.totalBytes)
+  if (st.position >= st.totalBytes)
   {
-    if (m_inProgressRecordingStream.finished)
+    if (st.finished)
       return 0; // genuine EOF -- the recording is done and we're at its true end
 
     constexpr int kCatchUpSleepMs = 250;
@@ -3138,12 +3125,10 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
     // seek-probing behaviour applies here, since this uses the same
     // native-demuxer mechanism).
     constexpr auto kSeekProbeWindow = std::chrono::milliseconds(800);
-    bool likelySeekProbe =
-        IsLikelySeekProbe(m_inProgressRecordingStream.position, m_inProgressRecordingStream.lastShortGiveUpPosition,
-                          m_inProgressRecordingStream.lastSeekTime, std::chrono::steady_clock::now(), kSeekProbeWindow);
+    bool likelySeekProbe = IsLikelySeekProbe(st.position, st.lastShortGiveUpPosition, st.lastSeekTime,
+                                             std::chrono::steady_clock::now(), kSeekProbeWindow);
 
-    int64_t segmentDurationEstimateMs =
-        EstimateSegmentDurationMs(m_inProgressRecordingStream.totalDurationMs, m_inProgressRecordingStream.segments);
+    int64_t segmentDurationEstimateMs = EstimateSegmentDurationMs(st.totalDurationMs, st.segments);
     int catchUpAttempts = ComputeCatchUpAttempts(likelySeekProbe, segmentDurationEstimateMs, kCatchUpSleepMs);
 
     const int64_t catchUpBudgetMs = ComputeCatchUpWallClockBudgetMs(catchUpAttempts, kCatchUpSleepMs);
@@ -3151,22 +3136,20 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
     // Taken in slices of kLiveTailWaitSliceMs, each ending in a -1 that Kodi retries, exactly as in
     // ReadLiveTimeshiftStream() (see its comment): a stop or channel change lands between reads, and the budget is
     // counted from where this episode at this position began.
-    m_inProgressRecordingStream.tailWait.Enter(m_inProgressRecordingStream.position, catchUpStart);
+    st.tailWait.Enter(st.position, catchUpStart);
     int attemptsUsed = 0;
-    for (int attempt = 0;
-         attempt < catchUpAttempts && m_inProgressRecordingStream.position >= m_inProgressRecordingStream.totalBytes;
-         ++attempt)
+    for (int attempt = 0; attempt < catchUpAttempts && st.position >= st.totalBytes; ++attempt)
     {
       attemptsUsed = attempt + 1;
       std::string refreshError;
       stateLock.unlock();
-      RefreshInProgressRecordingManifest(/*force=*/true, refreshError);
+      RefreshInProgressRecordingManifest(st, /*force=*/true, refreshError);
       stateLock.lock();
       if (!stillSameStream())
         return -1;
-      if (m_inProgressRecordingStream.position < m_inProgressRecordingStream.totalBytes)
+      if (st.position < st.totalBytes)
         break;
-      if (m_inProgressRecordingStream.finished)
+      if (st.finished)
         break; // finished while we were polling -- stop waiting, report EOF below
       if (HasCatchUpBudgetElapsed(
               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - catchUpStart),
@@ -3186,28 +3169,26 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
       }
     }
 
-    bool caughtUp = m_inProgressRecordingStream.position < m_inProgressRecordingStream.totalBytes;
-    if (!caughtUp && !m_inProgressRecordingStream.finished)
+    bool caughtUp = st.position < st.totalBytes;
+    if (!caughtUp && !st.finished)
     {
       // Nothing yet. Either the whole budget is used (give up, as before) or this was only a slice of it: -1, which
       // Kodi's demuxer retries at once after checking whether it has been asked to stop, and which does not touch
       // lastShortGiveUpPosition (this is not a give-up).
       const auto afterWait = std::chrono::steady_clock::now();
-      if (DecideTailWaitOutcome(likelySeekProbe, m_inProgressRecordingStream.tailWait.WaitedMs(afterWait),
-                                catchUpAttempts * kCatchUpSleepMs) == TailWaitOutcome::kRetry)
+      if (DecideTailWaitOutcome(likelySeekProbe, st.tailWait.WaitedMs(afterWait), catchUpAttempts * kCatchUpSleepMs) ==
+          TailWaitOutcome::kRetry)
       {
-        m_inProgressRecordingStream.tailWait.Touch(afterWait);
+        st.tailWait.Touch(afterWait);
         kodi::Log(ADDON_LOG_DEBUG,
                   "pvr.dispatcharr-unofficial: ReadInProgressRecordingStream: waited %lldms of ~%dms at the tail, "
                   "handing the read back (-1) so a stop can land",
-                  static_cast<long long>(m_inProgressRecordingStream.tailWait.WaitedMs(afterWait)),
-                  catchUpAttempts * kCatchUpSleepMs);
+                  static_cast<long long>(st.tailWait.WaitedMs(afterWait)), catchUpAttempts * kCatchUpSleepMs);
         return -1;
       }
     }
-    m_inProgressRecordingStream.tailWait.Reset();
-    m_inProgressRecordingStream.lastShortGiveUpPosition =
-        ComputeShortGiveUpPosition(likelySeekProbe, caughtUp, m_inProgressRecordingStream.position);
+    st.tailWait.Reset();
+    st.lastShortGiveUpPosition = ComputeShortGiveUpPosition(likelySeekProbe, caughtUp, st.position);
 
     double elapsedSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
     kodi::Log(ADDON_LOG_DEBUG,
@@ -3215,16 +3196,14 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
               "%.3fs (likelySeekProbe=%d, segmentDurationEstimateMs=%lld), position=%lld totalBytes=%lld "
               "-> %s",
               attemptsUsed, catchUpAttempts, elapsedSec, likelySeekProbe ? 1 : 0,
-              static_cast<long long>(segmentDurationEstimateMs),
-              static_cast<long long>(m_inProgressRecordingStream.position),
-              static_cast<long long>(m_inProgressRecordingStream.totalBytes), caughtUp ? "caught up" : "gave up");
+              static_cast<long long>(segmentDurationEstimateMs), static_cast<long long>(st.position),
+              static_cast<long long>(st.totalBytes), caughtUp ? "caught up" : "gave up");
 
     if (!caughtUp)
       return 0;
   }
 
-  const InProgressRecordingSegmentInfo* seg =
-      FindSegmentContainingPosition(m_inProgressRecordingStream.position, m_inProgressRecordingStream.segments);
+  const InProgressRecordingSegmentInfo* seg = FindSegmentContainingPosition(st.position, st.segments);
   if (!seg)
     return 0; // shouldn't happen (no rolling eviction here), but nothing safely readable if it did
 
@@ -3234,7 +3213,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
   // GetStreamTimes() may run on a different Kodi thread than this one and
   // call RefreshInProgressRecordingManifest(), which push_backs onto this
   // same segments vector. The state lock is released across the network
-  // wait below (see m_inProgressStateMutex), so a pointer into the vector
+  // wait below (see st.stateMutex), so a pointer into the vector
   // would dangle once a reallocation happened meanwhile.
   int64_t segByteOffset = seg->byteOffset;
   int64_t segByteSize = seg->byteSize;
@@ -3251,28 +3230,28 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
     return 0;
   }
 
-  int64_t offsetInSegment = m_inProgressRecordingStream.position - segByteOffset;
+  int64_t offsetInSegment = st.position - segByteOffset;
 
   // From here to the copy out of the cached bytes at the end, Close must not free the handle or the cache, so the
   // curl mutex is held (lock order: the curl mutex before the state mutex).
-  const int64_t positionAtStart = m_inProgressRecordingStream.position;
+  const int64_t positionAtStart = st.position;
   stateLock.unlock();
-  std::unique_lock<std::mutex> curlLock(m_inProgressCurlMutex);
+  std::unique_lock<std::mutex> curlLock(st.curlMutex);
   stateLock.lock();
-  if (!stillSameStream() || m_inProgressRecordingStream.position != positionAtStart)
+  if (!stillSameStream() || st.position != positionAtStart)
     return -1; // closed, or repositioned by a seek, since the segment was chosen -- Kodi retries the read
 
   // Fetch this segment's full body once and cache it, rather than issuing a
   // ranged GET per read -- see InProgressRecordingStreamState's own comment
   // on cachedSegmentBytes for why a ranged read against this specific
   // endpoint would silently return the wrong bytes, not just be wasteful.
-  if (m_inProgressRecordingStream.cachedSegmentByteOffset != segByteOffset)
+  if (st.cachedSegmentByteOffset != segByteOffset)
   {
     // Whatever this segment was, the server has already confirmed there is
     // nothing left to fetch it from -- see contentGone's own comment. EOF
     // (not -1): Kodi retries a -1 read near-immediately rather than giving
     // up, which is the request storm this exists to end.
-    if (m_inProgressRecordingStream.contentGone)
+    if (st.contentGone)
       return 0;
     // `attempt` counts only the 401 key recovery below; a transient failure (server unreachable, a gateway error)
     // retries within a budget instead of failing the read -- see dispatcharr::IsTransientReadFailure().
@@ -3282,13 +3261,13 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
     for (int attempt = 0; attempt < 2;)
     {
       auto segmentFetchStart = std::chrono::steady_clock::now();
-      CURL* curl = static_cast<CURL*>(m_inProgressRecordingStream.curl);
+      CURL* curl = static_cast<CURL*>(st.curl);
       if (!curl)
       {
         curl = curl_easy_init();
         if (!curl)
           return -1;
-        m_inProgressRecordingStream.curl = curl;
+        st.curl = curl;
       }
 
       struct curl_slist* headers = static_cast<struct curl_slist*>(AppendApiKeyHeaderIfPresent(nullptr, GetApiKey()));
@@ -3326,7 +3305,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
       // wrong offset into it.
       //
       // Fetched into a LOCAL buffer, not directly into the shared
-      // m_inProgressRecordingStream.cachedSegmentBytes (fixed 2026-09-27,
+      // st.cachedSegmentBytes (fixed 2026-09-27,
       // a 56th-pass audit, fixing a real, confirmed cache-coherency
       // regression this same 55th-pass fix introduced, found via a
       // project-wide review, not itself independently reproduced): the
@@ -3418,9 +3397,9 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
       {
         if (res != CURLE_OK)
         {
-          // Same "reused connection went stale" handling as ReadRecordingStream().
+          // Same "reused connection went stale" handling as ReadRecordingStreamImpl().
           curl_easy_cleanup(curl);
-          m_inProgressRecordingStream.curl = nullptr;
+          st.curl = nullptr;
         }
         ++transientFailures;
         const auto waited =
@@ -3455,22 +3434,21 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
         {
           std::string refreshError;
           stateLock.unlock();
-          RefreshInProgressRecordingManifest(/*force=*/false, refreshError);
+          RefreshInProgressRecordingManifest(st, /*force=*/false, refreshError);
           stateLock.lock();
           if (!stillSameStream())
             return -1;
-          if (m_inProgressRecordingStream.contentGone)
+          if (st.contentGone)
             return 0;
         }
         // A status that will not clear (a 403 or 500 on the segment, a 404 the refresh could not explain): -1
         // until the run has lasted long enough, then end the stream, see RecordPermanentReadFailure().
-        if (RecordPermanentReadFailure(m_inProgressRecordingStream.permanentReadFailures,
-                                       std::chrono::steady_clock::now()))
+        if (RecordPermanentReadFailure(st.permanentReadFailures, std::chrono::steady_clock::now()))
         {
           kodi::Log(ADDON_LOG_ERROR,
                     "pvr.dispatcharr-unofficial: in-progress recording %d: segment reads keep failing (last HTTP "
                     "status %ld); ending the stream instead of letting the player retry it endlessly",
-                    m_inProgressRecordingStream.recordingId, httpCode);
+                    st.recordingId, httpCode);
           kodi::QueueNotification(QUEUE_ERROR, "", "This recording can't be read from Dispatcharr any more.");
           return 0;
         }
@@ -3485,62 +3463,61 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
       // genuinely succeeded -- see this loop's own comment above on why
       // that atomicity matters.
       fetchedBytes.resize(sink.written);
-      m_inProgressRecordingStream.cachedSegmentBytes = std::move(fetchedBytes);
-      m_inProgressRecordingStream.cachedSegmentByteOffset = segByteOffset;
+      st.cachedSegmentBytes = std::move(fetchedBytes);
+      st.cachedSegmentByteOffset = segByteOffset;
       // A real `.ts` GET refreshes the server's viewer key on its own --
       // see HlsViewerKeepAlive.h.
-      m_inProgressRecordingStream.nextHlsKeepAliveAt =
-          NextHlsKeepAliveDueAt(std::chrono::steady_clock::now(), HlsKeepAliveOutcome::kRefreshed);
+      st.nextHlsKeepAliveAt = NextHlsKeepAliveDueAt(std::chrono::steady_clock::now(), HlsKeepAliveOutcome::kRefreshed);
       break;
     }
-    if (m_inProgressRecordingStream.cachedSegmentByteOffset != segByteOffset)
+    if (st.cachedSegmentByteOffset != segByteOffset)
       return -1; // both attempts failed
   }
 
   // A seek (or a close) during the fetch above, while the state lock was released: `offsetInSegment` is from the old
   // position, and advancing the new one by what is copied out would hand the demuxer the wrong bytes. The segment is
   // cached now, so Kodi's retry of the read costs nothing.
-  if (!stillSameStream() || m_inProgressRecordingStream.position != positionAtStart)
+  if (!stillSameStream() || st.position != positionAtStart)
     return -1;
-  const auto& cached = m_inProgressRecordingStream.cachedSegmentBytes;
+  const auto& cached = st.cachedSegmentBytes;
   unsigned int wantSize = 0;
   if (!ComputeSegmentReadSize(offsetInSegment, static_cast<int64_t>(cached.size()), size, wantSize))
     return 0; // segment turned out smaller than the probed byteSize -- nothing left to give
 
   std::memcpy(buffer, cached.data() + offsetInSegment, wantSize);
-  m_inProgressRecordingStream.position += static_cast<int64_t>(wantSize);
-  ResetPermanentReadFailures(m_inProgressRecordingStream.permanentReadFailures);
+  st.position += static_cast<int64_t>(wantSize);
+  ResetPermanentReadFailures(st.permanentReadFailures);
   return static_cast<int>(wantSize);
 }
 
-int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int whence)
+int64_t DispatcharrClient::SeekInProgressRecordingStreamImpl(InProgressRecordingStreamState& st, int64_t position,
+                                                             int whence)
 {
   {
-    std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-    if (!m_inProgressRecordingStream.open)
+    std::lock_guard<std::mutex> stateLock(st.stateMutex);
+    if (!st.open)
       return -1;
-    m_inProgressRecordingStream.lastSeekTime = std::chrono::steady_clock::now();
+    st.lastSeekTime = std::chrono::steady_clock::now();
   }
 
   if (whence == SEEK_END)
   {
     // Before the state lock is taken: the refresh is a network call.
     std::string refreshError;
-    RefreshInProgressRecordingManifest(/*force=*/true, refreshError);
+    RefreshInProgressRecordingManifest(st, /*force=*/true, refreshError);
   }
 
-  std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-  if (!m_inProgressRecordingStream.open)
+  std::lock_guard<std::mutex> stateLock(st.stateMutex);
+  if (!st.open)
     return -1;
 
-  int64_t newPos = ResolveSeekPosition(position, whence, m_inProgressRecordingStream.position,
-                                       m_inProgressRecordingStream.totalBytes);
+  int64_t newPos = ResolveSeekPosition(position, whence, st.position, st.totalBytes);
   if (newPos < 0)
   {
     kodi::Log(ADDON_LOG_DEBUG,
               "pvr.dispatcharr-unofficial: SeekInProgressRecordingStream(position=%lld, whence=%d) from "
               "current=%lld -> computed newPos=%lld < 0, failing",
-              static_cast<long long>(position), whence, static_cast<long long>(m_inProgressRecordingStream.position),
+              static_cast<long long>(position), whence, static_cast<long long>(st.position),
               static_cast<long long>(newPos));
     return -1;
   }
@@ -3564,74 +3541,70 @@ int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int w
   // last segment's worth of an otherwise-complete recording (e.g. a
   // SEEK_END landing short of the true end). Real bug, not yet reproduced
   // live (found via code reading): this used to apply unconditionally.
-  int64_t tailTarget =
-      ComputeLiveEdgeTailTarget(m_inProgressRecordingStream.segments, m_inProgressRecordingStream.totalBytes, 1);
+  int64_t tailTarget = ComputeLiveEdgeTailTarget(st.segments, st.totalBytes, 1);
   // Never behind the reader's own position on a forward seek -- see
   // dispatcharr::ClampSeekToTail().
-  bool clampedToTail = !m_inProgressRecordingStream.finished && newPos > tailTarget;
+  bool clampedToTail = !st.finished && newPos > tailTarget;
   if (clampedToTail)
-    newPos = ClampSeekToTail(newPos, m_inProgressRecordingStream.position, tailTarget);
+    newPos = ClampSeekToTail(newPos, st.position, tailTarget);
 
   kodi::Log(ADDON_LOG_DEBUG,
             "pvr.dispatcharr-unofficial: SeekInProgressRecordingStream(position=%lld, whence=%d) from "
             "current=%lld, totalBytes=%lld -> newPos=%lld%s",
-            static_cast<long long>(position), whence, static_cast<long long>(m_inProgressRecordingStream.position),
-            static_cast<long long>(m_inProgressRecordingStream.totalBytes), static_cast<long long>(newPos),
+            static_cast<long long>(position), whence, static_cast<long long>(st.position),
+            static_cast<long long>(st.totalBytes), static_cast<long long>(newPos),
             clampedToTail ? " (clamped to tail)" : "");
 
-  m_inProgressRecordingStream.position = newPos;
+  st.position = newPos;
   return newPos;
 }
 
-int64_t DispatcharrClient::GetInProgressRecordingStreamLength()
+int64_t DispatcharrClient::GetInProgressRecordingStreamLengthImpl(InProgressRecordingStreamState& st)
 {
   {
-    std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-    if (!m_inProgressRecordingStream.open)
+    std::lock_guard<std::mutex> stateLock(st.stateMutex);
+    if (!st.open)
       return -1;
   }
   std::string refreshError;
-  RefreshInProgressRecordingManifest(/*force=*/false, refreshError);
-  std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-  return m_inProgressRecordingStream.totalBytes;
+  RefreshInProgressRecordingManifest(st, /*force=*/false, refreshError);
+  std::lock_guard<std::mutex> stateLock(st.stateMutex);
+  return st.totalBytes;
 }
 
-int64_t DispatcharrClient::GetInProgressRecordingStreamDurationMs()
+int64_t DispatcharrClient::GetInProgressRecordingStreamDurationMsImpl(InProgressRecordingStreamState& st)
 {
   {
-    std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-    if (!m_inProgressRecordingStream.open)
+    std::lock_guard<std::mutex> stateLock(st.stateMutex);
+    if (!st.open)
       return 0;
   }
   std::string refreshError;
-  RefreshInProgressRecordingManifest(/*force=*/false, refreshError);
-  std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-  return m_inProgressRecordingStream.totalDurationMs;
+  RefreshInProgressRecordingManifest(st, /*force=*/false, refreshError);
+  std::lock_guard<std::mutex> stateLock(st.stateMutex);
+  return st.totalDurationMs;
 }
 
-time_t DispatcharrClient::GetInProgressRecordingStreamStartTime()
-{
-  std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-  if (!m_inProgressRecordingStream.open)
-    return 0;
-  return m_inProgressRecordingStream.startTime;
-}
-
-void DispatcharrClient::CloseInProgressRecordingStream()
+void DispatcharrClient::CloseInProgressRecordingStreamImpl(InProgressRecordingStreamState& st)
 {
   // The curl mutex first: a segment read still in flight finishes before its handle and cached bytes go.
-  std::lock_guard<std::mutex> curlLock(m_inProgressCurlMutex);
-  std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-  if (m_inProgressRecordingStream.curl)
-    curl_easy_cleanup(static_cast<CURL*>(m_inProgressRecordingStream.curl));
-  m_inProgressRecordingStream = InProgressRecordingStreamState();
-  ++m_inProgressSession;
+  std::lock_guard<std::mutex> curlLock(st.curlMutex);
+  std::lock_guard<std::mutex> stateLock(st.stateMutex);
+  if (st.curl)
+    curl_easy_cleanup(static_cast<CURL*>(st.curl));
+  st.curl = nullptr;
+  st.open = false;
+  st.segments.clear();
+  st.cachedSegmentBytes.clear();
+  st.cachedSegmentBytes.shrink_to_fit();
+  st.cachedSegmentByteOffset = -1;
 }
 
-bool DispatcharrClient::IsInProgressRecordingStreamOpen() const
+DispatcharrClient::InProgressRecordingStreamState::~InProgressRecordingStreamState()
 {
-  std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
-  return m_inProgressRecordingStream.open;
+  // Normally already freed by CloseInProgressRecordingStreamImpl(); this covers a failed open's private object.
+  if (curl)
+    curl_easy_cleanup(static_cast<CURL*>(curl));
 }
 
 bool DispatcharrClient::IsLiveTimeshiftStreamOpen() const
@@ -3640,10 +3613,9 @@ bool DispatcharrClient::IsLiveTimeshiftStreamOpen() const
   return m_liveTimeshiftStream.open;
 }
 
-bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
+bool DispatcharrClient::OpenRecordingStream(int recordingId, int64_t& streamIdOut, std::string& error)
 {
-  CloseRecordingStream();
-
+  streamIdOut = 0;
   std::string url = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/file/";
 
   // Up to two attempts: Dispatcharr keeps only one active API key
@@ -3768,19 +3740,22 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
       return false;
     }
 
-    m_recordingStream.open = true;
-    m_recordingStream.url = resolvedUrl;
-    m_recordingStream.length = totalLength;
-    m_recordingStream.position = 0;
+    // Built here and registered only now that the open succeeded; nothing else could have reached it before.
+    auto stream = std::make_shared<RecordingStreamState>();
+    stream->open = true;
+    stream->url = resolvedUrl;
+    stream->length = totalLength;
+    stream->position = 0;
+    streamIdOut = m_recordedStreams.Add(std::move(stream));
     return true;
   }
   error = "Dispatcharr returned HTTP 401 opening recording stream even after refreshing the API key";
   return false;
 }
 
-int DispatcharrClient::FailRecordingReadPermanently(long httpCode)
+int DispatcharrClient::FailRecordingReadPermanently(RecordingStreamState& st, long httpCode)
 {
-  if (!RecordPermanentReadFailure(m_recordingStream.permanentReadFailures, std::chrono::steady_clock::now()))
+  if (!RecordPermanentReadFailure(st.permanentReadFailures, std::chrono::steady_clock::now()))
     return -1;
   kodi::Log(ADDON_LOG_ERROR,
             "pvr.dispatcharr-unofficial: ReadRecordingStream: reads of this recording keep failing (last HTTP status "
@@ -3790,25 +3765,25 @@ int DispatcharrClient::FailRecordingReadPermanently(long httpCode)
   return 0;
 }
 
-int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
+int DispatcharrClient::ReadRecordingStreamImpl(RecordingStreamState& st, uint8_t* buffer, unsigned int size)
 {
-  if (!m_recordingStream.open || size == 0)
+  if (!st.open || size == 0)
     return 0;
-  if (m_recordingStream.length >= 0 && m_recordingStream.position >= m_recordingStream.length)
+  if (st.length >= 0 && st.position >= st.length)
     return 0; // EOF
 
   // Through dispatcharr::ComputeReadRangeEnd() (StreamSeek.h), not an
   // inline `position + size - 1` -- see that function's own comment for
   // the real signed-overflow gap this closes.
   int64_t rangeEnd = 0;
-  if (!ComputeReadRangeEnd(m_recordingStream.position, size, rangeEnd))
+  if (!ComputeReadRangeEnd(st.position, size, rangeEnd))
     return -1;
-  std::string range = std::to_string(m_recordingStream.position) + "-" + std::to_string(rangeEnd);
+  std::string range = std::to_string(st.position) + "-" + std::to_string(rangeEnd);
 
   // Already found to be a server that ignores Range -- see ServerIgnoredRangeRequest().
-  if (m_recordingStream.rangeIgnored)
+  if (st.rangeIgnored)
     return 0;
-  if (m_recordingStream.permanentReadFailures.ended)
+  if (st.permanentReadFailures.ended)
     return 0;
 
   // See OpenRecordingStream(): the API key can be invalidated mid-playback
@@ -3822,20 +3797,20 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
     // Reuse one persistent handle across every read (see RecordingStreamState's
     // comment) instead of curl_easy_init()/cleanup() per call, so libcurl's
     // connection cache lets HTTP keep-alive apply across sequential reads.
-    CURL* curl = static_cast<CURL*>(m_recordingStream.curl);
+    CURL* curl = static_cast<CURL*>(st.curl);
     if (!curl)
     {
       curl = curl_easy_init();
       if (!curl)
         return -1;
-      m_recordingStream.curl = curl;
+      st.curl = curl;
     }
 
     struct curl_slist* headers = static_cast<struct curl_slist*>(AppendApiKeyHeaderIfPresent(nullptr, GetApiKey()));
 
     FixedBufferSink sink{buffer, size, 0, /*truncated=*/false, /*abortWhenFull=*/true};
     int64_t serverReportedTotal = -1;
-    curl_easy_setopt(curl, CURLOPT_URL, m_recordingStream.url.c_str());
+    curl_easy_setopt(curl, CURLOPT_URL, st.url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, FixedBufferWriteCallback);
@@ -3853,9 +3828,8 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
       res = CURLE_OK;
 
     // The order of the checks is dispatcharr::ClassifyRecordingReadResponse()'s (RecordingHttpUtil.h, tested).
-    RecordingReadOutcome outcome =
-        ClassifyRecordingReadResponse(res == CURLE_OK, httpCode, /*apiKeyAlreadyRefreshed=*/attempt > 0,
-                                      m_recordingStream.position, m_recordingStream.length, serverReportedTotal);
+    RecordingReadOutcome outcome = ClassifyRecordingReadResponse(
+        res == CURLE_OK, httpCode, /*apiKeyAlreadyRefreshed=*/attempt > 0, st.position, st.length, serverReportedTotal);
     if (outcome == RecordingReadOutcome::kRefreshApiKeyAndRetry)
     {
       std::string regenKey, regenError;
@@ -3865,16 +3839,15 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
         continue;
       }
       // No new key to be had: judged as it would have been had the key already been refreshed.
-      outcome =
-          ClassifyRecordingReadResponse(res == CURLE_OK, httpCode, /*apiKeyAlreadyRefreshed=*/true,
-                                        m_recordingStream.position, m_recordingStream.length, serverReportedTotal);
+      outcome = ClassifyRecordingReadResponse(res == CURLE_OK, httpCode, /*apiKeyAlreadyRefreshed=*/true, st.position,
+                                              st.length, serverReportedTotal);
     }
 
     switch (outcome)
     {
     case RecordingReadOutcome::kRefreshApiKeyAndRetry: // not reachable: the call above passed `true`
     case RecordingReadOutcome::kFailPermanently:
-      return FailRecordingReadPermanently(httpCode);
+      return FailRecordingReadPermanently(st, httpCode);
     case RecordingReadOutcome::kRetryTransient:
     {
       if (res != CURLE_OK)
@@ -3885,7 +3858,7 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
         // long pause. Drop the handle so the next read opens a fresh
         // connection instead of retrying the same broken one indefinitely.
         curl_easy_cleanup(curl);
-        m_recordingStream.curl = nullptr;
+        st.curl = nullptr;
       }
       ++transientFailures;
       const auto waited =
@@ -3906,11 +3879,11 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
                 "pvr.dispatcharr-unofficial: ReadRecordingStream: the server answered a ranged read at byte %lld "
                 "with a plain 200 (it ignored the Range header -- a proxy in front of Dispatcharr that drops it?); "
                 "stopping this recording rather than play the wrong bytes",
-                static_cast<long long>(m_recordingStream.position));
+                static_cast<long long>(st.position));
       kodi::QueueNotification(QUEUE_ERROR, "",
                               "This recording can't be played: the server (or a proxy in front of it) doesn't "
                               "support partial downloads.");
-      m_recordingStream.rangeIgnored = true;
+      st.rangeIgnored = true;
       return 0;
     case RecordingReadOutcome::kFileChanged:
       // See dispatcharr::HasRecordingFileChanged() (RecordingHttpUtil.h): a real, confirmed risk (Dispatcharr's own
@@ -3923,42 +3896,123 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
                 "was opened (%lld) -- the file was likely replaced under this stream (e.g. "
                 "comskip post-processing); giving up on this read rather than risk silent "
                 "corruption",
-                static_cast<long long>(serverReportedTotal), static_cast<long long>(m_recordingStream.length));
-      return FailRecordingReadPermanently(httpCode);
+                static_cast<long long>(serverReportedTotal), static_cast<long long>(st.length));
+      return FailRecordingReadPermanently(st, httpCode);
     case RecordingReadOutcome::kOk:
       break;
     }
 
-    m_recordingStream.position += static_cast<int64_t>(sink.written);
-    ResetPermanentReadFailures(m_recordingStream.permanentReadFailures);
+    st.position += static_cast<int64_t>(sink.written);
+    ResetPermanentReadFailures(st.permanentReadFailures);
     return static_cast<int>(sink.written);
   }
   return -1;
 }
 
-int64_t DispatcharrClient::SeekRecordingStream(int64_t position, int whence)
+int64_t DispatcharrClient::SeekRecordingStreamImpl(RecordingStreamState& st, int64_t position, int whence)
 {
-  if (!m_recordingStream.open)
+  if (!st.open)
     return -1;
 
-  int64_t newPos = ResolveSeekPosition(position, whence, m_recordingStream.position, m_recordingStream.length);
+  int64_t newPos = ResolveSeekPosition(position, whence, st.position, st.length);
   if (newPos < 0)
     return -1;
 
-  m_recordingStream.position = newPos;
+  st.position = newPos;
   return newPos;
 }
 
-int64_t DispatcharrClient::GetRecordingStreamLength() const
+void DispatcharrClient::CloseRecordingStreamImpl(RecordingStreamState& st)
 {
-  return m_recordingStream.length;
+  std::lock_guard<std::mutex> ioLock(st.ioMutex);
+  if (st.curl)
+    curl_easy_cleanup(static_cast<CURL*>(st.curl));
+  st.curl = nullptr;
+  st.open = false;
 }
 
-void DispatcharrClient::CloseRecordingStream()
+DispatcharrClient::RecordingStreamState::~RecordingStreamState()
 {
-  if (m_recordingStream.curl)
-    curl_easy_cleanup(static_cast<CURL*>(m_recordingStream.curl));
-  m_recordingStream = RecordingStreamState();
+  // Normally already freed by CloseRecordingStreamImpl(); this covers a failed open's private object.
+  if (curl)
+    curl_easy_cleanup(static_cast<CURL*>(curl));
+}
+
+int DispatcharrClient::ReadRecordedStream(int64_t streamId, uint8_t* buffer, unsigned int size)
+{
+  const std::shared_ptr<RecordedStreamBase> stream = m_recordedStreams.Find(streamId);
+  if (!stream)
+    return 0;
+  if (stream->kind == RecordedStreamBase::Kind::kInProgress)
+    return ReadInProgressRecordingStreamImpl(static_cast<InProgressRecordingStreamState&>(*stream), buffer, size);
+  auto& st = static_cast<RecordingStreamState&>(*stream);
+  std::lock_guard<std::mutex> ioLock(st.ioMutex);
+  return ReadRecordingStreamImpl(st, buffer, size);
+}
+
+int64_t DispatcharrClient::SeekRecordedStream(int64_t streamId, int64_t position, int whence)
+{
+  const std::shared_ptr<RecordedStreamBase> stream = m_recordedStreams.Find(streamId);
+  if (!stream)
+    return -1;
+  if (stream->kind == RecordedStreamBase::Kind::kInProgress)
+    return SeekInProgressRecordingStreamImpl(static_cast<InProgressRecordingStreamState&>(*stream), position, whence);
+  auto& st = static_cast<RecordingStreamState&>(*stream);
+  std::lock_guard<std::mutex> ioLock(st.ioMutex);
+  return SeekRecordingStreamImpl(st, position, whence);
+}
+
+int64_t DispatcharrClient::GetRecordedStreamLength(int64_t streamId)
+{
+  const std::shared_ptr<RecordedStreamBase> stream = m_recordedStreams.Find(streamId);
+  if (!stream)
+    return -1;
+  if (stream->kind == RecordedStreamBase::Kind::kInProgress)
+    return GetInProgressRecordingStreamLengthImpl(static_cast<InProgressRecordingStreamState&>(*stream));
+  // Fixed when the stream was opened and never written again, so no ioMutex: a read in flight must not hold this up.
+  return static_cast<RecordingStreamState&>(*stream).length;
+}
+
+void DispatcharrClient::CloseRecordedStream(int64_t streamId)
+{
+  // Out of the registry first, so no new call can find it; a call already running on it holds its own reference and
+  // finishes before the Impl below frees the handle (it takes the same lock the call holds).
+  const std::shared_ptr<RecordedStreamBase> stream = m_recordedStreams.Remove(streamId);
+  if (!stream)
+    return;
+  if (stream->kind == RecordedStreamBase::Kind::kInProgress)
+    CloseInProgressRecordingStreamImpl(static_cast<InProgressRecordingStreamState&>(*stream));
+  else
+    CloseRecordingStreamImpl(static_cast<RecordingStreamState&>(*stream));
+}
+
+DispatcharrClient::RecordedStreamLookup DispatcharrClient::GetRecordedStreamTimes(int64_t streamId,
+                                                                                  RecordedStreamTimes& out)
+{
+  const std::shared_ptr<RecordedStreamBase> stream = m_recordedStreams.Find(streamId);
+  if (!stream)
+    return RecordedStreamLookup::kUnknownStream;
+  if (stream->kind != RecordedStreamBase::Kind::kInProgress)
+    return RecordedStreamLookup::kNoTimes;
+  auto& st = static_cast<InProgressRecordingStreamState&>(*stream);
+  out.durationMs = GetInProgressRecordingStreamDurationMsImpl(st);
+  std::lock_guard<std::mutex> stateLock(st.stateMutex);
+  out.startTime = st.startTime;
+  return RecordedStreamLookup::kOk;
+}
+
+bool DispatcharrClient::IsRecordedStreamRealTime(int64_t streamId, bool& realTimeOut) const
+{
+  const std::shared_ptr<RecordedStreamBase> stream = m_recordedStreams.Find(streamId);
+  if (!stream)
+    return false;
+  realTimeOut = stream->kind == RecordedStreamBase::Kind::kInProgress;
+  return true;
+}
+
+size_t DispatcharrClient::OpenRecordedStreamCount() const
+{
+  return m_recordedStreams.size();
 }
 
 bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool* fatalOut, bool coldStart,
@@ -4106,22 +4160,18 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
 
 bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, std::string& error)
 {
-  // Unlike OpenInProgressRecordingStream() (which already calls its own
-  // CloseInProgressRecordingStream() first), this used to just overwrite
-  // m_liveTimeshiftStream with a fresh default-constructed one directly --
-  // safe in the normal case (Kodi always closes before reopening), but a
-  // defensive gap found via a project-wide review: if Open() were ever
+  // A defensive gap found via a project-wide review: if Open() were ever
   // called again while a stream was already open (no live reproduction;
   // Kodi's own calling convention is assumed, not verified, to always
   // Close() first), the previous m_liveTimeshiftStream.curl handle would
   // leak (only ever cleaned up in CloseLiveTimeshiftStream(), never here)
   // and the previous viewer_id would never be deregistered server-side
   // (self-healing via the plugin's own idle-timeout reaper eventually,
-  // but not immediately). Unconditional, matching the sibling function's
-  // own pattern -- CloseLiveTimeshiftStream()'s own body already no-ops
-  // cheaply when nothing was open (skips StopTimeshiftBuffer(), and
-  // curl_easy_cleanup()/the state reset are both harmless against an
-  // already-default state).
+  // but not immediately). Unconditional -- CloseLiveTimeshiftStream()'s own
+  // body already no-ops cheaply when nothing was open (skips
+  // StopTimeshiftBuffer(), and curl_easy_cleanup()/the state reset are both
+  // harmless against an already-default state). Recorded streams are the
+  // opposite: Kodi 22 may keep several open, so their opens close nothing.
   CloseLiveTimeshiftStream();
 
   // This addon's own local bookkeeping always starts fresh on Open() --
@@ -4686,7 +4736,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
 
     // Segment-duration estimate (averaged + floored) and the resulting
     // attempt budget (3x margin) are shared with
-    // ReadInProgressRecordingStream() -- see EstimateSegmentDurationMs()'s
+    // ReadInProgressRecordingStreamImpl() -- see EstimateSegmentDurationMs()'s
     // and ComputeCatchUpAttempts()'s own comments (just above that function)
     // for the full history of why each constant is what it is, including a
     // real crash this fixed. A separate server-side bug (see the
@@ -4899,7 +4949,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
   stateLock.lock();
 
-  // Same reasoning as ReadInProgressRecordingStream()'s own identical log
+  // Same reasoning as ReadInProgressRecordingStreamImpl()'s own identical log
   // line: this was previously the ONE unlogged blocking network call in
   // this read path -- a reachability/firewall/wrong-port failure (see
   // docs/OPEN_ITEMS.md's own account of a real tester bug report) surfaced
@@ -4925,7 +4975,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
     kodi::Log(ADDON_LOG_ERROR,
               "pvr.dispatcharr-unofficial: ReadLiveTimeshiftStream: segment body fetch failed: %s (url=%s)",
               curl_easy_strerror(res), redactedUrl.c_str());
-    // Same "reused connection went stale" handling as ReadRecordingStream().
+    // Same "reused connection went stale" handling as ReadRecordingStreamImpl().
     curl_easy_cleanup(curl);
     m_liveTimeshiftStream.curl = nullptr;
     curlLock.unlock();
@@ -4946,7 +4996,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
     m_liveTimeshiftStream.firstSegmentFetchFailureAt = {};
     return 0;
   }
-  // The same plain-200-at-a-non-zero-offset check as ReadRecordingStream(): the plugin's file
+  // The same plain-200-at-a-non-zero-offset check as ReadRecordingStreamImpl(): the plugin's file
   // server always answers a Range GET with 206, so a 200 here is something in between ignoring
   // Range, and the bytes would be the segment's first ones spliced in at `offsetInSegment`. Not
   // retried -- nothing about a retry changes it -- so the stream ends as fatal.
@@ -5088,7 +5138,7 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
   // already keeps for its own cold-start trim.
   // The backoff computation itself lives in
   // dispatcharr::ComputeLiveEdgeTailTarget() (LiveEdgeMargin.h, shared
-  // with SeekInProgressRecordingStream()'s own margin-of-1 case) so it's
+  // with SeekInProgressRecordingStreamImpl()'s own margin-of-1 case) so it's
   // unit-testable standalone -- see that function's own comment.
   constexpr size_t kLiveEdgeSeekBackoffSegments = 3;
   int64_t tailTarget = ComputeLiveEdgeTailTarget(m_liveTimeshiftStream.segments, m_liveTimeshiftStream.totalBytes,
