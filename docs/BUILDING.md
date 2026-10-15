@@ -54,28 +54,12 @@ it by hand instead.
    ```
    On macOS, this same `make` invocation works from a shell with Xcode
    command line tools installed; see the next section for Windows, which
-   doesn't have `make` and needs a couple of extra dependency steps. If a
-   prior run failed partway through, delete
-   `tools/depends/target/binary-addons/.installed-native` first -- the
-   harness touches that marker even after a failed configure, which
-   otherwise makes it skip reconfiguring on the next run.
+   doesn't have `make` and needs a couple of extra dependency steps.
 
-   **The same marker also needs clearing on an ordinary rebuild against
-   updated source, not just after a failure** (confirmed live, 2026-09-09,
-   rebuilding a persistent Linux build tree from an earlier session that
-   was still at `0.9.0`): with `ADDONS_DEFINITION_DIR` pointing at a
-   `file://` path (a live local checkout, not a version-pinned tarball
-   URL the way CoreELEC's `package.mk` works), the harness has no signal
-   that the addon's own source content changed at all -- same URL every
-   time -- so it silently no-ops (`make: Nothing to be done for 'all'`)
-   and leaves the old binary in place. Confirmed the fix needs *two*
-   things removed, not just one: `.installed-native` itself, and the
-   addon's own stale ExternalProject state,
-   `tools/depends/target/binary-addons/native/pvr.dispatcharr-unofficial-prefix/`
-   (its stamp files are what the *inner* CMake target checks, one layer
-   below the outer marker) -- deleting only one of the two still no-op'd.
-   A version bump alone doesn't fix this either, since the file:// URL
-   itself never changes across versions the way a tagged tarball's would.
+   **Building again in a tree that has built this addon before (an update,
+   or a run that failed partway)? Clear the stale build state first: see
+   "Rebuilding after an update" below step 5.** Otherwise `make` prints
+   `make: Nothing to be done for 'all'` and leaves the old binary in place.
 5. `-DPACKAGE_DIR` looks like it should redirect where CPack writes the
    zip, but doesn't actually take effect for this harness (confirmed:
    verified against a real run, CPack still wrote it deep inside the
@@ -89,6 +73,32 @@ it by hand instead.
    what you install via Kodi's
    "install from zip file" option, or publish in a self-hosted repository
    (see the "Distribution" section below).
+
+### Rebuilding after an update
+
+If the build tree has built this addon before, `make` finishes at once with
+`make: Nothing to be done for 'all'` and the old zip stays as it was. The harness keeps two kinds of
+state that tell it the work is done, and with `ADDONS_DEFINITION_DIR` pointing at a `file://` path (a
+live local checkout, not a version-pinned tarball URL the way CoreELEC's `package.mk` works) nothing
+tells it the addon's source changed: the URL is the same every time, and a version bump does not
+change that. Remove both, from the `kodi-source` checkout, and run the same `make` again:
+
+```bash
+rm -f tools/depends/target/binary-addons/.installed-native
+rm -rf tools/depends/target/binary-addons/native/pvr.dispatcharr-unofficial-prefix
+```
+
+- Removing only one of the two still no-ops (confirmed live, 2026-09-09, rebuilding a persistent Linux
+  build tree that was still at `0.9.0`): `.installed-native` is the outer marker, and the addon's own
+  `ExternalProject` stamp files in `*-prefix/` are what the inner CMake target checks one layer below it.
+- The same applies after a build that failed partway: the harness touches `.installed-native` even
+  after a failed configure, so the next run skips reconfiguring.
+- Update the addon checkout (`git pull` in the directory the definition file points at) before
+  rebuilding; the harness builds whatever is there.
+- Confirm the result with the `find` above: the new zip's name carries the new version. If it is still
+  the old one, the state was not fully cleared.
+- On Windows, which has no `.installed-native`, deleting the addon's own `<build-dir>/pvr.dispatcharr-unofficial-prefix/`
+  directory is the equivalent (it forced a real reconfigure when the addon was renamed there).
 
 **macOS is deliberately NOT part of CI, as of 2026-09-28 -- the same
 "GitHub Actions job ... rejected" reasoning as the CoreELEC section below,
