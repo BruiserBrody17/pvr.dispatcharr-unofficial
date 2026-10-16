@@ -112,6 +112,32 @@ Not substituted for by a virtual GPU or a laptop.
   resume, 239 segment fetches, and no `Packet corrupt`, audio-sync, fatal or addon error lines. 32-bit ARM timers
   are covered by the N2+ run above.
   Still not done anywhere: audio passthrough, a long soak, and HEVC.
+- **The `Piers` addon (0.14.0, built by hand from the branch head) on Kodi 22.0-RC1, on a Mac and on two Android
+  phones (2026-10-16).** Not the release artefacts: nothing is tagged yet, so these are the hand-built zips that the
+  release gate's content checks accept (`docs/BUILDING.md`). Each device ran a fresh Kodi 22 RC1 profile against a lab
+  server, Kodi 21.3 untouched (macOS: the RC1 app copied to a separate folder and started with `HOME` pointed at a
+  throwaway profile; Android: the 21.3 profile backed up, 21.3 uninstalled, RC1 installed, the addon and its settings
+  copied in).
+  *macOS, Apple silicon:* the addon loads and connects. The smoke harness passed 15 of 15 attempted once the traps
+  below were out of the way: live and server-side timeshift (seek back 20 s), a completed recording (a 30 s forward
+  seek landed on target), an in-progress recording (play and seek, with a test recording running; the two live
+  checks skip themselves then and passed on a rerun without it) and catch-up. Kodi 22 itself opened two streams of
+  one recording at once, which the per-id state served (`openStreams=2`, then closed in turn).
+  *Android, 64-bit and 32-bit:* the addon loads (Android needed the brotli link fix, `docs/BUILDING.md`), and each
+  passed 12 of 15 with 3 skips on its first run, the 64-bit phone 13 of 15 with a test recording running. On both,
+  an in-progress and a completed recording played and seeked, and catch-up played; on the 32-bit one catch-up only
+  worked after Kodi finished its first-run guide write (trap 3 below; about 45 minutes for a very large lineup).
+  *Traps these runs added, none of them the addon:* (a) the first smoke run on a fresh Kodi 22 profile on the Mac
+  failed its first playback check (position stuck at 0) and Kodi then hung for good. A stack sample showed Kodi's own
+  deadlock: the main thread in Kodi's stop-playing path joining the `VideoPlayer` thread, which was waiting
+  on the main thread to switch to full-screen video (its video-resolution switch). Stopping a player while
+  it is still starting causes it; after a restart the same recordings played and seeked fine, so give a fresh profile
+  a minute after its first start before running the harness. (b) The harness's in-progress check pairs a
+  `recording`-state timer with the first recording of the same title, so a recurring rule can make it pick an older
+  `interrupted` occurrence (zero bytes, playlist 404); with nothing really recording that fails the check's choice,
+  not playback. Start a test recording on the channel under test before the run. (c) The recording seek checks used
+  to read `canseek` once and skipped on a slow device; they now poll like the live one (`docs/TEST_COVERAGE.md`).
+  Still not done on Kodi 22: CoreELEC on its device, a Linux desktop (CI only), audio passthrough, a long soak, HEVC.
 - **Traps the 2026-10-07 device runs hit, none of them the addon:**
   1. **Kodi's own "Play recording" / "Switch to channel" prompt** (a `DialogConfirm`) appears when a channel's
      current programme has a recording, and being modal it makes `Player.Open` hang and stalls the JSON-RPC calls
