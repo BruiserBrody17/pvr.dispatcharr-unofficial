@@ -236,6 +236,14 @@ if(ANDROID)
   find_library(DISPATCHARR_Z_LIBRARY NAMES z)
   list(APPEND DEPLIBS ${DISPATCHARR_NGHTTP2_LIBRARY} ${DISPATCHARR_SSL_LIBRARY} ${DISPATCHARR_CRYPTO_LIBRARY}
        ${DISPATCHARR_Z_LIBRARY})
+  # Kodi 22's depends build curl with brotli (libcurl.pc: -lbrotlidec -lbrotlicommon); Kodi 21's did not, so these
+  # are only listed when present. Without them the link still succeeds (a shared library may leave symbols
+  # undefined) and the library then fails to load on a device with unresolved BrotliDecoder* symbols.
+  find_library(DISPATCHARR_BROTLIDEC_LIBRARY NAMES brotlidec)
+  find_library(DISPATCHARR_BROTLICOMMON_LIBRARY NAMES brotlicommon)
+  if(DISPATCHARR_BROTLIDEC_LIBRARY AND DISPATCHARR_BROTLICOMMON_LIBRARY)
+    list(APPEND DEPLIBS ${DISPATCHARR_BROTLIDEC_LIBRARY} ${DISPATCHARR_BROTLICOMMON_LIBRARY})
+  endif()
 endif()
 
 # Unlike Linux (system libcurl.so, resolved against whatever the user's distro

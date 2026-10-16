@@ -20,18 +20,20 @@ it by hand instead.
 
 This repository has one branch per Kodi release ([BRANCHES.md](BRANCHES.md)): **`Omega` builds against Kodi 21 and
 `Piers` against Kodi 22**, and the steps below are the same for both except for the Kodi tree to clone. The sections
-were written and verified live against Kodi 21 (`Omega`); on `Piers` they have been run by CI on Linux and Windows
-only, against the Kodi commit `KODI_COMMIT` pins (`22.0rc1-Piers`), and the first Windows generator / dependency layout
-that CI found for Kodi 22 is the one `.github/workflows/build.yml` uses. Nothing else has been built by hand for Kodi 22
-yet. What is known to differ, from Kodi's own documentation at that commit:
+were written and verified live against Kodi 21 (`Omega`); on `Piers` they have been run against the Kodi commit
+`KODI_COMMIT` pins (`22.0rc1-Piers`) by CI on Linux and Windows and by hand on macOS, both Android ABIs and CoreELEC
+(2026-10-15/16; none of those four has run on a device yet). The first Windows generator / dependency layout that CI
+found for Kodi 22 is the one `.github/workflows/build.yml` uses. What differs, from Kodi's own documentation at that
+commit and from those builds (each is spelled out in its section below):
 
 - **Android:** NDK `28.2.13676358` (Kodi 21: `21.4.7075529`), `platforms;android-37.0` (`android-34`) and
-  `build-tools;37.0.0` (`33.0.1`); the "Android" section's version strings, `--with-ndk-path`, the worktree names and the
-  Kodi APK file name all change with them. Confirm each against Kodi's `docs/README.Android.md` at the commit you build.
-- **CoreELEC:** the `coreelec-22` branch (tag `22.0-Piers_rc1` exists) instead of `coreelec-21`; its `Amlogic-ng`
-  device, image and 32-bit userland facts in the CoreELEC section are Kodi 21's and unverified for Kodi 22.
-- **The built `addon.xml`** should declare `kodi.binary.global.main` 2.0.3 and the PVR instance API 9.2.0 (it is generated
-  from the Kodi tree; `addon.xml.in` hard-codes neither): check it on the first Windows hand build.
+  `build-tools;37.0.0` (`33.0.1`), and Kodi's default NDK API level is 24, so the per-ABI directories are
+  `...-android-24-debug`, not `-21-debug`. Kodi 22's dependency build no longer builds libcurl, which the addon needs, so
+  it is built by hand, and it is built with brotli. See "Android" below.
+- **CoreELEC:** the `coreelec-22` branch (tag `22.0-Piers_rc1`) instead of `coreelec-21`, device `Amlogic-no` and a real
+  64-bit userland (`ARCH=aarch64`), so the zip is `...-coreelec-aarch64.zip`. See "CoreELEC" below.
+- **The built `addon.xml`** declares `kodi.binary.global.main` 2.0.3 and the PVR instance API 9.2.0 (it is generated from
+  the Kodi tree; `addon.xml.in` hard-codes neither). Confirmed on the macOS, both Android and the CoreELEC builds.
 
 ## Linux / macOS (x86_64)
 
@@ -455,6 +457,21 @@ called out inline so a future rebuild doesn't have to rediscover them.
    cp packaging/coreelec/pvr.dispatcharr-unofficial/package.mk \
      CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharr-unofficial/
    ```
+   **On `Piers` (Kodi 22), clone the tag instead and build for the device the branch ships (confirmed 2026-10-16,
+   `22.0-Piers_rc1`, which pins the same Kodi as this branch):**
+   ```bash
+   git clone --branch 22.0-Piers_rc1 --depth 1 https://github.com/CoreELEC/CoreELEC.git CoreELEC-22
+   PROJECT=Amlogic-ce ARCH=aarch64 DEVICE=Amlogic-no ./scripts/create_addon pvr.dispatcharr-unofficial
+   ```
+   The device is `Amlogic-no` and the userland is true AArch64 (CoreELEC's own N2 image is
+   `CoreELEC-Amlogic-no.aarch64-22.0-Piers_rc1-Odroid_N2.img.gz`); the finished library is `ELF 64-bit ... ARM aarch64`.
+   The zip lands in `target/addons/Amlogic-no/22.0.12/aarch64/pvr.dispatcharr-unofficial/` as
+   `pvr.dispatcharr-unofficial-0.14.0.1.zip` (the `-Piers` of `PKG_VERSION` does not reach the zip: its `addon.xml`
+   says `0.14.0.1`, the library is `pvr.dispatcharr-unofficial.so.0.14.0`), and the zip was produced by `create_addon` itself. The host also needed
+   `rsync` and `xsltproc`, and Gentoo's gitweb (the pinned `pax-utils` source) was down for about ten hours mid-build;
+   the build resumed from where it stopped once the pinned file was served again, which the staging rule above makes
+   possible for any other source that is unreachable.
+
    **If this file was edited on Windows and copied into a Linux
    checkout, strip CRLF line endings before building** (confirmed live,
    2026-09-07): git's `core.autocrlf` normalizes this file to CRLF in a
@@ -573,8 +590,8 @@ called out inline so a future rebuild doesn't have to rediscover them.
    (the file name is not what Kodi installs by; the zip's own `addon.xml` is, and keeps CoreELEC's `<version>.<revision>`):
    ```bash
    cp target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr-unofficial/pvr.dispatcharr-unofficial-<version>.<revision>.zip \
-      addon-pvr.dispatcharr-unofficial-<version>-coreelec-armv7.zip
-   gh release upload <tag> addon-pvr.dispatcharr-unofficial-<version>-coreelec-armv7.zip
+      addon-pvr.dispatcharr-unofficial-<version>-coreelec-aarch64.zip
+   gh release upload <tag> addon-pvr.dispatcharr-unofficial-<version>-coreelec-aarch64.zip
    ```
 
 For later releases, only steps 1-2 and the `cp`/build in steps 3-4 need
@@ -728,6 +745,24 @@ all. This addon's own `CMakeLists.txt` already has this handled (see its
 `if(ANDROID)` block); a fresh third-party addon hitting the same "Could
 NOT find CURL" error should start here rather than assuming its own
 `CMakeLists.txt` is at fault.
+
+**On `Piers` (Kodi 22), three things differ here (confirmed 2026-10-15/16 against `22.0rc1-Piers`, both ABIs).**
+
+- Kodi 22's dependency build no longer builds libcurl on Android (`curl` is not in `tools/depends/target/Makefile`'s
+  `DEPENDS`, and a plain `make` leaves no `libcurl.a`), and its curl wants brotli. Build the three by hand in each ABI's
+  tree after step 2, in this order (`make curl` from `target/` does nothing: it has no recipe, only prerequisites):
+  ```bash
+  cd ~/android-build/kodi-source-arm64/tools/depends/target
+  for d in brotli nghttp2 curl; do make -j4 -C $d; done
+  ```
+  The libraries land in the ABI's depends prefix as `libcurl.a`, `libnghttp2.a`, `libbrotlidec.a`, `libbrotlicommon.a`.
+- The directory names carry API level 24, not 21: `aarch64-linux-android-24-debug` and `arm-linux-androideabi-24-debug`.
+  Use them for `DEPS_DIR` and `REAL_DEPENDS` above, and symlink `libbrotlidec.a` and `libbrotlicommon.a` along with the
+  five libraries listed.
+- `CMakeLists.txt` lists the brotli libraries for Android when `find_library` finds them. Without that the link
+  **succeeds** (a shared library may leave symbols undefined) and the library only fails to load on a device, with
+  unresolved `BrotliDecoder*` symbols. After any Android build check `llvm-nm -D --undefined-only` on the `.so` for
+  anything that is not libc, libc++ or the NDK's own libraries (`grep -i -E 'brotli|SSL_|nghttp|curl_'` should be empty).
 
 ### 4. Build the addon
 
@@ -897,7 +932,7 @@ privacy gate passes on all of them together.**
 | `timeshift_buffer.zip`, `recording_edl.zip` | CI (`package-dispatcharr-plugins`) |
 | `addon-pvr.dispatcharr-unofficial-<v>-osx-arm64.zip` | by hand on the Mac ("Linux / macOS" above) |
 | `addon-pvr.dispatcharr-unofficial-<v>-android-aarch64.zip`, `...-android-armv7.zip` | by hand ("Android" above) |
-| `addon-pvr.dispatcharr-unofficial-<v>-coreelec-armv7.zip` (the CoreELEC package, renamed from CoreELEC's `pvr.dispatcharr-unofficial-<v>.1.zip`; the `.1` is its own revision suffix and stays inside the zip's `addon.xml`) | by hand ("CoreELEC" below) |
+| `addon-pvr.dispatcharr-unofficial-<v>-coreelec-aarch64.zip` (on `Omega`: `-coreelec-armv7.zip`; the CoreELEC package, renamed from CoreELEC's `pvr.dispatcharr-unofficial-<v>.1.zip`; the `.1` is its own revision suffix and stays inside the zip's `addon.xml`) | by hand ("CoreELEC" below) |
 
 The tag is `<version>-<Branch>` (`0.14.0-Piers`, `0.13.1-Omega`; [BRANCHES.md](BRANCHES.md)) and is the only place the
 branch appears: the zips' names, `--expect-release` and the CHANGELOG heading use the plain version.

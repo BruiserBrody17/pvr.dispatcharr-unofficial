@@ -27,8 +27,9 @@ way round, so each branch builds against its own Kodi tree (`KODI_BRANCH` / `KOD
   archive's top directory after the tag. `tools/tests/test_version_sync.py` ties it to `addon.xml.in` through
   `RELEASE_TAG_SUFFIX`. On `Omega` the suffix is empty until its next release is tagged (`0.13.0` has no suffix, and its
   just-set checksum names that tarball); the version-bump commit of that release adds `-Omega` to `PKG_VERSION` and to the
-  test's constant. Not yet confirmed: what version CoreELEC writes into the zip's `addon.xml` when `PKG_VERSION` has a
-  suffix, and the zip's file name; check at the first Piers CoreELEC build and correct `docs/BUILDING.md`.
+  test's constant. Confirmed at the first Piers CoreELEC build (2026-10-16): the suffix does not reach the zip. CoreELEC
+  writes `0.14.0.1` (the numeric version plus its own revision) into `addon.xml` and names the file
+  `pvr.dispatcharr-unofficial-0.14.0.1.zip`; the library inside is `pvr.dispatcharr-unofficial.so.0.14.0`.
 
 ## Fixes that need to reach both
 
@@ -68,7 +69,12 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
   satisfies the minimum, so the import needs no change.
 - **Android:** Kodi 22's own `docs/README.Android.md` (at the RC1 commit) asks for NDK 28.2.13676358 with
   `platforms;android-37.0` and `build-tools;37.0.0`, against Kodi 21's NDK 21.4.7075529 / `android-34` / `33.0.1`.
-- **CoreELEC:** the `coreelec-22` branch exists, with the `22.0-Piers_rc1` tag; `coreelec-21` is Kodi 21.
+- **CoreELEC:** the `coreelec-22` branch exists, with the `22.0-Piers_rc1` tag (it pins the same Kodi, `22.0rc1-Piers`);
+  `coreelec-21` is Kodi 21. Its device is `Amlogic-no` and its userland is a real 64-bit one (`ARCH=aarch64`), where
+  `coreelec-21`'s was 32-bit `arm` on `Amlogic-ng`. The CoreELEC zip of a `Piers` release is therefore
+  `...-coreelec-aarch64.zip`, and `tools/check_release_zip.py` expects that name on this branch (`coreelec-armv7` on
+  `Omega`).
 
-None of the Android, macOS or CoreELEC builds has been done by hand for Kodi 22 yet; `docs/BUILDING.md` says which
-parts were.
+The macOS, both Android and the CoreELEC zips were built by hand from `Piers` against Kodi 22 RC1 on 2026-10-15/16 and
+pass the content checks of `tools/check_release_zip.py`; none has been run on a device. `docs/BUILDING.md` has the
+differences each build needed.

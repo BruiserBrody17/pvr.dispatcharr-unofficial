@@ -198,13 +198,14 @@ def test_the_coreelec_zip_is_named_like_the_other_platforms_and_the_harness_name
     version = "0.12.0"
     others = [n for n in _concrete(version) if "coreelec" not in n]
     assert (
-        gate.check_release_set(others + ["addon-pvr.dispatcharr-unofficial-0.12.0-coreelec-armv7.zip"], version) == []
+        gate.check_release_set(others + ["addon-pvr.dispatcharr-unofficial-0.12.0-coreelec-aarch64.zip"], version) == []
     )
     # CoreELEC's own file name (with its revision suffix) must be renamed before the release, not shipped as built
     for bad in (
         "pvr.dispatcharr-unofficial-0.12.0.1.zip",
-        "addon-pvr.dispatcharr-unofficial-0.12.1-coreelec-armv7.zip",
-        "addon-pvr.dispatcharr-unofficial-0.12.0-coreelec-aarch64.zip",
+        "addon-pvr.dispatcharr-unofficial-0.12.1-coreelec-aarch64.zip",
+        # Kodi 21's 32-bit CoreELEC package: not what a Piers release ships
+        "addon-pvr.dispatcharr-unofficial-0.12.0-coreelec-armv7.zip",
     ):
         assert any("missing" in p for p in gate.check_release_set(others + [bad], version)), bad
 
@@ -217,7 +218,7 @@ def test_every_platform_ships_with_every_release():
         "osx",
         "android-aarch64",
         "android-armv7",
-        "coreelec-armv7",
+        "coreelec-aarch64",
         "timeshift_buffer",
     ):
         assert platform in names

@@ -43,7 +43,7 @@ RELEASE_ASSETS = (
     PREFIX + "{v}-osx-arm64.zip",
     PREFIX + "{v}-android-aarch64.zip",
     PREFIX + "{v}-android-armv7.zip",
-    PREFIX + "{v}-coreelec-armv7.zip",  # the CoreELEC package (32-bit userland on Amlogic-ng, as CoreELEC builds it)
+    PREFIX + "{v}-coreelec-aarch64.zip",  # the CoreELEC package (64-bit userland on Amlogic-no, as CoreELEC 22 builds)
     "timeshift_buffer.zip",
     "recording_edl.zip",
 )
