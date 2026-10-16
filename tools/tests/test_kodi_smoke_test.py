@@ -459,6 +459,54 @@ def test_wait_for_canseek_asks_for_the_right_player():
     assert rpc.calls[0] == ("Player.GetProperties", {"playerid": 3, "properties": ["canseek"]})
 
 
+class _RecordingSeekRpc:
+    """Answers canseek from `canseek_answers` (the last repeats) and totaltime from `totaltime_seconds`."""
+
+    def __init__(self, canseek_answers, totaltime_seconds):
+        self.canseek_answers = list(canseek_answers)
+        self.totaltime = {"hours": 0, "minutes": 0, "seconds": totaltime_seconds, "milliseconds": 0}
+
+    def call(self, method, params=None, timeout=None):
+        if method != "Player.GetProperties":
+            return "OK"
+        if "canseek" in params["properties"]:
+            answers = self.canseek_answers
+            return {"canseek": answers.pop(0) if len(answers) > 1 else answers[0]}
+        return {"totaltime": self.totaltime}
+
+
+@pytest.fixture
+def seek_check_clock(monkeypatch):
+    """A fake clock for the recording seek check, with its player lookup and cleanup stubbed out. The poll's own sleep
+    and clock are default arguments bound at import, so the wait is wrapped rather than patched on `time`."""
+    clock = _Clock()
+    real_wait = kodi_smoke_test._wait_for_canseek
+    monkeypatch.setattr(
+        kodi_smoke_test,
+        "_wait_for_canseek",
+        lambda rpc, playerid, **kw: real_wait(rpc, playerid, sleep=clock.sleep, clock=clock, **kw),
+    )
+    monkeypatch.setattr(kodi_smoke_test, "_dismiss_resume_dialog_if_stuck", lambda rpc: {"playerid": 1})
+    monkeypatch.setattr(kodi_smoke_test, "_stop_all_active_players", lambda rpc: None)
+    return clock
+
+
+def test_recording_seek_check_waits_for_a_slow_device_to_become_seekable(seek_check_clock):
+    # A recording too short to seek into is the first thing checked after canseek, so reaching that skip means the
+    # check got past a canseek that only turned true on the fourth poll instead of skipping on the first false.
+    rpc = _RecordingSeekRpc([False, False, False, True], totaltime_seconds=10)
+    with pytest.raises(kodi_smoke_test.SkipCheck, match="too short"):
+        kodi_smoke_test._seek_within_recording_and_verify(rpc, 5)
+    assert seek_check_clock.now == 3
+
+
+def test_recording_seek_check_skips_only_after_the_whole_canseek_timeout(seek_check_clock):
+    rpc = _RecordingSeekRpc([False], totaltime_seconds=600)
+    with pytest.raises(kodi_smoke_test.SkipCheck, match="still reports canseek=false"):
+        kodi_smoke_test._seek_within_recording_and_verify(rpc, 5)
+    assert seek_check_clock.now == kodi_smoke_test.RECORDING_CANSEEK_TIMEOUT_SECONDS
+
+
 def test_with_database_ids_keeps_only_entries_kodi_has_numbered():
     entries = [
         {"title": "a"},
