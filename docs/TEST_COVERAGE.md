@@ -2513,6 +2513,13 @@ exactly as untested as before -- this is the same boundary as every
 other Kodi/Dispatcharr-touching code in this project, not a new
 exception to it.
 
+The recording seek checks (`_seek_within_recording_and_verify`) poll `canseek` for up to
+`RECORDING_CANSEEK_TIMEOUT_SECONDS` through `_wait_for_canseek`, the way the live timeshift check already did, instead of
+reading it once (2026-10-16): a 32-bit phone with a cold hardware decoder reported `canseek=false` for a while after
+`Player.Open` returned and skipped both checks on its first runs, while the same recordings seeked fine by hand a few
+seconds later. Two tests drive the check on a fake clock (a late `canseek` gets past the wait; a recording that never
+becomes seekable skips after exactly the timeout).
+
 `timeshift_buffer` 0.8.14 (2026-10-09) closed the host-clock-step gap in the reaper: `_IdleTracker` ages each heartbeat
 value on a monotonic clock from when it last changed (`_stale_viewers()`, `_drop_stale_viewers()`), and the reaper
 no longer subtracts two stamps. The tests drive real `_reaper_loop()` ticks against a fake monotonic clock

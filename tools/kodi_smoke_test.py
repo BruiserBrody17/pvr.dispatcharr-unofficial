@@ -94,6 +94,11 @@ LIVE_TIMESHIFT_BUFFER_WARMUP_SECONDS = 5
 # seconds), so canseek is polled for up to this long before concluding timeshift isn't available.
 LIVE_TIMESHIFT_CANSEEK_TIMEOUT_SECONDS = 30
 LIVE_TIMESHIFT_CANSEEK_POLL_INTERVAL_SECONDS = 1
+# A recording opened on slow hardware reports canseek=false for a while after Player.Open returns (a 32-bit phone with a
+# cold hardware decoder skipped both recording seek checks on its first runs, 2026-10-16, while the same recordings
+# were seekable by hand a few seconds later), so the recording seek checks poll the same way the live one does. A
+# recording that never becomes seekable (an in-progress one can stay false, docs/RECORDINGS.md) costs this long, once.
+RECORDING_CANSEEK_TIMEOUT_SECONDS = 30
 LIVE_TIMESHIFT_SEEK_BACK_SECONDS = 20
 LIVE_TIMESHIFT_SEEK_TIMEOUT_SECONDS = 30
 REALTIME_UPDATE_TEST_LEAD_MINUTES = 2
@@ -826,9 +831,9 @@ def _seek_within_recording_and_verify(rpc: JsonRpcClient, recording_id: int) -> 
             "prior playback avoids it entirely"
         )
         playerid = player["playerid"]
-        props = rpc.call("Player.GetProperties", {"playerid": playerid, "properties": ["canseek", "totaltime"]})
-        if not props["canseek"]:
-            raise SkipCheck("recording reports canseek=false")
+        if not _wait_for_canseek(rpc, playerid, timeout=RECORDING_CANSEEK_TIMEOUT_SECONDS):
+            raise SkipCheck(f"recording still reports canseek=false after {RECORDING_CANSEEK_TIMEOUT_SECONDS}s")
+        props = rpc.call("Player.GetProperties", {"playerid": playerid, "properties": ["totaltime"]})
         total_seconds = _time_to_seconds(props["totaltime"])
         if total_seconds < RECORDING_SEEK_MIN_DURATION_SECONDS:
             raise SkipCheck(
