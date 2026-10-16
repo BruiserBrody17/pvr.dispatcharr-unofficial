@@ -113,7 +113,7 @@ Not substituted for by a virtual GPU or a laptop.
   are covered by the N2+ run above.
   Still not done anywhere: audio passthrough, a long soak, and HEVC.
 - **The `Piers` addon (0.14.0, built by hand from the branch head) on Kodi 22.0-RC1, on a Mac, two Android
-  phones and a Linux desktop (2026-10-16).** Not the release artefacts: nothing is tagged yet, so these are the hand-built zips that the
+  phones, a Linux desktop and a CoreELEC box (2026-10-16).** Not the release artefacts: nothing is tagged yet, so these are the hand-built zips that the
   release gate's content checks accept (`docs/BUILDING.md`). Each device ran a fresh Kodi 22 RC1 profile against a lab
   server, Kodi 21.3 untouched (macOS: the RC1 app copied to a separate folder and started with `HOME` pointed at a
   throwaway profile; Android: the 21.3 profile backed up, 21.3 uninstalled, RC1 installed, the addon and its settings
@@ -148,7 +148,18 @@ Not substituted for by a virtual GPU or a laptop.
   idx_epg_idEpg_iStartTime already exists`), after which every guide read logs `no such column: sParentalRatingIcon`;
   deleting both guide databases (Kodi rebuilds the guide from the addon) cleared it. That is Kodi's own upgrade path,
   not the addon's, but a user who moves a long-lived Kodi 21 profile to Kodi 22 may see an empty or erroring guide.
-  Still not done on Kodi 22: CoreELEC on its device, audio passthrough, a long soak, HEVC.
+  *CoreELEC, ODROID-N2+ (2026-10-16):* a freshly wiped box on the CoreELEC 22.0 Piers nightly of that day
+  (`Amlogic-no`, aarch64; its Kodi reports `22.0-RC1 (21.90.901)` on a commit newer than the one CI pins and declares
+  `kodi.binary.global.main` 2.0.4), with the hand-built CoreELEC zip (`0.14.0.1`, built from `Piers` against the
+  `22.0rc1-Piers_rc1` CoreELEC tree) unzipped into `/storage/.kodi/addons`. The addon built for 2.0.3 loaded and enabled
+  without complaint. The smoke harness passed 13 of 13 attempted over three runs (the in-progress checks passed on a run
+  with a test recording going, the live ones on a run without); live H.264 and recorded playback opened the Amlogic
+  hardware decoder (`CAMLCodec::OpenDecoder`) and the log has no `Packet corrupt`, audio-sync or fatal lines. A fresh
+  CoreELEC does not ship `inputstream.ffmpegdirect`: catch-up (which the addon sends through it) failed with no
+  player until Kodi's "Add-on required" prompt was accepted, after which it played. One run's `recorded_playback_seek`
+  failed once (it started 1159 s into the recording and the seek landed 2 s on) and then passed seven times in a row,
+  by the harness and by hand at several positions including that one; not reproduced, so noted rather than explained.
+  Still not done on Kodi 22: audio passthrough, a long soak, HEVC.
 - **Traps the 2026-10-07 device runs hit, none of them the addon:**
   1. **Kodi's own "Play recording" / "Switch to channel" prompt** (a `DialogConfirm`) appears when a channel's
      current programme has a recording, and being modal it makes `Player.Open` hang and stalls the JSON-RPC calls
