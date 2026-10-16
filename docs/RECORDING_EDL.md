@@ -310,7 +310,7 @@ recorded so they are not rediscovered as plugin bugs.
   no `edl` key, so a still-valid `.edl` from an earlier successful run is not served afterwards. The plugin
   deliberately does not delete these files: nothing marks them as safe against a cut that is still running.
 
-## Kodi 22's "Skipped commercial" pop-up shows a wrong number at the start of a recording (2026-10-17)
+## Kodi 22's "Skipped commercial" pop-up shows a wrong number at the start of a recording (2026-10-16)
 
 **Seen on Kodi 22.0-RC1 (macOS) while playing a recording that has a break at 0:00; not the addon or the plugin.** The pop-up read
 "39:xx" where the first break ended at about a minute and a half. The recording's debug log showed the addon passing
