@@ -310,6 +310,20 @@ recorded so they are not rediscovered as plugin bugs.
   no `edl` key, so a still-valid `.edl` from an earlier successful run is not served afterwards. The plugin
   deliberately does not delete these files: nothing marks them as safe against a cut that is still running.
 
+## Kodi 22's "Skipped commercial" pop-up shows a wrong number at the start of a recording (2026-10-17)
+
+**Seen on Kodi 22.0-RC1 (macOS) while playing a recording that has a break at 0:00; not the addon or the plugin.** The pop-up read
+"39:xx" where the first break ended at about a minute and a half. The recording's debug log showed the addon passing
+Kodi ten sane breaks (the first `00:00:00.000 - 00:01:43.190`) and `Start position set to end of first commercial
+break: 103190`, in milliseconds. Kodi 22's `VideoPlayer.cpp` then builds the announcement for that start-of-playback
+skip with `StringUtils::SecondsToTimeString(edit->end.count(), TIME_FORMAT_MM_SS)`, and `edit->end` is a
+`std::chrono::milliseconds`, so 103190 ms is read as 103190 s (28 h 39 m 50 s), which the minutes:seconds format shows as
+"39:50". The same file's pop-up for a break skipped during playback uses `(edit->end - edit->start)` converted to
+seconds and is right, and Kodi 21 has no pop-up on the start-of-playback path at all. The line was still the same on
+Kodi's master branch when checked. Nothing to change here; the seek lands where the break ends. Users can hide the pop-ups
+with `<edl><displaycommbreaknotifications>false</displaycommbreaknotifications></edl>` in `advancedsettings.xml`
+(`docs/TROUBLESHOOTING.md`).
+
 ## The staging-directory scan covers absolute-template libraries (0.2.1)
 
 *2026-10-01.* `list_dvr_hls_staging_dirs` and `delete_orphaned_dvr_hls_dirs` only walked

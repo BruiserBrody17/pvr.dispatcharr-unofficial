@@ -120,6 +120,11 @@ None of these can be fixed from the addon; each was traced to Kodi's own code.
   allow to record this event." Kodi refuses it before the addon is called, even for a couple of minutes of overlap.
 - **A channel group that has lost all its channels stays in Kodi as an empty group,** even after a restart. Kodi never
   removes a group a client stops reporting. Delete it in Kodi's group manager.
+- **On Kodi 22, the "Skipped commercial" pop-up shows a wrong number** (such as "39:50" for a break that ends at 1:43) when a
+  recording starts inside a commercial break at 0:00. The skip itself lands in the right place. Kodi 22 builds that one
+  pop-up from the break's end in milliseconds but reads it as seconds. Kodi 21 shows no pop-up there, and the pop-ups for
+  breaks skipped later in the recording are correct. To hide them, set
+  `<edl><displaycommbreaknotifications>false</displaycommbreaknotifications></edl>` in `advancedsettings.xml`.
 
 **If you script Kodi through JSON-RPC** (for testing):
 
