@@ -112,8 +112,8 @@ Not substituted for by a virtual GPU or a laptop.
   resume, 239 segment fetches, and no `Packet corrupt`, audio-sync, fatal or addon error lines. 32-bit ARM timers
   are covered by the N2+ run above.
   Still not done anywhere: audio passthrough, a long soak, and HEVC.
-- **The `Piers` addon (0.14.0, built by hand from the branch head) on Kodi 22.0-RC1, on a Mac and on two Android
-  phones (2026-10-16).** Not the release artefacts: nothing is tagged yet, so these are the hand-built zips that the
+- **The `Piers` addon (0.14.0, built by hand from the branch head) on Kodi 22.0-RC1, on a Mac, two Android
+  phones and a Linux desktop (2026-10-16).** Not the release artefacts: nothing is tagged yet, so these are the hand-built zips that the
   release gate's content checks accept (`docs/BUILDING.md`). Each device ran a fresh Kodi 22 RC1 profile against a lab
   server, Kodi 21.3 untouched (macOS: the RC1 app copied to a separate folder and started with `HOME` pointed at a
   throwaway profile; Android: the 21.3 profile backed up, 21.3 uninstalled, RC1 installed, the addon and its settings
@@ -137,7 +137,18 @@ Not substituted for by a virtual GPU or a laptop.
   `interrupted` occurrence (zero bytes, playlist 404); with nothing really recording that fails the check's choice,
   not playback. Start a test recording on the channel under test before the run. (c) The recording seek checks used
   to read `canseek` once and skipped on a slow device; they now poll like the live one (`docs/TEST_COVERAGE.md`).
-  Still not done on Kodi 22: CoreELEC on its device, a Linux desktop (CI only), audio passthrough, a long soak, HEVC.
+  *Linux desktop, x86-64 (Flatpak):* Kodi 22.0-RC1 from the Flathub beta branch (the same `28ea2eac1eb` commit CI pins;
+  needs the `flathub-beta` remote and the `org.freedesktop.Platform//26.08` runtime), the addon zip CI built from the
+  tree, on the lab VM with its Kodi 21.3 profile backed up and restored afterwards. The smoke harness passed 15 of 15
+  attempted over three runs: 12 with a test recording running (its live checks skip themselves and catch-up skipped
+  because the guide ids had not been written yet, trap 3), then 15 once it was stopped. The log has no `Packet
+  corrupt`, audio-sync or fatal lines, Kodi 22 again opened two streams of one recording at once, and the only addon
+  error is the 404 of the `interrupted` recording above, which Kodi 22 probes in the background. (d) Kodi 22 copies the
+  21.x guide database (`Epg16.db`, a very large one here) to `Epg22.db` and then fails to upgrade it (`index
+  idx_epg_idEpg_iStartTime already exists`), after which every guide read logs `no such column: sParentalRatingIcon`;
+  deleting both guide databases (Kodi rebuilds the guide from the addon) cleared it. That is Kodi's own upgrade path,
+  not the addon's, but a user who moves a long-lived Kodi 21 profile to Kodi 22 may see an empty or erroring guide.
+  Still not done on Kodi 22: CoreELEC on its device, audio passthrough, a long soak, HEVC.
 - **Traps the 2026-10-07 device runs hit, none of them the addon:**
   1. **Kodi's own "Play recording" / "Switch to channel" prompt** (a `DialogConfirm`) appears when a channel's
      current programme has a recording, and being modal it makes `Player.Open` hang and stalls the JSON-RPC calls
