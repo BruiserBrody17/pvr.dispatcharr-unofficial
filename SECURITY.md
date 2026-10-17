@@ -2,10 +2,12 @@
 
 ## Supported versions
 
-This project is pre-1.0 and maintained by one person. Only the most
-recently released version of each piece (the addon, `timeshift_buffer`,
-`recording_edl` -- they version independently, see `CHANGELOG.md`) gets
-security fixes. There's no backport policy for older releases.
+This project is pre-1.0 and maintained by one person. Only the newest
+release of each piece gets security fixes: for the addon, the newest
+release on each branch (`Omega` for Kodi 21, `Piers` for Kodi 22); for
+`timeshift_buffer` and `recording_edl` (they version independently, see
+`CHANGELOG.md`), the newest version. There's no backport policy for
+older releases.
 
 ## Reporting a vulnerability
 

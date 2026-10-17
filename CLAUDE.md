@@ -86,31 +86,17 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   what-changed, not why. When you learn something new about Dispatcharr's
   API or fix a non-obvious bug, the explanation belongs in `docs/`, not
   buried in a commit message.
-- **New or changed pure-logic code gets a test alongside it, not after, as
-  of 2026-09-13.** The "Building and testing" section above draws a
-  specific boundary: Kodi/Dispatcharr-independent pure/filesystem logic is
-  unit-testable and covered; `PVRDispatcharr`/`DispatcharrClient`/
-  `WebSocketClient`'s actual Kodi-API/HTTP/socket surface and either
-  plugin's Redis/Django-touching code aren't, and stay manual/live-tested
-  instead. Going forward, a feature or fix that adds or changes code on
-  the testable side of that boundary should add Catch2/pytest coverage in
-  the *same* change -- following the same extract-into-its-own-free-function
-  pattern already used throughout `src/` and `dispatcharr-plugin/` when the
-  new logic is buried inside a larger, mixed-purity function. This is what
-  keeps the multi-pass catch-up work documented in
-  `docs/CLOSED_ITEMS.md`'s "No automated test suite exists" entry from
-  needing to repeat: new code should arrive already covered rather than
-  accumulating into another backlog to sweep later. Nothing changes for
-  the untested side of the boundary -- forcing a "unit test" that mocks
-  around Kodi's SDK or a real HTTP/Redis/Django call would test the mock,
-  not the addon, so that verification stays manual as it always has.
+- **New or changed pure-logic code gets a test in the same change, not after.** On the testable side of the boundary in
+  "Building and testing" above, a feature or fix adds Catch2/pytest coverage alongside it, extracting the logic into its own
+  free function (the pattern used throughout `src/` and `dispatcharr-plugin/`) when it is buried in a mixed-purity
+  function, so coverage never piles up into another catch-up backlog (`docs/CLOSED_ITEMS.md`'s "No automated test suite
+  exists" entry). The untested side stays manual.
 - **"Confirmed live" citations matter**: Dispatcharr is young and its API
   schema has changed across releases. Comments and docs here frequently
   cite exactly how something was confirmed (a real endpoint response, a
   real device test) rather than just asserting behavior -- keep doing
   that instead of trusting Dispatcharr's own docs/schema at face value.
-- **Never let a real personal/network detail land in the repo, as of
-  2026-09-11.** Anything that becomes permanent here -- docs, code
+- **Never let a real personal/network detail land in the repo.** Anything that becomes permanent here -- docs, code
   comments, commit messages, PR bodies -- must stay free of real
   channel/programme names (use this project's existing "Channel A"/
   "Channel B" generic-label convention, already throughout
@@ -125,83 +111,52 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   is far cheaper than a history rewrite after the fact.
 - **When removing or changing code, a setting, or CI behavior, grep
   `docs/` (and `CHANGELOG.md`) for references to it before calling the
-  change done.** `docs/*.md` cites specific function/setting names and
-  exact CI commands as part of its "confirmed against real source"
-  standard -- a removal or behavior change that isn't cross-checked
-  leaves a dangling reference or a stale claim behind, silently, since
-  nothing else in this repo reliably catches it (`tools/check_doc_refs.py`,
-  wired into CI, flags an outright-removed reference, but not a claim that's
-  merely gone stale in spirit; the unit test suite doesn't cover this either
-  -- it's narrow, see "Building and testing" above). Real recurring failure
-  mode, not hypothetical: found
-  and fixed 9 of these in one pass (2026-09-10) tracing back to feature
-  removals and CI changes that never got cross-checked this way.
+  change done.** `docs/*.md` cites exact function/setting names and CI commands; `tools/check_doc_refs.py` (in CI) flags
+  an outright-removed reference, but nothing catches a claim that has merely gone stale.
 - **Comments explain WHY, not WHAT**: this codebase's existing comments
   document non-obvious constraints, confirmed-live findings, and
   workarounds for specific bugs -- not a restatement of the code. Match
   that style; don't add narrative comments describing what a block of
   code obviously does.
-- **Pre-1.0 (`0.x`) versioning on purpose, as of 2026-09-07.** The project reached `1.0.x` once and stepped back: single-user,
-  still turning up real playback bugs, and dependent on Dispatcharr, itself pre-1.0. `0.x` means "anything may still
-  change". Move to `1.0.0` on this project's own track record (testing beyond one person, no more playback-breaking bugs),
-  not when Dispatcharr's version does.
-- **Branch for anything nontrivial, as of 2026-09-07.** The dividing line is behavioural risk, not size: a trivial,
+- **Pre-1.0 (`0.x`) versioning on purpose.** The project reached `1.0.x` once and stepped back (single user, real
+  playback bugs still turning up, Dispatcharr itself pre-1.0); `0.x` means "anything may still change". Move to `1.0.0` on
+  this project's own track record (testing beyond one person, no more playback-breaking bugs), not when Dispatcharr's
+  version does.
+- **Branch for anything nontrivial.** The dividing line is behavioural risk, not size: a trivial,
   low-risk fix (including a docs-only pass) goes straight to the release branch it belongs to (`Omega` or `Piers`, below); a
   bug investigation, feature or risky refactor gets a short-lived branch, merged once verified, then deleted. Not GitFlow:
   one maintainer, and the point is a known-good release branch and a diff to review. A branch that lives a while gets its
   base merged in along the way; a dependency whose *behaviour* changed without its signature fails nothing at compile time,
   so re-test after syncing.
-- **Branches are named after the Kodi release they target, as of 2026-10-05: `Omega` (Kodi 21) and, since 2026-10-14,
-  `Piers` (Kodi 22), not `master`.** Kodi's own addons (e.g. `pvr.hts`) do the same, and `KODI_BRANCH` in
-  `.github/workflows/build.yml` is each branch's Kodi tree. Kodi 22 refuses a Kodi 21 build, so the two release
-  separately: `Omega` is the Kodi 21 maintenance branch, `Piers` takes new work. One shared `0.x` version line (Omega
-  `0.13.x`, Piers from `0.14.0`); the addon version stays plain numeric and only the git tag and release name carry the
-  branch (`0.14.0-Piers`). `Omega` fixes are ported to `Piers` by hand from here on, not merged: the recorded-stream
-  state differs. [docs/BRANCHES.md](docs/BRANCHES.md) has the tag rules, what differs, and the list of what has been
-  ported. A change to the glue harness's Kodi ABI shape goes in `tests/glue/kodi_abi.h`, which each branch has its own
-  copy of. Older text in `docs/` and in this
-  file that says `master` describes the branch as it was then and is left as written. The links to
-  the public GitHub repo that still say `master` are tracked in `docs/CLOSED_ITEMS.md`'s "Links to the
-  public GitHub repo still name the master branch" entry.
-- **Every external contributor's PR gets a real manual review before
-  merging, as of 2026-09-11 -- never auto-merged on green CI alone.**
-  The bullet above's "no multi-contributor coordination problem" framing
-  stops holding the moment someone outside the project opens a PR.
-  Green CI (`lint`/`unit-tests`/`unit-tests-sanitized`/`unit-tests-tsan`/`unit-tests-python`/`glue-harness` and the
-  `build-unix`/`build-windows` builds) only proves
-  it compiles, formats cleanly, and doesn't regress the narrow
-  unit-tested pieces and the scenarios of the glue harness -- it proves nothing about whether a change to the
-  actual PVR/HTTP/Redis/Django-touching logic (untested, see "Building
-  and testing" above) is correct, so it's necessary but never sufficient
-  on its own. This doesn't require GitHub's "require pull request reviews"
-  branch-protection rule to be technically enforced: only the
-  maintainer has write access to this repo right now, so an outside
-  contributor's PR literally cannot merge itself regardless -- this
-  bullet exists to keep that a stated, deliberate policy rather than an
-  accident of current permissions, so it doesn't quietly erode later
-  (e.g. if another collaborator ever gets write access).
+- **Branches are named after the Kodi release they target: `Omega` (Kodi 21, maintenance) and `Piers` (Kodi 22, new
+  work), not `master`.** Each builds against its own Kodi tree (`KODI_BRANCH` in `.github/workflows/build.yml`) and
+  releases separately; `Omega` fixes are ported to `Piers` by hand, not merged. [docs/BRANCHES.md](docs/BRANCHES.md) has
+  the version and tag rules, what differs, and the list of what has been ported. A change to the glue harness's Kodi ABI
+  shape goes in `tests/glue/kodi_abi.h`, which each branch has its own copy of. Older text in `docs/` and in this file
+  that says `master` describes the branch as it was then and is left as written; the public GitHub links that still say
+  it are tracked in `docs/CLOSED_ITEMS.md`'s "Links to the public GitHub repo still name the master branch" entry.
+- **Every external contributor's PR gets a real manual review before merging -- never auto-merged on green CI alone.**
+  This is where the one-maintainer premise above stops holding. Green CI (`lint`, every `unit-tests*` job, `glue-harness`
+  and the `build-unix`/`build-windows` builds; `build-windows` is skipped for a PR from a fork) proves it compiles, formats
+  cleanly and doesn't regress the unit-tested pieces and the glue harness's scenarios -- nothing about the untested
+  PVR/HTTP/Redis/Django-touching logic, so it is necessary but never sufficient. This is stated policy, not an accident of
+  only the maintainer having write access, and holds if that changes.
   An accepted PR is applied as one squash commit that credits the contributor (`Co-Authored-By:` or `--author`), and the
   PR is closed with a link to it; see CONTRIBUTING.md, "What happens after you open a PR".
-- **Merge branches with squash-merge, as of 2026-09-07** -- when a
-  nontrivial branch (see above) is done, squash it into one commit on
-  `Omega` rather than preserving every individual commit from the
-  branch. Keeps `Omega`'s history readable as "one commit = one logical
-  change" instead of a trail of in-progress "wip"/"fix typo" commits.
-  When `Omega` has not moved since the branch was cut and the squash commit's tree equals the PR head's
+- **Merge branches with squash-merge**: a finished nontrivial branch (see above) becomes one commit on the branch it
+  targets (`Piers` for new work, `Omega` for Kodi 21 fixes), so history reads "one commit = one logical change".
+  When the target branch has not moved since the branch was cut and the squash commit's tree equals the PR head's
   (`git rev-parse HEAD^{tree}` against `git rev-parse <branch>^{tree}`), put `[skip ci]` on its own line in the squash
-  commit's message: the PR's CI run already tested exactly that tree and the push run would repeat it. If `Omega`
-  moved or the trees differ, leave it off, so the push run tests the real result. A tag push always builds everything.
-- **Code formatting/linting, as of 2026-09-07**: `.clang-format`
+  commit's message: the PR's CI run already tested exactly that tree. If the target branch moved, the trees differ or the
+  PR came from a fork (its run skipped `build-windows`), leave it off, so the push run tests the real result. A tag push
+  always builds everything.
+- **Code formatting/linting**: `.clang-format`
   (C++, `src/` and `tests/`) and `ruff.toml` (Python, `dispatcharr-plugin/`, `tests/glue/`
   and `tools/`). Run `clang-format -i src/*.cpp src/*.h tests/*.cpp tests/glue/*.cpp` and
   `ruff format dispatcharr-plugin/ tools/ tests/glue/` before committing nontrivial C++
   or Python changes; `ruff check dispatcharr-plugin/ tools/ tests/glue/` catches some real bugs
-  (unused variables, etc.), not just style. Both configs are
-  deliberately conservative -- `.clang-format` has `SortIncludes: false`
-  since a couple of files rely on include order for platform-conditional
-  (`#if defined(_WIN32)`) blocks, and neither config imposes an
-  unrelated style; both were derived from the codebase's own existing
-  conventions rather than a generic preset.
+  (unused variables, etc.), not just style. `.clang-format`'s `SortIncludes: false` is deliberate: a couple of files rely
+  on include order for `#if defined(_WIN32)` blocks.
 - **Three independent version numbers, decoupled since 1.0.1**: the addon and each plugin version separately. Bump only the
   piece whose files changed, and move all of that piece's version locations together:
   - Addon: `pvr.dispatcharr-unofficial/addon.xml.in` (`<addon version="...">`) and
@@ -213,29 +168,24 @@ everything); lint and every unit-test job run on every push, since the cross-fil
     not-yet-trusted import preview; the class attribute is what Dispatcharr runs. Bumping only `plugin.json` is the
     easy mistake.
 
-  A tag/release is addon-version-scoped (it triggers CI, which builds and publishes nothing) and carries both plugin zips whether or not their version moved.
+  A tag/release is addon-version-scoped (it triggers CI, which builds everything and publishes nothing) and carries both plugin zips whether or not their version moved.
   `CHANGELOG.md` says which piece(s) moved in an entry.
-- **Releasing, as of 2026-10-07 (every platform, one gate).** The tag is `<version>-<Branch>` (`0.14.0-Piers`), everything
-  else uses the plain version. A tag is the moment history becomes something a stranger can
-  clone, so before tagging run a data-hardening audit (an Opus subagent sweep over code, docs, full history and every
-  hosting-side surface: release assets, issues/PRs) and resolve any real finding with a `git-filter-repo` rewrite, never a
-  plain commit. The local pre-push and commit hooks are a backstop, not a substitute, and they do not see release assets.
-  Batch fixes into releases; do not tag per fix. **Every release ships all eight zips** (Windows, Linux, macOS, both
-  Android ABIs, CoreELEC, the two plugins), built from the tag's own source, and none is published until
-  `python3 tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>` passes over the lot
-  (build-machine paths in any binary, the private blocklist, zip timestamps and extra fields, unstripped libraries, debug
-  files, a complete set). A failing gate is fixed at its cause and the zip rebuilt, never by editing the gate. The release
-  notes inline any bundled plugin's own changelog entry. A plugin-only fix after a release shipped gets that release's zip
-  replaced when it is security-relevant or a bug a user of the shipped zip would hit; cosmetic, docs-only, refactor and
-  unreachable-on-that-build fixes wait for the next release. Steps, commands and the rationale: `docs/BUILDING.md`'s "Release assets".
+- **Releasing (every platform, one gate).** The tag is `<version>-<Branch>` (`0.14.0-Piers`), everything else uses the
+  plain version. A tag is the moment history becomes something a stranger can clone, so before tagging run a
+  data-hardening audit (an Opus subagent sweep over code, docs, full history and every hosting-side surface: release
+  assets, issues/PRs) and resolve any real finding with a `git-filter-repo` rewrite, never a plain commit. The local
+  pre-push and commit hooks are a backstop, not a substitute, and they do not see release assets. Batch fixes into
+  releases; do not tag per fix. **Every release ships all eight zips** (Windows, Linux, macOS, both Android ABIs,
+  CoreELEC, the two plugins), built from the tag's own source, and none is published until
+  `python3 tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>` passes over the lot.
+  A failing gate is fixed at its cause and the zip rebuilt, never by editing the gate. Steps, the release-notes rules and
+  when a plugin-only fix replaces a shipped zip: `docs/BUILDING.md`'s "Release assets".
 - **The CoreELEC package isn't part of CI** and won't be (see
   `docs/BUILDING.md`'s "GitHub Actions job ... rejected" note --
   CoreELEC's build harness assumes persistent, self-hosted infrastructure
   and a large pre-built toolchain cache, not a one-shot cloud runner). A
-  real tagged release needs its CoreELEC zip built and attached to the
-  GitHub Release by hand; the exact steps, including the `gh release
-  upload` command, are documented at the end of that file's CoreELEC
-  section.
+  release's CoreELEC zip is built by hand (that file's CoreELEC section) and published with the other seven through the
+  gate in its "Release assets".
 - **Commit messages**: short imperative summary line, no conventional-
   commit type prefixes (no `fix:`/`feat:`) -- match the existing git log.
 
