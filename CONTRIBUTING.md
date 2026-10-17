@@ -7,36 +7,23 @@ handled here.
 
 ## Before you start
 
-- **The automated test suite is narrow, on both sides.** `tests/`
-  (Catch2, run via CI's `unit-tests` jobs) covers C++ source files
-  with no Kodi SDK dependency at all -- the pure helpers pulled out of
-  `DispatcharrClient`/`PVRDispatcharr` (the parsers, the time and zone
-  arithmetic, the staleness, backoff and retry decisions, the response
-  classifiers, ...); `tests/CMakeLists.txt` lists every module, and each
-  new piece of such logic gets its test in the same change. The addon's
-  actual PVR API surface and HTTP/WebSocket handling
-  (`PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`) aren't covered by
-  Catch2 beyond `WebSocketClient`'s local-server tests; `tests/glue/` (below)
-  drives the real code against a fake Dispatcharr.
-  `dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/` (pytest,
-  run via CI's `unit-tests-python` job) cover each plugin's
-  Dispatcharr-independent pure/filesystem logic, and each plugin's own
-  `Plugin.run()` dispatch/message formatting (by `monkeypatch`ing the
-  one or few Redis-/Django-touching calls each action handler makes),
-  as of 2026-09-13 -- the real Redis client and Django ORM calls
-  themselves stay untested. `tools/tests/` covers
-  `tools/check_doc_refs.py` itself the same way (real parsing/matching
-  logic against synthetic `tmp_path` docs/src, not this repo's own).
-  `tests/glue/` is an optional, by-hand harness that runs the real `DispatcharrClient`/`PVRDispatcharr`
-  code against a fake Dispatcharr outside Kodi (see its README); CI runs its scenarios as the `glue-harness`
-  job, and it is also for running by hand after touching the stream, auth or shared-curl paths.
-  Verification of everything else is manual: smoke-testing against a
-  real Dispatcharr instance and a real (or emulated) Kodi install. If
-  your change touches the C++ addon or either Python plugin's actual
-  behavior beyond what's covered, you'll need a way to test it live --
-  a Dispatcharr instance you control, plus Kodi on at least one
-  platform. If you can't test a change end-to-end, say so plainly in
-  the PR rather than asserting it works.
+- **The automated test suite is narrow, on both sides.**
+  - **C++** (`tests/`, Catch2, CI's `unit-tests` jobs): the pure helpers pulled out of
+    `DispatcharrClient`/`PVRDispatcharr` (the parsers, the time and zone arithmetic, the staleness, backoff and retry
+    decisions, the response classifiers, ...) and `WebSocketClient` against a local server. `tests/CMakeLists.txt` lists
+    every module. The addon's actual PVR API surface and HTTP handling aren't covered by Catch2.
+  - **Python** (pytest, CI's `unit-tests-python`): `dispatcharr-plugin/{recording_edl,timeshift_buffer}/tests/` cover
+    each plugin's pure/filesystem logic and its `Plugin.run()` dispatch, with the Redis/Django calls `monkeypatch`ed (the
+    real Redis client and Django ORM calls stay untested). `tools/tests/` covers the release gate, the zip tools, the
+    doc-citation checker, the smoke harness's pure helpers, the CI path filter, and cross-file consistency checks (version
+    sync, settings ids, dependency pins, the time zone table).
+  - **Glue** (`tests/glue/`, CI's `glue-harness`): the real `DispatcharrClient`/`PVRDispatcharr` code against a fake
+    Dispatcharr outside Kodi. CI runs its standard scenarios; the TSan variant and the longer fault runs are by hand (see
+    its README), worth doing after touching the stream, auth or shared-curl paths.
+  - **Everything else is manual**: smoke-testing against a real Dispatcharr instance and a real (or emulated) Kodi
+    install. If your change touches behavior beyond what's covered, you'll need a Dispatcharr instance you control, plus
+    Kodi on at least one platform. If you can't test a change end-to-end, say so plainly in the PR rather than asserting
+    it works. New pure logic gets its test in the same change.
 - **The addon can't be built standalone.** It builds through Kodi's own
   binary-addon build harness. Full, previously-verified build steps for
   Windows/macOS/Linux/CoreELEC are in [docs/BUILDING.md](docs/BUILDING.md)
@@ -44,9 +31,9 @@ handled here.
   suite is a separate, plain CMake project (`tests/CMakeLists.txt`) that
   doesn't need any of that -- see its own comment.
 - **CI only covers part of this.** `.github/workflows/build.yml`
-  compiles the addon on Windows/Linux, packages the two plugins as
-  zips, and runs the unit test suites (`unit-tests`, plus its AddressSanitizer/UBSan and ThreadSanitizer
-  variants, for C++; `unit-tests-python` for the plugins) and the glue harness (`glue-harness`: the real client
+  compiles the addon on Windows/Linux (a PR from a fork skips the Windows build; it runs once the change lands),
+  packages the two plugins as zips, and runs the unit test suites (`unit-tests`, plus its 32-bit,
+  AddressSanitizer/UBSan and ThreadSanitizer variants, for C++; `unit-tests-python` for the plugins) and the glue harness (`glue-harness`: the real client
   code against a fake Dispatcharr) -- it doesn't build or test the
   CoreELEC package, macOS or Android (built by hand instead, see
   [docs/BUILDING.md](docs/BUILDING.md)), and runs nothing against a real
@@ -83,18 +70,16 @@ handled here.
   real server), or add new Kodi-independent C++ pure-logic code, run the C++
   unit test suite**
   before pushing (needs libcurl's dev headers, e.g. `libcurl4-openssl-dev`
-  on Debian/Ubuntu, for `UrlEncode`'s own test -- CI hit this as a real
-  "Could NOT find CURL" failure the first time this suite gained that
-  dependency):
+  on Debian/Ubuntu, for `UrlEncode`'s own test):
   `cmake -S tests -B build-tests && cmake --build build-tests && ctest
   --test-dir build-tests --output-on-failure`. Add test cases for new
   behavior rather than just confirming existing ones still pass.
-- **If you touch either plugin's pure/filesystem logic, `tools/check_doc_refs.py`,
-  or add new Dispatcharr-independent code, run the pytest suite**
+- **If you touch anything under `dispatcharr-plugin/` or `tools/`, `settings.xml` or `strings.po`, or a version
+  location (`addon.xml.in`, `package.mk`, a plugin's `plugin.json`/`plugin.py`), run the pytest suite**
   before pushing: `pip install -r dispatcharr-plugin/requirements-dev.txt
   && pytest` (picks up both `dispatcharr-plugin/` and `tools/`, see
-  `pyproject.toml`'s own `testpaths`). Add test cases for new behavior
-  rather than just confirming existing ones still pass.
+  `pyproject.toml`'s own `testpaths`); `tools/tests/`'s cross-file checks fail on settings ids or versions out of sync.
+  Add test cases for new behavior rather than just confirming existing ones still pass.
 - **Comments explain WHY, not WHAT.** Document non-obvious constraints,
   something you confirmed live, or a workaround for a specific bug --
   not a restatement of what the next line obviously does.
@@ -103,7 +88,8 @@ handled here.
   test, the actual result. Dispatcharr's own API has changed shape
   across releases, so "I checked the real behavior" is much more
   useful here than "this should work per the docs."
-- **Never include a real hostname, IP address, account username, or
+- **Never include a real hostname, IP address, account username, time
+  zone (a zone name, a UTC offset, or a local time shown beside UTC), or
   similar identifying detail** in code, comments, docs, commit
   messages, or the PR description itself -- including your own, and
   including anything from your own test instance's logs or output you
@@ -116,7 +102,7 @@ handled here.
   how you tested it (or that you couldn't, and why). This project's own
   commit history favors a real explanation over a one-line summary --
   a short PR that just says "fixes bug" with no context is much harder
-  to review with no test suite backing it up.
+  to review with only a narrow test suite backing it up.
 - Don't worry about crafting a clean commit history on your own
   branch -- accepted PRs get squash-merged into one commit, so your
   branch's intermediate commits don't end up in `Omega`'s history
