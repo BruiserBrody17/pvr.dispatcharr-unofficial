@@ -76,5 +76,5 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
   `Omega`).
 
 The macOS, both Android and the CoreELEC zips were built by hand from `Piers` against Kodi 22 RC1 on 2026-10-15/16 and
-pass the content checks of `tools/check_release_zip.py`; none has been run on a device. `docs/BUILDING.md` has the
-differences each build needed.
+pass the content checks of `tools/check_release_zip.py`; each was then run on a device against Kodi 22 RC1 on
+2026-10-16 (`docs/MANUAL_TESTING.md`). `docs/BUILDING.md` has the differences each build needed.

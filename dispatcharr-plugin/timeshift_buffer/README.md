@@ -4,40 +4,18 @@ Server-side rolling live-TV buffer per channel, held by Dispatcharr
 itself. `pvr.dispatcharr-unofficial` uses it to give live TV real pause, rewind,
 fast-forward, and live-follow -- no extra step, just plain Play.
 
-The seeking architecture (why this exists, what didn't work first, how
-Kodi's native demuxer ends up handling seeking directly against this
-plugin's own byte-range file server) is documented in
-[docs/TIMESHIFT.md](../../docs/TIMESHIFT.md) in the main repo.
+Set the addon's **Live TV pause/rewind (timeshift)** setting to **Server-side (Dispatcharr plugin)** to use it.
+How it is built, and why, is in [docs/TIMESHIFT.md](../../docs/TIMESHIFT.md) in the main repo.
 
 ## How it works, briefly
 
-`start_buffer` launches `ffmpeg` per channel against Dispatcharr's own
-live proxy, writing rolling `.ts` segments and a playlist under
-`storage_path`, served by this plugin's own minimal HTTP server (bound
-to `http_port`) rather than Django's `MEDIA_ROOT` route (unreachable
-here due to a routing-order issue in Dispatcharr's own `urls.py`).
-`get_live_manifest` returns the current segment list with a stable
-sequence number; the file server answers HTTP Range requests against
-them, letting `pvr.dispatcharr-unofficial` treat the buffer as one growing,
-byte-seekable stream. Viewers are reference-counted -- the ffmpeg
-process stops as soon as the last one deregisters -- with a background
-reaper (leader-elected across worker processes) as the backstop for
-viewers that vanish without deregistering (crash, network drop,
-force-quit), reaping anything idle past `idle_timeout_seconds`.
-
-Multiple devices watching the same channel share this one buffer
-process -- Dispatcharr opens a single upstream connection per channel
-regardless of viewer count. That sharing doesn't extend to rewind
-depth: `pvr.dispatcharr-unofficial` trims what it exposes locally to a small
-near-live-edge window on every fresh channel open, so a device can only
-rewind into what it's personally watched since opening the channel,
-never another device's earlier viewing. See
-[docs/TIMESHIFT.md](../../docs/TIMESHIFT.md)'s "Concurrent viewers"
-section for why.
+The plugin keeps one rolling buffer per channel on the Dispatcharr server, shared by every device watching that
+channel, and deletes it as soon as the last viewer stops. Each device can rewind only as far back as it has itself been
+watching since it opened the channel.
 
 ## Disk use, and watching live while a recording runs
 
-Each buffered channel writes a rolling window of the stream to `storage_path`: the **Buffer length (minutes)** setting,
+Each buffered channel writes a rolling window of the stream to the **Buffer storage path**: the **Buffer length (minutes)** setting,
 60 by default. At 10 Mbit/s that is about 4.5 GB per channel while someone is watching it, deleted as soon as the last
 viewer stops; lower the setting to shrink it (15 minutes is about a quarter of that, and rewind depth shrinks to match).
 The buffer is one `ffmpeg` that copies the stream without re-encoding.
@@ -65,22 +43,22 @@ without guide data has none; open it from Kodi's Recordings list instead.
 2. In Dispatcharr's UI, open the Plugins page, click refresh, enable
    "Timeshift Buffer" (accept the trust-warning modal -- this plugin runs
    arbitrary server-side code, same as any other).
-3. **Set `storage_path` to real, persistent storage** before using it --
+3. **Set Buffer storage path (`storage_path`) to real, persistent storage** before using it --
    left on the container's own unmapped filesystem, continuous rolling
    writes will fill up whatever's backing that (often a small cache
-   volume) fast. Don't share one `storage_path` between two Dispatcharr
+   volume) fast. Don't share one storage path between two Dispatcharr
    instances that can see each other's processes (the same container, or
    `--pid=host`): each treats a buffer directory its own Redis doesn't
    know as abandoned and stops the ffmpeg that owns it after five minutes.
-4. **Map `http_port` (default `9192`) through your container config**,
+4. **Publish the Buffer server port (`http_port`, default `9192`) through your container config**,
    the same way `9191` already is -- without this, the plugin's file
    server is only reachable from inside the container.
-   The number in the plugin's `http_port` setting and the published port must be the same: if they differ, the buffer
-   starts but Kodi cannot read it (the addon now says so with a notification; `curl -i http://<host>:<http_port>/` from the
-   Kodi device should answer `403`).
+   The number in the setting and the published port must be the same: if they differ, the buffer starts but Kodi
+   cannot read it (since addon 0.13.0 it says so with a notification; `curl -i http://<host>:<port>/` from the Kodi
+   device should answer `403`).
    The file server listens on IPv6 as well as IPv4 where the host has
    IPv6 (a dual-stack `::` socket), and on IPv4 alone where it doesn't.
-5. Check `internal_base_url` matches how this plugin reaches Dispatcharr's
+5. Check **Internal base URL** matches how this plugin reaches Dispatcharr's
    own web service from inside the container (default
    `http://127.0.0.1:9191`).
 6. The account calling these actions must be a Dispatcharr **admin**
@@ -88,24 +66,24 @@ without guide data has none; open it from Kodi's Recordings list instead.
 
 ## Testing manually
 
-Paste a channel's UUID into the `test_channel_uuid` setting and save
-(action buttons can't take click-time input), then use "Start Test
-Buffer" / "Get Test Manifest" / "List Active Buffers" / "Stop Test
-Buffer" on the Plugins page to confirm segments and a playlist appear
-under `storage_path`, and that the playlist is fetchable. The file server
-answers 403 to any request without the buffer's own access token, so use the
-URL "Start Test Buffer" prints in its message
-(`http://<dispatcharr-host>:<http_port>/<channel-uuid>/live.m3u8?token=...`);
-a plain URL without `?token=` is refused on purpose. A buffer started by an
-API caller (the Kodi addon) hands its token back in the response instead and
-never prints it. "Stop All Buffers" is there for cleanup if something's stuck.
+Paste a channel's UUID into the **Test channel UUID** setting and save
+(action buttons can't take click-time input), then use these actions on the Plugins page:
 
-## If a code change to this plugin doesn't seem to take effect
+| Action | Button | What it does |
+|---|---|---|
+| Start Buffer (manual test) | **Start Test Buffer** | Starts a buffer for the test channel and prints a playlist URL to try |
+| Get Live Manifest (manual test) | **Get Test Manifest** | Shows the test channel's current segment list |
+| List Active Buffers | **Refresh List** | Lists every running buffer |
+| Stop Buffer | **Stop Test Buffer** | Stops the test channel's buffer and deletes its files |
+| Stop All Buffers | **Stop Everything** | Stops every buffer, for every viewer; cleanup if something is stuck |
+| Scrub Orphaned Buffer Directories | **Scrub Now** | Deletes leftover buffer folders nothing is using; the plugin also does this by itself on a timer |
 
-Redeploying (even via Dispatcharr's own "overwrite" import flow) doesn't
-reliably make every already-running worker pick up new code -- this
-plugin's own background HTTP server is a thread that keeps running under
-the old code until something actually restarts it. Use Dispatcharr's own
-`POST /api/plugins/plugins/reload/` (reloads all plugins, no plugin key
-needed) or restart Dispatcharr outright; a plain per-plugin enable/disable
-toggle isn't enough. See `docs/TIMESHIFT.md` for the full story.
+Segments and a playlist should appear under the storage path. The file server answers 403 to any request without the
+buffer's own access token, so use the URL **Start Test Buffer** prints
+(`http://<dispatcharr-host>:<port>/<channel-uuid>/live.m3u8?token=...`); a plain URL without `?token=` is refused on
+purpose. A buffer started by the Kodi addon gets its token in the response instead and never prints it.
+
+## After updating the plugin
+
+Restart Dispatcharr. A per-plugin disable/enable is not enough for the plugin's background file server to pick up new
+code.

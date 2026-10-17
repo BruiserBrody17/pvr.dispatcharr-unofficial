@@ -151,7 +151,7 @@ Not substituted for by a virtual GPU or a laptop.
   *CoreELEC, ODROID-N2+ (2026-10-16):* a freshly wiped box on the CoreELEC 22.0 Piers nightly of that day
   (`Amlogic-no`, aarch64; its Kodi reports `22.0-RC1 (21.90.901)` on a commit newer than the one CI pins and declares
   `kodi.binary.global.main` 2.0.4), with the hand-built CoreELEC zip (`0.14.0.1`, built from `Piers` against the
-  `22.0rc1-Piers_rc1` CoreELEC tree) unzipped into `/storage/.kodi/addons`. The addon built for 2.0.3 loaded and enabled
+  `22.0-Piers_rc1` CoreELEC tree) unzipped into `/storage/.kodi/addons`. The addon built for 2.0.3 loaded and enabled
   without complaint. The smoke harness passed 13 of 13 attempted over three runs (the in-progress checks passed on a run
   with a test recording going, the live ones on a run without); live H.264 and recorded playback opened the Amlogic
   hardware decoder (`CAMLCodec::OpenDecoder`) and the log has no `Packet corrupt`, audio-sync or fatal lines. A fresh
@@ -182,6 +182,13 @@ Not substituted for by a virtual GPU or a laptop.
   5. **A Kodi that starts on its profile Login screen has no PVR manager yet** (`PVR.GetProperties` answers `-32100`
      and `System.CurrentWindow` is `Login screen`), so a restart looks like a broken addon: load a profile
      (`Profiles.LoadProfile`) and the client is up in about ten seconds with no addon toggle.
+- **Traps when scripting Kodi through JSON-RPC, on any platform:**
+  1. `Player.Open` on a recording that has a resume bookmark raises a "Resume / Play from beginning" dialog that
+     silently blocks every later call, and `{"resume": false}` doesn't suppress it. Use a fresh recording, or check
+     `GUI.GetProperties` for a stuck dialog before sending any key.
+  2. Never send blind `Input` keystrokes to get past a stall. On one real run the focus was Kodi's power menu and the
+     keystrokes shut the machine down.
+  3. `Player.Seek` returns at once with the old position; poll until the position changes.
 
 ## 3. Long-running conditions
 

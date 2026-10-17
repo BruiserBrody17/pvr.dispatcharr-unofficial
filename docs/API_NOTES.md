@@ -203,6 +203,21 @@ the same "confirmed live, not just assumed" standard as this one.
   this addon and its two plugins do not use yet, from reading, with the
   open items each finding produced (2026-10-10)
 
+Not feature notes, but in the same directory:
+
+- [BRANCHES.md](BRANCHES.md) -- the `Omega` (Kodi 21) and `Piers`
+  (Kodi 22) branches: versions, tags, what differs, what was ported
+- [BUILDING.md](BUILDING.md) -- building on every platform, and the
+  release assets and their privacy gate
+- [MANUAL_TESTING.md](MANUAL_TESTING.md) -- the live and on-device test
+  runs, and the traps they hit
+- [TEST_COVERAGE.md](TEST_COVERAGE.md) -- what the automated tests cover,
+  module by module, and why
+- [OPEN_ITEMS.md](OPEN_ITEMS.md) and [CLOSED_ITEMS.md](CLOSED_ITEMS.md) --
+  the punch-list, and the record of every resolved item
+- [RELEASE_HISTORY.md](RELEASE_HISTORY.md) -- which commit each release
+  named before the tags were cleared (2026-10-06)
+
 ## OS sleep/wake and the real-time-updates WebSocket
 
 Found via a comparative-architecture review against `pvr.hts`/Tvheadend,
@@ -434,7 +449,7 @@ curl http://<host>:9191/api/schema/ | grep -A30 '/api/channels/recordings/:'
 
 Once you've confirmed a field/path, update the corresponding line in
 `DispatcharrClient.cpp` (they're grouped near the top and clearly commented)
-and update TROUBLESHOOTING.md's "Still unconfirmed" list.
+and, if `TROUBLESHOOTING.md` described that behaviour as unconfirmed, update its entry to the confirmed one.
 
 ## Credentials and redirects, response limits, and the WebSocket handshake (2026-09-30)
 

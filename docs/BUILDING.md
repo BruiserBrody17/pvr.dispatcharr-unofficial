@@ -18,13 +18,13 @@ it by hand instead.
 
 ## Which Kodi, which branch
 
-This repository has one branch per Kodi release ([BRANCHES.md](BRANCHES.md)): **`Omega` builds against Kodi 21 and
-`Piers` against Kodi 22**, and the steps below are the same for both except for the Kodi tree to clone. The sections
-were written and verified live against Kodi 21 (`Omega`); on `Piers` they have been run against the Kodi commit
-`KODI_COMMIT` pins (`22.0rc1-Piers`) by CI on Linux and Windows and by hand on macOS, both Android ABIs and CoreELEC
-(2026-10-15/16; none of those four has run on a device yet). The first Windows generator / dependency layout that CI
-found for Kodi 22 is the one `.github/workflows/build.yml` uses. What differs, from Kodi's own documentation at that
-commit and from those builds (each is spelled out in its section below):
+**`Omega` builds against Kodi 21 and `Piers` against Kodi 22**; the branch model, versions and tags are in
+[BRANCHES.md](BRANCHES.md). The sections below were written and verified live against Kodi 21 (`Omega`); on `Piers` they
+have been run against the Kodi commit `KODI_COMMIT` pins (`22.0rc1-Piers`) by CI on Linux and Windows and by hand on
+macOS, both Android ABIs and CoreELEC (2026-10-15/16), and the hand-built zips were run on a device on 2026-10-16
+(`docs/MANUAL_TESTING.md`). The Windows generator / dependency layout for Kodi 22 is the one
+`.github/workflows/build.yml` uses. What differs, from Kodi's own documentation at that commit and from those builds
+(each is spelled out in its section below):
 
 - **Android:** NDK `28.2.13676358` (Kodi 21: `21.4.7075529`), `platforms;android-37.0` (`android-34`) and
   `build-tools;37.0.0` (`33.0.1`), and Kodi's default NDK API level is 24, so the per-ABI directories are
@@ -37,18 +37,19 @@ commit and from those builds (each is spelled out in its section below):
 
 ## Linux / macOS (x86_64)
 
-1. Clone a Kodi source tree matching your target Kodi major version (the
-   `Omega` branch for Kodi 21.x, which is roughly what CoreELEC on an ODROID N2+
-   ships, or `Piers` for Kodi 22):
+1. Clone a Kodi source tree matching your target Kodi major version, using the
+   same branch name as this addon's branch you build (`Omega` for Kodi 21.x,
+   `Piers` for Kodi 22):
    ```bash
-   git clone --branch Omega --depth 1 https://github.com/xbmc/xbmc.git kodi-source
+   git clone --branch Omega --depth 1 https://github.com/xbmc/xbmc.git kodi-source   # Kodi 21
+   git clone --branch Piers --depth 1 https://github.com/xbmc/xbmc.git kodi-source   # Kodi 22
    ```
    (CI does not track the branch: `KODI_COMMIT` in `.github/workflows/build.yml` names the exact Kodi
    commit every job builds, so a release build never picks up whatever Kodi pushed that day. To
    reproduce a CI build exactly, check that commit out instead.)
-2. Clone this addon next to it (any path):
+2. Clone this addon's branch for the same Kodi release next to it (any path):
    ```bash
-   git clone https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial.git addons/pvr.dispatcharr-unofficial
+   git clone --branch Piers https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial.git addons/pvr.dispatcharr-unofficial   # or Omega
    ```
 3. Register the addon with the harness. `pvr.dispatcharr-unofficial` isn't in Kodi's
    official addon manifests, so `ADDON_SRC_PREFIX` alone won't find it --
@@ -198,9 +199,9 @@ characters under the limit for this exact file even before accounting
 for the rename, so treat this as something to fix once globally on any
 Windows build machine, not just a CI-specific patch.
 
-1. Clone Kodi and this addon exactly as in steps 1-2 above (Omega branch,
-   this repo checked out under `addons/pvr.dispatcharr-unofficial`), and register the
-   addon exactly as in step 3.
+1. Clone Kodi and this addon exactly as in steps 1-2 above (`Omega` for Kodi 21,
+   `Piers` for Kodi 22, this repo checked out under `addons/pvr.dispatcharr-unofficial`),
+   and register the addon exactly as in step 3.
 2. Fetch curl and its own dependencies. Windows has no system libcurl, and
    the prebuilt curl Kodi's own dependency mirror serves needs OpenSSL and
    zlib to link against (confirmed by actually running this build -- curl's
@@ -584,14 +585,15 @@ called out inline so a future rebuild doesn't have to rediscover them.
    option, or copy it over SSH and extract into
    `/storage/.kodi/addons/pvr.dispatcharr-unofficial/` directly, then restart Kodi.
 6. This build isn't automated in CI (see the "GitHub Actions job ...
-   rejected" note above) -- if this is a real tagged release, also attach
-   the zip to the GitHub Release by hand so CoreELEC users have something
-   to download instead of having to build it themselves. Rename it first, to the scheme the other platforms use
-   (the file name is not what Kodi installs by; the zip's own `addon.xml` is, and keeps CoreELEC's `<version>.<revision>`):
+   rejected" note above) -- for a real tagged release, the CoreELEC zip is
+   one of the eight release assets, so CoreELEC users have something to
+   download instead of having to build it themselves. Rename it to the scheme the other platforms use
+   (the file name is not what Kodi installs by; the zip's own `addon.xml` is, and keeps CoreELEC's `<version>.<revision>`)
+   and put it in the directory with the other seven; it is published only through "Release assets" below (normalize,
+   gate all eight together, then publish), never uploaded on its own:
    ```bash
    cp target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr-unofficial/pvr.dispatcharr-unofficial-<version>.<revision>.zip \
-      addon-pvr.dispatcharr-unofficial-<version>-coreelec-aarch64.zip
-   gh release upload <tag> addon-pvr.dispatcharr-unofficial-<version>-coreelec-aarch64.zip
+      <release-dir>/addon-pvr.dispatcharr-unofficial-<version>-coreelec-aarch64.zip
    ```
 
 For later releases, only steps 1-2 and the `cp`/build in steps 3-4 need
@@ -643,9 +645,9 @@ build will "just work" the way the other platforms do.
 
 Kodi's own [`docs/README.Android.md`](https://github.com/xbmc/xbmc/blob/master/docs/README.Android.md)
 in the Kodi source tree is the authoritative reference; summarized here
-for this addon's own needs. Requires Android SDK cmdline-tools plus NDK
-r21e specifically (Kodi's own recommended/most-tested revision for the
-`Omega` branch this project already builds against everywhere else):
+for this addon's own needs. Requires Android SDK cmdline-tools plus the NDK
+revision Kodi's own README asks for at the branch you build: r21e for `Omega`
+(Kodi 21), shown below, or `28.2.13676358` for `Piers` (Kodi 22):
 
 ```bash
 mkdir -p ~/android-build/sdk
@@ -659,6 +661,9 @@ cd sdk/cmdline-tools/latest/bin
 yes | ./sdkmanager --sdk_root="$HOME/android-build/sdk" --licenses
 ./sdkmanager --sdk_root="$HOME/android-build/sdk" \
   platform-tools "platforms;android-34" "build-tools;33.0.1" "ndk;21.4.7075529"
+# Piers (Kodi 22) instead:
+./sdkmanager --sdk_root="$HOME/android-build/sdk" \
+  platform-tools "platforms;android-37.0" "build-tools;37.0.0" "ndk;28.2.13676358"
 ```
 
 Needs a JDK (confirmed live with OpenJDK 21) for `sdkmanager` itself --
@@ -805,6 +810,8 @@ unzip -q <the-built>/addon-pvr.dispatcharr-unofficial-<version>-android-aarch64.
 "$NDK_BIN/aarch64-linux-android-strip" --strip-unneeded pvr.dispatcharr-unofficial/libpvr.dispatcharr-unofficial.so
 TZ=UTC zip -X -r ../addon-pvr.dispatcharr-unofficial-<version>-android-aarch64.zip pvr.dispatcharr-unofficial
 ```
+
+On `Piers` the NDK is `28.2.13676358`, which has no per-ABI `strip`: use `$NDK_BIN/llvm-strip` (same flags) for both ABIs.
 
 **Stripping is not enough: two statically linked dependencies still carry the build machine's paths.** nghttp2's
 assertion messages name their source files, and OpenSSL records its configure line, compiler and install
@@ -983,7 +990,8 @@ addon tag exists, so a fix merged after the release leaves the published zip sta
 shipped zip would actually hit. Do not replace it for cosmetic changes, docs, internal refactors or fixes for behaviour the
 shipped build cannot reach; those wait for the next addon release, since replacing a gated public asset carries risk of its
 own and one refresh of a bundle of small fixes beats one per fix. The replacement still needs the user's go-ahead, because
-it publishes to the public release. When it applies, do not wait for the next release: rebuild just that plugin's zip from `Omega` the way
+it publishes to the public release. When it applies, do not wait for the next release: rebuild just that plugin's zip from the branch of the release being refreshed (the plugins are the same files on
+`Omega` and `Piers`, [BRANCHES.md](BRANCHES.md)) the way
 `package-dispatcharr-plugins` does, from `dispatcharr-plugin/`:
 
 ```bash
