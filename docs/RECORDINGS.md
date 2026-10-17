@@ -85,6 +85,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   `DeleteRecording()`'s path-id delete were both confirmed to actually
   remove the item server-side (checked directly against the API after
   deleting through Kodi), not just update Kodi's local view of it.
+
+## Creating, stopping and deleting recordings
+
 - **Pressing Kodi's "Record" button on an EPG guide entry never actually
   created a recording** -- reported as: a brief delay, then a repeating
   "Switch / Record / Cancel" dialog that just re-appears no matter which
@@ -261,6 +264,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   scoped to `status == "stopped"` only (not `"interrupted"`, which is
   set from several different code paths server-side with less certain
   per-instance timing semantics -- not chased this pass).
+
+## Playing a finished recording
+
 - **A recording that *did* show up under Recordings still failed to
   play, silently ("Error creating demuxer" in the log, no player ever
   started).** This took real digging, and an earlier note in this file
@@ -343,6 +349,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   Dispatcharr account; see "Known limitations with more than one Kodi
   client" in `docs/TROUBLESHOOTING.md` for the self-heal this addon does
   about a key another client replaced.
+
+## In-progress playback through `inputstream.ffmpegdirect` (since replaced)
+
 - **In-progress recording playback, via `inputstream.ffmpegdirect`
   (`enable_inprogress_playback` setting, off by default, experimental).**
   Confirmed query-param auth is **not** a usable alternative to the
@@ -971,6 +980,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   in-progress playback starts; accepted as a fair trade for closing a gap
   that's already been hit repeatedly in real testing across two
   installs sharing one account.
+
+## Keeping Kodi's lists current: refresh triggers and real-time updates
+
 - **A recording/timer deleted (or otherwise changed) with no local Kodi
   action to react to it kept showing in Kodi indefinitely -- a "phantom"
   recording only a full Kodi restart would clear.** Root cause: every
@@ -1097,6 +1109,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   not a correctness bug, just this doc's own wording (and `README.md`'s
   "show up immediately" feature-list line, corrected the same day)
   claiming more coverage than actually exists.
+
+## Reusing connections for recording reads and API calls
+
 - **`ReadRecordingStream()` used to open a brand-new libcurl easy handle
   (fresh TCP connection, fresh TLS handshake if HTTPS) for every single
   demuxer read**, rather than reusing one across the life of an open
@@ -1200,6 +1215,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   recommended unless the radio-doze theory gets real, direct confirmation
   (e.g. a slow `AddTimer` actually caught alongside a genuine power-save
   wake event, on a machine quiet enough for that state to occur at all).
+
+## Two side findings: refused `PVR.AddTimer` calls and placeholder titles
+
 - Unrelated discovery while testing the fix above: Kodi can reject
   `PVR.AddTimer` outright with "The PVR backend does not allow to record
   this event" for some EPG broadcasts and not others, with **zero** log
@@ -1241,6 +1259,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   `docs/CLOSED_ITEMS.md`, "A recording nothing titled showed as ..."), which is
   what Kodi itself titles an instant recording and, on an event-named channel,
   the event.
+
+## In-progress playback through the addon's own reader
+
 - **The entire `inputstream.ffmpegdirect`-based in-progress recording
   mechanism documented at length above -- `LocalPlaylistServer`, the
   gradual-cap join-position workaround, the "Play live"/"Play from start"
@@ -1450,6 +1471,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   Confirmed live after the change: a fresh in-progress recording opened
   and played correctly (`canseek: true`, growing `totaltime`, zero decode
   errors) with no setting enabled at all -- there's nothing left to enable.
+
+## Per-show recording folders
+
 - **Recordings are grouped into per-show folders in Kodi's own recordings
   UI (`PVRRecording::SetDirectory()`), using `rec.title` -- confirmed
   against Dispatcharr's own source that this is genuinely the show name,
@@ -1485,6 +1509,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   `dispatcharr::SanitizeRecordingDirectory()` (`RecordingDirectory.h`),
   mirroring `_safe_name()`'s own character set and falling back to
   `"Recording"` for the rare case sanitizing consumes the whole title.
+
+## Recording padding
+
 - **Recording pre/post padding is now surfaced as two addon settings
   (`recording_pre_offset_minutes`/`recording_post_offset_minutes`) that
   mirror Dispatcharr's own global padding setting directly, rather than
@@ -1638,6 +1665,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   showing as "changed" in Kodi's settings screen while Dispatcharr's real
   global setting silently didn't move. Not yet fixed -- flagged here so a
   future pass doesn't have to re-derive it from scratch.
+
+## Editing timers
+
 - **`UpdateTimer()` is now implemented, closing a long-standing gap --
   every timer type edits without a delete+recreate, dispatched by the
   same `ClientIndex` namespace-bit scheme `DeleteTimer()` already uses.**
@@ -1697,6 +1727,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
     -- mirrors `CreateOneTimeRecording()`'s own existing choice not to
     send `custom_properties` at all, for the same underlying reason
     (avoid stomping Dispatcharr's own auto-enrichment).
+
+## In-progress playback: later fixes
+
 - **Seeking to the live edge of an in-progress recording took ~10s,
   root-caused and fixed to land at ~2-3s, which turned out to be the
   real floor.** Reported live: recorded a channel for 2 minutes, started
@@ -2145,6 +2178,8 @@ the only `std::stod()`/`std::stof()` call anywhere in the addon's C++
 source (checked directly, not assumed), so this closes the entire class
 of this specific bug on the native side, not just this one call site.
 
+## Series rules
+
 **A series rule created with "Record all episodes" or "Record only new
 episodes" appeared correctly in Kodi and in Dispatcharr, but the actual
 upcoming episode never got marked to record -- reported live (2026-09-10)
@@ -2389,6 +2424,8 @@ other's is `-1`) now goes through `dispatcharr::IsSameSeriesRuleChannel()`
 (`TimerIdentity.h`) instead. See `docs/OPEN_ITEMS.md`'s own entry for
 the fuller account, including what still needs a live dialog check.
 
+## Episode dates from guide `<date>` placeholders
+
 **A `<date>` value can be a series-level placeholder, not a real
 per-episode original air date -- reported live (2026-09-10) as a
 recording showing an implausibly old date despite being a genuinely new,
@@ -2434,6 +2471,8 @@ actively recording at deploy time) still returns the old cached
 placeholder date/year for both fields, from Kodi's own separate EPG cache
 -- the same pre-existing gotcha noted in the entry above, not a gap in
 this fix.
+
+## Fetch efficiency and the recordings cache
 
 **`RefreshInProgressRecordingManifest()` fetched every recording just to
 check one's `isInProgress` flag -- found via an efficiency review
@@ -2537,6 +2576,8 @@ leading theories before the `isUpcoming` breakdown above settled it).
 Worth remembering next time this cache log's count doesn't match what
 `PVR.GetRecordings` shows: that's normal whenever the account has any
 upcoming scheduled recordings at all, not a sign of a broken transfer.
+
+## A timer on a broadcast already airing
 
 **`PVR.AddTimer` against a broadcast that has already started airing
 (rather than a genuinely future one) created two separate timers/

@@ -241,7 +241,8 @@ TEST_CASE("MatchRecordingsToSeriesRules evaluates a contains rule's AND/OR gramm
   std::vector<TimerRule> rules = {MakeRule(1, "news AND sport", "contains"),
                                   MakeRule(1, "cooking OR garden", "contains")};
   std::vector<Recording> recordings = {MakeRecording(1, "Sport and News Tonight", 1000),
-                                       MakeRecording(1, "Evening News", 2000), MakeRecording(1, "Garden Rescue", 3000)};
+                                       MakeRecording(1, "Evening News", 2000),
+                                       MakeRecording(1, "Alpha Gardening", 3000)};
 
   SeriesRuleMatchResult result = MatchRecordingsToSeriesRules(recordings, rules);
 
@@ -277,7 +278,8 @@ TEST_CASE("MatchRecordingsToSeriesRules reads an empty or differently-cased titl
 TEST_CASE("MatchRecordingsToSeriesRules matches a search-mode rule on whole words only", "[SeriesRuleMatching]")
 {
   std::vector<TimerRule> rules = {MakeRule(1, "news", "search")};
-  std::vector<Recording> recordings = {MakeRecording(1, "Evening News", 1000), MakeRecording(1, "Newsroom Live", 2000)};
+  std::vector<Recording> recordings = {MakeRecording(1, "Evening News", 1000),
+                                       MakeRecording(1, "Alpha Newsletter", 2000)};
 
   SeriesRuleMatchResult result = MatchRecordingsToSeriesRules(recordings, rules);
 
