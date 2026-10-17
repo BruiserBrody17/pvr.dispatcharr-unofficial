@@ -12,6 +12,7 @@ what was tried) are in [TROUBLESHOOTING_DETAIL.md](TROUBLESHOOTING_DETAIL.md).
 | A spinner for about 30 seconds, then the channel closes (Server-side mode) | [Server-side spinner](#server-side-live-tv-a-spinner-for-about-30-seconds-then-the-channel-closes) |
 | Live TV freezes, then recovers or ends | [Stalls](#live-tv-freezes-for-a-while-then-recovers-or-ends) |
 | The guide is empty but channels play | [Empty guide](#the-guide-is-empty-but-channels-and-recordings-work) |
+| The guide is empty or errors after moving a Kodi 21 profile to Kodi 22 | [Guide after upgrading](#the-guide-is-empty-or-errors-after-moving-a-kodi-21-profile-to-kodi-22) |
 | A recording made on another device isn't listed, or recording playback fails with 401 | [More than one Kodi client](#known-limitations-with-more-than-one-kodi-client) |
 | No Record button or Timers window, or "You do not have permission" when recording | [Permissions](#recording-is-refused-or-record-and-delete-are-missing) |
 | Nothing works after install or reboot, every PVR call fails | [Kodi startup](#kodi-does-not-start-the-addon) |
@@ -80,6 +81,20 @@ global IPv6 address.
 
 **What to do:** in Dispatcharr, open Settings, then Network Access, then "M3U / EPG Endpoints", and add the Kodi device's
 address or range.
+
+## The guide is empty or errors after moving a Kodi 21 profile to Kodi 22
+
+**You see:** after you start Kodi 22 on a profile that was used with Kodi 21, the guide is empty or shows errors while
+channels and recordings work. `kodi.log` has `index idx_epg_idEpg_iStartTime already exists` once, and then
+`no such column: sParentalRatingIcon` on every guide read.
+**Applies to:** Kodi 22 only, and only a profile carried over from Kodi 21.
+
+**Why:** Kodi 22 copies the Kodi 21 guide database to a new file and then fails to upgrade the copy. That is Kodi's own
+upgrade path; the addon is not involved, and a fresh Kodi 22 profile does not do it.
+
+**What to do:** quit Kodi, delete the two guide databases in Kodi's `userdata/Database` folder (`Epg16.db` and
+`Epg22.db`; the file names may differ slightly), and start Kodi again. Kodi rebuilds the guide from the addon. On a very
+large channel list or a slow device the rebuild can take a long while.
 
 ## Known limitations with more than one Kodi client
 
