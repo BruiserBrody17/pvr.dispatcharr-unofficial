@@ -547,14 +547,15 @@ called out inline so a future rebuild doesn't have to rediscover them.
    option, or copy it over SSH and extract into
    `/storage/.kodi/addons/pvr.dispatcharr-unofficial/` directly, then restart Kodi.
 6. This build isn't automated in CI (see the "GitHub Actions job ...
-   rejected" note above) -- if this is a real tagged release, also attach
-   the zip to the GitHub Release by hand so CoreELEC users have something
-   to download instead of having to build it themselves. Rename it first, to the scheme the other platforms use
-   (the file name is not what Kodi installs by; the zip's own `addon.xml` is, and keeps CoreELEC's `<version>.<revision>`):
+   rejected" note above) -- for a real tagged release, the CoreELEC zip is
+   one of the eight release assets, so CoreELEC users have something to
+   download instead of having to build it themselves. Rename it to the scheme the other platforms use
+   (the file name is not what Kodi installs by; the zip's own `addon.xml` is, and keeps CoreELEC's `<version>.<revision>`)
+   and put it in the directory with the other seven; it is published only through "Release assets" below (normalize,
+   gate all eight together, then publish), never uploaded on its own:
    ```bash
    cp target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr-unofficial/pvr.dispatcharr-unofficial-<version>.<revision>.zip \
-      addon-pvr.dispatcharr-unofficial-<version>-coreelec-armv7.zip
-   gh release upload <tag> addon-pvr.dispatcharr-unofficial-<version>-coreelec-armv7.zip
+      <release-dir>/addon-pvr.dispatcharr-unofficial-<version>-coreelec-armv7.zip
    ```
 
 For later releases, only steps 1-2 and the `cp`/build in steps 3-4 need
@@ -607,8 +608,8 @@ build will "just work" the way the other platforms do.
 Kodi's own [`docs/README.Android.md`](https://github.com/xbmc/xbmc/blob/master/docs/README.Android.md)
 in the Kodi source tree is the authoritative reference; summarized here
 for this addon's own needs. Requires Android SDK cmdline-tools plus NDK
-r21e specifically (Kodi's own recommended/most-tested revision for the
-`Omega` branch this project already builds against everywhere else):
+r21e specifically (Kodi's own recommended/most-tested revision for its
+`Omega` branch, the Kodi 21 tree this branch builds against):
 
 ```bash
 mkdir -p ~/android-build/sdk
@@ -925,7 +926,8 @@ addon tag exists, so a fix merged after the release leaves the published zip sta
 shipped zip would actually hit. Do not replace it for cosmetic changes, docs, internal refactors or fixes for behaviour the
 shipped build cannot reach; those wait for the next addon release, since replacing a gated public asset carries risk of its
 own and one refresh of a bundle of small fixes beats one per fix. The replacement still needs the user's go-ahead, because
-it publishes to the public release. When it applies, do not wait for the next release: rebuild just that plugin's zip from `Omega` the way
+it publishes to the public release. When it applies, do not wait for the next release: rebuild just that plugin's zip from the branch of the release being refreshed (the plugins are the same files on
+`Omega` and `Piers`) the way
 `package-dispatcharr-plugins` does, from `dispatcharr-plugin/`:
 
 ```bash

@@ -370,11 +370,11 @@ rolling buffer, held on the Dispatcharr server, with real pause/rewind/
 fast-forward -- via a companion Dispatcharr plugin this addon ships
 alongside itself (`dispatcharr-plugin/timeshift_buffer/` in this repo),
 **not** built into Dispatcharr itself and not installed through Kodi. See
-that directory's own `README.md`/`plugin.py` for the plugin's design and
-the several live-tested dead ends that led to its current shape (Django's
-`MEDIA_ROOT` static route turned out to be unreachable due to a
-routing-order bug in Dispatcharr's own `urls.py`; the plugin now runs its
-own minimal file server instead).
+"The plugin's moving parts" at the end of this file and the plugin's
+`plugin.py` for its design and the several live-tested dead ends that led
+to its current shape (Django's `MEDIA_ROOT` static route turned out to be
+unreachable due to a routing-order bug in Dispatcharr's own `urls.py`; the
+plugin now runs its own minimal file server instead).
 
 On this addon's side, `GetChannelStreamProperties()` for this mode leaves
 `STREAMURL` unset entirely -- **not** the `inputstream.ffmpegdirect`
@@ -3587,3 +3587,28 @@ only as far as the pause point, so it does not give them that; it only removes t
 whole concern, the on-demand route trades a large piece of new code (a third stream path and a splice) for a modest saving;
 if pause and rewind into the recording is the wish, delegating to the recording (with a handover at its end, see the open
 item) is the route that delivers it. Neither was built.
+
+## The plugin's moving parts
+
+*(moved from `dispatcharr-plugin/timeshift_buffer/README.md`, which now keeps only the user-facing summary)*
+
+`start_buffer` launches `ffmpeg` per channel against Dispatcharr's own live proxy, writing rolling `.ts` segments and a
+playlist under `storage_path`, served by the plugin's own minimal HTTP server (bound to `http_port`) rather than Django's
+`MEDIA_ROOT` route (unreachable because of a routing-order issue in Dispatcharr's own `urls.py`). `get_live_manifest`
+returns the current segment list with a stable sequence number; the file server answers HTTP Range requests against
+the segments, letting the addon treat the buffer as one growing, byte-seekable stream. Viewers are reference-counted --
+the ffmpeg process stops as soon as the last one deregisters -- with a background reaper (leader-elected across worker
+processes) as the backstop for viewers that vanish without deregistering (crash, network drop, force-quit), reaping
+anything idle past `idle_timeout_seconds`.
+
+Devices watching the same channel share one buffer process, and Dispatcharr opens a single upstream connection per
+channel regardless of viewer count. That sharing doesn't extend to rewind depth: the addon trims what it exposes locally
+to a small near-live-edge window on every fresh channel open, so a device can only rewind into what it has itself
+watched since opening the channel, never another device's earlier viewing ("Concurrent viewers" above has why).
+
+**Picking up a new copy of the plugin.** Redeploying (even through Dispatcharr's "overwrite" import) doesn't reliably
+make every running worker use the new code: the plugin's file server and reaper are threads that keep running under the
+code that started them. `POST /api/plugins/plugins/reload/` (reloads all plugins, no plugin key needed) re-imports it,
+and since 0.6.7 the first `run()` of a new import stops the previous copy's threads ("A reloaded plugin stops what its
+previous copy started" above); a per-plugin enable/disable toggle isn't enough. A Dispatcharr restart is the one step
+that always works, which is why the plugin's README gives only that.

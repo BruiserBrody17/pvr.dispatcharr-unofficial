@@ -13,14 +13,14 @@ what was tried) are in [TROUBLESHOOTING_DETAIL.md](TROUBLESHOOTING_DETAIL.md).
 | Live TV freezes, then recovers or ends | [Stalls](#live-tv-freezes-for-a-while-then-recovers-or-ends) |
 | The guide is empty but channels play | [Empty guide](#the-guide-is-empty-but-channels-and-recordings-work) |
 | A recording made on another device isn't listed, or recording playback fails with 401 | [More than one Kodi client](#known-limitations-with-more-than-one-kodi-client) |
-| "You do not have permission" when recording | [Permissions](#still-unconfirmed-verify-before-relying-on-in-production) |
+| No Record button or Timers window, or "You do not have permission" when recording | [Permissions](#recording-is-refused-or-record-and-delete-are-missing) |
 | Nothing works after install or reboot, every PVR call fails | [Kodi startup](#kodi-does-not-start-the-addon) |
 | Something odd in Kodi's own screens (guide grid, timers list, a recording's length) | [Kodi quirks](#known-kodi-core-quirks-confirmed-not-this-addons-bug) |
 
 ## A channel fails to start, then plays when you try again
 
 **You see:** a playback error after about 20 seconds; pressing OK and opening the channel again plays it at once.
-**Applies to:** live mode set to Off or Local. (Server-side mode waits up to about 30 seconds for a slow channel itself.)
+**Applies to:** **Live TV pause/rewind (timeshift)** set to Off or Local. (Server-side mode waits up to about 30 seconds for a slow channel itself.)
 
 **Why:** Dispatcharr's proxy sends nothing until it has buffered its first data. Kodi opens the stream itself and gives up
 after 20 seconds without a byte. The second try works because the channel is already running by then.
@@ -29,10 +29,9 @@ after 20 seconds without a byte. The second try works because the channel is alr
 
 1. **Check whether the channel's source is an HLS playlist with several quality levels** (its stream URL in Dispatcharr
    ends in `.m3u8`). Dispatcharr's default **FFmpeg** stream profile opens every quality level before it sends the first
-   byte, and passes all of them through, so the delay grows with their number. In a test with five levels and about a
-   second per request, FFmpeg took 20 seconds to the first byte and the built-in **Streamlink** profile took 4.4 seconds;
-   Streamlink sends one quality (the highest). To try it, change the channel's (or its stream's) stream profile from
-   FFmpeg to Streamlink in Dispatcharr. The test used a synthetic source, so treat the numbers as a guide.
+   byte, so the delay grows with their number; the built-in **Streamlink** profile sends one quality (the highest)
+   and starts much sooner (measurements in [TROUBLESHOOTING_DETAIL.md](TROUBLESHOOTING_DETAIL.md#stalls-or-slow-channel-starts-that-come-from-the-stream-itself)). To try it, change the channel's (or its stream's) stream profile from FFmpeg to Streamlink in
+   Dispatcharr.
 2. **Otherwise, or as well, give Kodi more patience.** In Kodi's `userdata` folder create or edit `advancedsettings.xml`:
 
    ```xml
@@ -48,9 +47,9 @@ after 20 seconds without a byte. The second try works because the channel is alr
 
 ## Server-side live TV: a spinner for about 30 seconds, then the channel closes
 
-**Why:** the timeshift buffer plugin serves its video from its own port (setting `http_port`, default **9192**), not from
-Dispatcharr's port. If Kodi can't reach that port, the buffer still starts on the server, but nothing can be played.
-Newer builds show a notification naming the port.
+**Why:** the timeshift buffer plugin serves its video from its own port (the plugin's **Buffer server port** setting, default
+**9192**), not from Dispatcharr's port. If Kodi can't reach that port, the buffer still starts on the server, but nothing
+can be played. Since 0.13.0 the addon shows a notification naming the port.
 
 **What to do:** publish that port from the Dispatcharr container (for Docker, `-p 9192:9192`, the same number on both
 sides) and make sure the Kodi device can reach it. To check by hand from the Kodi device:
@@ -104,13 +103,25 @@ These are not bugs; they come from running several separate Kodi installs agains
 - **After a cold Kodi reboot, nothing works and the addon logs nothing.** Seen on CoreELEC hardware. In Kodi, disable the
   addon and enable it again a few seconds later; a plain restart doesn't reliably help.
 
+## Recording is refused, or Record and Delete are missing
+
+**You see:** no Record button, no Timers window and no Delete or Rename on recordings, from an account that can log in,
+browse and play. (Before 0.12.0 the addon offered them anyway, and each failed with "You do not have permission to
+perform this action".)
+
+**Why:** Dispatcharr lets only an admin, or a standard account whose DVR access is `manage`, create or change recordings
+and timers; a standard account is view-only unless an admin sets it. The addon reads the account's DVR access and hides
+what it can't do. This is a Dispatcharr permission, not an addon bug.
+
+**What to do:** an admin sets the account's DVR access to `manage` in Dispatcharr's user settings.
+
 ## Known Kodi-core quirks (confirmed not this addon's bug)
 
 None of these can be fixed from the addon; each was traced to Kodi's own code.
 
 - **A completed recording shows a wrong, too-short length in the list.** Kodi remembers the length it measured if the
   recording was played while it was still being written, and prefers it over the addon's correct value, including after a
-  restart. Playback itself is unaffected. This could not be reproduced with the current in-progress playback.
+  restart. Playback itself is unaffected.
 - **The guide grid jumps to an odd time of day after switching channel groups a few times.** Kodi tries to keep your
   selection across the switch and sometimes lands on a stale position. Paging a day forward and back, or reopening the
   Guide window, re-centres it.
@@ -120,18 +131,3 @@ None of these can be fixed from the addon; each was traced to Kodi's own code.
   allow to record this event." Kodi refuses it before the addon is called, even for a couple of minutes of overlap.
 - **A channel group that has lost all its channels stays in Kodi as an empty group,** even after a restart. Kodi never
   removes a group a client stops reporting. Delete it in Kodi's group manager.
-
-**If you script Kodi through JSON-RPC** (for testing):
-
-- `Player.Open` on a recording that has a resume bookmark raises a "Resume / Play from beginning" dialog that silently
-  blocks every later call, and `{"resume": false}` doesn't suppress it. Use a fresh recording, or check
-  `GUI.GetProperties` for a stuck dialog before sending any key.
-- Never send blind `Input` keystrokes to get past a stall. On one real run the focus was Kodi's power menu and the
-  keystrokes shut the machine down.
-- `Player.Seek` returns at once with the old position; poll until the position changes.
-
-## Still unconfirmed (verify before relying on in production)
-
-- **"You do not have permission to perform this action" when creating a recording or series rule,** from an account that
-  can log in, browse and play fine. A standard account needs its DVR access set to `manage` (an admin sets that in
-  Dispatcharr's user settings); this is a Dispatcharr permission, not an addon bug. Check the account's role first.

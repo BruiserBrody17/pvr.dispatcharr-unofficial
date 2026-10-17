@@ -57,8 +57,8 @@ in the issue template) are genuinely useful for exactly this reason.
   provider supports it
 - Optional real-time push updates for recordings/timers, so most changes
   made elsewhere (another Kodi install, Dispatcharr's web UI) show up
-  immediately rather than waiting for the next periodic refresh (a few
-  narrower cases still wait for that refresh -- see `docs/RECORDINGS.md`); the same feed also tells the
+  immediately rather than waiting for the next periodic refresh (anything
+  the feed doesn't cover still arrives within the Recordings/timers refresh interval, 5 minutes by default); the same feed also tells the
   addon when Dispatcharr has finished refreshing an EPG source or an M3U account, so a new guide or
   channel list arrives within minutes rather than hours
 
@@ -69,13 +69,13 @@ repo and install separately on your Dispatcharr instance (not through
 Kodi):
 
 - **`timeshift_buffer`** -- enables server-side live TV pause/rewind/seek
-  (`live_timeshift_mode` set to `Server-side`): one buffer per channel,
+  (**Live TV pause/rewind (timeshift)** set to **Server-side (Dispatcharr plugin)**): one buffer per channel,
   shared across every device currently watching, torn down as soon as the
   last viewer stops. Requires an admin-level Dispatcharr account (see the
-  plugin's own README for the full picture). Without one, use `Local`
+  plugin's own README for the full picture). Without one, use **Local (this device)**
   instead: pause/rewind buffered on the Kodi device itself via
   `inputstream.ffmpegdirect`, no admin account or server-side plugin
-  needed, but local-only and gone on restart. `Off` (the default) is a
+  needed, but local-only and gone on restart. **Off** (the default) is a
   plain live stream, no pause/rewind, no extra dependency.
 - **`recording_edl`** -- exposes comskip commercial-break markers to Kodi.
   Also requires an admin-level Dispatcharr account. Optional; without it
@@ -102,8 +102,8 @@ username, and password. A standard account with `dvr_access` set to
 `manage` covers everything native to Dispatcharr -- browsing, playback,
 and timer management. An admin account is needed for both companion
 plugins and for pushing a recording-padding change back to Dispatcharr
-(reading the current value doesn't need one; the write just fails
-silently otherwise -- see [docs/RECORDINGS.md](docs/RECORDINGS.md)).
+(reading the current value doesn't need one; with a non-admin account the
+padding settings are greyed out).
 
 This addon only speaks Dispatcharr's native REST API, not its Xtream
 Codes compatibility layer -- there's no separate "XC" username/password
@@ -123,8 +123,9 @@ overrides the other, and the addon tells Kodi to re-read right after each downlo
 new data.
 
 Most settings take effect immediately after saving. Connection settings
-(host/port/HTTPS/username/password) need a Kodi restart -- Kodi will tell
-you when one does.
+(host, port, HTTPS, username, password, SSL certificate verification and
+connection timeout) and real-time updates need a Kodi restart -- Kodi will
+tell you when one does.
 
 If something doesn't work as expected -- a channel that is slow to start, an empty guide, a recording that doesn't
 show up on another device -- see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).

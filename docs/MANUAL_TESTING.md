@@ -134,6 +134,13 @@ Not substituted for by a virtual GPU or a laptop.
   5. **A Kodi that starts on its profile Login screen has no PVR manager yet** (`PVR.GetProperties` answers `-32100`
      and `System.CurrentWindow` is `Login screen`), so a restart looks like a broken addon: load a profile
      (`Profiles.LoadProfile`) and the client is up in about ten seconds with no addon toggle.
+- **Traps when scripting Kodi through JSON-RPC, on any platform:**
+  1. `Player.Open` on a recording that has a resume bookmark raises a "Resume / Play from beginning" dialog that
+     silently blocks every later call, and `{"resume": false}` doesn't suppress it. Use a fresh recording, or check
+     `GUI.GetProperties` for a stuck dialog before sending any key.
+  2. Never send blind `Input` keystrokes to get past a stall. On one real run the focus was Kodi's power menu and the
+     keystrokes shut the machine down.
+  3. `Player.Seek` returns at once with the old position; poll until the position changes.
 
 ## 3. Long-running conditions
 

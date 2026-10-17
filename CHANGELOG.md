@@ -238,21 +238,13 @@ Dispatcharr restart for every worker to pick it up.
 
 ### Fixed
 
-- **A change of the host's clock no longer makes the idle reaper stop buffers that are being watched.** The
-  reaper decided a buffer was idle by subtracting its last heartbeat's time from the current time, both read
-  from the host's clock. When that clock was stepped by more than the idle timeout (a manual change, a VM
-  resume, a clock correction), every buffer looked idle at once: viewers were dropped, buffers stopped and
-  playback ended; a step backwards had the opposite effect, keeping a really idle buffer, and the provider
-  slot it holds, until the clock caught up. The reaper now times each heartbeat on its own steady clock,
-  from when it last changed, so neither a step nor a suspend matters. A buffer is reaped after it has had no
-  heartbeat for the idle timeout plus up to one reaper interval (15 seconds), and a reaper that has just
-  started gives each buffer one idle timeout before it judges it.
-- **Closing a viewer with `stop_buffer` no longer drops the other viewers.** It used to remove every other
-  viewer whose last heartbeat looked older than the idle timeout by the same two-times subtraction, so a clock
-  step shortly before a stop could end a buffer under viewers that were still watching. It removes only the
-  viewer that is stopping now; the reaper drops viewers that went silent and, when that leaves nobody, ends the
-  buffer in that same pass (within 15 seconds), so a viewer that crashed without stopping still frees its
-  provider slot promptly.
+- **A change of the host's clock no longer makes the idle reaper stop buffers that are being watched.** A clock
+  stepped forward by more than the idle timeout (a manual change, a VM resume, a clock correction) used to drop
+  every viewer and end playback at once; a step backwards kept a really idle buffer, and its provider slot, until
+  the clock caught up. Neither a clock step nor a suspend matters now. An idle buffer is reaped after the idle
+  timeout plus up to 15 seconds.
+- **One viewer stopping no longer drops the other viewers of the same buffer** after a clock step. A viewer that
+  crashed without stopping still frees its provider slot within 15 seconds.
 
 ## `timeshift_buffer` [0.8.13] - 2026-10-06
 
@@ -272,9 +264,7 @@ Dispatcharr restart for every worker to pick it up.
 ### Fixed
 
 - **The file server can no longer be made to hold hundreds of megabytes by a client that sends no token.** A
-  request's headers were limited in time (10 s) but not in size, so a client could send about 6 MB of headers
-  per connection and stall: 64 such connections measured 418 MB. A request that has not finished its headers
-  after 16 KiB (a real client sends under 1 KiB) is now dropped.
+  request whose headers run past 16 KiB (a real client sends under 1 KiB) is now dropped.
 - **The per-client connection limit now works for IPv6**: a host with an IPv6 /64 could use a new source
   address for every connection and so never reach the limit; peers are counted by their /64 (an IPv4-mapped
   address by its IPv4 address).
@@ -296,7 +286,7 @@ Dispatcharr restart for every worker to pick it up.
 - **Clock differences between Dispatcharr workers no longer make buffers look idle.** The idle checks
   compared timestamps written by one worker with the clock of another, which differ when Redis runs on
   another host. They now use Redis's own clock, which all workers share. (This entry first said a clock
-  stepped on the host itself was handled too; it is not, because Redis shares that clock: see 0.8.12.)
+  stepped on the host itself was handled too; it is not, because Redis shares that clock: see 0.8.14.)
 
 ## `timeshift_buffer` [0.8.10] - 2026-10-05
 
@@ -305,7 +295,7 @@ Dispatcharr restart for every worker to pick it up.
 
 ### Fixed
 
-- **"Max concurrent buffers" now holds across channels.** Two channels starting at the same moment each
+- **"Max concurrent channel buffers" now holds across channels.** Two channels starting at the same moment each
   counted the same running buffers and could both start, going over the limit; counting and registering
   a new buffer is now one step, and a start that arrives during another one is told to retry in a moment.
 - **A buffer's `ffmpeg.log` can no longer grow without limit.** A source that makes ffmpeg warn on every

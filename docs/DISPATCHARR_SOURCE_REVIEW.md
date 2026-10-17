@@ -3,7 +3,8 @@
 *Engineering notes, not user documentation. Prompted by a "can we borrow or improve anything from Dispatcharr's own source,
 and from the published plugins" question, the day after the same exercise for the Tvheadend addon
 (`docs/PVR_HTS_COMPARISON.md`). Everything here is from reading source; nothing was run against a server. Where a finding
-changed an open item, the item in `docs/OPEN_ITEMS.md` carries the actionable version and this file keeps the evidence.*
+changed an open item, the item in `docs/OPEN_ITEMS.md` carries the actionable version and this file keeps the evidence.
+Every item this file calls an open item has since been resolved; its entry is now in `docs/CLOSED_ITEMS.md`.*
 
 ## What was read
 
@@ -83,7 +84,7 @@ recording-disk usage" is closed on this evidence (`docs/CLOSED_ITEMS.md`).
 `SeriesRulesAPIView` (`apps/channels/api_views.py`) validates `title_mode` against `exact`, `contains`, `search` and
 `regex` (default `exact`) and `description_mode` against `contains`, `search` and `regex` (default `contains`), and
 accepts `untagged_is_new`. The open item then called "Let a series rule's title and description match modes be set from Kodi" (title half
-closed 2026-10-13, description half still open) carried these values instead of the two the addon had seen in real rules.
+done 2026-10-13, description half closed without a change the same day) carried these values instead of the two the addon had seen in real rules.
 
 ### `/output/epg` parameters
 
@@ -103,7 +104,7 @@ explicitly").
 - The catch-up session's `expires_at` response field (unused; the session cache has its own TTL handling) and the
   `position` endpoint (already ruled cosmetic in `docs/CLOSED_ITEMS.md`). `apps/timeshift` is the catch-up
   implementation only; Dispatcharr has no live rewind buffer of its own, so `timeshift_buffer` remains the only one.
-- `is_radio` on `Channel` (confirmed in `apps/channels/models.py`; already an open item from the pvr.hts comparison).
+- `is_radio` on `Channel` (confirmed in `apps/channels/models.py`; the open item from the pvr.hts comparison, since fixed: "Map Dispatcharr's radio flag to Kodi's radio channel type" in `docs/CLOSED_ITEMS.md`).
 - VOD, HDHomeRun emulation, backups, channel profiles and system notifications: out of scope or already recorded as
   unused features in `docs/API_NOTES.md`.
 

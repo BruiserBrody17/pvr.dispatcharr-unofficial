@@ -468,14 +468,20 @@ in its web UI) has plugins aimed at this, read from the catalogue's own descript
 This is a pointer, not a recommendation: whether one of them helps, or interacts with `timeshift_buffer`, is
 unconfirmed.
 
-## Still unconfirmed (verify before relying on in production)
+**Slow first start on an HLS source (Off and Local mode).** Measured with a synthetic live HLS source (a master playlist
+with five variants, a set delay per request): Dispatcharr's default FFmpeg profile opened every variant's playlist and
+first segments before the first byte, 20.0 s at about a second per request, which is Kodi's 20 s `curllowspeedtime`
+limit; the built-in Streamlink profile took 4.4 s and sent one rendition. The source was synthetic and no real provider
+was used, so the numbers are a guide. Full account: `docs/CLOSED_ITEMS.md`, "A channel that is slow to start: Kodi gives up after 20 seconds in Off and
+Local live mode", measurement (d).
 
-- The account used to verify this (a standard, non-admin test account)
-  initially got "You do not have permission to perform this action"
-  trying to create a recording or
-  series rule -- same account that could log in, browse channels, and
-  stream fine. Raising that account's role in Dispatcharr's admin UI
-  resolved it. If you hit the same error, that's a Dispatcharr-side
-  permissions setting, not an addon bug -- check the account's role before
-  assuming otherwise.
+## Recording is refused, or Record and Delete are missing
+
+A standard, non-admin test account that could log in, browse channels and stream once got "You do not have permission
+to perform this action" trying to create a recording or series rule; raising its DVR access in Dispatcharr resolved it.
+Dispatcharr requires `IsAdminOrDVRManager` for every recording and timer write, and a standard account whose
+`custom_properties.dvr_access` is unset is `view`. Since 2026-10-02 (released in 0.12.0) the addon reads the account's
+DVR access (`DvrAccess.h`) and advertises timers, delete and rename only to an account that can manage, so Kodi hides
+the Record button, the Timers window and those actions. Confirmed live with a disposable standard account
+(`docs/CLOSED_ITEMS.md`, "View-only account is offered Record/Delete/Rename/Stop").
 

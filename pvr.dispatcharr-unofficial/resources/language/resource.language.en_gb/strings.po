@@ -90,7 +90,7 @@ msgid "Live TV pause/rewind (timeshift)"
 msgstr ""
 
 msgctxt "#30028"
-msgid "Off (default): plain live stream, no pause/rewind, works immediately. Local: real pause/rewind buffered on this device via inputstream.ffmpegdirect (must be installed, or live playback fails). Doesn't persist across a Kodi restart or follow you to another device. Server-side: pause/rewind/fast-forward buffered by Dispatcharr via the companion Timeshift Buffer plugin, shared across every device on the account. Needs a Dispatcharr admin account and the plugin's HTTP port reachable from this device. See docs/TIMESHIFT.md for the full comparison."
+msgid "Off (default): plain live stream, no pause/rewind, works immediately. Local: real pause/rewind buffered on this device via inputstream.ffmpegdirect (must be installed, or live playback fails). Doesn't persist across a Kodi restart or follow you to another device. Server-side: pause/rewind/fast-forward buffered by Dispatcharr via the companion Timeshift Buffer plugin, shared across every device on the account. Needs a Dispatcharr admin account and the plugin's HTTP port reachable from this device."
 msgstr ""
 
 msgctxt "#30035"
@@ -118,7 +118,7 @@ msgid "Recurring timer: manual timezone offset from UTC (minutes)"
 msgstr ""
 
 msgctxt "#30050"
-msgid "Only used when the timezone setting above is \"Manual\". Set to Dispatcharr's configured system timezone's CURRENT offset from UTC in minutes (e.g. 120 for Central European Summer Time) -- if that zone observes daylight saving, update this by 60 minutes yourself twice a year, or a recurring timer will fire an hour off. Leave at 0 for UTC. Only affects recurring (day-of-week) timers. See docs/RECURRING_RULES.md for the full explanation."
+msgid "Only used when the timezone setting above is \"Manual\". Set to Dispatcharr's configured system timezone's CURRENT offset from UTC in minutes (e.g. 120 for Central European Summer Time) -- if that zone observes daylight saving, update this by 60 minutes yourself twice a year, or a recurring timer will fire an hour off. Leave at 0 for UTC. Only affects recurring (day-of-week) timers."
 msgstr ""
 
 msgctxt "#30051"
@@ -138,7 +138,7 @@ msgid "Recording padding: start early (minutes)"
 msgstr ""
 
 msgctxt "#30055"
-msgid "Mirrors Dispatcharr's own global recording padding (Settings -> DVR) -- there's no per-timer equivalent, so this changes it for every EPG-based recording at once: one started from Kodi's own guide, Dispatcharr's own web UI, a series rule's recordings. Not applied to a manual timer you set by time with no guide programme behind it, nor to recurring (day-of-week) timers. Kept in sync with Dispatcharr's real value on every Kodi restart. Pushing a change here needs a Dispatcharr admin account; with a lesser account it fails silently (logged to kodi.log, nothing shown in the UI). See docs/RECORDINGS.md for details."
+msgid "Mirrors Dispatcharr's own global recording padding (Settings -> DVR) -- there's no per-timer equivalent, so this changes it for every EPG-based recording at once: one started from Kodi's own guide, Dispatcharr's own web UI, a series rule's recordings. Not applied to a manual timer you set by time with no guide programme behind it, nor to recurring (day-of-week) timers. Kept in sync with Dispatcharr's real value on every Kodi restart. Changing it needs a Dispatcharr admin account; with a lesser account this setting is greyed out."
 msgstr ""
 
 msgctxt "#30056"
@@ -162,7 +162,7 @@ msgid "Recurring timer: timezone"
 msgstr ""
 
 msgctxt "#30061"
-msgid "Only affects recurring (day-of-week) timers. Pick the zone matching Dispatcharr's own configured system timezone (shown above) and this addon computes the correct UTC offset automatically, including daylight saving. Auto-selected on every restart when your zone is in this list. If it isn't, choose \"Manual\" and use the offset setting below instead. See docs/RECURRING_RULES.md for details."
+msgid "Only affects recurring (day-of-week) timers. Pick the zone matching Dispatcharr's own configured system timezone (shown above) and this addon computes the correct UTC offset automatically, including daylight saving. Auto-selected on every restart when your zone is in this list. If it isn't, choose \"Manual\" and use the offset setting below instead."
 msgstr ""
 
 msgctxt "#30062"
@@ -390,7 +390,7 @@ msgid "Improve catch-up seek reliability (experimental)"
 msgstr ""
 
 msgctxt "#30048"
-msgid "Experimental: routes catch-up/archive playback through inputstream.ffmpegdirect (must be installed, or catch-up fails outright) instead of Kodi's own seeking. Testing found this consistently slower with no clear precision benefit over the default -- leave off unless you have a specific reason to try it. See docs/CATCHUP.md for details."
+msgid "Experimental: routes catch-up/archive playback through inputstream.ffmpegdirect (must be installed, or catch-up fails outright) instead of Kodi's own seeking. Testing found this consistently slower with no clear precision benefit over the default -- leave off unless you have a specific reason to try it."
 msgstr ""
 
 msgctxt "#30030"
