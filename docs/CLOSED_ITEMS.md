@@ -6,6 +6,65 @@
 
 ### Fixed
 
+#### Two streams of one in-progress recording each poll its manifest
+
+**Opened 2026-10-14, with the multiple-recorded-streams work on `Piers`; deferred.** Kodi 22 may hold two streams of the
+same recording open (`docs/API_NOTES.md`, "Single-instance assumption"), and each `InProgressRecordingStreamState`
+refreshes the recording's HLS playlist and looks the recording up on its own, about every half second while it is read
+and on every `GetRecordedStreamTimes()` poll. They share the sized-segment cache (`m_inProgressSegmentCache`) but not
+the refresh itself, so the request rate doubles for that recording. Nothing is known to break, and nothing in Kodi
+opens two streams of one recording on purpose that this project has found; pick it up if a log shows it, by sharing the
+playlist fetch and the lookup per recording id behind the throttle that already exists.
+
+**Closed 2026-10-17 on `Piers` (not ported: `Omega` has one recorded-stream slot, so it never has two), confirmed with
+the glue harness, not on a real Kodi.** Measured first: a new glue scenario, `ip_two_share`, counts the playlist
+fetches and recording lookups the fake answers for one recording while Kodi's pattern runs against one stream, then
+two (a poller on times and length every 30 ms, then readers waiting at the tail too). Before the change two streams
+cost 2.0x what one did when polled and 2.1x at the tail (8 s phases, 2 s segments: 30 and 60, 78 and 164). The fix:
+`RefreshInProgressRecordingManifest()` publishes each successful lookup-and-playlist fetch per recording
+(`m_inProgressManifestSnapshots`), and another stream of that recording uses it instead of fetching when
+`CanReuseSharedInProgressManifest()` (`InProgressSegmentCache.h`) allows: never a fetch the stream has already used,
+its own included (so a lone stream refreshes exactly as before), and no older than the 500 ms throttle, forced
+refreshes included. A first version held forced refreshes (the tail wait, SEEK_END, a cold start) to 250 ms, the tail
+wait's poll interval; it passed in a plain build (1.2x) and failed the scenario under ASan (1.8x, 78 and 140), because a
+tail-wait cycle is the 250 ms sleep plus the refresh, so the other stream's fetch was usually just past the limit. At
+500 ms a stream that takes the other's fetch is never further behind than that stream's own tail polling, and the
+tail under ASan came out at 1.0x and 1.2x over two runs. Only successes are shared; each
+stream still reaches `finished` and `contentGone` from its own failures. The segment sizes the other stream has
+already probed come from the cross-open cache (`SegmentSizesKnownToCache()`, same URL at the same index, never a
+zero-byte placeholder), so its new segments are not HEADed twice either. After: 1.0x polled (30 and 30) and 1.2x at
+the tail (78 and 94). The tail cannot reach 1.0x: right after reading a new segment each stream checks the tail again
+at once, and that check has nothing newer to share. With the fake's default 300 ms segments that check is most of the
+traffic (36 and 68 after, 36 and 88 before), so the scenario uses 2 s, nearer Dispatcharr's 4 s. The scenario is in
+CI's glue list with a 1.5x limit, and also checks that the stream left after the other closes keeps refreshing on its
+own. Unit tests for both decisions are in `tests/test_in_progress_segment_cache.cpp` (mutation-checked: dropping the
+already-used rule, or taking a placeholder's zero size, fails them). The rest of the glue list, under ASan and UBSan,
+and the multi-stream scenarios under ThreadSanitizer, passed.
+
+**Live check, the same day (Kodi 22.0-RC1 from Flathub's beta branch on the lab VM, against the lab server, with a
+counting forwarder between the addon and the server; the change's CI-built Linux zip against the released `0.14.0`
+one, the profile backed up and restored afterwards).** What it showed is mostly about Kodi:
+- *One stream is unchanged.* An in-progress test recording played for 173 s through the same sequence on both
+  builds: 268 lookups and 268 playlist fetches with `0.14.0`, 267 and 267 with the change, and no refresh took
+  another stream's fetch.
+- *Kodi 22 does not open a second stream of a recording that is being recorded.* `Player.Open` of the item already
+  playing (five times, 25 s apart) left the one stream playing on, and Kodi's stream-details probe skips any
+  recording it still counts as in progress, which is one with an active timer (`ProvidesStreamForMetaDataExtraction()`
+  in Kodi's `pvr/utils/PVRStreamUtils.cpp`: "We must wait with data extraction until recording has finished").
+- *The one real case shares nothing.* A recording stopped while it is watched: once its timer is gone, Kodi's
+  thumbnail loader (`CVideoThumbLoader`, on the Home and recordings windows) opens it to read its stream details
+  while the viewer's stream is still open, through the in-progress path because its HLS folder is still there
+  (`openStreams=2`, twice, from two threads, about 0.6 s each). The viewer's stream had reached `finished` 140 ms
+  before the first probe, and `finished` drops the shared snapshot and the cross-open segment cache, so each probe
+  fetched its own and sized every segment again: 340 HEADs in 1.7 s for an 11-minute recording. That cost is the
+  same without this change and is its own open item ("Kodi 22's stream-details probe of a just-finished recording
+  sizes every segment again").
+
+So the change is right where two streams of one in-progress recording do exist (the glue harness, and any later Kodi
+that opens them) and costs nothing where they do not, but real Kodi 22 was not seen producing that case. The
+MANUAL_TESTING.md recipe that asked for "the same in-progress recording twice" was corrected to the case Kodi does
+produce.
+
 #### Kodi 22 (Piers) refused the addon: it had to be rebuilt against Kodi 22's addon API
 
 **Opened 2026-10-12, from a user's report: on Kodi 22 RC1 (a Windows laptop) the addon "is not supported yet". Closed 2026-10-15 on the `Piers` branch, confirmed live on Kodi 22.0-RC1.** Kodi 22's PVR API is 9.2.0 with a minimum of 9.2.0 (Kodi 21: 8.3.0, minimum 8.2.0), so a binary built for Kodi 21 is refused outright. A syntax-only compile against the Kodi 22 headers failed in six places, all overrides in `PVRDispatcharr.h`: `GetChannelStreamProperties()` gained a `PVR_SOURCE` argument, and the five recorded-stream calls take or return a stream id. **What was done** (`docs/BRANCHES.md` has the branch model, tags and versions): a `Piers` branch beside `Omega`; the six overrides and the glue harness ported to Kodi 22's ABI (`tests/glue/kodi_abi.h`); a registry of open recorded streams keyed by that id, with `SetSupportsMultipleRecordedStreams(true)` and the per-id `IsRecordedStreamRealTime()`, `PauseRecordedStream()` and `GetRecordedStreamTimes()` (`docs/API_NOTES.md`); CI building against the `22.0rc1-Piers` commit; and `0.14.0` as the first Piers version. `addon.xml.in` needed no import change: the `kodi.binary.*` imports are generated by Kodi's build, and the optional `inputstream.ffmpegdirect` import's `3.0.0` is met by Kodi 22's `22.2.x`. **How it was confirmed (Windows, a portable Kodi 22.0-RC1 profile beside the Kodi 21.3 install, the build `28ea2eac1eb` that CI pins, the addon zip CI built from the tree; Kodi 21.3 on the same server as the control):** the addon loads and connects, and the built `addon.xml` declares `kodi.binary.global.main` 2.0.3 and PVR 9.2.0. `tools/kodi_smoke_test.py` passed 11, failed 0, skipped 4 (nothing recording, no catch-up programme in its 30-channel probe, and server-side timeshift not seekable on a placeholder channel). Server-side timeshift on real channels plays and is seekable, and Kodi's seeks reach the addon and land where it serves them (checked in the addon's debug log: the JSON-RPC `time` of a live channel follows wall time on Kodi 21.3 and 22 alike and cannot show a seek). Local mode (`inputstream.ffmpegdirect` 22.2.7, the newest Windows build on Kodi's mirror) plays, and ffmpegdirect's own buffer served a seek back, a pause and a resume. Completed recordings play and seek. An in-progress recording plays, its total time grows as it records, a seek to the live edge lands at the tail, and when the recording stops during playback the player ends cleanly. Kodi 22 itself opens a second stream of a recording that is already playing (within the same second as the first open): stream ids 3 and 4, `openStreams=2`, closed in turn, back to 0. Catch-up playback (a finished programme on a channel with archive, reached by probing more channels than the smoke harness's 30) plays and is seekable. The timer dialog opens with all four of the addon's recording types and Kodi's three reminder types, and the timer count is unchanged. Off mode had a problem on Kodi 22, fixed on the same branch (the next entry). A recording that the server marks `interrupted` with zero bytes fails to open with a 404 on its playlist, which Kodi 22 tries in the background; that is the server's state, not the addon's. **The other platforms and the first release (2026-10-15/17):** the macOS, both Android and the CoreELEC zips were built by hand from `Piers` against Kodi 22 RC1 and pass the content checks of `tools/check_release_zip.py` (`docs/BUILDING.md` has what each needed: Kodi 22's Android depends no longer build libcurl and its curl needs brotli, and CoreELEC 22 is `Amlogic-no`/aarch64, so that zip is now `...-coreelec-aarch64.zip`); the macOS zip, both Android zips and CI's Linux zip were then run on a Mac, a 64-bit and a 32-bit phone and a Linux desktop, and the CoreELEC zip on an ODROID-N2+ running the Piers nightly (2026-10-16, `MANUAL_TESTING.md`), and the smoke harness passed on each. The first `Piers` release, `0.14.0` (tag `0.14.0-Piers`), was published 2026-10-17 with all eight zips through the release gate, marked a pre-release because it is built against an RC. What is left (the pinned commit, the checks not yet run on Kodi 22, the pre-release mark) is in `OPEN_ITEMS.md`.

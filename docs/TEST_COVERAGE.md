@@ -734,6 +734,19 @@ non-sticky logic already documents -- appending onto the
 freshly-recreated (empty) entry would otherwise silently drop every
 earlier segment already known before that reset.
 
+2026-10-17 (`Piers`): two decisions for two streams of one in-progress recording sharing its refresh
+(`docs/CLOSED_ITEMS.md`, "Two streams of one in-progress recording each poll its manifest").
+`CanReuseSharedInProgressManifest()` says when a stream may use the lookup and playlist another stream published
+(`m_inProgressManifestSnapshots`): the tests pin the 500 ms window (one for forced refreshes too, after a 250 ms one
+for them failed the glue scenario under ASan, see the closed entry), that a stream never takes a fetch it has
+already used, its own included (the case that keeps a lone stream refreshing exactly as before), nor one older than
+its last, and that a stream that has never refreshed (a second stream's cold start) may take a fresh one.
+`SegmentSizesKnownToCache()` gives the sizes the cross-open cache already holds for a refresh's pending entries: the
+tests pin taking them, nothing past the cache's end or for a different URL at the same index, and never another
+stream's zero-byte placeholder. Mutation-checked: without the already-used rule, or with a zero size accepted, a test
+fails. The wiring is the glue harness's `ip_two_share` (in CI), which counts the manifest requests on the fake: two
+streams cost 2.0x and 2.1x what one does before, 1.0x and 1.2x after, against a 1.5x limit.
+
 ### `JsonFieldUtil`
 
 `JsonFieldUtil` also gained `MergeDvrOffsetMinutes()`, `SetDvrOffsetMinutes()`'s

@@ -2761,6 +2761,18 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   if (ShouldThrottleRefresh(force, st.lastManifestFetch, now, kMinRefreshInterval))
     return true;
 
+  // Another open stream of this recording may have fetched its lookup and playlist a moment ago (Kodi 22 can hold two
+  // open): use those instead of asking the server again -- see dispatcharr::CanReuseSharedInProgressManifest().
+  std::shared_ptr<const InProgressManifestSnapshot> shared;
+  {
+    std::lock_guard<std::mutex> snapshotsLock(m_inProgressManifestSnapshotsMutex);
+    auto snapshotIt = m_inProgressManifestSnapshots.find(recordingId);
+    if (snapshotIt != m_inProgressManifestSnapshots.end() &&
+        CanReuseSharedInProgressManifest(snapshotIt->second->startedAt, st.lastAppliedManifestStartedAt, now,
+                                         kMinRefreshInterval))
+      shared = snapshotIt->second;
+  }
+
   // Timing breakdown for diagnosing "seek to live took ~10s"-type reports:
   // this one call does up to three separate HTTP round trips (playlist
   // fetch, one ranged-GET probe per newly-discovered segment, and an
@@ -2803,112 +2815,123 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   // already documents for a failed lookup.
   auto getRecordingsStart = std::chrono::steady_clock::now();
   Recording rec;
-  std::string recordingsError;
-  long lookupHttpStatus = 0;
+  bool lookupOk = false;
+  double getRecordingsSec = 0.0;
+  double fetchPlaylistSec = 0.0;
+  std::string playlistText;
+  std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/";
   // A stream that already has segments is in steady state: its requests get the short bound, a cold start the
   // configured timeout (ShortRequestTimeoutMs()).
   const bool steadyState = dispatcharr::IsInProgressSteadyState(coldStart, !st.segments.empty());
   const long requestTimeoutMs = steadyState ? ShortRequestTimeoutMs() : 0;
-  stateLock.unlock();
-  bool lookupAuthenticationNotCompleted = false;
-  bool lookupOk = GetRecordingById(recordingId, rec, recordingsError, &lookupHttpStatus, requestTimeoutMs,
-                                   &lookupAuthenticationNotCompleted);
-  double getRecordingsSec =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - getRecordingsStart).count();
-  // No answer at all to the lookup, for a stream that is already playing: the server is very likely unreachable,
-  // and the playlist fetch would only wait out another bound before failing the same way (a refresh was three
-  // timeouts long). Not for a cold start, whose loop treats a failed refresh as retryable and whose playlist may
-  // answer when the lookup did not.
-  if (dispatcharr::ShouldSkipPlaylistAfterUnansweredLookup(steadyState, lookupOk, lookupHttpStatus,
-                                                           lookupAuthenticationNotCompleted))
+  if (shared)
   {
-    stateLock.lock();
-    error = "Dispatcharr did not answer the recording lookup: " + recordingsError;
-    return false;
+    lookupOk = shared->lookupOk;
+    rec.isInProgress = shared->recordingInProgress;
   }
-
-  std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/";
-  std::string playlistUrl = baseDir + "index.m3u8";
-
-  auto playlistFetchStart = std::chrono::steady_clock::now();
-  std::string playlistText;
-  bool playlistWasNotFound = false;
-  long playlistHttpStatus = 0;
-  const bool playlistFetched = FetchRawInProgressPlaylist(recordingId, playlistUrl, playlistText, error,
-                                                          &playlistWasNotFound, &playlistHttpStatus, requestTimeoutMs);
-  stateLock.lock();
-  if (!stillSameStream())
+  else
   {
-    error = "the in-progress recording stream was closed while its playlist was being fetched";
-    return false;
-  }
-  if (!playlistFetched)
-  {
-    // A definitive 404 OR 3xx here (Dispatcharr has genuinely removed this
-    // recording's HLS directory, per docs/RECORDINGS.md's own documented
-    // concat-plus-viewer-wait-grace removal -- see FetchRawInProgressPlaylist()'s
-    // own header comment for why a *naturally*-completed recording, as
-    // opposed to a user Stop, takes the 3xx path specifically), combined
-    // with the server's own isInProgress already confirming this recording
-    // is done, is a real "this recording is finished and gone" signal in
-    // its own right -- worth recomputing `finished` from even though
-    // there's no fresh playlist this cycle, rather than the previous
-    // behavior of returning early with `finished` untouched. Real,
-    // confirmed-by-code-reading gap this closes: without it, a recording
-    // whose final pre-removal refresh cycle left `finished` false (its own
-    // probe batch had a failure, deliberately holding `finished` at false
-    // for a retry -- see ResolveInProgressFinished()'s own comment) never
-    // became `finished` again, since every later refresh hit exactly this
-    // early return forever. ReadInProgressRecordingStreamImpl() then looped
-    // its full catch-up budget and returned 0 on every read indefinitely
-    // instead of EOF -- confirmed by code reading to be the *only* path to
-    // `finished` for a naturally-completed recording before the 3xx case
-    // was added here, since a natural completion's own final "completed"/
-    // "interrupted" status write (apps/channels/tasks.py) happens strictly
-    // after the HLS directory is already removed, at which point this
-    // addon's own next FetchRawInProgressPlaylist() call already sees the
-    // redirect, not a 404 (Dispatcharr's `hls()` view never 404s a `.m3u8`
-    // request as long as the final file exists, only a `.ts` one).
-    //
-    // Deliberately requires lookupOk too, not just the playlist 404/3xx --
-    // a non-404/non-3xx playlist failure (network blip, 5xx), or
-    // GetRecordingById() itself failing, still returns early with
-    // `finished` untouched, the existing, safer "unknown means don't
-    // assume finished" margin ResolveInProgressFinished() already applies
-    // to a failed lookup. That left one case open, closed just below: a
-    // recording *deleted* entirely mid-playback also 404s on
-    // GetRecordingById() itself (lookupOk false, not just the playlist),
-    // so this same stuck-forever symptom happened there.
-    if (playlistWasNotFound)
-      st.finished = ResolveInProgressFinished(lookupOk, rec.isInProgress, st.finished, /*allProbesSucceeded=*/true);
-    // The gap the paragraph above documents as still open -- a recording
-    // *deleted* outright, where the lookup itself 404s too -- is closed
-    // here: both endpoints agreeing the recording doesn't exist is a
-    // definitive "gone", unlike a lookup that merely failed. See
-    // dispatcharr::IsInProgressContentGone() for the exact conditions.
-    if (IsInProgressContentGone(!st.segments.empty(), playlistWasNotFound, lookupOk, lookupHttpStatus,
-                                rec.isInProgress))
+    std::string recordingsError;
+    long lookupHttpStatus = 0;
+    stateLock.unlock();
+    bool lookupAuthenticationNotCompleted = false;
+    lookupOk = GetRecordingById(recordingId, rec, recordingsError, &lookupHttpStatus, requestTimeoutMs,
+                                &lookupAuthenticationNotCompleted);
+    getRecordingsSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - getRecordingsStart).count();
+    // No answer at all to the lookup, for a stream that is already playing: the server is very likely unreachable,
+    // and the playlist fetch would only wait out another bound before failing the same way (a refresh was three
+    // timeouts long). Not for a cold start, whose loop treats a failed refresh as retryable and whose playlist may
+    // answer when the lookup did not.
+    if (dispatcharr::ShouldSkipPlaylistAfterUnansweredLookup(steadyState, lookupOk, lookupHttpStatus,
+                                                             lookupAuthenticationNotCompleted))
     {
-      kodi::Log(ADDON_LOG_INFO,
-                "pvr.dispatcharr-unofficial: in-progress recording %d is gone on the server (%s) -- ending "
-                "playback instead of polling it",
-                st.recordingId, lookupOk ? "finished, and its HLS directory has been removed" : "deleted");
-      st.contentGone = true;
-      st.finished = true;
-      // Its cross-open segment cache entry is dead weight now too, the
-      // same as for any other finished recording (see below).
-      std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
-      m_inProgressSegmentCache.erase(st.recordingId);
+      stateLock.lock();
+      error = "Dispatcharr did not answer the recording lookup: " + recordingsError;
+      return false;
     }
-    // A young recording has no HLS directory yet -- the caller's cold-start
-    // loop can wait that out. Decided from the same lookup, taken before
-    // the playlist fetch, that decides `finished` above.
-    if (coldStartRetryableOut)
-      *coldStartRetryableOut = ShouldRetryInProgressColdStart(playlistHttpStatus, lookupOk, rec.isInProgress);
-    return false;
+
+    std::string playlistUrl = baseDir + "index.m3u8";
+
+    auto playlistFetchStart = std::chrono::steady_clock::now();
+    bool playlistWasNotFound = false;
+    long playlistHttpStatus = 0;
+    const bool playlistFetched = FetchRawInProgressPlaylist(
+        recordingId, playlistUrl, playlistText, error, &playlistWasNotFound, &playlistHttpStatus, requestTimeoutMs);
+    stateLock.lock();
+    if (!stillSameStream())
+    {
+      error = "the in-progress recording stream was closed while its playlist was being fetched";
+      return false;
+    }
+    if (!playlistFetched)
+    {
+      // A definitive 404 OR 3xx here (Dispatcharr has genuinely removed this
+      // recording's HLS directory, per docs/RECORDINGS.md's own documented
+      // concat-plus-viewer-wait-grace removal -- see FetchRawInProgressPlaylist()'s
+      // own header comment for why a *naturally*-completed recording, as
+      // opposed to a user Stop, takes the 3xx path specifically), combined
+      // with the server's own isInProgress already confirming this recording
+      // is done, is a real "this recording is finished and gone" signal in
+      // its own right -- worth recomputing `finished` from even though
+      // there's no fresh playlist this cycle, rather than the previous
+      // behavior of returning early with `finished` untouched. Real,
+      // confirmed-by-code-reading gap this closes: without it, a recording
+      // whose final pre-removal refresh cycle left `finished` false (its own
+      // probe batch had a failure, deliberately holding `finished` at false
+      // for a retry -- see ResolveInProgressFinished()'s own comment) never
+      // became `finished` again, since every later refresh hit exactly this
+      // early return forever. ReadInProgressRecordingStreamImpl() then looped
+      // its full catch-up budget and returned 0 on every read indefinitely
+      // instead of EOF -- confirmed by code reading to be the *only* path to
+      // `finished` for a naturally-completed recording before the 3xx case
+      // was added here, since a natural completion's own final "completed"/
+      // "interrupted" status write (apps/channels/tasks.py) happens strictly
+      // after the HLS directory is already removed, at which point this
+      // addon's own next FetchRawInProgressPlaylist() call already sees the
+      // redirect, not a 404 (Dispatcharr's `hls()` view never 404s a `.m3u8`
+      // request as long as the final file exists, only a `.ts` one).
+      //
+      // Deliberately requires lookupOk too, not just the playlist 404/3xx --
+      // a non-404/non-3xx playlist failure (network blip, 5xx), or
+      // GetRecordingById() itself failing, still returns early with
+      // `finished` untouched, the existing, safer "unknown means don't
+      // assume finished" margin ResolveInProgressFinished() already applies
+      // to a failed lookup. That left one case open, closed just below: a
+      // recording *deleted* entirely mid-playback also 404s on
+      // GetRecordingById() itself (lookupOk false, not just the playlist),
+      // so this same stuck-forever symptom happened there.
+      if (playlistWasNotFound)
+        st.finished = ResolveInProgressFinished(lookupOk, rec.isInProgress, st.finished, /*allProbesSucceeded=*/true);
+      // The gap the paragraph above documents as still open -- a recording
+      // *deleted* outright, where the lookup itself 404s too -- is closed
+      // here: both endpoints agreeing the recording doesn't exist is a
+      // definitive "gone", unlike a lookup that merely failed. See
+      // dispatcharr::IsInProgressContentGone() for the exact conditions.
+      if (IsInProgressContentGone(!st.segments.empty(), playlistWasNotFound, lookupOk, lookupHttpStatus,
+                                  rec.isInProgress))
+      {
+        kodi::Log(ADDON_LOG_INFO,
+                  "pvr.dispatcharr-unofficial: in-progress recording %d is gone on the server (%s) -- ending "
+                  "playback instead of polling it",
+                  st.recordingId, lookupOk ? "finished, and its HLS directory has been removed" : "deleted");
+        st.contentGone = true;
+        st.finished = true;
+        // Its cross-open segment cache entry is dead weight now too, the
+        // same as for any other finished recording (see below).
+        std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
+        m_inProgressSegmentCache.erase(st.recordingId);
+      }
+      // A young recording has no HLS directory yet -- the caller's cold-start
+      // loop can wait that out. Decided from the same lookup, taken before
+      // the playlist fetch, that decides `finished` above.
+      if (coldStartRetryableOut)
+        *coldStartRetryableOut = ShouldRetryInProgressColdStart(playlistHttpStatus, lookupOk, rec.isInProgress);
+      return false;
+    }
+    fetchPlaylistSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - playlistFetchStart).count();
   }
-  double fetchPlaylistSec =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - playlistFetchStart).count();
+  const std::string& playlist = shared ? shared->playlistText : playlistText;
+  const auto manifestStartedAt = shared ? shared->startedAt : getRecordingsStart;
 
   // Append-only merge: segments before the count we already know about are
   // skipped (no rolling-window eviction for a recording -- see
@@ -2928,7 +2951,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   // lives in dispatcharr::ParseNewM3u8SegmentEntries() (M3u8SegmentParser.{h,cpp})
   // so it's unit-testable standalone -- see that function's own comment.
   size_t alreadyKnown = st.segments.size();
-  std::vector<M3u8SegmentEntry> pending = ParseNewM3u8SegmentEntries(playlistText, baseDir, alreadyKnown);
+  std::vector<M3u8SegmentEntry> pending = ParseNewM3u8SegmentEntries(playlist, baseDir, alreadyKnown);
   // Segment URLs are absolute and name whatever address Dispatcharr thought it was
   // reached on; behind a reverse proxy that is not what this addon can reach. Use
   // the configured address -- see dispatcharr::RebaseRecordingSegmentUrl().
@@ -2946,7 +2969,16 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   // cumulative, happens afterward on this thread once every probe in a
   // batch has finished.
   auto probeStart = std::chrono::steady_clock::now();
-  std::vector<int64_t> probedSizes(pending.size(), -1);
+  // Segments another open stream of the recording has already sized are taken from the cross-open cache instead of
+  // probed again -- see dispatcharr::SegmentSizesKnownToCache().
+  std::vector<int64_t> probedSizes;
+  {
+    std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
+    auto cacheIt = m_inProgressSegmentCache.find(recordingId);
+    probedSizes = cacheIt != m_inProgressSegmentCache.end()
+                      ? SegmentSizesKnownToCache(cacheIt->second.segments, pending, alreadyKnown)
+                      : std::vector<int64_t>(pending.size(), -1);
+  }
   // A leading segment that failed on the previous refresh is probed alone: nothing
   // behind it can be merged until it answers, and re-probing the whole tail every
   // refresh (only to discard the sizes) is what flooded the server -- see
@@ -2954,10 +2986,19 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   const bool probeOnlyLeading =
       !pending.empty() && ShouldProbeOnlyLeadingSegment(st.unprobeableSegment, pending[0].url);
   const size_t probeCount = probeOnlyLeading ? 1 : pending.size();
+  const size_t sizedFromCache =
+      static_cast<size_t>(std::count_if(probedSizes.begin(), probedSizes.end(), [](int64_t size) { return size > 0; }));
+  std::vector<size_t> toProbe;
+  for (size_t i = 0; i < probeCount; ++i)
+  {
+    if (probedSizes[i] < 0)
+      toProbe.push_back(i);
+  }
   stateLock.unlock(); // the probes are network calls
   constexpr size_t kMaxConcurrentProbes = 16;
-  RunInBoundedBatches(probeCount, kMaxConcurrentProbes, [this, &pending, &probedSizes, requestTimeoutMs](size_t i)
-                      { probedSizes[i] = ProbeSegmentByteSize(pending[i].url, requestTimeoutMs); });
+  RunInBoundedBatches(toProbe.size(), kMaxConcurrentProbes,
+                      [this, &pending, &probedSizes, &toProbe, requestTimeoutMs](size_t k)
+                      { probedSizes[toProbe[k]] = ProbeSegmentByteSize(pending[toProbe[k]].url, requestTimeoutMs); });
   double probeSegmentsSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - probeStart).count();
   stateLock.lock();
   if (!stillSameStream())
@@ -3032,8 +3073,9 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   size_t newSegmentsProbed = mergedCount;
   size_t newSegmentsProbeFailed = failedProbeCount;
   // A probe is a HEAD on a `.ts` URL, which refreshes the server's viewer
-  // key just as a keep-alive would -- see HlsViewerKeepAlive.h.
-  if (mergedCount > 0)
+  // key just as a keep-alive would -- see HlsViewerKeepAlive.h. Only a probe this
+  // stream sent itself: a size taken from the cache sent nothing.
+  if (!toProbe.empty() && toProbe.front() < mergedCount)
     st.nextHlsKeepAliveAt = NextHlsKeepAliveDueAt(std::chrono::steady_clock::now(), HlsKeepAliveOutcome::kRefreshed);
 
   // lookupOk/rec.isInProgress were captured *before* the playlist fetch
@@ -3059,7 +3101,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   // flips the status about three seconds before the final segment and the
   // ENDLIST tag appear -- see dispatcharr::GateFinishedOnEndList().
   st.finished =
-      GateFinishedOnEndList(statusFinished, M3u8HasEndList(playlistText), st.endListWaitingSince, now, kEndListGrace);
+      GateFinishedOnEndList(statusFinished, M3u8HasEndList(playlist), st.endListWaitingSince, now, kEndListGrace);
   if (statusFinished && !st.finished)
   {
     kodi::Log(ADDON_LOG_DEBUG,
@@ -3071,7 +3113,8 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   // Keep the cross-open cache (m_inProgressSegmentCache) in step. A
   // finished recording won't be opened through this path again -- it plays
   // back as a completed recording instead -- so its entry is just dead
-  // weight once that happens. Otherwise, append only what the entry lacks
+  // weight once that happens (not quite, see m_inProgressSegmentCache's
+  // comment: Kodi 22's stream-details probe does). Otherwise, append only what the entry lacks
   // rather than recopying the whole vector: this refresh runs roughly every
   // 500ms during active playback of a long recording, and st.segments is
   // always exactly this entry's own prefix (seeded from it verbatim on open,
@@ -3129,12 +3172,39 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   // same playlist URL) doubled the playlist traffic of every refresh cycle --
   // several a second near the live edge -- for nothing.
 
+  // Published only once this refresh has merged and updated the segment cache, so a stream that takes it finds the
+  // new segments' sizes there too.
+  st.lastAppliedManifestStartedAt = manifestStartedAt;
+  {
+    std::lock_guard<std::mutex> snapshotsLock(m_inProgressManifestSnapshotsMutex);
+    const auto publishNow = std::chrono::steady_clock::now();
+    if (st.finished)
+    {
+      m_inProgressManifestSnapshots.erase(recordingId);
+    }
+    else if (!shared && publishNow - manifestStartedAt < kMinRefreshInterval)
+    {
+      for (auto it = m_inProgressManifestSnapshots.begin(); it != m_inProgressManifestSnapshots.end();)
+      {
+        if (publishNow - it->second->startedAt >= kMinRefreshInterval)
+          it = m_inProgressManifestSnapshots.erase(it);
+        else
+          ++it;
+      }
+      auto& slot = m_inProgressManifestSnapshots[recordingId];
+      if (!slot || slot->startedAt < manifestStartedAt)
+        slot = std::make_shared<const InProgressManifestSnapshot>(
+            InProgressManifestSnapshot{manifestStartedAt, lookupOk, rec.isInProgress, std::move(playlistText)});
+    }
+  }
+
   double totalSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - refreshStart).count();
   kodi::Log(ADDON_LOG_DEBUG,
-            "pvr.dispatcharr-unofficial: RefreshInProgressRecordingManifest: %.3fs total (playlist fetch "
-            "%.3fs, %zu new segment probe(s) %.3fs [%zu failed], GetRecordingById %.3fs), "
-            "totalBytes=%lld totalDurationMs=%lld finished=%d",
-            totalSec, fetchPlaylistSec, newSegmentsProbed, probeSegmentsSec, newSegmentsProbeFailed, getRecordingsSec,
+            "pvr.dispatcharr-unofficial: RefreshInProgressRecordingManifest: %.3fs total (%s, playlist fetch "
+            "%.3fs, %zu new segment(s) merged, probes %.3fs [%zu failed, %zu sized by another stream], "
+            "GetRecordingById %.3fs), totalBytes=%lld totalDurationMs=%lld finished=%d",
+            totalSec, shared ? "lookup and playlist from another stream" : "own lookup and playlist", fetchPlaylistSec,
+            newSegmentsProbed, probeSegmentsSec, newSegmentsProbeFailed, sizedFromCache, getRecordingsSec,
             static_cast<long long>(st.totalBytes), static_cast<long long>(st.totalDurationMs), st.finished ? 1 : 0);
 
   st.lastManifestFetch = now;
@@ -3773,6 +3843,9 @@ void DispatcharrClient::CloseInProgressRecordingStreamImpl(InProgressRecordingSt
   st.cachedSegmentBytes.clear();
   st.cachedSegmentBytes.shrink_to_fit();
   st.cachedSegmentByteOffset = -1;
+  // Only of use to another stream for half a second, and nothing else would free it once the last one has closed.
+  std::lock_guard<std::mutex> snapshotsLock(m_inProgressManifestSnapshotsMutex);
+  m_inProgressManifestSnapshots.erase(st.recordingId);
 }
 
 DispatcharrClient::InProgressRecordingStreamState::~InProgressRecordingStreamState()

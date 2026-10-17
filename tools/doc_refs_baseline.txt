@@ -28,6 +28,7 @@ docs/CLOSED_ITEMS.md|function|IsApiKeyValidFor
 docs/CLOSED_ITEMS.md|function|MatchDayOfWeek
 docs/CLOSED_ITEMS.md|function|OnPreparePlayback
 docs/CLOSED_ITEMS.md|function|PlatformSupportsAddon
+docs/CLOSED_ITEMS.md|function|ProvidesStreamForMetaDataExtraction
 docs/CLOSED_ITEMS.md|function|SetConnectionState
 docs/CLOSED_ITEMS.md|function|SetFirstDayFromLocalTime
 docs/CLOSED_ITEMS.md|function|SwitchToChannel

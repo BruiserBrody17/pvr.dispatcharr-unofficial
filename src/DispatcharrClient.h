@@ -1752,7 +1752,8 @@ private:
     // stateMutex guards every other field here. curlMutex is held for a whole segment fetch and the copy out of
     // `cachedSegmentBytes` that follows it, so Close, which takes it before clearing the state, never frees the handle
     // or the cached bytes under a read. refreshMutex serialises manifest refreshes. Order: refresh, then curl, then
-    // state; the shared segment cache's own mutex (m_inProgressSegmentCacheMutex) is a leaf below all of them.
+    // state; the shared segment cache's own mutex (m_inProgressSegmentCacheMutex) and the shared manifest snapshots'
+    // (m_inProgressManifestSnapshotsMutex) are leaves below all of them, never held together.
     mutable std::mutex stateMutex;
     std::mutex refreshMutex;
     std::mutex curlMutex;
@@ -1780,6 +1781,9 @@ private:
     // see dispatcharr::GateFinishedOnEndList().
     std::optional<std::chrono::steady_clock::time_point> endListWaitingSince;
     std::chrono::steady_clock::time_point lastManifestFetch{};
+    // When the last lookup-and-playlist fetch this stream used began, its own or one shared by another stream of the
+    // recording (m_inProgressManifestSnapshots) -- see dispatcharr::CanReuseSharedInProgressManifest().
+    std::chrono::steady_clock::time_point lastAppliedManifestStartedAt{};
     // The leading unmerged segment that could not be sized, and for how long -- see
     // UnprobeableSegment.h.
     dispatcharr::UnprobeableSegmentTracker unprobeableSegment;
@@ -1863,7 +1867,11 @@ private:
   // time). Cleared for a recording once RefreshInProgressRecordingManifest()
   // sees it's finished -- a finished recording is played back through the
   // completed-recording path instead, so its entry here would just sit
-  // unused.
+  // unused. Not quite: Kodi 22's stream-details probe opens a just-finished
+  // recording through this path while its HLS folder is still there, and
+  // then sizes every segment again (docs/OPEN_ITEMS.md, "Kodi 22's
+  // stream-details probe of a just-finished recording sizes every segment
+  // again").
   struct InProgressRecordingSegmentCache
   {
     std::vector<InProgressRecordingSegmentInfo> segments;
@@ -1885,6 +1893,23 @@ private:
   std::map<int, InProgressRecordingSegmentCache> m_inProgressSegmentCache;
   std::mutex m_inProgressSegmentCacheMutex;
 
+  // The newest successful lookup and playlist fetch of each in-progress recording, published by the stream that made
+  // it so another open stream of the same recording can use it instead of fetching again -- see
+  // dispatcharr::CanReuseSharedInProgressManifest() for when it may. Only a refresh that got this far successfully
+  // publishes one; a failed fetch is never shared, so each stream still decides `finished` and `contentGone` from its
+  // own failures. Kept only while it can still be used: dropped when the recording finishes, when one of its streams
+  // closes, and when older than the throttle interval at the next publish.
+  struct InProgressManifestSnapshot
+  {
+    std::chrono::steady_clock::time_point startedAt{};
+    bool lookupOk = false;
+    bool recordingInProgress = false;
+    std::string playlistText;
+  };
+  std::map<int, std::shared_ptr<const InProgressManifestSnapshot>> m_inProgressManifestSnapshots;
+  // A leaf, like m_inProgressSegmentCacheMutex; the two are never held together.
+  std::mutex m_inProgressManifestSnapshotsMutex;
+
   // Fetches the recording's current HLS playlist (FetchRawInProgressPlaylist)
   // and merges any segments not already known into
   // `st`, extending its fixed-origin address space,
@@ -1900,6 +1925,8 @@ private:
   // cold-start loop reads it.
   // `coldStart` is set by OpenInProgressRecordingStream()'s own loop: an open keeps the configured timeout even when
   // it was seeded with segments from a previous open of the same recording (dispatcharr::IsInProgressSteadyState()).
+  // With two streams of one recording open, one may use the lookup and playlist the other has just fetched
+  // (m_inProgressManifestSnapshots), and the sizes it has just probed (m_inProgressSegmentCache).
   bool RefreshInProgressRecordingManifest(InProgressRecordingStreamState& st, bool force, std::string& error,
                                           bool* coldStartRetryableOut = nullptr, bool coldStart = false);
 

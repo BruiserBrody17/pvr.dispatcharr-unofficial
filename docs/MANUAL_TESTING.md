@@ -261,7 +261,12 @@ disk during a recording (both need the real conditions).
   stream before it closes the first. With debug logging on, start a recording, then start another within a second
   or two (JSON-RPC `Player.Open` twice in a loop does it): pass is the second plays while the first tears down,
   `kodi.log` shows `OpenRecordedStream: ... streamId=` with different ids and `openStreams=` going 1, 2, 1, and
-  nothing logs an unknown id. Repeat with a completed and an in-progress recording, and the same in-progress
-  recording twice. Stop playback: `CloseRecordedStream: ... openStreams=0`.
+  nothing logs an unknown id. Repeat with a completed and an in-progress recording. Stop playback:
+  `CloseRecordedStream: ... openStreams=0`. The same recording twice cannot be had this way (checked live
+  2026-10-17): Kodi 22 does not reopen the item already playing (`Player.Open` of it leaves the one stream playing
+  on), and its stream-details probe skips a recording it still counts as in progress. The case Kodi 22 does produce
+  is that probe opening a recording that has just finished while it is watched: start a test recording, play it,
+  stop the recording (`PVR.Record` with `record: false`), then show the Home or recordings window; the log has
+  `CVideoThumbLoader ... trying to extract filestream details` and `openStreams=2` for the same recording id.
 - Two installs sharing one account: neither should end up with a revoked key
   (`docs/CLOSED_ITEMS.md`, the two API-key entries).

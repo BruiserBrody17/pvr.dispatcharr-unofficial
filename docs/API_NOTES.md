@@ -426,8 +426,21 @@ reasons:
    Two consequences worth knowing: a stream paused behind the tail still
    polls and keeps the server's HLS key for that recording alive, which can
    delay the end of a recording for another viewer of it who is at the tail;
-   and two streams of one recording each poll its manifest (see
-   `docs/OPEN_ITEMS.md`).
+   and two streams of one recording share its manifest: one uses the
+   lookup and playlist the other fetched a moment ago
+   (`m_inProgressManifestSnapshots`, `CanReuseSharedInProgressManifest()`)
+   instead of asking again, which they each used to (`docs/CLOSED_ITEMS.md`,
+   "Two streams of one in-progress recording each poll its manifest").
+   When Kodi 22 itself opens several streams (confirmed live on 22.0-RC1,
+   2026-10-17): switching to another recording opens it before the old one
+   closes; `Player.Open` of the item already playing opens nothing; and
+   its stream-details probe (the thumbnail loader, on windows that list
+   recordings, sometimes from several threads at once) opens recordings
+   in the background, but never one it still counts as in progress (an
+   active timer). So two streams of one recording come only from that
+   probe catching a recording that has just finished while it is watched,
+   which the addon still opens through the in-progress path while the HLS
+   folder exists.
 
 ## How to verify quickly
 

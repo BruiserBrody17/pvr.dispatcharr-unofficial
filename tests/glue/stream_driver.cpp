@@ -9,6 +9,7 @@
 #include <curl/curl.h>
 #include <map>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <random>
 #include <string>
 #include <thread>
@@ -1419,6 +1420,107 @@ static void multi_play(DispatcharrClient& cl, const std::vector<int>& recIds, si
   INFO("multi: %zu streams played and closed", streams.size());
 }
 
+// Playlist fetches plus recording lookups the fake has answered for one in-progress recording so far.
+static long manifest_requests(int recId)
+{
+  const auto stats = nlohmann::json::parse(http("/__stats"), nullptr, false);
+  const std::string base = "GET /api/channels/recordings/" + std::to_string(recId) + "/";
+  long n = 0;
+  for (const std::string& key : {base, base + "hls/index.m3u8"})
+    if (stats.is_object() && stats.contains(key))
+      n += stats[key].get<long>();
+  return n;
+}
+
+// `durMs` of what Kodi does with open in-progress streams: a poller on every stream's times and length, and with
+// `atTail` a reader per stream that reads on from where it is to the live edge and waits there (each wait forces
+// refreshes). Not a SEEK_END: a read right after a seek that finds nothing is taken for Kodi's seek probe and ends
+// with 0. Returns the manifest requests the recording cost meanwhile.
+static long drive_streams(DispatcharrClient& cl, std::vector<OpenStream*> streams, int recId, long durMs, bool atTail)
+{
+  const long before = manifest_requests(recId);
+  const long end = ms() + durMs;
+  std::vector<std::thread> readers;
+  if (atTail)
+    for (auto* st : streams)
+      readers.emplace_back(
+          [&cl, st, end]
+          {
+            std::vector<uint8_t> buf(16384);
+            while (ms() < end)
+            {
+              const int n = cl.ReadRecordedStream(st->sid, buf.data(), (unsigned)buf.size());
+              if (n < 0)
+              {
+                sleep_ms(20);
+                continue;
+              }
+              if (n == 0)
+              {
+                FAIL("recording %d (stream %lld): unexpected end at the tail", st->recId, (long long)st->sid);
+                return;
+              }
+              for (int i = 0; i < n; i++)
+                if (buf[i] != st->byteAt(st->pos + i))
+                {
+                  FAIL("recording %d (stream %lld): byte mismatch at %lld at the tail", st->recId, (long long)st->sid,
+                       (long long)(st->pos + i));
+                  return;
+                }
+              st->pos += n;
+            }
+          });
+  while (ms() < end)
+  {
+    for (auto* st : streams)
+    {
+      DispatcharrClient::RecordedStreamTimes times;
+      cl.GetRecordedStreamTimes(st->sid, times);
+      cl.GetRecordedStreamLength(st->sid);
+    }
+    sleep_ms(30);
+  }
+  for (auto& t : readers)
+    t.join();
+  return manifest_requests(recId) - before;
+}
+
+// Two streams of one in-progress recording (Kodi 22 can hold both open) share its playlist fetch and lookup: the
+// server sees about what one stream costs, not twice as much -- polled only, and with both reading at the tail.
+// Before the sharing the two cost 2.0x (polled) and 2.1x (at the tail) what one did; with it 1.0x and 1.2x. Segments
+// of 2 s, nearer Dispatcharr's 4 s than the fake's default: at the tail each stream re-checks once right after
+// reading a new segment, and with the default's 300 ms that re-check, which nothing can share, is most of the traffic.
+static void ip_two_share(DispatcharrClient& cl)
+{
+  ctl("ip_seg_ms=2000&ip_reset=20");
+  OpenStream a, b;
+  if (!open_stream(cl, 7, a))
+    return;
+  const long durMs = getenv("SHARE_MS") ? atol(getenv("SHARE_MS")) : 8000;
+  const long onePolled = drive_streams(cl, {&a}, 7, durMs, false);
+  const long oneAtTail = drive_streams(cl, {&a}, 7, durMs, true);
+  if (!open_stream(cl, 7, b))
+    return;
+  const long twoPolled = drive_streams(cl, {&a, &b}, 7, durMs, false);
+  const long twoAtTail = drive_streams(cl, {&a, &b}, 7, durMs, true);
+  INFO("manifest requests in %ld ms: polled one=%ld two=%ld, at the tail one=%ld two=%ld", durMs, onePolled, twoPolled,
+       oneAtTail, twoAtTail);
+  const double maxRatio = getenv("SHARE_MAX_RATIO") ? atof(getenv("SHARE_MAX_RATIO")) : 1.5;
+  if (onePolled <= 0 || oneAtTail <= 0)
+    FAIL("one stream made no manifest requests (polled %ld, at the tail %ld)", onePolled, oneAtTail);
+  if (twoPolled > onePolled * maxRatio)
+    FAIL("two polled streams made %ld manifest requests, one made %ld", twoPolled, onePolled);
+  if (twoAtTail > oneAtTail * maxRatio)
+    FAIL("two streams at the tail made %ld manifest requests, one made %ld", twoAtTail, oneAtTail);
+  cl.CloseRecordedStream(a.sid);
+  // The other stream refreshes on its own once its partner is gone.
+  const long survivor = drive_streams(cl, {&b}, 7, 2000, true);
+  if (survivor <= 0)
+    FAIL("the remaining stream made no manifest requests after the other closed");
+  cl.CloseRecordedStream(b.sid);
+  expect_all_closed(cl);
+}
+
 // A stream already playing must not wait for another stream's open: the second open's cold start (here a slow first
 // playlist) holds no lock the first stream's reads need.
 static void ip_open_while_playing(DispatcharrClient& cl)
@@ -1632,6 +1734,8 @@ int main(int argc, char** argv)
     }
     else if (what == "ip_open_while_playing")
       ip_open_while_playing(*cl);
+    else if (what == "ip_two_share")
+      ip_two_share(*cl);
     else if (what == "multi_close_race")
       multi_close_race(*cl);
     else if (what == "multi_dtor")

@@ -2,6 +2,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
+#include <string>
+#include <vector>
+
 using namespace dispatcharr;
 
 namespace
@@ -70,4 +74,86 @@ TEST_CASE("PlanInProgressSegmentCacheUpdate does not underflow when more was pro
   // Cannot happen, but the subtraction must not wrap: with a short entry the answer is to take everything.
   CHECK(plan.action != SegmentCacheAction::kNone);
   CHECK(plan.appendFrom == 0);
+}
+
+namespace
+{
+using Clock = std::chrono::steady_clock;
+using std::chrono::milliseconds;
+
+constexpr milliseconds kMaxAge{500};
+
+bool CanReuse(Clock::time_point snapshot, Clock::time_point lastApplied, Clock::time_point now)
+{
+  return CanReuseSharedInProgressManifest(snapshot, lastApplied, now, kMaxAge);
+}
+
+struct CachedSeg
+{
+  std::string url;
+  int64_t byteSize = 0;
+};
+
+struct PendingSeg
+{
+  std::string url;
+};
+} // namespace
+
+TEST_CASE("CanReuseSharedInProgressManifest takes another stream's fetch while it is younger than the limit",
+          "[InProgressSegmentCache]")
+{
+  const Clock::time_point lastApplied = Clock::time_point{} + std::chrono::hours(1);
+  const auto snapshot = lastApplied + milliseconds(100);
+  CHECK(CanReuse(snapshot, lastApplied, snapshot + milliseconds(0)));
+  CHECK(CanReuse(snapshot, lastApplied, snapshot + milliseconds(499)));
+  CHECK_FALSE(CanReuse(snapshot, lastApplied, snapshot + milliseconds(500)));
+  CHECK_FALSE(CanReuse(snapshot, lastApplied, snapshot + milliseconds(2000)));
+}
+
+TEST_CASE("CanReuseSharedInProgressManifest never hands a stream a fetch it has already used",
+          "[InProgressSegmentCache]")
+{
+  // A lone stream finds only its own snapshot, which it applied: it must fetch, exactly as before the sharing, or it
+  // would poll half as often as it asks to. The same holds for another stream's snapshot it has already taken.
+  const auto own = Clock::time_point{} + std::chrono::hours(1);
+  CHECK_FALSE(CanReuse(own, own, own + milliseconds(10)));
+  // Older than what this stream last used (it fetched since): not new information either.
+  CHECK_FALSE(CanReuse(own - milliseconds(50), own, own + milliseconds(10)));
+}
+
+TEST_CASE("CanReuseSharedInProgressManifest lets a stream that has never refreshed take a fresh fetch",
+          "[InProgressSegmentCache]")
+{
+  // A second stream's cold start: nothing applied yet (the zero time point).
+  const auto snapshot = Clock::time_point{} + std::chrono::hours(1);
+  CHECK(CanReuse(snapshot, Clock::time_point{}, snapshot + milliseconds(50)));
+}
+
+TEST_CASE("SegmentSizesKnownToCache takes the sizes another stream has already probed", "[InProgressSegmentCache]")
+{
+  const std::vector<CachedSeg> cached{{"s0", 100}, {"s1", 200}, {"s2", 300}, {"s3", 400}};
+  // This stream holds 2 segments; the playlist lists s2..s4, the cache knows s2 and s3.
+  const std::vector<PendingSeg> pending{{"s2"}, {"s3"}, {"s4"}};
+  CHECK(SegmentSizesKnownToCache(cached, pending, 2) == std::vector<int64_t>{300, 400, -1});
+}
+
+TEST_CASE("SegmentSizesKnownToCache knows nothing past the cache or for a different URL", "[InProgressSegmentCache]")
+{
+  const std::vector<CachedSeg> cached{{"s0", 100}, {"s1", 200}};
+  CHECK(SegmentSizesKnownToCache(cached, std::vector<PendingSeg>{{"s2"}, {"s3"}}, 2) == std::vector<int64_t>{-1, -1});
+  // Same index, different segment: never borrow a size for it.
+  CHECK(SegmentSizesKnownToCache(cached, std::vector<PendingSeg>{{"other"}, {"s1"}}, 0) ==
+        std::vector<int64_t>{-1, 200});
+  CHECK(SegmentSizesKnownToCache(std::vector<CachedSeg>{}, std::vector<PendingSeg>{{"s0"}}, 0) ==
+        std::vector<int64_t>{-1});
+  CHECK(SegmentSizesKnownToCache(cached, std::vector<PendingSeg>{}, 0).empty());
+}
+
+TEST_CASE("SegmentSizesKnownToCache does not inherit another stream's zero-byte placeholder",
+          "[InProgressSegmentCache]")
+{
+  // The other stream gave up on s1 and merged it as empty; this stream probes s1 itself.
+  const std::vector<CachedSeg> cached{{"s0", 100}, {"s1", 0}, {"s2", 300}};
+  CHECK(SegmentSizesKnownToCache(cached, std::vector<PendingSeg>{{"s1"}, {"s2"}}, 1) == std::vector<int64_t>{-1, 300});
 }

@@ -10,6 +10,15 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased] -- addon
+
+### Changed
+
+- **Two streams of one recording that is still being recorded no longer ask the server twice as often**: should two
+  be open at once, they share the recording's playlist and status checks and the segment sizes either has already
+  learned, so the server sees about what one stream costs. Kodi 22 was not seen opening two such streams in normal use,
+  so for now this is a safeguard rather than something you will notice.
+
 ## [0.14.0] - 2026-10-17
 
 The first release for Kodi 22 ("Piers"), built against Kodi 22.0 RC1. **It works with Kodi 22 only**: Kodi 22 refuses a
