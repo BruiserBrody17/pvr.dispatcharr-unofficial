@@ -10,7 +10,7 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [0.14.0] - unreleased
+## [0.14.0] - 2026-10-17
 
 The first release for Kodi 22 ("Piers"), built against Kodi 22.0 RC1. **It works with Kodi 22 only**: Kodi 22 refuses a
 binary addon built for Kodi 21 ("not supported"), and this one is refused by Kodi 21 the other way round. Kodi 21 stays on the
