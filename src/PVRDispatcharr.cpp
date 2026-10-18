@@ -3713,7 +3713,7 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
     // own _safe_name() sanitization, which dispatcharr::
     // SanitizeRecordingDirectory() (RecordingDirectory.h) now mirrors
     // (added 2026-09-26, a 21st-pass audit, fixing a real, confirmed
-    // bug: a raw title containing '/' -- e.g. "Face/Off", "20/20" --
+    // bug: a raw title containing '/' -- e.g. "Alpha/Beta", "10/12" --
     // turned SetDirectory() into a *nested* Kodi folder instead of
     // Dispatcharr's own single flat one, confirmed against Kodi's real
     // source, CPVRRecordingsPath treats a raw '/' in Directory as a path

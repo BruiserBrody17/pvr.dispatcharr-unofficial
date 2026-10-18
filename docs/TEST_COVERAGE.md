@@ -950,17 +950,18 @@ sanitization -- strips the same forbidden-filename-character set
 (`\ / : * ? " < > |`) and trims -- so `GetRecordings()`'s own
 `SetDirectory(rec.title)` call matches the single flat per-show folder
 Dispatcharr itself actually wrote the recording under. A title
-containing a forward slash (e.g. "Face/Off", "20/20") passed straight
+containing a forward slash (e.g. "Alpha/Beta", "10/12") passed straight
 through used to turn into a *nested* Kodi folder instead, confirmed
 against Kodi's real source: `CPVRRecordingsPath` treats a raw `/` in
 `Directory` as a path separator, and only the title itself gets
 `CURL::Encode()`'d, not the directory. Falls back to `"Recording"` for
 the rare case sanitizing consumes the whole title, matching this
 addon's own already-existing "never an empty Directory" convention.
-**Confirmed live 2026-09-30**: an API-created recording titled `Face/Off`
-appears under the single flat folder `FaceOff`, and a title containing every
-forbidden character (`/ : * ? " < > | \`) under one sanitized folder, with
-no nested folder in either.
+**Confirmed live 2026-09-30**: an API-created recording whose title has a
+`/` in it appears under one flat folder named for the title with the slash
+dropped, and a title containing every forbidden character
+(`/ : * ? " < > | \`) under one sanitized folder, with no nested folder in
+either.
 
 ### `RecordingEpgLinks`
 

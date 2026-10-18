@@ -20,7 +20,7 @@ namespace dispatcharr
 //
 // Fix for a real, confirmed bug found via a project-wide review, not
 // itself independently reproduced: a title containing a forward slash
-// (e.g. "Face/Off", "20/20") passed straight through to SetDirectory()
+// (e.g. "Alpha/Beta", "10/12") passed straight through to SetDirectory()
 // turned into a *nested* Kodi folder instead of Dispatcharr's own single
 // flat one -- confirmed against Kodi's real source, CPVRRecordingsPath
 // treats a raw '/' in Directory as a path separator, while only the

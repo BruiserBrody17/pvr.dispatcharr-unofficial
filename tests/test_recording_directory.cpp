@@ -6,7 +6,7 @@ using namespace dispatcharr;
 
 TEST_CASE("SanitizeRecordingDirectory passes through an ordinary title unchanged", "[RecordingDirectory]")
 {
-  CHECK(SanitizeRecordingDirectory("Breaking Bad") == "Breaking Bad");
+  CHECK(SanitizeRecordingDirectory("Alpha Cookery") == "Alpha Cookery");
 }
 
 TEST_CASE("SanitizeRecordingDirectory strips a forward slash -- the real bug this fixes", "[RecordingDirectory]")
@@ -14,8 +14,8 @@ TEST_CASE("SanitizeRecordingDirectory strips a forward slash -- the real bug thi
   // Kodi's own CPVRRecordingsPath treats a raw '/' in Directory as a
   // path separator, turning this into a nested folder instead of
   // Dispatcharr's own single flat one for the show.
-  CHECK(SanitizeRecordingDirectory("Face/Off") == "FaceOff");
-  CHECK(SanitizeRecordingDirectory("20/20") == "2020");
+  CHECK(SanitizeRecordingDirectory("Alpha/Beta") == "AlphaBeta");
+  CHECK(SanitizeRecordingDirectory("10/12") == "1012");
 }
 
 TEST_CASE("SanitizeRecordingDirectory strips every forbidden filename character", "[RecordingDirectory]")
