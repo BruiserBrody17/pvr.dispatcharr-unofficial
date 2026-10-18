@@ -584,10 +584,21 @@ TEST_CASE("DecideInProgressColdStartStep stops waiting on a recording that finis
 TEST_CASE("DecideInProgressColdStartStep retries only the young recording's missing playlist -- the live fix",
           "[RecordingVisibility]")
 {
-  // The failed refresh's `retryable` is ShouldRetryInProgressColdStart()'s verdict;
-  // the stale segment/finished flags of a failed refresh are never consulted.
+  // The failed refresh's `retryable` is ShouldRetryInProgressColdStart()'s verdict.
   CHECK(DecideInProgressColdStartStep(false, /*retryable=*/true, false, false) == InProgressColdStartStep::kWait);
   CHECK(DecideInProgressColdStartStep(false, /*retryable=*/true, true, true) == InProgressColdStartStep::kWait);
   CHECK(DecideInProgressColdStartStep(false, /*retryable=*/false, false, false) == InProgressColdStartStep::kFail);
-  CHECK(DecideInProgressColdStartStep(false, /*retryable=*/false, true, true) == InProgressColdStartStep::kFail);
+  CHECK(DecideInProgressColdStartStep(false, /*retryable=*/false, true, false) == InProgressColdStartStep::kFail);
+}
+
+TEST_CASE("DecideInProgressColdStartStep sends a finished recording whose playlist is gone to its file",
+          "[RecordingVisibility]")
+{
+  // Found live 2026-10-18: an interrupted recording with `_hls_dir` still set took the HLS path days after it ended. A
+  // failed refresh sets `finished` only when the playlist is gone and the lookup says the recording is over; segments
+  // seeded from an earlier open do not change that (their URLs are gone too).
+  CHECK(DecideInProgressColdStartStep(false, /*retryable=*/false, /*haveSegments=*/false, /*finished=*/true) ==
+        InProgressColdStartStep::kFinishedPlaylistGone);
+  CHECK(DecideInProgressColdStartStep(false, /*retryable=*/false, /*haveSegments=*/true, /*finished=*/true) ==
+        InProgressColdStartStep::kFinishedPlaylistGone);
 }

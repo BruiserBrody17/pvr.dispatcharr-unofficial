@@ -1194,6 +1194,14 @@ proves: 130 playlist GETs per 40s at the live edge became 65.
 `RecordingVisibility` gained `DecideDeleteTimerAction()`: a failed server lookup is no longer guessed past -- 404 is
 already-gone, `forceDelete` keeps Stop, anything else is refused (confirmed live), and it can never reach Delete unverified (tested exhaustively).
 
+`DecideInProgressColdStartStep()` gained `kFinishedPlaylistGone` (2026-10-18, on `Piers` and ported to `Omega`): a
+failed refresh whose playlist is gone (404 or a redirect) on a recording the lookup says has ended sends
+`OpenRecordedStream()` to the finished file instead of failing. Found live: Dispatcharr left `_hls_dir` set on an
+interrupted recording for days, so it was routed to the HLS path. Unit-tested in `tests/test_recording_visibility.cpp`;
+the glue scenario `finished_hls_gone` opens such a recording through the C function table (its playlist redirecting to
+the file: the file's bytes, not real-time; no playlist and no file: a failure with no notification) and fails on the
+code before the change.
+
 ### `RecurringRuleEdit`
 
 `RecurringRuleEdit` is `ComputeRecurringRuleEditPatch()`, `RecurringRuleEditPatch` and `ComputeEndDateForOpenEndedRuleEdit()` (added 2026-10-02, fixing

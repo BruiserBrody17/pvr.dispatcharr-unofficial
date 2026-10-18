@@ -2982,8 +2982,11 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   return true;
 }
 
-bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t startTime, std::string& error)
+bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t startTime, std::string& error,
+                                                      bool* finishedPlaylistGoneOut)
 {
+  if (finishedPlaylistGoneOut)
+    *finishedPlaylistGoneOut = false;
   CloseInProgressRecordingStream();
 
   // Opened and seeded in one state-locked scope: a refresh from another thread (GetStreamTimes() polling) that sees the
@@ -3049,7 +3052,8 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
     // (RecordingVisibility.h, tested); see dispatcharr::ShouldRetryInProgressColdStart()
     // for why only that one failure retries and anything else still fails fast.
     bool stopWaiting = false;
-    switch (DecideInProgressColdStartStep(refreshOk, retryable, haveSegments, finished))
+    const InProgressColdStartStep step = DecideInProgressColdStartStep(refreshOk, retryable, haveSegments, finished);
+    switch (step)
     {
     case InProgressColdStartStep::kReady:
       haveSegment = true;
@@ -3059,7 +3063,10 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
       stopWaiting = true; // finished with literally zero segments -- nothing to wait for
       break;
     case InProgressColdStartStep::kFail:
+    case InProgressColdStartStep::kFinishedPlaylistGone:
     {
+      if (step == InProgressColdStartStep::kFinishedPlaylistGone && finishedPlaylistGoneOut)
+        *finishedPlaylistGoneOut = true;
       std::lock_guard<std::mutex> stateLock(m_inProgressStateMutex);
       m_inProgressRecordingStream = InProgressRecordingStreamState();
       ++m_inProgressSession;
@@ -3648,7 +3655,7 @@ bool DispatcharrClient::IsLiveTimeshiftStreamOpen() const
   return m_liveTimeshiftStream.open;
 }
 
-bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
+bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error, bool notifyViewer)
 {
   CloseRecordingStream();
 
@@ -3764,7 +3771,7 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
     if (outcome == RecordingOpenOutcome::kHttpFailure)
     {
       error = "Dispatcharr returned HTTP " + std::to_string(httpCode) + " opening recording stream";
-      const std::string userMessage = DescribeRecordingOpenFailure(httpCode);
+      const std::string userMessage = notifyViewer ? DescribeRecordingOpenFailure(httpCode) : std::string();
       if (!userMessage.empty())
         kodi::QueueNotification(QUEUE_ERROR, "", userMessage);
       return false;

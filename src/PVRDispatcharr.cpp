@@ -4126,8 +4126,21 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
             "pvr.dispatcharr-unofficial: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d "
             "hlsDirStillPresent=%d",
             recording.GetRecordingId().c_str(), id, rec.isInProgress ? 1 : 0, rec.hlsDirStillPresent ? 1 : 0);
-  bool opened = useGrowingBuffer ? m_client.OpenInProgressRecordingStream(id, recording.GetRecordingTime(), error)
+  bool finishedPlaylistGone = false;
+  bool opened = useGrowingBuffer ? m_client.OpenInProgressRecordingStream(id, recording.GetRecordingTime(), error,
+                                                                          &finishedPlaylistGone)
                                  : m_client.OpenRecordingStream(id, error);
+  // A leftover `_hls_dir` sent a finished recording down the HLS path (see
+  // InProgressColdStartStep::kFinishedPlaylistGone); whatever is left of it is the finished file.
+  if (!opened && finishedPlaylistGone)
+  {
+    kodi::Log(ADDON_LOG_DEBUG,
+              "pvr.dispatcharr-unofficial: OpenRecordedStream: recording %d is finished and its HLS playlist is "
+              "gone (%s) -- opening the finished file instead",
+              id, error.c_str());
+    error.clear();
+    opened = m_client.OpenRecordingStream(id, error, /*notifyViewer=*/false);
+  }
   kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: OpenRecordedStream: opened=%d isInProgressStreamOpen=%d",
             opened ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
   if (!opened)

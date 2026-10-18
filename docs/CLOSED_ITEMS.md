@@ -6,6 +6,34 @@
 
 ### Fixed
 
+#### An interrupted recording with a leftover `_hls_dir` is opened as in progress, and fails again and again
+
+**Opened 2026-10-18 on `Piers`, found during the live check of the audit's fixes (Kodi 22.0-RC1 against the lab server);
+confirmed live.** A recording the server had marked `interrupted` two days earlier (`interrupted_reason`
+`no_stream_data`, `bytes_written` 0, `remux_success` false) still had `custom_properties._hls_dir` set.
+`ParseRecordingFields()` turns that into `hlsDirStillPresent`, so `OpenRecordedStream()` takes the in-progress path
+(`inProgress=0 hlsDirStillPresent=1` in the debug log), the in-progress playlist answers 404, and the open fails with
+"Dispatcharr returned HTTP 404 fetching in-progress playlist". Kodi 22's thumbnail loader retried it about ten times in
+ten minutes, each an error line in `kodi.log`. Nothing is lost in this case, since there is no file to play, but a
+finished recording with real content and the same leftover key would be sent to a playlist that is gone too; not checked
+whether that open falls back to the finished file. Fix: trust `_hls_dir` only while the status is not terminal (or
+shortly after `ended_at`), and/or fall back to the finished-file path on a 404 for a terminal recording; an empty one
+(`bytes_written` 0) logged once, not as an error on every open. Regression test in `tests/test_recording_parser.cpp` or
+`tests/test_recording_visibility.cpp`.
+
+**Closed 2026-10-18 on `Piers`, and ported to `Omega` the same day by hand (`Omega` has one recorded-stream slot, so the
+failed in-progress open resets it before the file is opened); confirmed with a unit test and the glue harness on both
+branches; not checked live (no recording in that state could be made on purpose).** Dispatcharr's own source explains
+the key: `_hls_dir` is cleared only after a successful remux has removed the HLS directory, and is kept on purpose after
+a shutdown (to resume) or a failed remux (the HLS copy is then the only one), so the addon keeps trusting it, and its
+HLS endpoint redirects the playlist to the file whenever the file exists. What changed is the failure:
+`DecideInProgressColdStartStep()` has a `kFinishedPlaylistGone` outcome (the playlist is gone and the lookup says the
+recording has ended), and `OpenRecordedStream()` then opens the finished file. That fallback passes `notifyViewer` false
+to `OpenRecordingStream()`, so a recording with no file at all still fails as before, in the log only: Kodi 22's
+thumbnail loader makes opens nobody asked to watch (Kodi 21 not checked), and a notification on each would be new. The
+glue scenario `finished_hls_gone` fails on the old code ("did not open"). Not done: the error line per open for an empty
+recording stays.
+
 #### Integer overflows in pure helpers, two of them 32-bit-only
 
 **Opened 2026-10-18 on `Piers`, from the read-only audit.** (1) `EdlDecision.h`: `covered * 100` is a signed overflow
@@ -13,7 +41,7 @@ for a large `covered` (confirmed under UBSan); return early when `covered <= 0` 
 `EpgTagUtil.cpp`: `catchup_days` times 86400 is not clamped, and overflows a 32-bit `time_t` (by arithmetic, not run on
 a 32-bit build); clamp the days or use int64. (3) `SaturatingTimeGm` (behind `TimeFromIso` and `ParseXmlTvTime()`) has
 no low-end clamp on a 32-bit `time_t` (low confidence). Unit tests in the matching `tests/test_<module>.cpp`; see also
-`OPEN_ITEMS.md` on `Piers`, "The 32-bit unit tests run without UBSan".
+`OPEN_ITEMS.md`, "The 32-bit unit tests run without UBSan".
 
 **Closed 2026-10-18 on `Piers`, confirmed by unit tests; ported to `Omega` the same day, where the code was the same.**
 (1) `WithoutBreaksCoveringRecording()` clamps both ends of an entry into [0, duration] before subtracting, so `covered`

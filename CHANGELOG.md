@@ -14,6 +14,8 @@ compare against.
 
 ### Fixed
 
+- **A finished recording whose live copy is gone opens from its file**: the server can leave a recording marked as
+  still having its live copy after it ended, and the addon then failed to open it; it now plays the finished file.
 - **Realtime updates work behind a server or proxy that writes `Upgrade:websocket` without a space.** The addon looked
   for the exact text `Upgrade: websocket` and, without it, silently fell back to refreshing on a timer. Dispatcharr's
   own server was never affected.

@@ -42,6 +42,7 @@ run "destroy with streams open"  TMO=30 T=120 -- dtor_inflight
 run "PVR surface: functional"    BIN=pvr_harness T=180 -- functional
 run "PVR: M3U refresh event"       BIN=pvr_harness T=60 -- refresh_events
 run "PVR: server offset vs table"   BIN=pvr_harness T=60 -- offset_cross_check
+run "PVR: finished recording, playlist gone" BIN=pvr_harness T=60 -- finished_hls_gone
 run "PVR surface: threads"       BIN=pvr_harness T=180 -- surface 6000
 run "PVR: connection, healthy"    BIN=pvr_harness T=60 -- connection_state 4000 connected
 run "PVR: connection, rejected"   BIN=pvr_harness T=60 CTL="login_status=401" -- connection_state 4000 denied

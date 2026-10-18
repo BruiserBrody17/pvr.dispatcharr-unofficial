@@ -984,7 +984,11 @@ public:
   // unset for a completed recording for that reason. Only supports a
   // completed recording (a real, Range-seekable file) -- an in-progress one
   // is instead served via OpenInProgressRecordingStream() below.
-  bool OpenRecordingStream(int recordingId, std::string& error);
+  //
+  // `notifyViewer` false keeps an HTTP failure in the log only, without DescribeRecordingOpenFailure()'s notification:
+  // the fallback from a gone HLS playlist (PVRDispatcharr::OpenRecordedStream()) also runs for opens nobody asked to
+  // watch (Kodi 22's thumbnail loader makes them, seen on `Piers`; Kodi 21 not checked).
+  bool OpenRecordingStream(int recordingId, std::string& error, bool notifyViewer = true);
   int ReadRecordingStream(uint8_t* buffer, unsigned int size);
   int64_t SeekRecordingStream(int64_t position, int whence);
   int64_t GetRecordingStreamLength() const;
@@ -1080,7 +1084,12 @@ public:
   // than live-timeshift's own "anchor at the trim point" approach below,
   // since a recording always starts at true byte 0 with a genuinely known
   // start time, no cold-start trim to anchor instead.
-  bool OpenInProgressRecordingStream(int recordingId, time_t startTime, std::string& error);
+  // `finishedPlaylistGoneOut`, if given, is set true when the open failed because
+  // the recording is over and its HLS playlist is gone
+  // (InProgressColdStartStep::kFinishedPlaylistGone): the caller should open the
+  // finished file with OpenRecordingStream() instead.
+  bool OpenInProgressRecordingStream(int recordingId, time_t startTime, std::string& error,
+                                     bool* finishedPlaylistGoneOut = nullptr);
   int ReadInProgressRecordingStream(uint8_t* buffer, unsigned int size);
   int64_t SeekInProgressRecordingStream(int64_t position, int whence);
   int64_t GetInProgressRecordingStreamLength();
