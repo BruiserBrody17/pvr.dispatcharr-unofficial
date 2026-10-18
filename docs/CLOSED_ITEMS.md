@@ -36,8 +36,9 @@ route that does not start with `/` (or contains `@`, `\` or a scheme) and a port
 (`PluginUrlUtil.h`): a route must start with a single `/` and hold no `@`, backslash, `#`, space or control character, a
 port must be 1 to 65535. `CallTimeshiftPluginAction()` checks before the access token is stored or put into a URL, and
 `RefreshLiveManifest()` checks the segment prefix; either refuses the response with an error. Tests in
-`tests/test_plugin_url_util.cpp`. Not checked live: the real plugin's routes (`/<channel-uuid>/live.m3u8`,
-`/<channel-uuid>/`) pass the check by reading.
+`tests/test_plugin_url_util.cpp`. Checked live the same day (the PR's CI build on Kodi 22.0-RC1 against the lab server,
+through a forwarder that logged each request): a channel in Server-side mode started, its playlist refreshes passed the
+segment-prefix check, segments came from the plugin's file server, and a rewind to the start of the buffer played on.
 
 #### WebSocket handshake: too strict on `Upgrade`, too trusting in its error log
 
@@ -52,7 +53,10 @@ line parser with `FindWebSocketAcceptHeader()`; a different header that merely c
 counts. The failure message passes the response through `SanitizeServerErrorBody(…, 200)`. Tests in
 `tests/test_web_socket_handshake.cpp`, plus two local-server tests in `tests/test_web_socket_client.cpp` (a full connect
 with `Upgrade:websocket`, and a refused handshake whose error holds no control characters); all fail on the old code.
-Not checked live: Dispatcharr's own server sends `Upgrade: websocket` and was never affected.
+Checked live the same day (the PR's CI build on Kodi 22.0-RC1 against the lab server, through a forwarder that logged
+each request): the real server's `101` was accepted ("realtime updates: connected"), and `recording_started` and
+`recording_updated` arrived for a test recording. Dispatcharr's own server sends `Upgrade: websocket` and was never
+affected.
 
 #### Server input that reaches Kodi unchecked: negative episodes, sequence order, wrapped integers, a non-string token
 
@@ -61,13 +65,15 @@ season or episode through to Kodi. (2) `ParseNewLiveManifestSegments()` does not
 sequence numbers. (3) A raw `get<int>()` on `days_of_week` and on the adoption state wraps an unsigned or out-of-range
 value instead of rejecting it. (4) `Login()` accepts an `access` field that is not a string and stores an empty token.
 
-**Closed 2026-10-18 on `Piers`, confirmed by unit tests.** (1) `ParseEpisodeNum()` leaves a field below -1 unknown.
-Not every negative: Dispatcharr's own export writes `-1` for season 0, which the existing specials test caught when
-the first version of the fix refused it. (2) `ParseNewLiveManifestSegments()` keeps only a strictly increasing run (a
+**Closed 2026-10-18 on `Piers`, confirmed by unit tests.** (1) `ParseEpisodeNum()` leaves a field below -1 unknown. Not
+every negative: Dispatcharr's own export writes `-1` for season 0, which the existing specials test caught when the
+first version of the fix refused it. (2) `ParseNewLiveManifestSegments()` keeps only a strictly increasing run (a
 malformed entry does not raise the bar). (3) `days_of_week` entries outside 0 to 6 and adoption-state ids outside `int`
 are dropped, not wrapped. (4) `ReadNonEmptyStringField()` (`JsonFieldUtil.h`): `Login()` and `RefreshAccessToken()` fail
 on an `access` that is absent, empty or not a string, rather than storing an empty token. The tests for (1) to (3) fail
-on the old code; (4) is a new helper with its own tests.
+on the old code; (4) is a new helper with its own tests. (4) checked live the same day (the PR's CI build on Kodi
+22.0-RC1 against the lab server, through a forwarder that logged each request): the login, and a token refresh about
+five minutes later, both stored a token that every later request used, with no 401.
 
 #### `UrlEncode()` returns the value unescaped when escaping fails
 
@@ -75,10 +81,12 @@ on the old code; (4) is a new helper with its own tests.
 input as it was, so a value with `&` or `/` would change the request it is put into. Fail closed instead (an empty
 result the caller refuses, or an encoder that does not need curl). Unit test in `tests/test_url_encode.cpp`.
 
-**Closed 2026-10-18 on `Piers`, confirmed by unit tests.** `UrlEncode()` encodes by hand (RFC 3986 unreserved bytes kept,
-everything else `%XX` in upper case), so there is no curl handle to fail and no fallback. A test pins the output to
-`curl_easy_escape`'s for every byte value and for all 256 together, so the requests it builds are byte-identical to
-before.
+**Closed 2026-10-18 on `Piers`, confirmed by unit tests.** `UrlEncode()` encodes by hand (RFC 3986 unreserved bytes
+kept, everything else `%XX` in upper case), so there is no curl handle to fail and no fallback. A test pins the output
+to `curl_easy_escape`'s for every byte value and for all 256 together, so the requests it builds are byte-identical to
+before. Checked live the same day (the PR's CI build on Kodi 22.0-RC1 against the lab server, through a forwarder that
+logged each request): a timer set from the guide sent the programme lookup with its times escaped (`…%3A59%3A59Z`), the
+search answered 200, and the timer got the programme's title.
 
 #### The timeshift file server answers 404, not the 403 the docs tell users to expect
 
