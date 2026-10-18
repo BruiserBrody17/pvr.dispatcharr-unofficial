@@ -52,7 +52,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`fe85ce3`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`7ae30bb`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -61,6 +61,8 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `6cc7ee1`, `2ec3551`, `b0f542a` | already on `Piers` as `b26412c`, `48764de`, `ffe8c16` | The docs-audit pass, made on `Piers` first and ported to `Omega` without its Kodi 22-only parts. |
 | `80a146f` | `git cherry-pick -x` (applied cleanly) | Made-up titles in the recording-directory tests, comments and docs. |
 | `fe85ce3` | already on `Piers` as `59123ca` | The read-only audit's pure-logic fixes and two doc errors, made on `Piers` first and cherry-picked to `Omega`; only `OPEN_ITEMS.md`, `CLOSED_ITEMS.md` and `CHANGELOG.md` needed a hand fix there. |
+| `66722df` | not ported: `Piers` already lists them | The read-only audit's 21 open items, copied to `Omega`'s `OPEN_ITEMS.md` and checked against its code (three reworded for `Omega`). |
+| `7ae30bb` | already on `Piers` as `3a0897b` | A finished recording's file opened when its leftover HLS playlist is gone; made on `Piers` first and ported to `Omega` by hand (one recorded-stream slot there). |
 
 ## Dependencies that differ by Kodi release
 
