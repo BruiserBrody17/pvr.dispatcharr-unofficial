@@ -4,25 +4,26 @@
 
 ## Status at a glance
 
-**31 open, 315 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the
+**24 open, 322 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the
-Kodi 22 work on `Piers`: what remains of Kodi 22 support. The other 28 come from the 2026-10-18 read-only audit of the
-whole project (addon, both plugins, tools, CI and packaging; findings only, nothing changed), each marked with how sure
+Kodi 22 work on `Piers`: what remains of Kodi 22 support. The other 21 come from the 2026-10-18 read-only audit of the
+whole project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the
+same day and moved to `CLOSED_ITEMS.md`), each marked with how sure
 the audit was: *confirmed* (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the
 trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 12 |
+| Open: Fix known, not yet done | 7 |
 | Open: Architectural / concurrency | 4 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 2 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 7 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 273 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 280 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -74,44 +75,6 @@ keep that buffer-wide heartbeat fresh, and `DispatcharrClient.h` assumes they al
 viewer heartbeats on the API port fail for 30 s or more (a 429, the expired-token skip) while segment reads keep
 working, the buffer is stopped mid-playback. Fix: tear down only if the buffer-wide heartbeat is also stale; otherwise
 just drop the stale viewers. Regression test in the plugin's `tests/`.
-
-#### Integer overflows in pure helpers, two of them 32-bit-only
-
-**Opened 2026-10-18, from the read-only audit.** (1) `EdlDecision.h`: `covered * 100` is a signed overflow for a large
-`covered` (confirmed under UBSan); return early when `covered <= 0` and do the arithmetic in 64 bits. (2) `EpgTagUtil.cpp`:
-`catchup_days` times 86400 is not clamped, and overflows a 32-bit `time_t` (by arithmetic, not run on a 32-bit build);
-clamp the days or use int64. (3) `SaturatingTimeGm` (behind `TimeFromIso` and `ParseXmlTvTime()`) has no low-end clamp
-on a 32-bit `time_t` (low confidence). Unit tests in the matching `tests/test_<module>.cpp`; see also "The 32-bit unit
-tests run without UBSan" below.
-
-#### The server-supplied timeshift URL is not validated before the plugin token is sent to it
-
-**Opened 2026-10-18, from the read-only audit; confirmed by reading.** `PluginUrlUtil` builds the timeshift file-server
-URL from a route and port the plugin reports, without requiring the route to start with `/` or the port to be at most
-65535. A route like `@otherhost/` turns the authority into a different host, and the plugin token goes there. The
-plugin is the one reporting the route, so this needs a compromised or buggy plugin, but the check is cheap. Fix: refuse a
-route that does not start with `/` (or contains `@`, `\` or a scheme) and a port outside 1 to 65535. Unit test in
-`tests/test_plugin_url_util.cpp`.
-
-#### WebSocket handshake: too strict on `Upgrade`, too trusting in its error log
-
-**Opened 2026-10-18, from the read-only audit; confirmed by reading.** `IsWebSocketHandshakeAccepted()` needs the exact
-text `upgrade: websocket`, so a valid `Upgrade:websocket` (no space) is rejected and realtime updates are silently off.
-And a failed handshake logs the server's raw header bytes; pass them through `SanitizeServerErrorBody()` first. Unit test
-in `tests/test_web_socket_handshake.cpp`.
-
-#### Server input that reaches Kodi unchecked: negative episodes, sequence order, wrapped integers, a non-string token
-
-**Opened 2026-10-18, from the read-only audit.** Each small, each unit-testable: (1) `ParseEpisodeNum()` lets a negative
-season or episode through to Kodi. (2) `ParseNewLiveManifestSegments()` does not require strictly increasing media
-sequence numbers. (3) A raw `get<int>()` on `days_of_week` and on the adoption state wraps an unsigned or out-of-range
-value instead of rejecting it. (4) `Login()` accepts an `access` field that is not a string and stores an empty token.
-
-#### `UrlEncode()` returns the value unescaped when escaping fails
-
-**Opened 2026-10-18, from the read-only audit; confirmed by reading.** If curl's init or escape call fails, it returns the
-input as it was, so a value with `&` or `/` would change the request it is put into. Fail closed instead (an empty
-result the caller refuses, or an encoder that does not need curl). Unit test in `tests/test_url_encode.cpp`.
 
 #### `PersistApiKeyIfChanged()` writes three settings on the stream read thread
 
@@ -203,8 +166,9 @@ root to be inside a configured allow-list of directories.
 #### The 32-bit unit tests run without UBSan
 
 **Opened 2026-10-18, from the read-only audit.** `unit-tests-32bit` builds with `-m32` only, and `unit-tests-sanitized`
-is 64-bit, so an overflow that only happens with a 32-bit `time_t` or `long` (the `catchup_days` one above) is never
-caught by CI. Add `-fsanitize=undefined` to the 32-bit job.
+is 64-bit, so an overflow that only happens with a 32-bit `time_t` or `long` is caught only when it gives a wrong answer
+a test checks, never as the overflow itself (the `catchup_days` one, fixed in `CLOSED_ITEMS.md`'s "Integer overflows in
+pure helpers, two of them 32-bit-only", has a test that fails there by its wrong answer). Add `-fsanitize=undefined` to the 32-bit job.
 
 #### Kodi 22 (`Piers`): the pinned Kodi commit, checks still missing, and the pre-release mark
 
@@ -212,19 +176,7 @@ caught by CI. Add `-fsanitize=undefined` to the 32-bit job.
 
 ### Upstream (Dispatcharr) or documentation accuracy
 
-#### The timeshift file server answers 404, not the 403 the docs tell users to expect
-
-**Opened 2026-10-18, from the read-only audit; confirmed by reading.** `curl -i http://<dispatcharr-host>:9192/` gets a 404
-(a path with fewer than two parts is refused as not found before the token is looked at), but the plugin README's install
-check and its storage note, `docs/TROUBLESHOOTING.md` and `docs/TROUBLESHOOTING_DETAIL.md` all say 403, so a user following
-the check may think the setup is broken. Correct the docs (any HTTP answer means the server is reachable) or answer the
-root with 403; confirm live either way.
-
-#### The timeshift README's disk estimate is half the real figure
-
-**Opened 2026-10-18, from the read-only audit.** The plugin README's "about 4.5 GB per channel" at 10 Mbit/s for the
-default 60 minutes leaves out the headroom ffmpeg keeps before deleting segments (`hls_delete_threshold`, about 2x).
-State the real peak.
+None open.
 
 ### Known gaps, deliberately deferred
 

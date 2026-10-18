@@ -84,6 +84,37 @@ TEST_CASE("ParseNewLiveManifestSegments keeps well-formed entries even alongside
   CHECK(entries[1].sequence == 3);
 }
 
+// The 2026-10-18 audit: only lastKnownSequence was checked, so a sequence that repeated or went back inside one
+// response was appended into the byte stream a second time.
+TEST_CASE("ParseNewLiveManifestSegments keeps only a strictly increasing run of sequences", "[LiveManifestParser]")
+{
+  json segments = json::array({{{"sequence", 5}, {"filename", "seg5.ts"}, {"byte_size", 100}, {"duration_ms", 2000}},
+                               {{"sequence", 6}, {"filename", "seg6.ts"}, {"byte_size", 100}, {"duration_ms", 2000}},
+                               {{"sequence", 5}, {"filename", "seg5.ts"}, {"byte_size", 100}, {"duration_ms", 2000}},
+                               {{"sequence", 6}, {"filename", "seg6b.ts"}, {"byte_size", 100}, {"duration_ms", 2000}},
+                               {{"sequence", 7}, {"filename", "seg7.ts"}, {"byte_size", 100}, {"duration_ms", 2000}}});
+
+  auto entries = ParseNewLiveManifestSegments(segments, /*lastKnownSequence=*/4);
+
+  REQUIRE(entries.size() == 3);
+  CHECK(entries[0].sequence == 5);
+  CHECK(entries[1].sequence == 6);
+  CHECK(entries[1].filename == "seg6.ts");
+  CHECK(entries[2].sequence == 7);
+}
+
+TEST_CASE("ParseNewLiveManifestSegments does not let a malformed entry raise the bar for the next one",
+          "[LiveManifestParser]")
+{
+  json segments = json::array({{{"sequence", 5}, {"filename", ""}, {"byte_size", 100}, {"duration_ms", 2000}},
+                               {{"sequence", 5}, {"filename", "seg5.ts"}, {"byte_size", 100}, {"duration_ms", 2000}}});
+
+  auto entries = ParseNewLiveManifestSegments(segments, /*lastKnownSequence=*/4);
+
+  REQUIRE(entries.size() == 1);
+  CHECK(entries[0].filename == "seg5.ts");
+}
+
 TEST_CASE("ParseNewLiveManifestSegments returns nothing for an empty array", "[LiveManifestParser]")
 {
   CHECK(ParseNewLiveManifestSegments(json::array(), -1).empty());

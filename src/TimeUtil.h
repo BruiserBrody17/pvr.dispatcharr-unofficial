@@ -43,6 +43,10 @@ inline bool IsValidCivilDate(int year, int month, int day)
 // day-sized additions and offset arithmetic callers do on an end date cannot themselves overflow.
 constexpr time_t kLatestRepresentableTime = std::numeric_limits<time_t>::max() - 366 * 86400;
 
+// The earliest time PortableTimeGmSaturating() returns, mirroring kLatestRepresentableTime: the smallest time_t plus
+// a year, so that an offset subtracted from a start date cannot overflow either.
+constexpr time_t kEarliestRepresentableTime = std::numeric_limits<time_t>::lowest() + 366 * 86400;
+
 // timegm() with `gm` (injectable so a test can stand in for a 32-bit libc), except that a date after
 // 1970 it cannot represent saturates to kLatestRepresentableTime instead of coming back as -1.
 // Found by the 2026-10-04 third hardening sweep: on a 32-bit time_t build (CoreELEC armhf, the primary
@@ -53,15 +57,23 @@ constexpr time_t kLatestRepresentableTime = std::numeric_limits<time_t>::max() -
 //
 // A date that IS representable but later than `latest` (on a 32-bit time_t, 2037-01-18 to 2038-01-19)
 // is clamped to it as well: left alone it sorted above the saturated value and the callers' day
-// arithmetic on it could still overflow (found by the 2026-10-04 fourth hardening sweep). `latest`
-// is a parameter only so a test can stand in for a 32-bit time_t on a 64-bit host.
+// arithmetic on it could still overflow (found by the 2026-10-04 fourth hardening sweep).
+//
+// The low end is the mirror image: on a 32-bit time_t a date before 1901-12-13 also came back as -1, which reads as a
+// real instant a second before 1970 rather than as "long ago", and a representable date close to the bottom left no
+// room for an offset to be subtracted (found by the 2026-10-18 read-only audit). A -1 for a year before 1969 -- where
+// it can only be the failure value -- and anything below `earliest` saturate to `earliest`. `latest` and `earliest`
+// are parameters only so a test can stand in for a 32-bit time_t on a 64-bit host.
 template <typename GmFn>
-inline time_t SaturatingTimeGm(struct tm* tmVal, GmFn gm, time_t latest = kLatestRepresentableTime)
+inline time_t SaturatingTimeGm(struct tm* tmVal, GmFn gm, time_t latest = kLatestRepresentableTime,
+                               time_t earliest = kEarliestRepresentableTime)
 {
   const int yearBefore = tmVal->tm_year;
   const time_t t = gm(tmVal);
   if ((t == static_cast<time_t>(-1) && yearBefore > 70) || t > latest)
     return latest;
+  if ((t == static_cast<time_t>(-1) && yearBefore < 69) || t < earliest)
+    return earliest;
   return t;
 }
 

@@ -5,6 +5,24 @@
 namespace dispatcharr
 {
 
+bool IsValidTimeshiftRoute(const std::string& route)
+{
+  if (route.empty() || route[0] != '/' || (route.size() > 1 && route[1] == '/'))
+    return false;
+  for (const char ch : route)
+  {
+    const unsigned char c = static_cast<unsigned char>(ch);
+    if (c <= 0x20 || c == 0x7F || c == '@' || c == '\\' || c == '#')
+      return false;
+  }
+  return true;
+}
+
+bool IsValidTimeshiftPort(int port)
+{
+  return port >= 1 && port <= 65535;
+}
+
 std::string BuildTimeshiftPlaylistUrl(const std::string& host, int httpPort, const std::string& playlistRoute,
                                       const std::string& accessToken)
 {

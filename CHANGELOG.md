@@ -24,6 +24,17 @@ compare against.
 - **A recording that finishes while you watch it is no longer re-checked segment by segment right afterwards** (Kodi
   22): when Kodi reads the finished recording's details, the addon reuses the segment sizes it already knows instead of
   asking the server about every segment again (thousands of requests for a long recording).
+- **Realtime updates work behind a server or proxy that writes `Upgrade:websocket` without a space.** The addon looked
+  for the exact text `Upgrade: websocket` and, without it, silently fell back to refreshing on a timer. Dispatcharr's
+  own server was never affected.
+- **Hardening against bad server data**: a timeshift buffer address the plugin reports that would send its access token
+  to another host is refused; a guide entry's season or episode below zero, a buffer playlist listing a segment twice,
+  a series rule's weekday outside Monday to Sunday and a login reply without a usable token are rejected instead of
+  passed on; a few date and catch-up calculations that could overflow on 32-bit devices no longer do; and search terms
+  in requests are always escaped.
+- **`timeshift_buffer` README**: the disk use per buffered channel is up to about twice the earlier estimate (about 9 GB
+  for 60 minutes at 10 Mbit/s), and the port check now says that a `404` for the bare address means the server is
+  reachable (the README and the troubleshooting guide said to expect `403`).
 
 ## [0.14.0] - 2026-10-17
 

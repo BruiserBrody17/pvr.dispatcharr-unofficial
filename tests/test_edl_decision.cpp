@@ -5,6 +5,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
+#include <limits>
+
 using namespace dispatcharr;
 using json = nlohmann::json;
 
@@ -146,6 +149,18 @@ TEST_CASE("WithoutBreaksCoveringRecording clamps an entry that runs outside the 
   CHECK(WithoutBreaksCoveringRecording({Entry(-2000, 120000)}, 100).empty());
   // Starts after the end: covers nothing.
   CHECK(WithoutBreaksCoveringRecording({Entry(200000, 300000)}, 100).size() == 1);
+}
+
+// The 2026-10-18 audit: an entry far outside the recording made the covered span a huge negative number, and
+// multiplying it by 100 a signed overflow (UBSan reported it in CI's sanitized job before the clamp).
+TEST_CASE("WithoutBreaksCoveringRecording keeps an entry at the extremes of int64 without overflowing", "[EdlDecision]")
+{
+  const int64_t lowest = std::numeric_limits<int64_t>::min();
+  const int64_t highest = std::numeric_limits<int64_t>::max();
+  CHECK(WithoutBreaksCoveringRecording({Entry(lowest, lowest + 10)}, 100).size() == 1);
+  CHECK(WithoutBreaksCoveringRecording({Entry(highest - 10, highest)}, 100).size() == 1);
+  CHECK(WithoutBreaksCoveringRecording({Entry(lowest, highest)}, 100).empty());
+  CHECK(WithoutBreaksCoveringRecording({Entry(0, highest)}, std::numeric_limits<int>::max()).empty());
 }
 
 TEST_CASE("WithoutBreaksCoveringRecording drops nothing when the duration is unknown", "[EdlDecision]")

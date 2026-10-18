@@ -133,3 +133,11 @@ TEST_CASE("ParseRecurringRuleJson keeps only integer weekdays from days_of_week"
   auto good = nlohmann::json::parse(R"({"id":3,"days_of_week":[0,2,4]})");
   CHECK(ParseRecurringRuleJson(good).daysOfWeek == std::vector<int>{0, 2, 4});
 }
+
+// The 2026-10-18 audit: get<int>() wrapped an out-of-range value, so 4294967297 read as Tuesday (1).
+TEST_CASE("ParseRecurringRuleJson drops weekdays outside 0-6 instead of wrapping them", "[TimerRuleParser]")
+{
+  auto item =
+      nlohmann::json::parse(R"({"id":3,"days_of_week":[4294967297,18446744073709551615,-9223372036854775808,-1,7,2]})");
+  CHECK(ParseRecurringRuleJson(item).daysOfWeek == std::vector<int>{2});
+}

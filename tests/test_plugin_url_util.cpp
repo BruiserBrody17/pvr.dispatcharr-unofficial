@@ -2,6 +2,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <string>
+
 using namespace dispatcharr;
 
 // ---------------------------------------------------------------------
@@ -83,4 +85,48 @@ TEST_CASE("BuildTimeshiftFileServerUnreachableMessage names the port", "[PluginU
   CHECK(message.find("9192") != std::string::npos);
   CHECK(message.find("http_port") != std::string::npos);
   CHECK(BuildTimeshiftFileServerUnreachableMessage(9393).find("9393") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------
+// IsValidTimeshiftRoute / IsValidTimeshiftPort
+// ---------------------------------------------------------------------
+
+TEST_CASE("IsValidTimeshiftRoute accepts the plugin's real routes", "[PluginUrlUtil]")
+{
+  CHECK(IsValidTimeshiftRoute("/00000000-0000-4000-8000-000000000001/live.m3u8"));
+  CHECK(IsValidTimeshiftRoute("/00000000-0000-4000-8000-000000000001/"));
+  CHECK(IsValidTimeshiftRoute("/abc/live.m3u8?foo=bar"));
+}
+
+// The 2026-10-18 audit: a route that does not start the path moves the URL's authority, and the playlist URL carries
+// the buffer's access token to whatever host that names.
+TEST_CASE("IsValidTimeshiftRoute refuses a route that could change the URL's host", "[PluginUrlUtil]")
+{
+  CHECK_FALSE(IsValidTimeshiftRoute("@otherhost/live.m3u8"));
+  CHECK_FALSE(IsValidTimeshiftRoute("/x@otherhost/live.m3u8"));
+  CHECK_FALSE(IsValidTimeshiftRoute("//otherhost/live.m3u8"));
+  CHECK_FALSE(IsValidTimeshiftRoute("\\otherhost/live.m3u8"));
+  CHECK_FALSE(IsValidTimeshiftRoute("/a\\b"));
+  CHECK_FALSE(IsValidTimeshiftRoute("http://otherhost/live.m3u8"));
+  CHECK_FALSE(IsValidTimeshiftRoute("live.m3u8"));
+  CHECK_FALSE(IsValidTimeshiftRoute(""));
+}
+
+TEST_CASE("IsValidTimeshiftRoute refuses a fragment, spaces and control characters", "[PluginUrlUtil]")
+{
+  CHECK_FALSE(IsValidTimeshiftRoute("/abc/live.m3u8#frag"));
+  CHECK_FALSE(IsValidTimeshiftRoute("/abc/live m3u8"));
+  CHECK_FALSE(IsValidTimeshiftRoute("/abc/live.m3u8\r\nX-Injected: 1"));
+  CHECK_FALSE(IsValidTimeshiftRoute(std::string("/abc\0/", 6)));
+  CHECK_FALSE(IsValidTimeshiftRoute("/abc\x7F/"));
+}
+
+TEST_CASE("IsValidTimeshiftPort accepts 1-65535 only", "[PluginUrlUtil]")
+{
+  CHECK(IsValidTimeshiftPort(1));
+  CHECK(IsValidTimeshiftPort(9192));
+  CHECK(IsValidTimeshiftPort(65535));
+  CHECK_FALSE(IsValidTimeshiftPort(0));
+  CHECK_FALSE(IsValidTimeshiftPort(-1));
+  CHECK_FALSE(IsValidTimeshiftPort(65536));
 }

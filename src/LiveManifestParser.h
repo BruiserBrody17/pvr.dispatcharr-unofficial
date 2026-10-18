@@ -26,7 +26,11 @@ struct LiveManifestSegmentEntry
 // `lastKnownSequence` are kept -- an already-known segment's size can't
 // legitimately change (ffmpeg only ever appends new, closed segments to
 // the playlist), so silently skipping it here rather than re-verifying
-// it is safe, not just an optimization. A malformed entry (empty
+// it is safe, not just an optimization. Each kept entry must also be newer
+// than the one kept before it: an entry that repeats or goes back (5, 6, 5)
+// was appended a second time into the byte stream, which the order the
+// plugin promises never produces but nothing checked (found by the
+// 2026-10-18 read-only audit). A malformed entry (empty
 // filename or non-positive byte_size) is dropped rather than returned,
 // so it can't corrupt the caller's own cumulative byte/time offsets.
 //

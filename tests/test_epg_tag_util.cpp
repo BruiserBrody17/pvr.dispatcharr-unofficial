@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <clocale>
+#include <limits>
 #include <string>
 
 using namespace dispatcharr;
@@ -282,6 +283,17 @@ TEST_CASE("IsWithinCatchupWindow is true exactly at the retention boundary", "[E
   time_t now = 1767268800;
   time_t exactlySevenDaysAgo = now - 7 * 24 * 60 * 60;
   CHECK(IsWithinCatchupWindow(/*catchupEnabled=*/true, /*catchupDays=*/7, exactlySevenDaysAgo, now));
+}
+
+// The 2026-10-18 audit: `days * 86400` in time_t overflowed a 32-bit time_t past about 24855 days, so on CI's 32-bit
+// job a very deep archive refused a programme well inside it.
+TEST_CASE("IsWithinCatchupWindow handles a catch-up depth too large for a 32-bit time_t in seconds", "[EpgTagUtil]")
+{
+  const time_t now = 1791072000; // 2026-10-04
+  const time_t fiftyYearsAgo = now - static_cast<time_t>(50) * 365 * 86400;
+  CHECK(IsWithinCatchupWindow(/*catchupEnabled=*/true, /*catchupDays=*/30000, fiftyYearsAgo, now));
+  CHECK(IsWithinCatchupWindow(/*catchupEnabled=*/true, /*catchupDays=*/std::numeric_limits<int>::max(), 0, now));
+  CHECK_FALSE(IsWithinCatchupWindow(/*catchupEnabled=*/true, /*catchupDays=*/30000, now + 1, now));
 }
 
 // ---------------------------------------------------------------------

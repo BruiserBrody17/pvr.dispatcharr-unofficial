@@ -228,6 +228,32 @@ TEST_CASE("SaturatingTimeGm also clamps a representable date later than the ceil
   CHECK(2114380800 < kLatest32);
 }
 
+// The 2026-10-18 audit: on a 32-bit time_t a date before 1901-12-13 came back as -1, a real instant a second before
+// 1970, and a representable date near the bottom left no room to subtract an offset.
+TEST_CASE("SaturatingTimeGm saturates a date before what a 32-bit time_t can hold to the floor", "[TimeUtil]")
+{
+  constexpr time_t kEarliest32 = -2147483647LL - 1 + 366 * 86400;
+  tm longAgo = Utc(1800, 1, 1);
+  CHECK(SaturatingTimeGm(&longAgo, Gm32, kLatest32, kEarliest32) == kEarliest32);
+  // 1901-12-14 is representable in 32 bits but below the floor.
+  tm nearFloor = Utc(1901, 12, 14);
+  CHECK(SaturatingTimeGm(&nearFloor, Gm32, kLatest32, kEarliest32) == kEarliest32);
+  // A date above the floor is untouched, as is the real -1 instant.
+  tm early = Utc(1950, 1, 1);
+  CHECK(SaturatingTimeGm(&early, Gm32, kLatest32, kEarliest32) == -631152000);
+  tm minusOne = Utc(1969, 12, 31);
+  minusOne.tm_hour = 23;
+  minusOne.tm_min = 59;
+  minusOne.tm_sec = 59;
+  CHECK(SaturatingTimeGm(&minusOne, Gm32, kLatest32, kEarliest32) == -1);
+}
+
+TEST_CASE("The floor leaves room for an offset to be subtracted", "[TimeUtil]")
+{
+  static_assert(kEarliestRepresentableTime >= std::numeric_limits<time_t>::lowest() + 366 * 86400);
+  CHECK(kEarliestRepresentableTime - 24 * 3600 < kEarliestRepresentableTime);
+}
+
 TEST_CASE("LocalTimeZoned fills the broken-down local time and reports success", "[TimeUtil]")
 {
   tm out{};

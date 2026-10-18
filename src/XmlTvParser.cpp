@@ -113,7 +113,11 @@ void ParseEpisodeNum(const std::string& value, int& season, int& episode)
         // live. No real season/episode number is ever legitimately this
         // large, so treat it the same as any other unparseable value:
         // leave as unknown rather than risk the overflow.
-        if (parsed < std::numeric_limits<int>::max())
+        //
+        // Below -1 is just as unparseable ("-3", which stoi accepts, reached Kodi as season -2; found by the
+        // 2026-10-18 read-only audit). -1 itself stays: Dispatcharr's own export writes it for season 0 (see the
+        // specials test in ../tests/test_xmltv_parser.cpp).
+        if (parsed >= -1 && parsed < std::numeric_limits<int>::max())
         {
           if (index == 0)
             season = parsed + 1; // xmltv_ns is 0-indexed

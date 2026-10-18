@@ -504,14 +504,15 @@ bool DispatcharrClient::Login(std::string& error, long* httpStatusOut, long time
                timeoutMsOverride))
     return false;
 
-  if (!response.contains("access"))
+  std::string accessToken;
+  if (!ReadNonEmptyStringField(response, "access", accessToken))
   {
     error = "Login response did not contain an access token";
     return false;
   }
 
   std::lock_guard<std::mutex> stateLock(m_authStateMutex);
-  m_accessToken = FieldOr<std::string>(response, "access", "");
+  m_accessToken = std::move(accessToken);
   m_refreshToken = FieldOr<std::string>(response, "refresh", m_refreshToken);
   // SimpleJWT's default access-token lifetime is short (often 5 minutes);
   // we don't decode the JWT to read its real `exp`, we just re-authenticate
@@ -540,13 +541,14 @@ bool DispatcharrClient::RefreshAccessToken(std::string& error, long* httpStatusO
                timeoutMsOverride))
     return false;
 
-  if (!response.contains("access"))
+  std::string accessToken;
+  if (!ReadNonEmptyStringField(response, "access", accessToken))
   {
     error = "Refresh response did not contain an access token";
     return false;
   }
   std::lock_guard<std::mutex> stateLock(m_authStateMutex);
-  m_accessToken = FieldOr<std::string>(response, "access", "");
+  m_accessToken = std::move(accessToken);
   m_accessTokenExpiry = std::chrono::steady_clock::now() + std::chrono::minutes(4);
   return true;
 }
@@ -1223,6 +1225,12 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action, con
   if (httpPort <= 0 || playlistRoute.empty())
   {
     error = "timeshift_buffer plugin response was missing http_port/playlist_route";
+    return false;
+  }
+  // Checked before the access token below is stored or put into a URL (IsValidTimeshiftRoute()'s comment).
+  if (!IsValidTimeshiftPort(httpPort) || !IsValidTimeshiftRoute(playlistRoute))
+  {
+    error = "timeshift_buffer plugin response had an invalid http_port/playlist_route";
     return false;
   }
 
@@ -2384,7 +2392,7 @@ bool DispatcharrClient::ProbeTimeshiftFileServer(const std::string& url)
   CURL* curl = curl_easy_init();
   if (!curl)
     return true;
-  // Headers only: a reachable file server answers 403 (no token) and the body is of no interest.
+  // Headers only: a reachable file server answers 404 to the bare channel prefix and the body is of no interest.
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
   ApplyStandardCurlOptions(curl, GetCurlShare());
@@ -4342,6 +4350,11 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
   if (httpPort <= 0 || routePrefix.empty() || !result.contains("segments") || !result["segments"].is_array())
   {
     error = "timeshift_buffer plugin manifest response was missing required fields";
+    return false;
+  }
+  if (!IsValidTimeshiftPort(httpPort) || !IsValidTimeshiftRoute(routePrefix))
+  {
+    error = "timeshift_buffer plugin manifest response had an invalid http_port/segment_route_prefix";
     return false;
   }
   // The URL assembly itself lives in dispatcharr::BuildTimeshiftSegmentBaseUrl() (PluginUrlUtil.h) so it's

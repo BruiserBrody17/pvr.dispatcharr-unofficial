@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -378,6 +379,40 @@ TEST_CASE("a handshake answered with the wrong Sec-WebSocket-Accept is refused",
   std::string error;
   CHECK_FALSE(client.Connect("127.0.0.1", server.port(), false, "/ws/", false, 5, error));
   CHECK(error.find("Sec-WebSocket-Accept") != std::string::npos);
+}
+
+TEST_CASE("a handshake with no space after Upgrade's colon connects", "[WebSocketClient]")
+{
+  LocalWebSocketServer server([](int fd, const std::atomic<bool>&) { SendBytes(fd, Frame(0x1, "hello")); },
+                              [](const std::string& key)
+                              {
+                                return "HTTP/1.1 101 Switching Protocols\r\nUpgrade:websocket\r\n"
+                                       "Connection:Upgrade\r\nSec-WebSocket-Accept:" +
+                                       ComputeWebSocketAccept(key) + "\r\n\r\n";
+                              });
+  WebSocketClient client;
+  std::string error;
+  REQUIRE(client.Connect("127.0.0.1", server.port(), false, "/ws/", false, 5, error));
+  std::string message;
+  CHECK(client.ReceiveTextMessage(message, 3, error) == 1);
+  CHECK(message == "hello");
+}
+
+TEST_CASE("a refused handshake's error carries no control characters from the response", "[WebSocketClient]")
+{
+  LocalWebSocketServer server([](int, const std::atomic<bool>&) {},
+                              [](const std::string&)
+                              {
+                                return std::string("HTTP/1.1 403 Forbidden\r\nX-Evil: \x1b[2J\x07"
+                                                   "bell\r\n\r\n");
+                              });
+  WebSocketClient client;
+  std::string error;
+  CHECK_FALSE(client.Connect("127.0.0.1", server.port(), false, "/ws/", false, 5, error));
+  CHECK(error.find("did not accept") != std::string::npos);
+  CHECK(error.find("403 Forbidden") != std::string::npos);
+  CHECK(std::none_of(error.begin(), error.end(), [](char c)
+                     { return static_cast<unsigned char>(c) < 0x20 || static_cast<unsigned char>(c) == 0x7F; }));
 }
 
 TEST_CASE("a handshake response whose headers never end is cut off at the size limit", "[WebSocketClient]")

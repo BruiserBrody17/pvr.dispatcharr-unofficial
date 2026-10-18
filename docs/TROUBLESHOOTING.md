@@ -54,8 +54,8 @@ can be played. Since 0.13.0 the addon shows a notification naming the port.
 
 **What to do:** publish that port from the Dispatcharr container (for Docker, `-p 9192:9192`, the same number on both
 sides) and make sure the Kodi device can reach it. To check by hand from the Kodi device:
-`curl -i http://<dispatcharr-host>:9192/` should answer `403 Forbidden`; "connection refused" or a hang means it can't be
-reached.
+`curl -i http://<dispatcharr-host>:9192/` should get an HTTP answer (`404 Not Found` for that bare address is normal);
+"connection refused" or a hang means it can't be reached.
 
 ## Live TV freezes for a while, then recovers or ends
 

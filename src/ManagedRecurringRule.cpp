@@ -5,6 +5,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 
 namespace dispatcharr
 {
@@ -89,10 +91,15 @@ bool ParseAdoptionState(const std::string& text, RecurringRuleAdoptionState& out
   out.done = doc["done"].get<bool>();
   if (doc.contains("pending") && doc["pending"].is_array())
   {
+    // An id outside int's range is dropped, not wrapped: get<int>() turned 4294967297 into the id 1, another rule
+    // (found by the 2026-10-18 read-only audit).
     for (const auto& id : doc["pending"])
     {
-      if (id.is_number_integer() && id.get<int>() > 0)
-        out.pending.push_back(id.get<int>());
+      const bool inRange = id.is_number_unsigned()
+                               ? id.get<uint64_t>() <= static_cast<uint64_t>(std::numeric_limits<int>::max())
+                               : id.is_number_integer() && id.get<int64_t>() <= std::numeric_limits<int>::max();
+      if (inRange && id.get<int64_t>() > 0)
+        out.pending.push_back(static_cast<int>(id.get<int64_t>()));
     }
   }
   if (out.done)

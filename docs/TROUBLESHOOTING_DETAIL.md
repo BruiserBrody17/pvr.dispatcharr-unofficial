@@ -448,8 +448,11 @@ page runs entirely inside the container and succeeds too. The port has to be pub
 device. Since the open-time probe (2026-10-11) the addon says so: a notification names the port, and the log has
 `ProbeTimeshiftFileServer: ... unreachable`. On an older build the same cause showed as a spinner that ended the channel
 after about 30 s, with `giving up after N consecutive segment fetch failure(s)` in the debug log. To check by hand from
-the Kodi device: `curl -i http://<dispatcharr-host>:<http_port>/` answers `403 Forbidden` when the file server is
-reachable (a connection refused or a hang means it is not). Confirmed live (`docs/CLOSED_ITEMS.md`, "Say why a
+the Kodi device: `curl -i http://<dispatcharr-host>:<http_port>/` gets an HTTP answer when the file server is
+reachable (a connection refused or a hang means it is not). That answer is `404 Not Found`: the file server refuses a
+path shorter than `/<channel-uuid>/<file>` as not found before it looks for a token, and only a full file path without
+the token gets `403 Forbidden` (both confirmed live, 2026-10-18). Earlier versions of this guide said to expect `403`
+for the bare address. Confirmed live (`docs/CLOSED_ITEMS.md`, "Say why a
 server-timeshift open fails when the buffer's file server cannot be reached"); first met in a Docker install where
 the number in the plugin's setting and the published port differed.
 

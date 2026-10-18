@@ -120,6 +120,19 @@ template <typename T> T FieldOr(const nlohmann::json& item, const char* key, T d
   }
 }
 
+// The string at `key` when it is present, a string and not empty; false otherwise, with `out` left alone. For a value
+// whose absence must fail the caller rather than fall back: Login() and RefreshAccessToken() checked only that
+// "access" was present, then read it with FieldOr(), so a token that was a number or an object was stored as an empty
+// string and the login reported success (found by the 2026-10-18 read-only audit).
+inline bool ReadNonEmptyStringField(const nlohmann::json& item, const char* key, std::string& out)
+{
+  const auto it = item.find(key);
+  if (it == item.end() || !it->is_string() || it->get_ref<const std::string&>().empty())
+    return false;
+  out = it->get<std::string>();
+  return true;
+}
+
 // DispatcharrClient::SetDvrOffsetMinutes()'s own merge-preserving PATCH
 // body: sets only the offset key(s) actually being changed on top of
 // whatever this dvr_settings row's value blob already held (comskip

@@ -1,5 +1,6 @@
 #include "WebSocketClient.h"
 
+#include "JsonResponse.h"
 #include "SocketWait.h"
 #include "StringUtil.h"
 #include "WebSocketFrame.h"
@@ -371,14 +372,16 @@ bool WebSocketClient::Connect(const std::string& host, int port, bool useTls, co
     // Sec-WebSocket-Accept is a different problem from one that was never
     // accepted (an account without access): the first is something in the path
     // (a proxy) that never read this connection's key, so don't send the user
-    // chasing credentials for it.
+    // chasing credentials for it. The response goes through SanitizeServerErrorBody() because it is whatever answered
+    // on the port, and this error reaches kodi.log: raw, it could carry control characters and escape sequences.
+    const std::string shownResponse = SanitizeServerErrorBody(headerText, 200);
     error = IsWebSocketHandshakeAccepted(headerText)
                 ? "The WebSocket upgrade was answered, but not with the Sec-WebSocket-Accept value this connection's "
                   "key requires -- something between this addon and Dispatcharr is answering for it (response: " +
-                      headerText.substr(0, 200) + ")"
+                      shownResponse + ")"
                 : "Dispatcharr did not accept the WebSocket upgrade (check the account can "
                   "authenticate; response: " +
-                      headerText.substr(0, 200) + ")";
+                      shownResponse + ")";
     Close();
     return false;
   }

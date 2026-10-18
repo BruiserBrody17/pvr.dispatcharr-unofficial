@@ -6,6 +6,106 @@
 
 ### Fixed
 
+#### Integer overflows in pure helpers, two of them 32-bit-only
+
+**Opened 2026-10-18, from the read-only audit.** (1) `EdlDecision.h`: `covered * 100` is a signed overflow for a large
+`covered` (confirmed under UBSan); return early when `covered <= 0` and do the arithmetic in 64 bits. (2) `EpgTagUtil.cpp`:
+`catchup_days` times 86400 is not clamped, and overflows a 32-bit `time_t` (by arithmetic, not run on a 32-bit build);
+clamp the days or use int64. (3) `SaturatingTimeGm` (behind `TimeFromIso` and `ParseXmlTvTime()`) has no low-end clamp
+on a 32-bit `time_t` (low confidence). Unit tests in the matching `tests/test_<module>.cpp`; see also `OPEN_ITEMS.md`, "The 32-bit unit
+tests run without UBSan".
+
+**Closed 2026-10-18 on `Piers`, confirmed by unit tests.** (1) `WithoutBreaksCoveringRecording()` clamps both ends of an
+entry into [0, duration] before subtracting, so `covered` is at most the duration and the products cannot overflow; the
+new test with `int64` extremes fails under UBSan on the old code (`-9223372036854775798 * 100`). (2)
+`IsWithinCatchupWindow()` compares the programme's age with `days * 86400` in 64 bits; its test (30000 days, and
+`INT_MAX`) can fail only on a 32-bit `time_t`, so CI's `unit-tests-32bit` job is the check (no 32-bit toolchain in the
+workspace where it was written). (3) `SaturatingTimeGm()` has a floor, `kEarliestRepresentableTime` (the smallest
+`time_t` plus a year), and a -1 for a year before 1969 saturates to it; tested with the injected 32-bit `timegm`.
+
+#### The server-supplied timeshift URL is not validated before the plugin token is sent to it
+
+**Opened 2026-10-18, from the read-only audit; confirmed by reading.** `PluginUrlUtil` builds the timeshift file-server
+URL from a route and port the plugin reports, without requiring the route to start with `/` or the port to be at most
+65535. A route like `@otherhost/` turns the authority into a different host, and the plugin token goes there. The
+plugin is the one reporting the route, so this needs a compromised or buggy plugin, but the check is cheap. Fix: refuse a
+route that does not start with `/` (or contains `@`, `\` or a scheme) and a port outside 1 to 65535. Unit test in
+`tests/test_plugin_url_util.cpp`.
+
+**Closed 2026-10-18 on `Piers`, confirmed by unit tests.** `IsValidTimeshiftRoute()` and `IsValidTimeshiftPort()`
+(`PluginUrlUtil.h`): a route must start with a single `/` and hold no `@`, backslash, `#`, space or control character, a
+port must be 1 to 65535. `CallTimeshiftPluginAction()` checks before the access token is stored or put into a URL, and
+`RefreshLiveManifest()` checks the segment prefix; either refuses the response with an error. Tests in
+`tests/test_plugin_url_util.cpp`. Not checked live: the real plugin's routes (`/<channel-uuid>/live.m3u8`,
+`/<channel-uuid>/`) pass the check by reading.
+
+#### WebSocket handshake: too strict on `Upgrade`, too trusting in its error log
+
+**Opened 2026-10-18, from the read-only audit; confirmed by reading.** `IsWebSocketHandshakeAccepted()` needs the exact
+text `upgrade: websocket`, so a valid `Upgrade:websocket` (no space) is rejected and realtime updates are silently off.
+And a failed handshake logs the server's raw header bytes; pass them through `SanitizeServerErrorBody()` first. Unit test
+in `tests/test_web_socket_handshake.cpp`.
+
+**Closed 2026-10-18 on `Piers`, confirmed by unit tests.** `IsWebSocketHandshakeAccepted()` reads `Upgrade` as a header
+(name case-insensitive, any whitespace, a comma-separated protocol list with `websocket` anywhere in it), sharing the
+line parser with `FindWebSocketAcceptHeader()`; a different header that merely contains the old search text no longer
+counts. The failure message passes the response through `SanitizeServerErrorBody(…, 200)`. Tests in
+`tests/test_web_socket_handshake.cpp`, plus two local-server tests in `tests/test_web_socket_client.cpp` (a full connect
+with `Upgrade:websocket`, and a refused handshake whose error holds no control characters); all fail on the old code.
+Not checked live: Dispatcharr's own server sends `Upgrade: websocket` and was never affected.
+
+#### Server input that reaches Kodi unchecked: negative episodes, sequence order, wrapped integers, a non-string token
+
+**Opened 2026-10-18, from the read-only audit.** Each small, each unit-testable: (1) `ParseEpisodeNum()` lets a negative
+season or episode through to Kodi. (2) `ParseNewLiveManifestSegments()` does not require strictly increasing media
+sequence numbers. (3) A raw `get<int>()` on `days_of_week` and on the adoption state wraps an unsigned or out-of-range
+value instead of rejecting it. (4) `Login()` accepts an `access` field that is not a string and stores an empty token.
+
+**Closed 2026-10-18 on `Piers`, confirmed by unit tests.** (1) `ParseEpisodeNum()` leaves a field below -1 unknown.
+Not every negative: Dispatcharr's own export writes `-1` for season 0, which the existing specials test caught when
+the first version of the fix refused it. (2) `ParseNewLiveManifestSegments()` keeps only a strictly increasing run (a
+malformed entry does not raise the bar). (3) `days_of_week` entries outside 0 to 6 and adoption-state ids outside `int`
+are dropped, not wrapped. (4) `ReadNonEmptyStringField()` (`JsonFieldUtil.h`): `Login()` and `RefreshAccessToken()` fail
+on an `access` that is absent, empty or not a string, rather than storing an empty token. The tests for (1) to (3) fail
+on the old code; (4) is a new helper with its own tests.
+
+#### `UrlEncode()` returns the value unescaped when escaping fails
+
+**Opened 2026-10-18, from the read-only audit; confirmed by reading.** If curl's init or escape call fails, it returns the
+input as it was, so a value with `&` or `/` would change the request it is put into. Fail closed instead (an empty
+result the caller refuses, or an encoder that does not need curl). Unit test in `tests/test_url_encode.cpp`.
+
+**Closed 2026-10-18 on `Piers`, confirmed by unit tests.** `UrlEncode()` encodes by hand (RFC 3986 unreserved bytes kept,
+everything else `%XX` in upper case), so there is no curl handle to fail and no fallback. A test pins the output to
+`curl_easy_escape`'s for every byte value and for all 256 together, so the requests it builds are byte-identical to
+before.
+
+#### The timeshift file server answers 404, not the 403 the docs tell users to expect
+
+**Opened 2026-10-18, from the read-only audit; confirmed by reading.** `curl -i http://<dispatcharr-host>:9192/` gets a 404
+(a path with fewer than two parts is refused as not found before the token is looked at), but the plugin README's install
+check and its storage note, `docs/TROUBLESHOOTING.md` and `docs/TROUBLESHOOTING_DETAIL.md` all say 403, so a user following
+the check may think the setup is broken. Correct the docs (any HTTP answer means the server is reachable) or answer the
+root with 403; confirm live either way.
+
+**Closed 2026-10-18, confirmed live.** Against the lab server's file server: the bare root and a bare channel prefix
+both answer 404, a full file path without a token 403. The docs were corrected rather than the plugin changed (any HTTP
+answer shows the port is reachable): the plugin README's install check, `docs/TROUBLESHOOTING.md` and
+`docs/TROUBLESHOOTING_DETAIL.md` now say a 404 for the bare address is expected, and the README's storage note says the
+403 is for a buffer's files. The addon's own open-time probe asks for the channel prefix, so it gets a 404 too; the
+comments that said 403 (`IsTimeshiftFileServerReachable()`, `ProbeTimeshiftFileServer()`) were corrected, and the
+probe's logic (any HTTP answer) was already right.
+
+#### The timeshift README's disk estimate is half the real figure
+
+**Opened 2026-10-18, from the read-only audit.** The plugin README's "about 4.5 GB per channel" at 10 Mbit/s for the
+default 60 minutes leaves out the headroom ffmpeg keeps before deleting segments (`hls_delete_threshold`, about 2x).
+State the real peak.
+
+**Closed 2026-10-18.** The README now says up to about 9 GB per channel at 10 Mbit/s for 60 minutes: the 4.5 GB you can
+rewind plus as much again, because `_build_ffmpeg_command()` sets `-hls_delete_threshold` to `wrap_segments -
+visible_segments`, which `_compute_segment_counts()` makes equal to the visible window.
+
 #### Kodi 22's stream-details probe of a just-finished recording sizes every segment again
 
 **Opened 2026-10-17, from the live check of the two-streams change (`CLOSED_ITEMS.md`, "Two streams of one
