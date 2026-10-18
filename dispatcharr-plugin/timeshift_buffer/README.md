@@ -16,8 +16,10 @@ watching since it opened the channel.
 ## Disk use, and watching live while a recording runs
 
 Each buffered channel writes a rolling window of the stream to the **Buffer storage path**: the **Buffer length (minutes)** setting,
-60 by default. At 10 Mbit/s that is about 4.5 GB per channel while someone is watching it, deleted as soon as the last
-viewer stops; lower the setting to shrink it (15 minutes is about a quarter of that, and rewind depth shrinks to match).
+60 by default. At 10 Mbit/s that is up to about 9 GB per channel while someone is watching it (the 60 minutes you can
+rewind, about 4.5 GB, plus as much again that `ffmpeg` keeps on disk before deleting old segments, so a viewer still
+reading one is not cut off), deleted as soon as the last viewer stops; lower the setting to shrink it (15 minutes is about
+a quarter of that, and rewind depth shrinks to match).
 The buffer is one `ffmpeg` that copies the stream without re-encoding.
 
 If Dispatcharr is also recording that channel, the recording and the buffer share the channel's one connection to your
@@ -54,8 +56,9 @@ without guide data has none; open it from Kodi's Recordings list instead.
    the same way `9191` already is -- without this, the plugin's file
    server is only reachable from inside the container.
    The number in the setting and the published port must be the same: if they differ, the buffer starts but Kodi
-   cannot read it (since addon 0.13.0 it says so with a notification; `curl -i http://<host>:<port>/` from the Kodi
-   device should answer `403`).
+   cannot read it (since addon 0.13.0 it says so with a notification). To check from the Kodi device,
+   `curl -i http://<host>:<port>/` should get an HTTP answer: `404 Not Found` for that bare address is expected and
+   means the server is reachable, while "connection refused" or a hang means it is not.
    The file server listens on IPv6 as well as IPv4 where the host has
    IPv6 (a dual-stack `::` socket), and on IPv4 alone where it doesn't.
 5. Check **Internal base URL** matches how this plugin reaches Dispatcharr's
@@ -78,8 +81,8 @@ Paste a channel's UUID into the **Test channel UUID** setting and save
 | Stop All Buffers | **Stop Everything** | Stops every buffer, for every viewer; cleanup if something is stuck |
 | Scrub Orphaned Buffer Directories | **Scrub Now** | Deletes leftover buffer folders nothing is using; the plugin also does this by itself on a timer |
 
-Segments and a playlist should appear under the storage path. The file server answers 403 to any request without the
-buffer's own access token, so use the URL **Start Test Buffer** prints
+Segments and a playlist should appear under the storage path. The file server answers 403 to a request for a buffer's files
+without that buffer's access token, so use the URL **Start Test Buffer** prints
 (`http://<dispatcharr-host>:<port>/<channel-uuid>/live.m3u8?token=...`); a plain URL without `?token=` is refused on
 purpose. A buffer started by the Kodi addon gets its token in the response instead and never prints it.
 

@@ -5,6 +5,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
+
 namespace dispatcharr
 {
 
@@ -45,10 +47,16 @@ RecurringRule ParseRecurringRuleJson(const nlohmann::json& item)
   const nlohmann::json& days = item.contains("days_of_week") ? item["days_of_week"] : nlohmann::json();
   if (days.is_array())
   {
+    // Read as int64 and range-checked: get<int>() wrapped an unsigned or out-of-range value, so 4294967297 became
+    // the valid day 1 (found by the 2026-10-18 read-only audit). Anything outside 0-6 is not a day.
     for (const auto& d : days)
     {
-      if (d.is_number_integer())
-        rule.daysOfWeek.push_back(d.get<int>());
+      if (!d.is_number_integer())
+        continue;
+      const bool isDay =
+          d.is_number_unsigned() ? d.get<uint64_t>() <= 6 : d.get<int64_t>() >= 0 && d.get<int64_t>() <= 6;
+      if (isDay)
+        rule.daysOfWeek.push_back(static_cast<int>(d.get<int64_t>()));
     }
   }
   return rule;

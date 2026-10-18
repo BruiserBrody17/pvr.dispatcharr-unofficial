@@ -9,6 +9,42 @@
 namespace dispatcharr
 {
 
+namespace detail
+{
+// `value` with leading and trailing spaces, tabs and CRs removed.
+inline std::string TrimHeaderValue(const std::string& value)
+{
+  const char* ws = " \t\r";
+  const size_t first = value.find_first_not_of(ws);
+  if (first == std::string::npos)
+    return "";
+  const size_t last = value.find_last_not_of(ws);
+  return value.substr(first, last - first + 1);
+}
+
+// Calls `visit(trimmedValue)` for every "Name: value" line of headerText whose name, compared case-insensitively, is
+// `lowerName`, until `visit` returns true; returns whether one did.
+template <typename Visit>
+bool VisitHttpHeaderValues(const std::string& headerText, const std::string& lowerName, Visit visit)
+{
+  size_t pos = 0;
+  while (pos < headerText.size())
+  {
+    size_t eol = headerText.find('\n', pos);
+    if (eol == std::string::npos)
+      eol = headerText.size();
+    const std::string line = headerText.substr(pos, eol - pos);
+    pos = eol + 1;
+    const size_t colon = line.find(':');
+    if (colon == std::string::npos || ToLower(TrimHeaderValue(line.substr(0, colon))) != lowerName)
+      continue;
+    if (visit(TrimHeaderValue(line.substr(colon + 1))))
+      return true;
+  }
+  return false;
+}
+} // namespace detail
+
 // Pure decision core of WebSocketClient::Connect()'s handshake check:
 // given the raw HTTP response headers Dispatcharr sent back for the
 // WebSocket upgrade request (everything up to, but not including, the
@@ -16,9 +52,14 @@ namespace dispatcharr
 // accepted it. Requires both a "101" status line (accepting "HTTP/1.0"
 // and "HTTP/1.1", and a bare " 101 " match for a non-conformant
 // intermediary that reorders/prefixes the status line) and an
-// "Upgrade: websocket" response header -- either alone isn't sufficient
+// Upgrade response header naming websocket -- either alone isn't sufficient
 // (e.g. a reverse proxy returning 101 for an unrelated protocol
 // upgrade).
+//
+// The Upgrade header is read as a header, not searched for as the text "upgrade: websocket": that refused a valid
+// "Upgrade:websocket" (no space after the colon, which HTTP allows) and left realtime updates silently off (found by
+// the 2026-10-18 read-only audit). The value is a comma-separated list of protocols (RFC 9110 section 7.8), matched
+// case-insensitively, any one of which may be websocket.
 //
 // Zero curl/socket dependency once headerText is already in hand --
 // pulled out here specifically so it's unit-testable standalone; see
@@ -28,7 +69,22 @@ inline bool IsWebSocketHandshakeAccepted(const std::string& headerText)
   std::string headerLower = ToLower(headerText);
   bool got101 = headerLower.find(" 101 ") != std::string::npos || headerLower.rfind("http/1.1 101", 0) == 0 ||
                 headerLower.rfind("http/1.0 101", 0) == 0;
-  bool gotUpgrade = headerLower.find("upgrade: websocket") != std::string::npos;
+  bool gotUpgrade = detail::VisitHttpHeaderValues(
+      headerText, "upgrade",
+      [](const std::string& value)
+      {
+        size_t start = 0;
+        while (start <= value.size())
+        {
+          size_t comma = value.find(',', start);
+          if (comma == std::string::npos)
+            comma = value.size();
+          if (ToLower(detail::TrimHeaderValue(value.substr(start, comma - start))) == "websocket")
+            return true;
+          start = comma + 1;
+        }
+        return false;
+      });
   return got101 && gotUpgrade;
 }
 
@@ -46,26 +102,14 @@ inline std::string ComputeWebSocketAccept(const std::string& base64Key)
 // case-insensitively, surrounding whitespace trimmed), or "" if it has none.
 inline std::string FindWebSocketAcceptHeader(const std::string& headerText)
 {
-  size_t pos = 0;
-  while (pos < headerText.size())
-  {
-    size_t eol = headerText.find('\n', pos);
-    if (eol == std::string::npos)
-      eol = headerText.size();
-    std::string line = headerText.substr(pos, eol - pos);
-    pos = eol + 1;
-    const size_t colon = line.find(':');
-    if (colon == std::string::npos || ToLower(line.substr(0, colon)) != "sec-websocket-accept")
-      continue;
-    std::string value = line.substr(colon + 1);
-    const char* ws = " \t\r";
-    const size_t first = value.find_first_not_of(ws);
-    if (first == std::string::npos)
-      return "";
-    const size_t last = value.find_last_not_of(ws);
-    return value.substr(first, last - first + 1);
-  }
-  return "";
+  std::string accept;
+  detail::VisitHttpHeaderValues(headerText, "sec-websocket-accept",
+                                [&](const std::string& value)
+                                {
+                                  accept = value;
+                                  return true;
+                                });
+  return accept;
 }
 
 // IsWebSocketHandshakeAccepted() plus RFC 6455's own requirement that a client

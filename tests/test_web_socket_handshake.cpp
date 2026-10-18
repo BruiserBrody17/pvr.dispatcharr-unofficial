@@ -63,6 +63,30 @@ TEST_CASE("IsWebSocketHandshakeAccepted rejects an empty response", "[WebSocketH
   CHECK_FALSE(IsWebSocketHandshakeAccepted(""));
 }
 
+// The 2026-10-18 audit: the check looked for the text "upgrade: websocket", so a valid header with no space after the
+// colon was refused and realtime updates stayed off.
+TEST_CASE("IsWebSocketHandshakeAccepted accepts an Upgrade header with no space or extra spaces",
+          "[WebSocketHandshake]")
+{
+  CHECK(IsWebSocketHandshakeAccepted("HTTP/1.1 101 Switching Protocols\r\nUpgrade:websocket\r\n"));
+  CHECK(IsWebSocketHandshakeAccepted("HTTP/1.1 101 Switching Protocols\r\nUpgrade: \t websocket \r\n"));
+  CHECK(IsWebSocketHandshakeAccepted("HTTP/1.1 101 Switching Protocols\r\nUpgrade:websocket"));
+}
+
+TEST_CASE("IsWebSocketHandshakeAccepted accepts websocket anywhere in an Upgrade protocol list", "[WebSocketHandshake]")
+{
+  CHECK(IsWebSocketHandshakeAccepted("HTTP/1.1 101 Switching Protocols\r\nUpgrade: foo/2, WebSocket\r\n"));
+}
+
+TEST_CASE("IsWebSocketHandshakeAccepted refuses websocket outside an Upgrade header's value", "[WebSocketHandshake]")
+{
+  // A different header whose value merely contains the old search text, and an Upgrade to another protocol whose
+  // name only starts with websocket.
+  CHECK_FALSE(IsWebSocketHandshakeAccepted("HTTP/1.1 101 Switching Protocols\r\nX-Note: upgrade: websocket\r\n"));
+  CHECK_FALSE(IsWebSocketHandshakeAccepted("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocketx\r\n"));
+  CHECK_FALSE(IsWebSocketHandshakeAccepted("HTTP/1.1 101 Switching Protocols\r\nX-Upgrade: websocket\r\n"));
+}
+
 // ---------------------------------------------------------------------
 // BuildWebSocketHandshakeRequest
 // ---------------------------------------------------------------------

@@ -74,7 +74,7 @@ builds shares (`DispatcharrClient::BaseUrl()`, `BuildTimeshiftPlaylistUrl()`/
 `BuildTimeshiftSegmentBaseUrl()` in `PluginUrlUtil.h`, and
 `BuildWebSocketHandshakeRequest()`'s own `Host:` header in
 `WebSocketHandshake.h`), Dispatcharr's own date-time
-string formats, curl-based URL escaping, the null-safe JSON field
+string formats, URL escaping, the null-safe JSON field
 reader nearly every response parse in `DispatcharrClient.cpp` goes
 through, the plain libcurl write/header callbacks -- none of which
 touch a `CURL*` themselves, despite conceptually being curl callbacks --
@@ -2480,6 +2480,20 @@ either order fails them. The last three (the recording open probe, the in-progre
 redirect, a size-limited probe read as a response, the 401 before the transient check, a 404 apart from other statuses) and the
 span's edges (one byte left, none left, past the end, a zero request, an offset near the top of the 64-bit range).
 Mutation-checked for two of the orders, and the glue harness's in-progress and recording scenarios drive the rewired callers.
+
+The 2026-10-18 read-only audit's pure-logic findings were fixed together (`docs/CLOSED_ITEMS.md`, the entries dated
+2026-10-18), each with a test that fails on the code it replaced (checked by running the new tests against the old `src/`,
+under ASan/UBSan): `IsWebSocketHandshakeAccepted()` reads `Upgrade` as a header (no space after the colon, a protocol list,
+not merely the text inside another header; `tests/test_web_socket_handshake.cpp`, and a local-server connect in
+`tests/test_web_socket_client.cpp` with the refused handshake's logged response free of control characters);
+`IsValidTimeshiftRoute()`/`IsValidTimeshiftPort()` (`PluginUrlUtil.h`, checked before the plugin token goes into a URL);
+`UrlEncode()` without curl, pinned byte for byte to `curl_easy_escape` over all 256 byte values; `ReadNonEmptyStringField()`
+(`JsonFieldUtil.h`, the access token `Login()` and `RefreshAccessToken()` store); `WithoutBreaksCoveringRecording()` clamping
+both ends before the share is taken (an `int64` extreme was a UBSan-reported overflow); `IsWithinCatchupWindow()`
+comparing ages in 64 bits (a 32-bit `time_t` overflow, so its test fails only in CI's `unit-tests-32bit` job, which this
+workspace could not build); `SaturatingTimeGm()`'s floor (`kEarliestRepresentableTime`); `ParseEpisodeNum()` refusing a field
+below -1 (-1 stays: it is Dispatcharr's season 0); `ParseNewLiveManifestSegments()` keeping only a strictly increasing run;
+and the range-checked `days_of_week` (`ParseRecurringRuleJson()`) and adoption-state ids (`ParseAdoptionState()`).
 
 ### What the C++ suite does not test
 

@@ -433,3 +433,29 @@ TEST_CASE("FieldOr<int> reads a JSON float that is exactly INT_MIN or INT_MAX, a
   CHECK(FieldOr<int>(item, "below", 7) == 7);
   CHECK(FieldOr<int>(item, "above", 7) == 7);
 }
+
+// ---------------------------------------------------------------------
+// ReadNonEmptyStringField (the 2026-10-18 audit: Login() stored a non-string "access" as an empty token and reported
+// success)
+// ---------------------------------------------------------------------
+
+TEST_CASE("ReadNonEmptyStringField reads a non-empty string", "[JsonFieldUtil]")
+{
+  std::string out;
+  REQUIRE(ReadNonEmptyStringField(json{{"access", "eyJ.token"}}, "access", out));
+  CHECK(out == "eyJ.token");
+}
+
+TEST_CASE("ReadNonEmptyStringField refuses an absent, empty, null or non-string value and leaves out alone",
+          "[JsonFieldUtil]")
+{
+  std::string out = "unchanged";
+  CHECK_FALSE(ReadNonEmptyStringField(json::object(), "access", out));
+  CHECK_FALSE(ReadNonEmptyStringField(json{{"access", ""}}, "access", out));
+  CHECK_FALSE(ReadNonEmptyStringField(json{{"access", nullptr}}, "access", out));
+  CHECK_FALSE(ReadNonEmptyStringField(json{{"access", 12345}}, "access", out));
+  CHECK_FALSE(ReadNonEmptyStringField(json{{"access", {{"token", "x"}}}}, "access", out));
+  CHECK_FALSE(ReadNonEmptyStringField(json{{"access", json::array({"x"})}}, "access", out));
+  CHECK_FALSE(ReadNonEmptyStringField(json::array({"access"}), "access", out));
+  CHECK(out == "unchanged");
+}

@@ -183,11 +183,13 @@ bool IsWithinCatchupWindow(bool catchupEnabled, int catchupDays, time_t tagStart
   // a channel the server would have actually served. kDefaultCatchupDaysWhenUnknown
   // matches Dispatcharr's own migration 0038, which backfills a missing
   // duration as 7 days, not 0.
-  int effectiveCatchupDays = catchupDays > 0 ? catchupDays : kDefaultCatchupDaysWhenUnknown;
-  time_t oldestAllowed = now - static_cast<time_t>(effectiveCatchupDays) * 24 * 60 * 60;
-  if (tagStartTime < oldestAllowed)
-    return false; // outside the provider's archive retention window
-  return true;
+  //
+  // Compared as an age in 64 bits: `days * 86400` in time_t overflowed a 32-bit time_t (CoreELEC armhf, 32-bit
+  // Android) for anything over about 24855 days, an unclamped number the server reports (found by the 2026-10-18
+  // read-only audit, by arithmetic).
+  const int64_t effectiveCatchupDays = catchupDays > 0 ? catchupDays : kDefaultCatchupDaysWhenUnknown;
+  const int64_t age = static_cast<int64_t>(now) - static_cast<int64_t>(tagStartTime);
+  return age <= effectiveCatchupDays * 24 * 60 * 60; // past that is outside the provider's archive retention window
 }
 
 bool ShouldOfferCatchup(bool channelCatchupEnabled, bool catchupEnabledGlobally, bool catchupEnabledForCurrentUser)

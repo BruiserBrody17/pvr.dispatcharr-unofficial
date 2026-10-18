@@ -163,6 +163,15 @@ TEST_CASE("pending ids that are not positive integers are dropped on read", "[Ma
   CHECK(out.pending == std::vector<int>{4, 7});
 }
 
+// The 2026-10-18 audit: get<int>() wrapped an id outside int's range into another rule's id (4294967297 became 1).
+TEST_CASE("pending ids outside int's range are dropped, not wrapped", "[ManagedRecurringRule]")
+{
+  RecurringRuleAdoptionState out;
+  REQUIRE(ParseAdoptionState(
+      "{\"version\":1,\"done\":false,\"pending\":[4294967297,18446744073709551615,2147483648,2147483647,9]}", out));
+  CHECK(out.pending == std::vector<int>{2147483647, 9});
+}
+
 // ---------------------------------------------------------------------
 // PlanRecurringRuleAdoption
 // ---------------------------------------------------------------------

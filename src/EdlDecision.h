@@ -49,6 +49,12 @@ constexpr int kWholeRecordingBreakPercent = 90;
 // `durationSeconds` is the recording's own length as the addon reports it (an early-stopped recording uses its stop
 // time, see ParseRecordingFields()); 0 or less means unknown (still recording), and nothing is dropped. An entry that
 // runs past the end, as comskip's does by a second or two, is clamped to the duration before the share is taken.
+//
+// Both ends are clamped into [0, duration] before anything is subtracted or multiplied: an entry far outside the
+// recording (the plugin passes whatever the .edl file holds, and ParseRecordingEdlEntryJson() only requires end >
+// start) made `covered` a huge negative number, and `covered * 100` a signed overflow (found by the 2026-10-18
+// read-only audit, confirmed under UBSan). Clamped, `covered` is at most the duration, which is at most INT_MAX
+// seconds in milliseconds, so the products cannot overflow.
 inline std::vector<RecordingEdlEntry> WithoutBreaksCoveringRecording(std::vector<RecordingEdlEntry> entries,
                                                                      int durationSeconds)
 {
@@ -60,9 +66,10 @@ inline std::vector<RecordingEdlEntry> WithoutBreaksCoveringRecording(std::vector
                                {
                                  if (e.type != kEdlTypeCut && e.type != kEdlTypeCommercialBreak)
                                    return false;
-                                 const int64_t covered =
-                                     std::min(e.endMs, durationMs) - std::max<int64_t>(e.startMs, 0);
-                                 return covered * 100 >= durationMs * kWholeRecordingBreakPercent;
+                                 const int64_t start = std::clamp<int64_t>(e.startMs, 0, durationMs);
+                                 const int64_t end = std::clamp<int64_t>(e.endMs, 0, durationMs);
+                                 const int64_t covered = end - start;
+                                 return covered > 0 && covered * 100 >= durationMs * kWholeRecordingBreakPercent;
                                }),
                 entries.end());
   return entries;

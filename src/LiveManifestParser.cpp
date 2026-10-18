@@ -32,10 +32,11 @@ std::vector<LiveManifestSegmentEntry> ParseNewLiveManifestSegments(const nlohman
                                                                    int64_t lastKnownSequence)
 {
   std::vector<LiveManifestSegmentEntry> out;
+  int64_t newestKept = lastKnownSequence;
   for (const nlohmann::json& seg : segmentsArray)
   {
     int64_t sequence = FieldOr<int64_t>(seg, "sequence", -1);
-    if (sequence < 0 || sequence <= lastKnownSequence)
+    if (sequence < 0 || sequence <= newestKept)
       continue;
 
     LiveManifestSegmentEntry entry;
@@ -61,6 +62,7 @@ std::vector<LiveManifestSegmentEntry> ParseNewLiveManifestSegments(const nlohman
       entry.durationMs = kMaxSegmentDurationMs;
 
     entry.sequence = sequence;
+    newestKept = sequence;
     out.push_back(std::move(entry));
   }
   return out;

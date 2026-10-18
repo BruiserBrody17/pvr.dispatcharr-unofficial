@@ -318,6 +318,22 @@ TEST_CASE("ParseEpisodeNum strips /total from both the season and episode fields
   CHECK(episode == 1);
 }
 
+// The 2026-10-18 audit: stoi accepts a sign, so "-3" reached Kodi as season -2. -1 stays valid (season 0, see the
+// specials test below).
+TEST_CASE("ParseEpisodeNum leaves a field below -1 unknown", "[XmlTvParser]")
+{
+  int season = 0, episode = 0;
+  ParseEpisodeNum("-3.4", season, episode);
+  CHECK(season == -1);
+  CHECK(episode == 5);
+  ParseEpisodeNum("2.-2", season, episode);
+  CHECK(season == 3);
+  CHECK(episode == -1);
+  ParseEpisodeNum("-2147483648.-5", season, episode);
+  CHECK(season == -1);
+  CHECK(episode == -1);
+}
+
 TEST_CASE("ParseEpisodeNum leaves both unknown for an empty value", "[XmlTvParser]")
 {
   int season = 0, episode = 0;
