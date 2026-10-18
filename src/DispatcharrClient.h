@@ -987,7 +987,8 @@ public:
   //
   // `notifyViewer` false keeps an HTTP failure in the log only, without DescribeRecordingOpenFailure()'s notification:
   // the fallback from a gone HLS playlist (PVRDispatcharr::OpenRecordedStream()) also runs for opens nobody asked to
-  // watch (Kodi 22's thumbnail loader makes them, seen on `Piers`; Kodi 21 not checked).
+  // watch on Kodi 22 (its thumbnail loader). Kodi 21 never opens a PVR recording for that
+  // (CDVDFileInfo::CanExtract() refuses them), so here it is a safeguard.
   bool OpenRecordingStream(int recordingId, std::string& error, bool notifyViewer = true);
   int ReadRecordingStream(uint8_t* buffer, unsigned int size);
   int64_t SeekRecordingStream(int64_t position, int whence);

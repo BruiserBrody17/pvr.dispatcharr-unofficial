@@ -30,9 +30,10 @@ HLS endpoint redirects the playlist to the file whenever the file exists. What c
 `DecideInProgressColdStartStep()` has a `kFinishedPlaylistGone` outcome (the playlist is gone and the lookup says the
 recording has ended), and `OpenRecordedStream()` then opens the finished file. That fallback passes `notifyViewer` false
 to `OpenRecordingStream()`, so a recording with no file at all still fails as before, in the log only: Kodi 22's
-thumbnail loader makes opens nobody asked to watch (Kodi 21 not checked), and a notification on each would be new. The
-glue scenario `finished_hls_gone` fails on the old code ("did not open"). Not done: the error line per open for an empty
-recording stays.
+thumbnail loader makes opens nobody asked to watch and a notification on each would be new. Kodi 21 does not: its
+`CDVDFileInfo::CanExtract()` refuses every PVR recording (checked in the source the same day), so on `Omega` this is a
+safeguard. The glue scenario `finished_hls_gone` fails on the old code ("did not open"). Not done: the error line per
+open for an empty recording stays.
 
 #### Integer overflows in pure helpers, two of them 32-bit-only
 
