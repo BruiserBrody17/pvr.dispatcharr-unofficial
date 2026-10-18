@@ -52,13 +52,14 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`b0f542a`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`80a146f`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
 | Omega commit | Ported as | Notes |
 |---|---|---|
 | `6cc7ee1`, `2ec3551`, `b0f542a` | already on `Piers` as `b26412c`, `48764de`, `ffe8c16` | The docs-audit pass, made on `Piers` first and ported to `Omega` without its Kodi 22-only parts. |
+| `80a146f` | `git cherry-pick -x` (applied cleanly) | Made-up titles in the recording-directory tests, comments and docs. |
 
 ## Dependencies that differ by Kodi release
 

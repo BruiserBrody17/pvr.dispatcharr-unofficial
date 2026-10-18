@@ -1500,7 +1500,7 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   test).** `_build_output_paths` doesn't use `program.get('title')`
   completely raw -- it passes both `show` and `title` through its own
   `_safe_name()` first, which strips `[\/:*?"<>|]` and trims. A title
-  containing a forward slash (e.g. "Face/Off", "20/20") passed straight
+  containing a forward slash (e.g. "Alpha/Beta", "10/12") passed straight
   to `SetDirectory()` turned into a *nested* Kodi folder instead of
   Dispatcharr's own single flat one for that show -- confirmed against
   Kodi's own real source, `CPVRRecordingsPath` treats a raw `/` in
