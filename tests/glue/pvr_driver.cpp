@@ -1265,6 +1265,45 @@ int main(int argc, char** argv)
     abi::CloseRecorded(I(), d);
     INFO("streams2: ids %lld..%lld", (long long)a.id, (long long)e.id);
   }
+  else if (what == "finished_hls_gone")
+  {
+    // A recording the server ended long ago whose `_hls_dir` key was never cleared (Dispatcharr clears it only after a
+    // successful remux; found live 2026-10-18 on an interrupted recording) is opened on the HLS path, whose playlist is
+    // gone. The open falls back to the finished file.
+    ctl("ip_reset=20&ip_state=interrupted&ip_hls_key=1&ip_dir_gone=1&ip_file=1");
+    PVR_RECORDING r{};
+    abi::setf(r.strRecordingId, "%d", 7);
+    r.recordingTime = time(nullptr) - 600;
+    abi::RecordedStream st;
+    if (!abi::OpenRecorded(I(), &r, st))
+      FAIL("a finished recording whose playlist redirects to its file did not open");
+    else
+    {
+      std::vector<unsigned char> buf(4096);
+      const int n = abi::ReadRecorded(I(), st, buf.data(), (unsigned)buf.size());
+      const uint32_t first =
+          n >= 4 ? (uint32_t(buf[0]) << 24) | (uint32_t(buf[1]) << 16) | (uint32_t(buf[2]) << 8) | buf[3] : 0;
+      if (first != 0x1B000000u)
+        FAIL("the fallback read returned %d byte(s) starting %08x, not the finished file's", n, first);
+      bool realTime = true;
+      if (abi::RecordedStreamRealTime(I(), st, realTime) != PVR_ERROR_NO_ERROR || realTime)
+        FAIL("the fallback stream is not reported as a finished, non-real-time one");
+      abi::CloseRecorded(I(), st);
+    }
+    // The shape seen live: the HLS directory is there but never got a playlist (404) and there is no file. The open
+    // still fails, but without a notification: Kodi 22's thumbnail loader makes opens nobody asked to watch.
+    ctl("ip_dir_gone=0&ip_nodir=1&ip_file=0");
+    const long notifiesBefore = g_notifyCount;
+    abi::RecordedStream empty;
+    if (abi::OpenRecorded(I(), &r, empty))
+    {
+      FAIL("a finished recording with no playlist and no file opened");
+      abi::CloseRecorded(I(), empty);
+    }
+    if (g_notifyCount != notifiesBefore)
+      FAIL("the failed fallback showed %ld notification(s)", g_notifyCount - notifiesBefore);
+    ctl("ip_state=&ip_hls_key=0&ip_nodir=0");
+  }
   else if (what == "warm_up")
   {
     // Off mode hands Kodi the proxy URL, and Kodi 22 plays it while Dispatcharr is still starting a channel nobody is

@@ -182,17 +182,26 @@ bool ShouldRetryInProgressColdStart(long playlistHttpStatus, bool lookupOk, bool
 //   kWait          -- the refresh worked but nothing is there yet, or it failed in
 //                     the one way ShouldRetryInProgressColdStart() says is a
 //                     young recording's missing HLS directory: sleep and retry.
+//   kFinishedPlaylistGone -- the refresh failed because the playlist is gone
+//                     (404 or a redirect) and the lookup says the recording is
+//                     over: the HLS copy no longer exists, so the caller opens
+//                     the finished file instead. Dispatcharr can leave `_hls_dir`
+//                     set on a recording long after it ended (an interrupted one,
+//                     confirmed live 2026-10-18; it clears the key only after a
+//                     successful remux), which is what routed it here; the HLS
+//                     endpoint redirects to the file whenever the file exists.
 //   kFail          -- the refresh failed for any other reason: give up now rather
-//                     than burn the budget (a finished, failed or deleted
-//                     recording).
-// `haveSegments`/`finished` are only consulted after a successful refresh: a
-// failed one has not updated them.
+//                     than burn the budget (a failed or deleted recording).
+// A failed refresh updates `finished` only in that playlist-gone case (see
+// RefreshInProgressRecordingManifest()), and `haveSegments` may hold segments
+// seeded from an earlier open, whose URLs are gone too, so it is not consulted.
 enum class InProgressColdStartStep
 {
   kReady,
   kWait,
   kFail,
   kFinishedEmpty,
+  kFinishedPlaylistGone,
 };
 
 InProgressColdStartStep DecideInProgressColdStartStep(bool refreshOk, bool retryable, bool haveSegments, bool finished);

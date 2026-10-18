@@ -96,7 +96,11 @@ DeleteTimerAction DecideDeleteTimerAction(bool forceDelete, bool lookupOk, long 
 InProgressColdStartStep DecideInProgressColdStartStep(bool refreshOk, bool retryable, bool haveSegments, bool finished)
 {
   if (!refreshOk)
-    return retryable ? InProgressColdStartStep::kWait : InProgressColdStartStep::kFail;
+  {
+    if (retryable)
+      return InProgressColdStartStep::kWait;
+    return finished ? InProgressColdStartStep::kFinishedPlaylistGone : InProgressColdStartStep::kFail;
+  }
   if (haveSegments)
     return InProgressColdStartStep::kReady;
   if (finished)

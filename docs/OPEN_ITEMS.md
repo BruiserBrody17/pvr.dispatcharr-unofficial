@@ -4,26 +4,25 @@
 
 ## Status at a glance
 
-**25 open, 322 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**24 open, 323 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support; one from the live check of the audit's fixes. The other 21 come from
-the 2026-10-18 read-only audit of the whole project (addon, both plugins, tools, CI and packaging; findings only,
-nothing changed; 28 at first, seven fixed the same day and moved to `CLOSED_ITEMS.md`), each marked with how sure the
-audit was: *confirmed* (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the
-trigger is not demonstrated) or *low confidence*.
+work on `Piers`: what remains of Kodi 22 support. The other 21 come from the 2026-10-18 read-only audit of the whole
+project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
+day and moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
+path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 8 |
+| Open: Fix known, not yet done | 7 |
 | Open: Architectural / concurrency | 4 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 2 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 7 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 280 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 281 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -104,20 +103,6 @@ confidence that it helps with the provider streams in use). (3) `_is_process_ali
 before it compares the start ticks (low confidence; depends on whether the container runs as root). (4)
 `RefreshToken.for_user` may add a database row per buffer start if Django's `token_blacklist` app is installed (low
 confidence; not checked on a real server).
-
-#### An interrupted recording with a leftover `_hls_dir` is opened as in progress, and fails again and again
-
-**Opened 2026-10-18, found during the live check of the audit's fixes (Kodi 22.0-RC1 against the lab server); confirmed
-live.** A recording the server had marked `interrupted` two days earlier (`interrupted_reason` `no_stream_data`,
-`bytes_written` 0, `remux_success` false) still had `custom_properties._hls_dir` set. `ParseRecordingFields()` turns that
-into `hlsDirStillPresent`, so `OpenRecordedStream()` takes the in-progress path (`inProgress=0 hlsDirStillPresent=1` in
-the debug log), the in-progress playlist answers 404, and the open fails with "Dispatcharr returned HTTP 404 fetching
-in-progress playlist". Kodi 22's thumbnail loader retried it about ten times in ten minutes, each an error line in
-`kodi.log`. Nothing is lost in this case, since there is no file to play, but a finished recording with real content and
-the same leftover key would be sent to a playlist that is gone too; not checked whether that open falls back to the
-finished file. Fix: trust `_hls_dir` only while the status is not terminal (or shortly after `ended_at`), and/or fall back
-to the finished-file path on a 404 for a terminal recording; an empty one (`bytes_written` 0) logged once, not as an
-error on every open. Regression test in `tests/test_recording_parser.cpp` or `tests/test_recording_visibility.cpp`.
 
 ### Architectural / concurrency
 

@@ -21,6 +21,8 @@ compare against.
 
 ### Fixed
 
+- **A finished recording whose live copy is gone opens from its file**: the server can leave a recording marked as
+  still having its live copy after it ended, and the addon then failed to open it; it now plays the finished file.
 - **A recording that finishes while you watch it is no longer re-checked segment by segment right afterwards** (Kodi
   22): when Kodi reads the finished recording's details, the addon reuses the segment sizes it already knows instead of
   asking the server about every segment again (thousands of requests for a long recording).

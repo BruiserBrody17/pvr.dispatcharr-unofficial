@@ -3210,9 +3210,11 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
 }
 
 bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t startTime, int64_t& streamIdOut,
-                                                      std::string& error)
+                                                      std::string& error, bool* finishedPlaylistGoneOut)
 {
   streamIdOut = 0;
+  if (finishedPlaylistGoneOut)
+    *finishedPlaylistGoneOut = false;
   // Built on a private object and registered only once it has its first segment, so nothing else can reach a half-open
   // stream (a refresh from a GetRecordedStreamTimes() poll would otherwise find no segments yet, merge the whole
   // playlist, and the seed below would add the cached copies again -- every segment twice in the byte stream), and so
@@ -3289,6 +3291,10 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
       stopWaiting = true; // finished with literally zero segments -- nothing to wait for
       break;
     case InProgressColdStartStep::kFail:
+      return false;
+    case InProgressColdStartStep::kFinishedPlaylistGone:
+      if (finishedPlaylistGoneOut)
+        *finishedPlaylistGoneOut = true;
       return false;
     case InProgressColdStartStep::kWait:
       if (!refreshOk)
@@ -3859,7 +3865,8 @@ bool DispatcharrClient::IsLiveTimeshiftStreamOpen() const
   return m_liveTimeshiftStream.open;
 }
 
-bool DispatcharrClient::OpenRecordingStream(int recordingId, int64_t& streamIdOut, std::string& error)
+bool DispatcharrClient::OpenRecordingStream(int recordingId, int64_t& streamIdOut, std::string& error,
+                                            bool notifyViewer)
 {
   streamIdOut = 0;
   std::string url = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/file/";
@@ -3974,7 +3981,7 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, int64_t& streamIdOu
     if (outcome == RecordingOpenOutcome::kHttpFailure)
     {
       error = "Dispatcharr returned HTTP " + std::to_string(httpCode) + " opening recording stream";
-      const std::string userMessage = DescribeRecordingOpenFailure(httpCode);
+      const std::string userMessage = notifyViewer ? DescribeRecordingOpenFailure(httpCode) : std::string();
       if (!userMessage.empty())
         kodi::QueueNotification(QUEUE_ERROR, "", userMessage);
       return false;

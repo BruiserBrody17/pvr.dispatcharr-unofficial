@@ -747,45 +747,7 @@ class H(BaseHTTPRequestHandler):
             if rid in REC_TAGS:  # completed recording
                 tag = REC_TAGS[rid]
                 if rest == ["file"]:
-                    st = ctl_int("rec_status", 0)
-                    if st:
-                        return self.send(st, b"x")
-                    size = REC_SIZE if CTL["rec_shrunk"] != "1" else REC_SIZE - 4096
-                    rng = self.headers.get("Range")
-                    data_len = size
-                    ign = CTL["rec_norange"] == "1"
-                    if rng and not ign and rng.startswith("bytes="):
-                        a, _, bb = rng[6:].partition("-")
-                        a = int(a)
-                        bb = int(bb) if bb else data_len - 1
-                        bb = min(bb, data_len - 1)
-                        if a >= data_len:
-                            return self.send(
-                                416, b"", "video/mp2t", {"Content-Range": "bytes */%d" % data_len}, method == "HEAD"
-                            )
-                        return self.send(
-                            206,
-                            rec_bytes(a, bb + 1, tag),
-                            "video/mp2t",
-                            {"Content-Range": "bytes %d-%d/%d" % (a, bb, data_len)},
-                            method == "HEAD",
-                        )
-                    if ign and ctl_int("rec_slow_ms") and method != "HEAD":
-                        # a body that takes a while to arrive, as a multi-gigabyte file over a real link does
-                        body = rec_bytes(0, data_len, tag)
-                        self.send_response(200)
-                        self.send_header("Content-Type", "video/mp2t")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        try:
-                            for off in range(0, len(body), 65536):
-                                self.wfile.write(body[off : off + 65536])
-                                self.wfile.flush()
-                                time.sleep(ctl_int("rec_slow_ms") / 1000.0)
-                        except OSError:
-                            pass  # the client ended the transfer
-                        return True
-                    return self.send(200, rec_bytes(0, data_len, tag), "video/mp2t", None, method == "HEAD")
+                    return self.serve_rec_file(method, tag)
                 return self.J(
                     200,
                     {
@@ -811,10 +773,17 @@ class H(BaseHTTPRequestHandler):
                             "channel": 1,
                             "start_time": st,
                             "end_time": en,
-                            "custom_properties": {"status": state},
+                            # ip_hls_key=1: the key Dispatcharr leaves set until a successful remux has removed the HLS
+                            # directory, so an ended recording can still carry it
+                            "custom_properties": dict(
+                                {"status": state}, **({"_hls_dir": "/x"} if CTL["ip_hls_key"] == "1" else {})
+                            ),
                         },
                     )
                 if rest == ["file"]:
+                    # ip_file=1: the recording also has a finished file (what a 302 from its playlist points at)
+                    if CTL["ip_file"] == "1":
+                        return self.serve_rec_file(method, tag)
                     return self.J(404, {"detail": "nf"})
                 if rest == ["hls", "index.m3u8"]:
                     if ctl_int("ip_manifest_delay_ms_%d" % rid):
@@ -865,6 +834,47 @@ class H(BaseHTTPRequestHandler):
             jb = {}
         if pvr_route(self, method, p, q, jb) is None:
             return self.J(404, {"detail": "nf"})
+
+    def serve_rec_file(self, method, tag):
+        """A completed recording's /file/: Range honoured unless rec_norange=1; rec_status=N answers N, rec_shrunk=1
+        serves 4 KiB less, rec_slow_ms paces a Range-less body."""
+        st = ctl_int("rec_status", 0)
+        if st:
+            return self.send(st, b"x")
+        size = REC_SIZE if CTL["rec_shrunk"] != "1" else REC_SIZE - 4096
+        rng = self.headers.get("Range")
+        data_len = size
+        ign = CTL["rec_norange"] == "1"
+        if rng and not ign and rng.startswith("bytes="):
+            a, _, bb = rng[6:].partition("-")
+            a = int(a)
+            bb = int(bb) if bb else data_len - 1
+            bb = min(bb, data_len - 1)
+            if a >= data_len:
+                return self.send(416, b"", "video/mp2t", {"Content-Range": "bytes */%d" % data_len}, method == "HEAD")
+            return self.send(
+                206,
+                rec_bytes(a, bb + 1, tag),
+                "video/mp2t",
+                {"Content-Range": "bytes %d-%d/%d" % (a, bb, data_len)},
+                method == "HEAD",
+            )
+        if ign and ctl_int("rec_slow_ms") and method != "HEAD":
+            # a body that takes a while to arrive, as a multi-gigabyte file over a real link does
+            body = rec_bytes(0, data_len, tag)
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp2t")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                for off in range(0, len(body), 65536):
+                    self.wfile.write(body[off : off + 65536])
+                    self.wfile.flush()
+                    time.sleep(ctl_int("rec_slow_ms") / 1000.0)
+            except OSError:
+                pass  # the client ended the transfer
+            return True
+        return self.send(200, rec_bytes(0, data_len, tag), "video/mp2t", None, method == "HEAD")
 
     def proxy_stream(self, method, p):
         """Dispatcharr's MPEG-TS proxy for a plain stream URL (what Off and Local modes hand to Kodi). GET only (HEAD

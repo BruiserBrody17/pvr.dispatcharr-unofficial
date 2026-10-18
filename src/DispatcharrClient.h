@@ -1005,7 +1005,11 @@ public:
   // every later call takes it. Ids are never reused and opening one stream closes nothing, so a Close for an old id
   // can arrive after the next stream's open. An unknown id (already closed, or never issued) is a harmless no-op or
   // an error value, never another stream's data.
-  bool OpenRecordingStream(int recordingId, int64_t& streamIdOut, std::string& error);
+  //
+  // `notifyViewer` false keeps an HTTP failure in the log only, without DescribeRecordingOpenFailure()'s notification:
+  // the fallback from a gone HLS playlist (PVRDispatcharr::OpenRecordedStream()) also runs for opens nobody asked to
+  // watch, such as Kodi 22's thumbnail loader, which retried one empty recording about ten times in ten minutes.
+  bool OpenRecordingStream(int recordingId, int64_t& streamIdOut, std::string& error, bool notifyViewer = true);
 
   // Growing, seekable byte-stream access to the server-side live timeshift
   // buffer -- the actual consumer of StartTimeshiftBuffer() above. Exposes
@@ -1096,7 +1100,12 @@ public:
   // than live-timeshift's own "anchor at the trim point" approach below,
   // since a recording always starts at true byte 0 with a genuinely known
   // start time, no cold-start trim to anchor instead.
-  bool OpenInProgressRecordingStream(int recordingId, time_t startTime, int64_t& streamIdOut, std::string& error);
+  // `finishedPlaylistGoneOut`, if given, is set true when the open failed because
+  // the recording is over and its HLS playlist is gone
+  // (InProgressColdStartStep::kFinishedPlaylistGone): the caller should open the
+  // finished file with OpenRecordingStream() instead.
+  bool OpenInProgressRecordingStream(int recordingId, time_t startTime, int64_t& streamIdOut, std::string& error,
+                                     bool* finishedPlaylistGoneOut = nullptr);
 
   // The calls both kinds of recorded stream share, dispatched on the kind the id was opened as. Read returns 0 for an
   // unknown id (Kodi retries a -1 at once, which would spin); Seek and Length return -1.
