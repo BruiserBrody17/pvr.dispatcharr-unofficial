@@ -2014,6 +2014,10 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
      from the cache before its own cold-start wait loop; the cache entry
      itself is dropped once `finished` goes true, since a finished
      recording plays back through the completed-recording path instead.
+     (Since 2026-10-18 it is kept for 15 minutes after its last use
+     instead: Kodi 22 opens a just-finished recording through this path
+     once more -- `docs/CLOSED_ITEMS.md`, "Kodi 22's stream-details probe
+     of a just-finished recording sizes every segment again".)
 
   Confirmed live on Windows against a real, currently-recording game (same
   matchup as the original report, coincidentally): a cold open (fresh addon

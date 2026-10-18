@@ -6,6 +6,46 @@
 
 ### Fixed
 
+#### Kodi 22's stream-details probe of a just-finished recording sizes every segment again
+
+**Opened 2026-10-17, from the live check of the two-streams change (`CLOSED_ITEMS.md`, "Two streams of one
+in-progress recording each poll its manifest").** When a recording finishes while it is watched, Kodi 22's thumbnail
+loader opens it to read its stream details once its timer is gone, and the addon sends the open through the
+in-progress path because the recording's HLS folder is still there (`hlsDirStillPresent`). By then a stream has seen
+the recording `finished`, and `RefreshInProgressRecordingManifest()` has erased its cross-open segment cache
+(`m_inProgressSegmentCache`) on the assumption that a finished recording is not opened through this path again. So
+the probe HEADs every segment: two probes from two threads cost 340 HEADs in 1.7 s for an 11-minute recording, which
+would be about 3,600 for a two-hour one. Nothing breaks. Fix options: keep the entry for a finished recording until
+its HLS folder is gone (or for a short grace after `finished`), or open a finished recording through the completed
+path even while its folder exists (check first what the completed `/file/` endpoint serves while the server is still
+joining the segments). Kodi's probe also opens one recording from several threads at once (seen for an older
+recording whose playlist answers 404), which the first option would serve too.
+
+**Closed 2026-10-18 on `Piers`, confirmed with the glue harness and live on Kodi 22.0-RC1.** The first option, with
+the grace measured from the entry's last use: a finished recording's entry is updated like any other (so the final
+segments the finishing refresh sized are in it too), marked `finished`, and dropped by the opportunistic prune once
+nothing has touched it for 15 minutes (`kFinishedSegmentCacheTtl`, against the 24 hours a still-recording entry keeps;
+`ShouldPruneInProgressSegmentCacheEntry()` in `InProgressSegmentCache.h`). Every refresh of a stream still reading the
+finished recording touches it, so a viewer who keeps watching keeps it. The entry is still erased at once when the
+HLS folder is confirmed gone (`IsInProgressContentGone()`), since nothing opens the recording through this path after
+that. The second option was ruled out without a new check: `docs/RECORDINGS.md`'s "Opening a recording immediately
+after stopping it could error outright, or play without the ability to seek" is a real reported bug from opening the
+completed path during exactly that window. A new glue scenario, `ip_finished_reopen`, plays an in-progress recording
+of 200 segments to its end after it finishes, closes it, then opens it from two threads at once, as the probe does:
+before the change the two reopens cost 400 segment HEADs, after it 2 (the scenario's limit is 10, and it is in CI's
+glue list). Unit tests pin both TTLs (`tests/test_in_progress_segment_cache.cpp`; mutation-checked: with the finished
+TTL set to 24 hours the finished-entry test fails). Not ported: `Omega` erases the entry the same way, but the
+probe that reopens a finished recording was seen on Kodi 22 only, and whether Kodi 21 does the same is not checked.
+
+**Live check, the same day (Kodi 22.0-RC1 from Flathub's beta branch on the lab VM, against the lab server, with the
+counting forwarder between the addon and the server; the PR's CI-built Linux zip against the `Piers` tip's, the
+profile backed up and restored afterwards).** The same sequence on each build: a 10-minute instant recording, played
+while in progress for 200 s, stopped while it was watched, then Home and the recordings window opened to bring on
+the thumbnail loader. On both, Kodi's probe opened the just-finished recording twice through the in-progress path
+(`openStreams=2`), about 20 s after the stop. Without the change each probe merged all 58 segments and the two cost
+116 segment HEADs within 2 s (about 0.3 s per open); with it they cost 2 (about 0.06 to 0.08 s per open). Playback
+itself was the same on both: the viewer's stream played on to the end of the stopped recording and closed.
+
 #### Two streams of one in-progress recording each poll its manifest
 
 **Opened 2026-10-14, with the multiple-recorded-streams work on `Piers`; deferred.** Kodi 22 may hold two streams of the

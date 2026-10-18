@@ -157,3 +157,23 @@ TEST_CASE("SegmentSizesKnownToCache does not inherit another stream's zero-byte 
   const std::vector<CachedSeg> cached{{"s0", 100}, {"s1", 0}, {"s2", 300}};
   CHECK(SegmentSizesKnownToCache(cached, std::vector<PendingSeg>{{"s1"}, {"s2"}}, 1) == std::vector<int64_t>{-1, 300});
 }
+
+TEST_CASE("ShouldPruneInProgressSegmentCacheEntry keeps a finished recording's entry for a while after its last use",
+          "[InProgressSegmentCache]")
+{
+  // Kodi 22's stream-details probe opens a just-finished recording once more; erasing the entry the moment the
+  // recording finished made that open size every segment again.
+  const auto touched = Clock::time_point{} + std::chrono::hours(1);
+  CHECK_FALSE(ShouldPruneInProgressSegmentCacheEntry(touched, /*finished=*/true, touched));
+  CHECK_FALSE(ShouldPruneInProgressSegmentCacheEntry(touched, true, touched + std::chrono::minutes(14)));
+  CHECK_FALSE(ShouldPruneInProgressSegmentCacheEntry(touched, true, touched + std::chrono::minutes(15)));
+  CHECK(ShouldPruneInProgressSegmentCacheEntry(touched, true, touched + std::chrono::minutes(15) + milliseconds(1)));
+}
+
+TEST_CASE("ShouldPruneInProgressSegmentCacheEntry keeps a still-recording entry for a day", "[InProgressSegmentCache]")
+{
+  const auto touched = Clock::time_point{} + std::chrono::hours(1);
+  CHECK_FALSE(ShouldPruneInProgressSegmentCacheEntry(touched, /*finished=*/false, touched + std::chrono::hours(2)));
+  CHECK_FALSE(ShouldPruneInProgressSegmentCacheEntry(touched, false, touched + std::chrono::hours(24)));
+  CHECK(ShouldPruneInProgressSegmentCacheEntry(touched, false, touched + std::chrono::hours(24) + milliseconds(1)));
+}

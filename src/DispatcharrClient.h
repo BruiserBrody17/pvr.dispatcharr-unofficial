@@ -1864,24 +1864,25 @@ private:
   // every *first* open already pays for a recording that's been running a
   // while, which was confirmed live (a ~2h-in recording took 29.4s to
   // open, entirely spent probing 1,800 already-elapsed segments one at a
-  // time). Cleared for a recording once RefreshInProgressRecordingManifest()
-  // sees it's finished -- a finished recording is played back through the
-  // completed-recording path instead, so its entry here would just sit
-  // unused. Not quite: Kodi 22's stream-details probe opens a just-finished
-  // recording through this path while its HLS folder is still there, and
-  // then sizes every segment again (docs/OPEN_ITEMS.md, "Kodi 22's
-  // stream-details probe of a just-finished recording sizes every segment
-  // again").
+  // time). A finished recording's entry is kept for a short while rather
+  // than cleared at once: Kodi 22's stream-details probe opens a
+  // just-finished recording through this path while its HLS folder is still
+  // there -- see dispatcharr::ShouldPruneInProgressSegmentCacheEntry(). It
+  // is erased once its HLS folder is confirmed gone.
   struct InProgressRecordingSegmentCache
   {
     std::vector<InProgressRecordingSegmentInfo> segments;
     int64_t totalBytes = 0;
     int64_t totalDurationMs = 0;
+    // Whether the stream that last touched this entry saw the recording
+    // finished: such an entry is pruned much sooner.
+    bool finished = false;
     // Set every time this entry is touched -- backs the opportunistic
     // TTL-based prune RefreshInProgressRecordingManifest() runs alongside
     // its own normal cache-touch. Real, confirmed leak this fixes (found
-    // via code reading): the "finished" cleanup above only ever runs if
-    // this exact recording's stream is reopened again after it finishes
+    // via code reading): the "finished" cleanup (then an erase, now the
+    // shorter finished TTL) only ever runs if this exact recording's stream
+    // is reopened again after it finishes
     // -- a recording watched partway while in progress, then abandoned
     // (channel changed, never tuned back in) before it naturally
     // completes, otherwise leaked its entry for the rest of this

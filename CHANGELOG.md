@@ -19,6 +19,12 @@ compare against.
   learned, so the server sees about what one stream costs. Kodi 22 was not seen opening two such streams in normal use,
   so for now this is a safeguard rather than something you will notice.
 
+### Fixed
+
+- **A recording that finishes while you watch it is no longer re-checked segment by segment right afterwards** (Kodi
+  22): when Kodi reads the finished recording's details, the addon reuses the segment sizes it already knows instead of
+  asking the server about every segment again (thousands of requests for a long recording).
+
 ## [0.14.0] - 2026-10-17
 
 The first release for Kodi 22 ("Piers"), built against Kodi 22.0 RC1. **It works with Kodi 22 only**: Kodi 22 refuses a

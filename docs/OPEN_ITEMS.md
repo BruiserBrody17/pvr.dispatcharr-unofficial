@@ -4,23 +4,22 @@
 
 ## Status at a glance
 
-**4 open, 314 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the
+**3 open, 315 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the
 two 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the other two come from the
-Kodi 22 work on `Piers`: what remains of Kodi 22 support, and Kodi 22's stream-details probe of a just-finished
-recording.
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); the third comes from the
+Kodi 22 work on `Piers`: what remains of Kodi 22 support.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 1 |
+| Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 272 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 273 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -29,21 +28,6 @@ recording.
 ### Needs a live check
 
 ### Fix known, not yet done
-
-#### Kodi 22's stream-details probe of a just-finished recording sizes every segment again
-
-**Opened 2026-10-17, from the live check of the two-streams change (`CLOSED_ITEMS.md`, "Two streams of one
-in-progress recording each poll its manifest").** When a recording finishes while it is watched, Kodi 22's thumbnail
-loader opens it to read its stream details once its timer is gone, and the addon sends the open through the
-in-progress path because the recording's HLS folder is still there (`hlsDirStillPresent`). By then a stream has seen
-the recording `finished`, and `RefreshInProgressRecordingManifest()` has erased its cross-open segment cache
-(`m_inProgressSegmentCache`) on the assumption that a finished recording is not opened through this path again. So
-the probe HEADs every segment: two probes from two threads cost 340 HEADs in 1.7 s for an 11-minute recording, which
-would be about 3,600 for a two-hour one. Nothing breaks. Fix options: keep the entry for a finished recording until
-its HLS folder is gone (or for a short grace after `finished`), or open a finished recording through the completed
-path even while its folder exists (check first what the completed `/file/` endpoint serves while the server is still
-joining the segments). Kodi's probe also opens one recording from several threads at once (seen for an older
-recording whose playlist answers 404), which the first option would serve too.
 
 ### Architectural / concurrency
 

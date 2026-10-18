@@ -1521,6 +1521,83 @@ static void ip_two_share(DispatcharrClient& cl)
   expect_all_closed(cl);
 }
 
+// Segment-size probes (HEADs on an in-progress recording's segments) the fake has answered so far.
+static long segment_heads()
+{
+  const auto stats = nlohmann::json::parse(http("/__stats"), nullptr, false);
+  return stats.is_object() && stats.contains("HEAD /hls/seg") ? stats["HEAD /hls/seg"].get<long>() : 0;
+}
+
+// Kodi 22's stream-details probe: a recording finishes while it is watched, and Kodi opens it again from two threads
+// at once while its HLS folder is still there (so through the in-progress path). Those opens must take the segment
+// sizes the watched stream already probed instead of sizing every segment again: before the finished recording's
+// cache entry was kept, they cost 340 HEADs for an 11-minute recording on a real Kodi 22.
+static void ip_finished_reopen(DispatcharrClient& cl)
+{
+  ctl("ip_reset=60"); // 200 segments already elapsed
+  OpenStream a;
+  const long headsBefore = segment_heads();
+  if (!open_stream(cl, 7, a))
+    return;
+  read_verified(cl, a, 50000);
+  ctl("ip_freeze=1");
+  ctl("ip_state=completed");
+  ctl("ip_endlist=1");
+  // Read to the end, which the stream reaches only once it has seen the recording finished.
+  std::vector<uint8_t> buf(32768);
+  const long deadline = ms() + 20000;
+  bool ended = false;
+  while (!ended && ms() < deadline)
+  {
+    const int n = cl.ReadRecordedStream(a.sid, buf.data(), (unsigned)buf.size());
+    if (n < 0)
+    {
+      sleep_ms(20);
+      continue;
+    }
+    if (n == 0)
+    {
+      ended = true;
+      break;
+    }
+    for (int i = 0; i < n; i++)
+      if (buf[i] != a.byteAt(a.pos + i))
+      {
+        FAIL("watched stream: byte mismatch at %lld", (long long)(a.pos + i));
+        return;
+      }
+    a.pos += n;
+  }
+  if (!ended)
+    FAIL("the watched stream never reached the end of the finished recording (at %lld)", (long long)a.pos);
+  cl.CloseRecordedStream(a.sid);
+  const long watchedHeads = segment_heads() - headsBefore;
+
+  const long reopenBefore = segment_heads();
+  OpenStream probes[2];
+  std::vector<std::thread> openers;
+  for (auto& p : probes)
+    openers.emplace_back(
+        [&cl, &p]
+        {
+          if (open_stream(cl, 7, p))
+          {
+            read_verified(cl, p, 50000);
+            cl.CloseRecordedStream(p.sid);
+          }
+        });
+  for (auto& t : openers)
+    t.join();
+  const long reopenHeads = segment_heads() - reopenBefore;
+  INFO("segment HEADs: %ld while watched (%lld bytes to the end), %ld for two reopens after it finished", watchedHeads,
+       (long long)a.pos, reopenHeads);
+  if (watchedHeads < 150)
+    FAIL("the watched stream sized only %ld segments; the reopen count below proves nothing", watchedHeads);
+  if (reopenHeads > 10)
+    FAIL("two reopens of the just-finished recording sized %ld segments again", reopenHeads);
+  expect_all_closed(cl);
+}
+
 // A stream already playing must not wait for another stream's open: the second open's cold start (here a slow first
 // playlist) holds no lock the first stream's reads need.
 static void ip_open_while_playing(DispatcharrClient& cl)
@@ -1736,6 +1813,8 @@ int main(int argc, char** argv)
       ip_open_while_playing(*cl);
     else if (what == "ip_two_share")
       ip_two_share(*cl);
+    else if (what == "ip_finished_reopen")
+      ip_finished_reopen(*cl);
     else if (what == "multi_close_race")
       multi_close_race(*cl);
     else if (what == "multi_dtor")

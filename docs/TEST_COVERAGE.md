@@ -747,6 +747,15 @@ stream's zero-byte placeholder. Mutation-checked: without the already-used rule,
 fails. The wiring is the glue harness's `ip_two_share` (in CI), which counts the manifest requests on the fake: two
 streams cost 2.0x and 2.1x what one does before, 1.0x and 1.2x after, against a 1.5x limit.
 
+2026-10-18 (`Piers`): `ShouldPruneInProgressSegmentCacheEntry()` says when the prune drops a cache entry: a day after
+its last use for a recording still recording, 15 minutes for one a stream saw finished, which used to be erased at
+once and made Kodi 22's stream-details probe size every segment again (`docs/CLOSED_ITEMS.md`, "Kodi 22's
+stream-details probe of a just-finished recording sizes every segment again"). The tests pin both limits, inclusive.
+Mutation-checked: with the finished limit at 24 hours the finished-entry test fails. The wiring is the glue harness's
+`ip_finished_reopen` (in CI): two reopens of a 200-segment recording that has just finished cost 400 segment HEADs
+before, 2 after, against a limit of 10. Confirmed live on Kodi 22.0-RC1 as well: 116 segment HEADs for the probe's two
+opens before, 2 after (the closed entry has the details).
+
 ### `JsonFieldUtil`
 
 `JsonFieldUtil` also gained `MergeDvrOffsetMinutes()`, `SetDvrOffsetMinutes()`'s

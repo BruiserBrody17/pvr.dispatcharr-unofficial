@@ -2916,8 +2916,9 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
                   st.recordingId, lookupOk ? "finished, and its HLS directory has been removed" : "deleted");
         st.contentGone = true;
         st.finished = true;
-        // Its cross-open segment cache entry is dead weight now too, the
-        // same as for any other finished recording (see below).
+        // Its cross-open segment cache entry is dead weight now: with the
+        // HLS folder gone, nothing opens the recording through this path
+        // again, so it is not kept like a finished one (see below).
         std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
         m_inProgressSegmentCache.erase(st.recordingId);
       }
@@ -3110,55 +3111,44 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
               st.recordingId);
   }
 
-  // Keep the cross-open cache (m_inProgressSegmentCache) in step. A
-  // finished recording won't be opened through this path again -- it plays
-  // back as a completed recording instead -- so its entry is just dead
-  // weight once that happens (not quite, see m_inProgressSegmentCache's
-  // comment: Kodi 22's stream-details probe does). Otherwise, append only what the entry lacks
-  // rather than recopying the whole vector: this refresh runs roughly every
-  // 500ms during active playback of a long recording, and st.segments is
-  // always exactly this entry's own prefix (seeded from it verbatim on open,
-  // append-only since) plus whatever's new here. Several streams of one
-  // recording share the entry, so the plan also covers a stream that is
-  // behind another: it never shrinks the entry.
+  // Keep the cross-open cache (m_inProgressSegmentCache) in step, a
+  // finished recording's entry included: Kodi 22's stream-details probe
+  // opens it through this path once more (see m_inProgressSegmentCache's
+  // comment), and the prune below drops it soon after its last use. Append
+  // only what the entry lacks rather than recopying the whole vector: this
+  // refresh runs roughly every 500ms during active playback of a long
+  // recording, and st.segments is always exactly this entry's own prefix
+  // (seeded from it verbatim on open, append-only since) plus whatever's new
+  // here. Several streams of one recording share the entry, so the plan also
+  // covers a stream that is behind another: it never shrinks the entry.
   if (newSegmentsProbed > 0 || st.finished)
   {
     std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
-    if (st.finished)
+    auto& cacheEntry = m_inProgressSegmentCache[st.recordingId];
+    // The decision itself lives in dispatcharr::PlanInProgressSegmentCacheUpdate() (InProgressSegmentCache.h) so
+    // it's unit-testable standalone -- see that function's own comment, including the gap the reseed fixes.
+    const SegmentCachePlan plan =
+        PlanInProgressSegmentCacheUpdate(cacheEntry.segments.size(), st.segments.size(), newSegmentsProbed);
+    if (plan.action == SegmentCacheAction::kReseed)
+      cacheEntry.segments = st.segments;
+    else if (plan.action == SegmentCacheAction::kAppend)
+      cacheEntry.segments.insert(cacheEntry.segments.end(), st.segments.begin() + plan.appendFrom, st.segments.end());
+    if (plan.action != SegmentCacheAction::kNone)
     {
-      m_inProgressSegmentCache.erase(st.recordingId);
+      // The totals describe the segments the entry now holds, which are exactly this stream's.
+      cacheEntry.totalBytes = st.totalBytes;
+      cacheEntry.totalDurationMs = st.totalDurationMs;
     }
-    else
-    {
-      auto& cacheEntry = m_inProgressSegmentCache[st.recordingId];
-      // The decision itself lives in dispatcharr::PlanInProgressSegmentCacheUpdate() (InProgressSegmentCache.h) so
-      // it's unit-testable standalone -- see that function's own comment, including the gap the reseed fixes.
-      const SegmentCachePlan plan =
-          PlanInProgressSegmentCacheUpdate(cacheEntry.segments.size(), st.segments.size(), newSegmentsProbed);
-      if (plan.action == SegmentCacheAction::kReseed)
-        cacheEntry.segments = st.segments;
-      else if (plan.action == SegmentCacheAction::kAppend)
-        cacheEntry.segments.insert(cacheEntry.segments.end(), st.segments.begin() + plan.appendFrom, st.segments.end());
-      if (plan.action != SegmentCacheAction::kNone)
-      {
-        // The totals describe the segments the entry now holds, which are exactly this stream's.
-        cacheEntry.totalBytes = st.totalBytes;
-        cacheEntry.totalDurationMs = st.totalDurationMs;
-      }
-      cacheEntry.lastUpdated = now;
-    }
+    cacheEntry.finished = st.finished;
+    cacheEntry.lastUpdated = now;
 
-    // Opportunistic prune: drops any entry (for a different recording)
-    // that hasn't been touched in kInProgressSegmentCacheTtlHours -- see
+    // Opportunistic prune of entries not touched for a while -- see
     // InProgressRecordingSegmentCache::lastUpdated's own comment for the
-    // leak this closes. A generous TTL: any recording actually still
-    // being watched touches its own entry roughly every 500ms, so
-    // anything this stale was genuinely abandoned, not just idle between
-    // reads.
-    constexpr auto kInProgressSegmentCacheTtl = std::chrono::hours(24);
+    // leak this closes, and dispatcharr::ShouldPruneInProgressSegmentCacheEntry()
+    // for how long each kind of entry is kept.
     for (auto it = m_inProgressSegmentCache.begin(); it != m_inProgressSegmentCache.end();)
     {
-      if (now - it->second.lastUpdated > kInProgressSegmentCacheTtl)
+      if (ShouldPruneInProgressSegmentCacheEntry(it->second.lastUpdated, it->second.finished, now))
         it = m_inProgressSegmentCache.erase(it);
       else
         ++it;

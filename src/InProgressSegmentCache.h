@@ -37,7 +37,9 @@ struct SegmentCachePlan
 //    a project-wide review, not itself independently reproduced: `finished` briefly went true (erasing the entry) and
 //    flipped back to false per ResolveInProgressFinished()'s non-sticky logic, and appending only this cycle's suffix
 //    onto the empty entry dropped every earlier segment while totalBytes/totalDurationMs still claimed the full
-//    recording, stranding any read into the missing region on a later open as a permanent gap.
+//    recording, stranding any read into the missing region on a later open as a permanent gap. A finished entry is
+//    no longer erased at once (see ShouldPruneInProgressSegmentCacheEntry()), but the prune can still drop one under a
+//    stream that is open and idle (paused longer than the finished TTL), which this covers the same way.
 inline SegmentCachePlan PlanInProgressSegmentCacheUpdate(size_t cachedCount, size_t streamCount,
                                                          size_t newlyProbedCount)
 {
@@ -47,6 +49,27 @@ inline SegmentCachePlan PlanInProgressSegmentCacheUpdate(size_t cachedCount, siz
   if (cachedCount < streamPreviousCount)
     return {SegmentCacheAction::kReseed, 0};
   return {SegmentCacheAction::kAppend, cachedCount};
+}
+
+// How long a recording's cross-open cache entry outlives its last use. One still recording keeps the generous 24 h: a
+// recording actually being watched touches its entry about every 500 ms, so anything that stale was abandoned. One
+// that has finished is kept, not erased at once, because Kodi 22's stream-details probe opens a just-finished
+// recording through the in-progress path while its HLS folder is still there, and with no entry it sized every segment
+// again (340 HEADs in 1.7 s for an 11-minute recording, seen live; docs/CLOSED_ITEMS.md, "Kodi 22's stream-details
+// probe of a just-finished recording sizes every segment again"). The probe came as soon as the recording's timer
+// was gone, so a finished entry needs only minutes, and every refresh of a stream still reading it extends them.
+inline constexpr std::chrono::hours kInProgressSegmentCacheTtl{24};
+inline constexpr std::chrono::minutes kFinishedSegmentCacheTtl{15};
+
+// Whether the opportunistic prune in RefreshInProgressRecordingManifest() drops a cache entry last touched at
+// `lastUpdated`, whose recording a stream last saw as `finished`.
+inline bool ShouldPruneInProgressSegmentCacheEntry(std::chrono::steady_clock::time_point lastUpdated, bool finished,
+                                                   std::chrono::steady_clock::time_point now)
+{
+  const std::chrono::steady_clock::duration ttl = finished
+                                                      ? std::chrono::steady_clock::duration(kFinishedSegmentCacheTtl)
+                                                      : std::chrono::steady_clock::duration(kInProgressSegmentCacheTtl);
+  return now - lastUpdated > ttl;
 }
 
 // Whether RefreshInProgressRecordingManifest() may take the recording lookup and playlist that another open stream of
