@@ -27,6 +27,9 @@ compare against.
   for the programme's full length instead of up to a minute less.
 - **A rare crash when Kodi exits or the addon restarts**: if the addon was just about to tell Kodi the connection
   state at that moment, Kodi could crash while closing it.
+- **A recording with very deeply nested extra data on the server no longer crashes Kodi on Android**: the addon
+  copied that data in a way that ran out of thread stack, so Kodi crashed each time it refreshed the recordings list.
+  It now reads the data in place.
 - **No more "no file for this recording" pop-ups while browsing** (Kodi 22): Kodi opens recordings by itself to
   read their details, and each failed open showed the message. It now appears only when you press Play on such a
   recording.

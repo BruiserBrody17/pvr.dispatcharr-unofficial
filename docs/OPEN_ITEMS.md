@@ -4,25 +4,25 @@
 
 ## Status at a glance
 
-**21 open, 327 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**20 open, 328 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. The other 18 come from the 2026-10-18 read-only audit of the whole
+work on `Piers`: what remains of Kodi 22 support. The other 17 come from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
-day and three on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
+day and four on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
 path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 5 |
+| Open: Fix known, not yet done | 4 |
 | Open: Architectural / concurrency | 3 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 2 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 7 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 285 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 286 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -39,20 +39,6 @@ initialisation covers the addon's copy on those platforms. If it does not, one `
 addon's create path (and the matching cleanup on destroy) is the fix.
 
 ### Fix known, not yet done
-
-#### Deeply nested `custom_properties` can overflow the stack on Android
-
-**Opened 2026-10-18, from the read-only audit; confirmed.** `cond ? item["x"] : nlohmann::json()` bound to a
-`const nlohmann::json&` is a prvalue, so it deep-copies the whole subtree, and nlohmann's copy constructor recurses
-(parsing and destruction do not). It is in `ParseRecordingFields()` and two more places in `RecordingParser.cpp`, and the
-same shape is in `TimerRuleParser.cpp`, `PluginRunResult.cpp` and three places in `DispatcharrClient.cpp` (one copies the
-signed-in user's own `custom_properties`). A recording whose `custom_properties` nests about 8000 deep crashed the real
-parser on a 1 MiB thread stack (bionic's default; 5000 passed). Python's json round-trips that depth, so a user with DVR
-access could store it and every client would crash on each recording refresh. Not checked: whether Dispatcharr caps the
-depth anywhere. Fix: a `static const nlohmann::json kNull;` fallback (or pointers) so nothing is copied, verified to depth
-100000; optionally a depth cap in `ParseJsonResponseBody()`. Regression test: a 100000-deep value parsed on a 1 MiB-stack
-thread in `tests/test_recording_parser.cpp`.
-
 
 #### `PersistApiKeyIfChanged()` writes three settings on the stream read thread
 

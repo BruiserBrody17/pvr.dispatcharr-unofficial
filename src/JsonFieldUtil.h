@@ -133,6 +133,20 @@ inline bool ReadNonEmptyStringField(const nlohmann::json& item, const char* key,
   return true;
 }
 
+// A reference to the value at `key`, or to a shared null when `item` is not an object or has no such key. For binding
+// a sub-object without copying it: `const json& x = cond ? item[key] : json();` makes the conditional a prvalue, so it
+// deep-copies the subtree, and nlohmann's copy constructor recurses once per nesting level (parsing and destruction do
+// not). A recording whose custom_properties nested about 8000 deep crashed the real parser on a 1 MiB thread stack,
+// Android's default (found by the 2026-10-18 read-only audit, reproduced in tests/test_recording_parser.cpp).
+inline const nlohmann::json& FieldRefOrNull(const nlohmann::json& item, const char* key)
+{
+  static const nlohmann::json kNull;
+  if (!item.is_object())
+    return kNull;
+  const auto it = item.find(key);
+  return it != item.end() ? *it : kNull;
+}
+
 // DispatcharrClient::SetDvrOffsetMinutes()'s own merge-preserving PATCH
 // body: sets only the offset key(s) actually being changed on top of
 // whatever this dvr_settings row's value blob already held (comskip

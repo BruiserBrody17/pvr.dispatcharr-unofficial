@@ -48,7 +48,7 @@ Recording ParseRecordingFields(const nlohmann::json& item, time_t now)
   r.isInProgress = r.startTime > 0 && r.startTime <= now && now < r.endTime;
   r.isUpcoming = r.startTime > now;
 
-  const nlohmann::json& custom = item.contains("custom_properties") ? item["custom_properties"] : nlohmann::json();
+  const nlohmann::json& custom = FieldRefOrNull(item, "custom_properties");
   if (custom.is_object())
   {
     // custom_properties.status is a more authoritative signal than the
@@ -176,7 +176,7 @@ Recording ParseRecordingFields(const nlohmann::json& item, time_t now)
     r.bytesWritten = FieldOr<int64_t>(custom, "bytes_written", 0);
     r.comskip = ParseComskipInfo(custom);
 
-    const nlohmann::json& program = custom.contains("program") ? custom["program"] : nlohmann::json();
+    const nlohmann::json& program = FieldRefOrNull(custom, "program");
     if (program.is_object())
     {
       r.title = FieldOr<std::string>(program, "title", "");
@@ -215,7 +215,7 @@ Recording ParseRecordingFields(const nlohmann::json& item, time_t now)
     // {"type": "recurring", "id": <rule id>, ...}) -- see RecurringRule's
     // own comment for how this links back to its parent rule as a Kodi
     // timer.
-    const nlohmann::json& rule = custom.contains("rule") ? custom["rule"] : nlohmann::json();
+    const nlohmann::json& rule = FieldRefOrNull(custom, "rule");
     if (rule.is_object() && FieldOr<std::string>(rule, "type", "") == "recurring")
       r.recurringRuleId = FieldOr(rule, "id", 0);
   }

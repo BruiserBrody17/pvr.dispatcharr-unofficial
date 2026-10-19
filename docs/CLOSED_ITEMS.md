@@ -116,6 +116,40 @@ the application...", no crash log) 3, 10 and 60 s after start and after about si
 With the account-level request held from start and let through 0 to 2 s after the quit, this build and the previous one
 both exited cleanly, so the window did not open on a real client; `dtor_late_report` is the reproduction.
 
+#### Deeply nested `custom_properties` could overflow the stack on Android
+
+**Opened 2026-10-18, from the read-only audit; confirmed.** `cond ? item["x"] : nlohmann::json()` bound to a
+`const nlohmann::json&` is a prvalue, so it deep-copies the whole subtree, and nlohmann's copy constructor recurses
+(parsing and destruction do not). It is in `ParseRecordingFields()` and two more places in `RecordingParser.cpp`, and the
+same shape is in `TimerRuleParser.cpp`, `PluginRunResult.cpp` and three places in `DispatcharrClient.cpp` (one copies the
+signed-in user's own `custom_properties`). A recording whose `custom_properties` nests about 8000 deep crashed the real
+parser on a 1 MiB thread stack (bionic's default; 5000 passed). Python's json round-trips that depth, so a user with DVR
+access could store it and every client would crash on each recording refresh. Not checked: whether Dispatcharr caps the
+depth anywhere. Fix: a `static const nlohmann::json kNull;` fallback (or pointers) so nothing is copied, verified to depth
+100000; optionally a depth cap in `ParseJsonResponseBody()`. Regression test: a 100000-deep value parsed on a 1 MiB-stack
+thread in `tests/test_recording_parser.cpp`.
+
+**Closed 2026-10-19 on `Piers`, confirmed with unit tests and the glue harness.** `FieldRefOrNull()` (`JsonFieldUtil.h`)
+returns a reference into the item, or to a function-local `static const` null, and replaces all seven bindings (the
+three in `RecordingParser.cpp`, `days_of_week` in `TimerRuleParser.cpp`, and `entries`, `timezones` and the signed-in
+user's `custom_properties` in `DispatcharrClient.cpp`). `UnwrapPluginRunResult()` now takes the response as an rvalue and
+moves the inner result out; its four callers never read the response afterwards. A grep for the same shape and for
+by-value copies of a response subtree found two more, left as they are: `FindSettingsRowByKey()` copies a core settings
+row's `value` and `MergeDvrOffsetMinutes()` takes it by value; only a Dispatcharr admin can write that value, and the
+merge-preserving `SetDvrOffsetMinutes()` PATCH needs a copy of it anyway. Regression tests parse a 100000-deep value on a thread with a 1 MiB stack
+(`tests/small_stack.h`): in `ParseRecordingFields()` under `custom_properties`, its `program` and its `rule`, in
+`ParseRecurringRuleJson()` under `days_of_week`, and in `UnwrapPluginRunResult()`. All three test files crashed with
+SIGSEGV on the old code, and reverting just the `program` or just the `rule` binding crashed the recording test again;
+with the fix the whole suite passes in a release build and under ASan + UBSan. No depth cap was added to
+`ParseJsonResponseBody()`: the parser and destructor are iterative (nlohmann 3.11.3), so nothing else recursed, and a
+cap would reject the whole response, so one deep recording would empty the recordings list instead of being parsed
+with the rest. The glue harness (`ci.sh` under ASan + UBSan, against the Kodi 22 dev-kit headers) passed with the
+`DispatcharrClient.cpp` changes. **Live (2026-10-19)**, a Kodi 22 RC1 Linux client against a real Dispatcharr 0.32.0:
+this build and the previous one reported identical recordings (every field Kodi exposes), timers and rules,
+channel groups and channels, and the same comskip breaks for a recording's EDL; live TV through the server-side
+buffer, whose plugin results go through `UnwrapPluginRunResult()`, played. No deeply nested value was stored on the real
+server.
+
 #### Kodi 22's thumbnail loader made the "no file for this recording" notice pop up while browsing
 
 **Opened 2026-10-18, a question from the live check of the leftover-`_hls_dir` fix; confirmed live.** The notice
