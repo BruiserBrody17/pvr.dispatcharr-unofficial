@@ -1,5 +1,7 @@
 #include "PluginRunResult.h"
 
+#include "small_stack.h"
+
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
@@ -12,7 +14,7 @@ TEST_CASE("UnwrapPluginRunResult succeeds when both envelope and inner status ar
 
   json result;
   std::string error;
-  bool ok = UnwrapPluginRunResult(response, "timeshift_buffer", result, error);
+  bool ok = UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error);
 
   REQUIRE(ok);
   CHECK(error.empty());
@@ -25,7 +27,7 @@ TEST_CASE("UnwrapPluginRunResult fails on the outer success=false envelope, usin
 
   json result;
   std::string error;
-  bool ok = UnwrapPluginRunResult(response, "timeshift_buffer", result, error);
+  bool ok = UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error);
 
   CHECK_FALSE(ok);
   CHECK(error == "plugin not installed");
@@ -38,7 +40,7 @@ TEST_CASE("UnwrapPluginRunResult falls back to a generic outer error message whe
 
   json result;
   std::string error;
-  bool ok = UnwrapPluginRunResult(response, "recording_edl", result, error);
+  bool ok = UnwrapPluginRunResult(std::move(response), "recording_edl", result, error);
 
   CHECK_FALSE(ok);
   CHECK(error == "recording_edl plugin call did not succeed");
@@ -50,7 +52,7 @@ TEST_CASE("UnwrapPluginRunResult fails when the inner status isn't ok, using its
 
   json result;
   std::string error;
-  bool ok = UnwrapPluginRunResult(response, "timeshift_buffer", result, error);
+  bool ok = UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error);
 
   CHECK_FALSE(ok);
   CHECK(error == "channel not found");
@@ -67,7 +69,7 @@ TEST_CASE("UnwrapPluginRunResult falls back to a generic inner error message whe
 
   json result;
   std::string error;
-  bool ok = UnwrapPluginRunResult(response, "recording_edl", result, error);
+  bool ok = UnwrapPluginRunResult(std::move(response), "recording_edl", result, error);
 
   CHECK_FALSE(ok);
   CHECK(error == "recording_edl plugin returned an error");
@@ -79,8 +81,26 @@ TEST_CASE("UnwrapPluginRunResult leaves resultOut null when result is absent", "
 
   json result;
   std::string error;
-  bool ok = UnwrapPluginRunResult(response, "timeshift_buffer", result, error);
+  bool ok = UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error);
 
   CHECK_FALSE(ok); // no "status": "ok" -- FieldOr's own default applies to a null resultOut too
   CHECK(result.is_null());
+}
+
+TEST_CASE("UnwrapPluginRunResult hands back a deeply nested result on a 1 MiB thread stack", "[PluginRunResult]")
+{
+  // The inner result is moved out of the response, not copied: nlohmann's copy constructor recurses per nesting level
+  // (docs/CLOSED_ITEMS.md, "Deeply nested custom_properties could overflow the stack on Android").
+  // The deep value is moved into place: an initializer list would copy it, recursively, on this thread.
+  json response = {{"success", true}, {"result", {{"status", "ok"}}}};
+  response["result"]["extra"] = dispatcharr_test::DeeplyNestedArray(dispatcharr_test::kDeepNestingLevels);
+
+  json result;
+  std::string error;
+  bool ok = false;
+  REQUIRE(dispatcharr_test::RunOnSmallStack(
+      [&] { ok = UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error); }));
+
+  CHECK(ok);
+  CHECK(result["status"] == "ok");
 }

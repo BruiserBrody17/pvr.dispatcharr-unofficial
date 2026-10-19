@@ -1,5 +1,7 @@
 #include "TimerRuleParser.h"
 
+#include "small_stack.h"
+
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
@@ -140,4 +142,19 @@ TEST_CASE("ParseRecurringRuleJson drops weekdays outside 0-6 instead of wrapping
   auto item =
       nlohmann::json::parse(R"({"id":3,"days_of_week":[4294967297,18446744073709551615,-9223372036854775808,-1,7,2]})");
   CHECK(ParseRecurringRuleJson(item).daysOfWeek == std::vector<int>{2});
+}
+
+TEST_CASE("ParseRecurringRuleJson reads a deeply nested days_of_week on a 1 MiB thread stack", "[TimerRuleParser]")
+{
+  // days_of_week bound through `cond ? x : json()` deep-copied it recursively (docs/CLOSED_ITEMS.md, "Deeply nested
+  // custom_properties could overflow the stack on Android"); the nested array is not an integer, so only 1 is kept.
+  // The deep value is moved into place: an initializer list would copy it, recursively, on this thread.
+  json item = {{"id", 4}, {"name", "Rule A"}, {"days_of_week", json::array({1})}};
+  item["days_of_week"].push_back(dispatcharr_test::DeeplyNestedArray(dispatcharr_test::kDeepNestingLevels));
+
+  RecurringRule rule;
+  REQUIRE(dispatcharr_test::RunOnSmallStack([&] { rule = ParseRecurringRuleJson(item); }));
+
+  CHECK(rule.name == "Rule A");
+  CHECK(rule.daysOfWeek == std::vector<int>{1});
 }

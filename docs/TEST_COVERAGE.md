@@ -431,6 +431,9 @@ mode this addon's own channel-number-keyed EPG lookup already assumes
 -- so an overridden channel number this addon didn't also read broke
 EPG matching for that channel entirely, not just its displayed number).
 
+2026-10-19: `ParseRecurringRuleJson()` reads a 100000-deep value inside `days_of_week` on a 1 MiB thread stack; it crashed
+when `days_of_week` was bound through `cond ? x : json()` (see `RecordingParser` below for the mechanism).
+
 ### `ChannelRenumbering`
 
 `ChannelRenumbering` is `HaveChannelNumbersChanged()` (added 2026-09-26,
@@ -798,6 +801,10 @@ past the true max" exclusive boundary either way -- 2^(bits-1) for a
 signed type, 2^bits for unsigned, not a flat "2^bits" for both as this
 entry originally, imprecisely, said.
 
+2026-10-19: `FieldRefOrNull()` (a reference into the item, or to a shared null for an absent key or a non-object item)
+replaces the `cond ? item[key] : json()` bindings that deep-copied a sub-object; the tests check the returned address is
+the item's own and the null cases. Why it matters is in `RecordingParser` below.
+
 ### `LiveEdgeMargin`
 
 `LiveEdgeMargin` holds two templates (same `byteOffset`/`byteSize`/
@@ -925,6 +932,9 @@ rather than staying behind a delegating wrapper; checks the outer
 `{"success", "error"}` envelope every plugin `run/` response is wrapped
 in, then the plugin's own inner `{"status", "message"}` result.
 
+2026-10-19: it takes the response as an rvalue and moves the inner result out instead of copying it; a 100000-deep
+result comes back on a 1 MiB thread stack, which crashed with the copy (see `RecordingParser` below for the mechanism).
+
 ### `PluginUrlUtil`
 
 2026-10-11: `IsTimeshiftFileServerReachable()` and `BuildTimeshiftFileServerUnreachableMessage()` (`PluginUrlUtil.h`, `tests/test_plugin_url_util.cpp`: any HTTP answer including the token-less 403 is reachable; a failed transfer is not, whatever stale status was left behind; the message names the port and the setting) decide the open-time probe of the plugin's file server. The glue harness gained the live_fileserver_unreachable scenario (the fake's fs_port knob reports a port nothing listens on: the open must fail at once with the port in the error, and succeed again once it is reachable; it fails on the old code, where the open succeeded; in CI's glue run). Checked live through a forwarder that exposed only the API port: 35.4 s of spinner before, 3.5 s to the notification after (`docs/CLOSED_ITEMS.md`).
@@ -1044,6 +1054,16 @@ string, fractional, negative and boolean values. The glue harness's `functional`
 plain recording and checks the thumbnail and numbers on what reaches Kodi, and fails with the thumbnail line removed.
 
 2026-10-11: `DisplayTitleForRecording()` (`RecordingParser.h`, `tests/test_recording_parser.cpp`: a placeholder takes the channel's name, a real title is never replaced even when it looks like the placeholder, no known channel name keeps the placeholder) picks what Kodi shows for a recording nothing titled. The glue harness's functional scenario gained fake recording 910 (completed, no title, on a named channel: it must show the channel's name; it fails with the substitution removed) beside the titled 908. Checked live: a recording Kodi had listed as "Recording <id>" showed its channel's name (`docs/CLOSED_ITEMS.md`).
+
+2026-10-19, deep nesting (`docs/CLOSED_ITEMS.md`, "Deeply nested `custom_properties` could overflow the stack on
+Android"): `ParseRecordingFields()` bound `custom_properties`, its `program` and its `rule` through `cond ? x : json()`,
+a prvalue that deep-copies the subtree with nlohmann's recursive copy constructor. The test puts a 100000-deep array
+under each of the three in turn and parses on a thread with a 1 MiB stack (`tests/small_stack.h`, Android's default
+thread stack); it crashed with SIGSEGV before the fix, and reverting any one of the three sites alone crashes it again.
+The deep values are moved into the test's items, not written in an initializer list: that copies too, and under ASan's
+larger frames it overflowed the main thread's 8 MiB before the parser ran. The same test shape covers `TimerRuleParser`
+(`days_of_week`) and `PluginRunResult`; the three `DispatcharrClient.cpp` sites use the same `FieldRefOrNull()` and
+run in the glue harness.
 
 ### `RecordingVisibility`
 

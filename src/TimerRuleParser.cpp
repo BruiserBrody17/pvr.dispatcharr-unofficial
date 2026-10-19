@@ -44,7 +44,7 @@ RecurringRule ParseRecurringRuleJson(const nlohmann::json& item)
   rule.endTimeOfDaySeconds = SecondsSinceMidnightFromString(FieldOr<std::string>(item, "end_time", ""));
   rule.startDate = TimeFromDateString(FieldOr<std::string>(item, "start_date", ""));
   rule.endDate = TimeFromDateString(FieldOr<std::string>(item, "end_date", ""));
-  const nlohmann::json& days = item.contains("days_of_week") ? item["days_of_week"] : nlohmann::json();
+  const nlohmann::json& days = FieldRefOrNull(item, "days_of_week");
   if (days.is_array())
   {
     // Read as int64 and range-checked: get<int>() wrapped an unsigned or out-of-range value, so 4294967297 became

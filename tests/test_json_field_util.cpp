@@ -459,3 +459,26 @@ TEST_CASE("ReadNonEmptyStringField refuses an absent, empty, null or non-string 
   CHECK_FALSE(ReadNonEmptyStringField(json::array({"access"}), "access", out));
   CHECK(out == "unchanged");
 }
+
+// ---------------------------------------------------------------------
+// FieldRefOrNull (the 2026-10-18 audit: `cond ? item[key] : json()` deep-copied a sub-object, and a deeply nested one
+// overflowed a 1 MiB thread stack; the stack itself is exercised in test_recording_parser.cpp)
+// ---------------------------------------------------------------------
+
+TEST_CASE("FieldRefOrNull refers into the item rather than copying it", "[JsonFieldUtil]")
+{
+  const json item = {{"custom_properties", {{"program", {{"title", "Show A"}}}}}};
+  const json& custom = FieldRefOrNull(item, "custom_properties");
+  CHECK(&custom == &item["custom_properties"]);
+  CHECK(&FieldRefOrNull(custom, "program") == &item["custom_properties"]["program"]);
+}
+
+TEST_CASE("FieldRefOrNull gives null for an absent key or a non-object item", "[JsonFieldUtil]")
+{
+  CHECK(FieldRefOrNull(json::object(), "custom_properties").is_null());
+  CHECK(FieldRefOrNull(json(nullptr), "custom_properties").is_null());
+  CHECK(FieldRefOrNull(json::array({"custom_properties"}), "custom_properties").is_null());
+  CHECK(FieldRefOrNull(json("custom_properties"), "custom_properties").is_null());
+  // An explicit null is returned as the value itself, which is null too.
+  CHECK(FieldRefOrNull(json{{"custom_properties", nullptr}}, "custom_properties").is_null());
+}

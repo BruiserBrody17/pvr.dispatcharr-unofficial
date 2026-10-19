@@ -1,6 +1,7 @@
 #include "RecordingParser.h"
 
 #include "DateTimeFormat.h"
+#include "small_stack.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -754,4 +755,33 @@ TEST_CASE("DisplayTitleForRecording never replaces a real title", "[RecordingPar
 TEST_CASE("DisplayTitleForRecording keeps the placeholder when the channel has no known name", "[RecordingParser]")
 {
   CHECK(DisplayTitleForRecording("Recording 1234", true, "") == "Recording 1234");
+}
+
+TEST_CASE("ParseRecordingFields reads a deeply nested custom_properties on a 1 MiB thread stack", "[RecordingParser]")
+{
+  // Each item puts the deep value one level further in, so each of the three references the parser takes
+  // (custom_properties, its program and its rule) is covered: binding any of them through `cond ? x : json()` makes a
+  // prvalue, which deep-copies the subtree recursively and overflowed the stack (docs/CLOSED_ITEMS.md).
+  // Each deep value is moved into place: an initializer list would copy it, recursively, on this thread.
+  json atCustom = {{"id", 1}, {"custom_properties", {{"title", "Show A"}}}};
+  atCustom["custom_properties"]["extra"] = dispatcharr_test::DeeplyNestedArray(dispatcharr_test::kDeepNestingLevels);
+  json atProgram = {{"id", 2}, {"custom_properties", {{"program", {{"title", "Show B"}}}}}};
+  atProgram["custom_properties"]["program"]["extra"] =
+      dispatcharr_test::DeeplyNestedArray(dispatcharr_test::kDeepNestingLevels);
+  json atRule = {{"id", 3}, {"custom_properties", {{"rule", {{"type", "recurring"}, {"id", 9}}}}}};
+  atRule["custom_properties"]["rule"]["extra"] =
+      dispatcharr_test::DeeplyNestedArray(dispatcharr_test::kDeepNestingLevels);
+
+  Recording a, b, c;
+  REQUIRE(dispatcharr_test::RunOnSmallStack(
+      [&]
+      {
+        a = ParseRecordingFields(atCustom, 0);
+        b = ParseRecordingFields(atProgram, 0);
+        c = ParseRecordingFields(atRule, 0);
+      }));
+
+  CHECK(a.title == "Show A");
+  CHECK(b.title == "Show B");
+  CHECK(c.recurringRuleId == 9);
 }

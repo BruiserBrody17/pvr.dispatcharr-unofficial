@@ -17,11 +17,14 @@ namespace dispatcharr
 // error messages used when the response doesn't carry its own. `resultOut`
 // is always set to the (possibly empty) inner result object on return,
 // even on failure, so a caller needing a field from it either way (e.g.
-// RefreshLiveManifest()'s "fatal") still can.
+// RefreshLiveManifest()'s "fatal") still can. The result is moved out of
+// `response`, not copied: nlohmann's copy constructor recurses once per
+// nesting level, which a deeply nested value turns into a stack overflow
+// on Android's 1 MiB thread stacks (JsonFieldUtil.h, FieldRefOrNull()).
 //
 // Zero Kodi/curl/member-state dependency -- pulled out here specifically
 // so it's unit-testable standalone; see ../tests/test_plugin_run_result.cpp.
-bool UnwrapPluginRunResult(const nlohmann::json& response, const char* pluginLabel, nlohmann::json& resultOut,
+bool UnwrapPluginRunResult(nlohmann::json&& response, const char* pluginLabel, nlohmann::json& resultOut,
                            std::string& error);
 
 } // namespace dispatcharr

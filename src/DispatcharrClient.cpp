@@ -1034,7 +1034,7 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action, con
     return false;
 
   json result;
-  if (!UnwrapPluginRunResult(response, "timeshift_buffer", result, error))
+  if (!UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error))
   {
     // result is still populated even on a logical (inner status != "ok")
     // failure -- see UnwrapPluginRunResult()'s own comment -- so this
@@ -1159,7 +1159,7 @@ bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, cons
                nullptr, ShortRequestTimeoutMs()))
     return false;
   json result;
-  return UnwrapPluginRunResult(response, "timeshift_buffer", result, error);
+  return UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error);
 }
 
 void DispatcharrClient::SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId)
@@ -1383,13 +1383,13 @@ bool DispatcharrClient::GetRecordingEdl(int recordingId, std::vector<RecordingEd
     return false;
 
   json result;
-  if (!UnwrapPluginRunResult(response, "recording_edl", result, error))
+  if (!UnwrapPluginRunResult(std::move(response), "recording_edl", result, error))
     return false;
 
   // The field-mapping/validity-filter logic itself lives in
   // dispatcharr::ParseRecordingEdlEntryJson() (RecordingParser.{h,cpp}) so
   // it's unit-testable standalone -- see that function's own comment.
-  const json& entries = result.contains("entries") ? result["entries"] : json();
+  const json& entries = FieldRefOrNull(result, "entries");
   if (entries.is_array())
   {
     for (const auto& item : entries)
@@ -2116,7 +2116,7 @@ bool DispatcharrClient::GetSupportedTimezones(std::vector<std::string>& timezone
   json response;
   if (!Request("GET", kTimezonesPath, json(), response, error))
     return false;
-  const json& list = response.contains("timezones") ? response["timezones"] : json();
+  const json& list = FieldRefOrNull(response, "timezones");
   if (!list.is_array())
   {
     error = "Unexpected timezones response shape";
@@ -2179,7 +2179,7 @@ bool DispatcharrClient::IsCatchupEnabledForCurrentUser(bool& enabledOut, std::st
   json response;
   if (!Request("GET", kCurrentUserPath, json(), response, error))
     return false;
-  const json& customProperties = response.contains("custom_properties") ? response["custom_properties"] : json();
+  const json& customProperties = FieldRefOrNull(response, "custom_properties");
   enabledOut = FieldOr(customProperties, "catchup_enabled", true);
   return true;
 }
@@ -4049,7 +4049,7 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
                nullptr, requestTimeoutMs))
     return false;
   json result;
-  if (!UnwrapPluginRunResult(response, "timeshift_buffer", result, error))
+  if (!UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error))
   {
     // result is still populated (empty json() if the outer envelope itself
     // failed) -- FieldOr() on that safely yields false either way, matching
