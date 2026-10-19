@@ -244,8 +244,10 @@ in `tests/test_plugin_url_util.cpp`.
 `IsValidTimeshiftRoute()` and `IsValidTimeshiftPort()` (`PluginUrlUtil.h`): a route must start with a single `/` and
 hold no `@`, backslash, `#`, space or control character, a port must be 1 to 65535. `CallTimeshiftPluginAction()` checks
 before the access token is stored or put into a URL, and `RefreshLiveManifest()` checks the segment prefix; either
-refuses the response with an error. Tests in `tests/test_plugin_url_util.cpp`. Not checked live: the real plugin's
-routes (`/<channel-uuid>/live.m3u8`, `/<channel-uuid>/`) pass the check by reading.
+refuses the response with an error. Tests in `tests/test_plugin_url_util.cpp`. Checked live the same day on `Piers` (the
+PR's CI build on Kodi 22.0-RC1 against the lab server, through a forwarder that logged each request; not repeated on
+`Omega`, whose code here is the same): a channel in Server-side mode started, its playlist refreshes passed the
+segment-prefix check, segments came from the plugin's file server, and a rewind to the start of the buffer played on.
 
 #### WebSocket handshake: too strict on `Upgrade`, too trusting in its error log
 
@@ -260,8 +262,11 @@ protocol list with `websocket` anywhere in it), sharing the line parser with `Fi
 header that merely contains the old search text no longer counts. The failure message passes the response through
 `SanitizeServerErrorBody(…, 200)`. Tests in `tests/test_web_socket_handshake.cpp`, plus two local-server tests in
 `tests/test_web_socket_client.cpp` (a full connect with `Upgrade:websocket`, and a refused handshake whose error holds
-no control characters); all fail on the old code. Not checked live: Dispatcharr's own server sends `Upgrade: websocket`
-and was never affected.
+no control characters); all fail on the old code. Checked live the same day on `Piers` (the PR's CI build on Kodi
+22.0-RC1 against the lab server, through a forwarder that logged each request; not repeated on `Omega`, whose code here
+is the same): the real server's `101` was accepted ("realtime updates: connected"), and `recording_started` and
+`recording_updated` arrived for a test recording. Dispatcharr's own server sends `Upgrade: websocket` and was never
+affected.
 
 #### Server input that reaches Kodi unchecked: negative episodes, sequence order, wrapped integers, a non-string token
 
@@ -278,7 +283,9 @@ season 0, which the existing specials test caught when the first version of the 
 `days_of_week` entries outside 0 to 6 and adoption-state ids outside `int` are dropped, not wrapped. (4)
 `ReadNonEmptyStringField()` (`JsonFieldUtil.h`): `Login()` and `RefreshAccessToken()` fail on an `access` that is
 absent, empty or not a string, rather than storing an empty token. The tests for (1) to (3) fail on the old code; (4) is
-a new helper with its own tests.
+a new helper with its own tests. (4) checked live the same day on `Piers` (the PR's CI build on Kodi 22.0-RC1 against
+the lab server, through a forwarder that logged each request; not repeated on `Omega`, whose code here is the same): the
+login, and a token refresh about five minutes later, both stored a token that every later request used, with no 401.
 
 #### `UrlEncode()` returns the value unescaped when escaping fails
 
@@ -289,7 +296,10 @@ it returns the input as it was, so a value with `&` or `/` would change the requ
 **Closed 2026-10-18 on `Piers`, confirmed by unit tests; ported to `Omega` the same day, where the code was the same.**
 `UrlEncode()` encodes by hand (RFC 3986 unreserved bytes kept, everything else `%XX` in upper case), so there is no curl
 handle to fail and no fallback. A test pins the output to `curl_easy_escape`'s for every byte value and for all 256
-together, so the requests it builds are byte-identical to before.
+together, so the requests it builds are byte-identical to before. Checked live the same day on `Piers` (the PR's CI
+build on Kodi 22.0-RC1 against the lab server, through a forwarder that logged each request; not repeated on `Omega`,
+whose code here is the same): a timer set from the guide sent the programme lookup with its times escaped
+(`…%3A59%3A59Z`), the search answered 200, and the timer got the programme's title.
 
 #### The timeshift file server answers 404, not the 403 the docs tell users to expect
 
