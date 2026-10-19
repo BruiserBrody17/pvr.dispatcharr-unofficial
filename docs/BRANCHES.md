@@ -53,7 +53,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`c52f392`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`1542cd3`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -71,6 +71,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `14db1cf` | already on `Piers` as `7abb9d9` | Nested JSON read in place, made on `Piers` first; applied cleanly apart from the running docs. |
 | `b129c23` | not ported: `Piers` already lists them | The two open items from the 2026-10-19 live check (`ef2492c`), copied to `Omega`'s `OPEN_ITEMS.md` and checked against its code. |
 | `639ae6e`, `d70d857`, `c52f392` | already on `Piers` as `984df9c`, `1c7d817`, `d9a3e74` | Ports from `Piers`; see the table below. |
+| `1542cd3` | not ported: `Piers` closed it on 2026-10-15 | `Omega`'s copy of the Kodi 22 support item, still open there after `Piers` resolved it, moved to `Omega`'s `CLOSED_ITEMS.md` with a pointer to `Piers`'s entry and this file. |
 
 ### Ported to Omega
 
