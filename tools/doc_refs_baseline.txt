@@ -48,7 +48,6 @@ docs/CLOSED_ITEMS.md|function|build_addon
 docs/CLOSED_ITEMS.md|function|check_realtime_update_push
 docs/CLOSED_ITEMS.md|function|check_section_titles
 docs/CLOSED_ITEMS.md|function|check_settings
-docs/CLOSED_ITEMS.md|function|client_duration_to_window
 docs/CLOSED_ITEMS.md|function|discover_plugins
 docs/CLOSED_ITEMS.md|function|get_id
 docs/CLOSED_ITEMS.md|function|log_system_event

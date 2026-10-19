@@ -1143,7 +1143,11 @@ bool DispatcharrClient::CreateCatchupSession(const std::string& channelUuid, tim
               m_catchupSessionCache.durationMinutes);
   }
 
-  if (!EnsureAuthenticated(error))
+  // Kodi calls this on its main thread while it prepares playback (CApplicationPlay::ResolvePath() ->
+  // CPVRPlaybackState::OnPreparePlayback(), and PlayEpgTag() before that), so a hung server froze the UI for the whole
+  // configured timeout. The POST measured about 0.3 s against a real instance (docs/TEST_COVERAGE.md), so the short
+  // bound (RequestTimeout.h) costs a slow-but-working server nothing.
+  if (!EnsureAuthenticated(error, ShortRequestTimeoutMs()))
     return false;
 
   // Body assembly (including the API's own 480-minute duration cap) and the
@@ -1151,7 +1155,7 @@ bool DispatcharrClient::CreateCatchupSession(const std::string& channelUuid, tim
   json body = BuildCatchupSessionBody(channelUuid, programmeStart, durationMinutes);
 
   json response;
-  if (!Request("POST", kCatchupSessionsPath, body, response, error))
+  if (!Request("POST", kCatchupSessionsPath, body, response, error, true, 1, nullptr, ShortRequestTimeoutMs()))
     return false;
 
   std::string playbackUrl = FieldOr<std::string>(response, "playback_url", "");

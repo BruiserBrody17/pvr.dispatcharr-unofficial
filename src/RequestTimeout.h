@@ -9,7 +9,8 @@ namespace dispatcharr
 //
 // These are the requests a viewer is made to wait for when the server has gone: the stop request of Stop, the
 // live-edge manifest refresh a blocked read repeats, an in-progress recording's steady-state lookup, playlist fetch and
-// keep-alive, the startup version check, and the authentication in front of them. Against a server that accepts
+// keep-alive, the startup version check, the catch-up session request Kodi makes on its main thread, and the
+// authentication in front of them. Against a server that accepts
 // connections and never answers each took the full timeout (30 s), and Stop waited for several of them, up to 140 s
 // (docs/OPEN_ITEMS.md). A server that merely answers slowly is the other side of the same trade: with 6 s of latency on
 // every request, a bound fixed at 5 s makes a running stream's refreshes always time out. Deriving it from the

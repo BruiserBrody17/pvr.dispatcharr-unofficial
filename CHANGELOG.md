@@ -21,6 +21,10 @@ compare against.
 
 ### Fixed
 
+- **Pressing Play on a recording or a catch-up programme no longer freezes Kodi when the server stops answering**:
+  Kodi waited the whole connection timeout (30 s by default, up to 3 minutes) before playback started or failed. A
+  recording now skips that check entirely, and a catch-up programme gives up after a few seconds. Catch-up also asks
+  for the programme's full length instead of up to a minute less.
 - **No more "no file for this recording" pop-ups while browsing** (Kodi 22): Kodi opens recordings by itself to
   read their details, and each failed open showed the message. It now appears only when you press Play on such a
   recording.

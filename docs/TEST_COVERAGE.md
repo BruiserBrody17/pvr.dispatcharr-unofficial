@@ -2301,7 +2301,11 @@ the give-up-after-three-retries rule, replacing three members on
 "+0530"/"-0400"/malformed-offset handling is tested directly rather than only
 through whole documents). The Python side gained direct tests for
 `timeshift_buffer`'s `_same_buffer_instance()` and the smoke harness's
-`_time_to_seconds()`.
+`_time_to_seconds()`. `CatchupSessionRequest.h` gained
+`CatchupSessionDurationMinutes()` on 2026-10-19: the catch-up `duration` rounded up rather than down, 0 (none sent) when
+the end is not after the start, and a span over the 480-minute cap capped before it is narrowed to an int. Its tests fail
+on the old `(end - start) / 60` (`docs/CLOSED_ITEMS.md`, "Pressing Play on a recording can freeze the UI for the full
+request timeout").
 
 A second pass the same day pulled out three more: `DecideInProgressColdStartStep()`
 (`RecordingVisibility.h`, the per-attempt step of `OpenInProgressRecordingStream()`'s

@@ -1,6 +1,7 @@
 #include "PVRDispatcharr.h"
 
 #include "AuthBackoff.h"
+#include "CatchupSessionRequest.h"
 #include "ConnectionReport.h"
 #include "ChannelGroupFilter.h"
 #include "ChannelLineupChange.h"
@@ -3450,7 +3451,7 @@ PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag
     return PVR_ERROR_REJECTED;
   }
 
-  int durationMinutes = static_cast<int>((tag.GetEndTime() - tag.GetStartTime()) / 60);
+  const int durationMinutes = dispatcharr::CatchupSessionDurationMinutes(tag.GetStartTime(), tag.GetEndTime());
   std::string playbackUrl, error;
   if (!m_client.CreateCatchupSession(channelUuid, tag.GetStartTime(), durationMinutes, playbackUrl, error))
   {
@@ -3863,7 +3864,7 @@ void PVRDispatcharr::ReassertApiKeySetting()
 }
 
 PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
-                                                       std::vector<kodi::addon::PVRStreamProperty>& properties)
+                                                       std::vector<kodi::addon::PVRStreamProperty>& /*properties*/)
 {
   // Confirmed against a real failed playback (a live kodi.log showed
   // Kodi's generic CCurlFile opening a populated STREAMURL directly,
@@ -3877,28 +3878,19 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
   // DispatcharrClient::OpenInProgressRecordingStream()'s comment for why
   // this no longer needs its own STREAMURL/inputstream.ffmpegdirect
   // properties at all.
-  bool isRealTime = false;
-  {
-    int id = std::atoi(recording.GetRecordingId().c_str());
-    {
-      std::lock_guard<std::mutex> lock(m_viewerOpenMutex);
-      m_lastStreamPropertiesRecordingId = id;
-      m_lastStreamPropertiesAt = std::chrono::steady_clock::now();
-    }
-    Recording rec;
-    if (FindRecordingById(id, rec))
-    {
-      // Same predicate OpenRecordedStream() uses to choose the
-      // growing-buffer read path -- dispatcharr::ShouldUseGrowingBufferPlayback()
-      // (RecordingVisibility.h) -- since a recording still on that path is
-      // still "real-time" in the sense Kodi cares about here. See that
-      // function's own comment for hlsDirStillPresent alongside
-      // isInProgress: a just-stopped recording still needs it for the
-      // whole window until Dispatcharr's own HLS-to-MKV concat finishes.
-      isRealTime = dispatcharr::ShouldUseGrowingBufferPlayback(rec);
-    }
-  }
-  properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, isRealTime ? "true" : "false");
+  //
+  // No ISREALTIMESTREAM either, and so no lookup of the recording: this runs on Kodi's main thread
+  // (CPVRPlaybackState::OnPreparePlayback()), and the GetRecordingById() it used to make waited the full request
+  // timeout against a hung server before playback could start. On Kodi 22, with SetSupportsMultipleRecordedStreams()
+  // set (GetCapabilities()), the property is never read for a PVR recording: CInputStreamPVRBase::IsRealtime()
+  // overrides the base CDVDInputStream's property-backed answer and asks IsRecordedStreamRealTime() per stream id
+  // (checked against the Kodi 22 RC1 source: InputStreamPVRBase.cpp, InputStreamPVRRecording.cpp,
+  // PVRClient.cpp's IsRecordedStreamRealTime()). That answer comes from the stream OpenRecordedStream() actually
+  // opened.
+  const int id = std::atoi(recording.GetRecordingId().c_str());
+  std::lock_guard<std::mutex> lock(m_viewerOpenMutex);
+  m_lastStreamPropertiesRecordingId = id;
+  m_lastStreamPropertiesAt = std::chrono::steady_clock::now();
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -4075,19 +4067,14 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
                 genError.c_str());
   }
 
-  // Check current in-progress status directly rather than trusting
-  // GetRecordingStreamProperties()'s own check from moments earlier: a
-  // recording that finishes in the gap between that call and this one
-  // should still open correctly either way (both paths handle a
-  // recording that finishes mid-session -- OpenRecordingStream() simply
-  // isn't the right one to have started with if it was in progress right
-  // now).
+  // Check current in-progress status directly, right before choosing the read path: both paths handle a recording
+  // that finishes mid-session, but OpenRecordingStream() isn't the right one to start with if it is in progress now.
+  // This is the only lookup on the way to playback (GetRecordingStreamProperties() makes none, see its comment).
   Recording rec; // stays default-constructed (isInProgress/hlsDirStillPresent both false) if not found
   FindRecordingById(id, rec);
 
   // The decision itself lives in dispatcharr::ShouldUseGrowingBufferPlayback()
-  // (RecordingVisibility.h, shared with GetRecordingStreamProperties()'s
-  // own check) so it's unit-testable standalone -- see that function's
+  // (RecordingVisibility.h) so it's unit-testable standalone -- see that function's
   // own comment, including the real reported bug this guards against.
   bool useGrowingBuffer = dispatcharr::ShouldUseGrowingBufferPlayback(rec);
 

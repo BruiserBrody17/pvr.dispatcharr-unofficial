@@ -35,6 +35,22 @@ inline nlohmann::json BuildCatchupSessionBody(const std::string& channelUuid, ti
   return body;
 }
 
+// The `duration` (minutes) for a programme running from `programmeStart` to `programmeEnd`: rounded up, so a programme
+// that is not a whole number of minutes is not asked for up to 59 s short (the same rounding as
+// ComputeRecordingExtendMinutes(), TimerIdentity.h). Dispatcharr adds five minutes of its own to the duration it is
+// sent (`client_duration_to_window()`, read in its source 2026-09-26), which hides the shortfall today; this does not
+// lean on that. 0, so that no duration is sent, when the end is not after the start; a span longer than the cap above
+// is capped here, before it is narrowed to an int.
+inline int CatchupSessionDurationMinutes(time_t programmeStart, time_t programmeEnd)
+{
+  if (programmeEnd <= programmeStart)
+    return 0;
+  const long long seconds = static_cast<long long>(programmeEnd) - static_cast<long long>(programmeStart);
+  if (seconds > static_cast<long long>(kMaxCatchupSessionDurationMinutes) * 60)
+    return kMaxCatchupSessionDurationMinutes;
+  return static_cast<int>((seconds + 59) / 60);
+}
+
 // The `playback_url` the session response carries is a relative path
 // ("/proxy/catchup/<uuid>?session_id=...", confirmed live), so it is joined to
 // the configured server's own base URL; an absolute http(s) URL is used as-is.
