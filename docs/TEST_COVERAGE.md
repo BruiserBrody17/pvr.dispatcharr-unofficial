@@ -2943,6 +2943,17 @@ counted), and CI's `unit-tests-32bit` job runs the whole C++ suite built with `-
 `FindEpgEntryIndexCoveringRecording()` failing an exact 80% overlap on x87 (a double ratio against 0.8); the check is integer
 arithmetic now (`tests/test_epg_program_match.cpp` already pinned 79%, 80% and 100%).
 
+2026-10-19: `tools/tests/test_build_kodi_repo.py` covers `tools/build_kodi_repo.py`, which builds the Kodi repository's
+site (`docs/BUILDING.md`, "Distribution: the Kodi repository"). It mirrors what Kodi does with the output, read from
+Kodi's source: each of seven platforms' accepted `<platform>` names is offered exactly its own build from an index built
+from zips tagged the way the real 0.14.0 release zips are (and the zips' own tags are shown to fail that), every Kodi
+`ADDON_API` from 20.2 to a Kodi 23 pre-release reads only its own line's `<dir>` plus the repository's own, no index sits
+in the directory users browse (the directory-cache failure seen live), and the landing page parses to just the
+repository zip under Kodi's HTTP-directory rules. It also checks the refusals (version, PVR API of the other Kodi,
+contradicting platform, unknown asset, duplicate platform, bad tag), that a failed run leaves the old index, that one
+line's rewrite leaves the other alone, art copying, and that the repository zip is reproducible and passes
+`check_release_zip.py`. The behaviour in Kodi itself was confirmed live (that section of `docs/BUILDING.md`).
+
 ### `kodi_smoke_test.py`
 
 `tools/kodi_smoke_test.py` (added 2026-09-29, fixing several real,

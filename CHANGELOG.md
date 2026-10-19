@@ -50,6 +50,13 @@ compare against.
   for 60 minutes at 10 Mbit/s), and the port check now says that a `404` for the bare address means the server is
   reachable (the README and the troubleshooting guide said to expect `403`).
 
+## `repository.dispatcharr-unofficial` [0.1.0] - Unreleased
+
+New: a Kodi repository for the addon (unofficial, like the addon). Install it once and Kodi installs the right build
+for your platform and Kodi version and keeps it up to date, including switching to the Kodi 22 build after an upgrade
+from Kodi 21. Steps in README.md's "Installing"; an addon installed from a zip needs to be installed once from the
+repository to start getting updates.
+
 ## `timeshift_buffer` [0.8.15] - Unreleased
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a

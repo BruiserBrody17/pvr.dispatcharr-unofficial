@@ -4,10 +4,10 @@
 
 ## Status at a glance
 
-**22 open, 328 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**23 open, 328 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. Two came from the 2026-10-19 live check of four audit fixes. The other 17 come from the 2026-10-18 read-only audit of the whole
+work on `Piers`: what remains of Kodi 22 support. Two came from the 2026-10-19 live check of four audit fixes. One tracks publishing the Kodi repository added on 2026-10-19. The other 17 come from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
 day and four on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
 path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
@@ -18,7 +18,7 @@ path read end to end), *plausible* (the logic is there, the trigger is not demon
 | Open: Fix known, not yet done | 5 |
 | Open: Architectural / concurrency | 3 |
 | Open: Design decision needed | 1 |
-| Open: Release, CI and manual testing | 3 |
+| Open: Release, CI and manual testing | 4 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 7 |
@@ -126,6 +126,18 @@ by a Dispatcharr admin, so this is not reachable by an ordinary user. Decision: 
 root to be inside a configured allow-list of directories.
 
 ### Release, CI and manual testing
+
+#### The Kodi repository is built but not published
+
+**Opened 2026-10-19, when the repository was added** (`tools/build_kodi_repo.py`, `kodi-repository/`; how it works and
+what was confirmed live: `docs/BUILDING.md`'s "Distribution: the Kodi repository"). Nothing is public yet, and
+README.md's "Installing" already describes it, so the site has to exist before README.md reaches the public repository.
+First publish: (1) create the `gh-pages` branch on the public repository holding only the site: `index` for Kodi 21
+from `0.13.0` and for Kodi 22 from `0.14.0-Piers` (the gated zips), then `repository`; gate the repository zip;
+(2) let the local pre-push hook allow `gh-pages` on the public remote; (3) turn on GitHub Pages for that branch and
+check the site URL and a range request (206); (4) install the repository on a real Kodi from the public URL and
+install the addon from it. Then (5) port the tool, the repository addon and README.md's "Installing" to `Omega`
+(GitHub's default branch, whose README Kodi 21 users read), and record it in `docs/BRANCHES.md`.
 
 #### The glue harness's TSan build crashes at start about one run in four
 

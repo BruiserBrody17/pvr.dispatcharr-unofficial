@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Kodi repository addon for pvr.dispatcharr-unofficial. Not built by Kodi's harness or by CI:
+  tools/build_kodi_repo.py fills in the two URLs and zips it (docs/BUILDING.md, "Kodi repository").
+
+  One <dir> per Kodi major the addon is built for, because a binary built for one is refused by the other
+  (docs/BRANCHES.md) and Kodi offers the highest version it finds across a repository's dirs. Kodi keeps a <dir> only
+  when its own xbmc.addon version (ADDON_API in Kodi's version.txt) lies within minversion..maxversion
+  (CRepository::CRepository in xbmc/addons/Repository.cpp): 21.3.0 for Kodi 21.3, 21.90.901 for Kodi 22.0 RC1,
+  read from both source trees. By the same pattern a Kodi 23 pre-release would report 22.90.x and see neither.
+
+  The addon zips are not copied here: each index entry names its zip under the release download URL with a <path>,
+  so the release assets that passed the gate are the files Kodi downloads. No <hashes>: Kodi would fetch a
+  .sha256 next to every zip, which would mean extra release assets; the zips come over HTTPS from the release.
+
+  XML comments here may not contain a double hyphen (see the note in pvr.dispatcharr-unofficial/addon.xml.in).
+-->
+<addon id="repository.dispatcharr-unofficial" name="Dispatcharr PVR Client (Unofficial) Repository" version="0.1.0" provider-name="BruiserBrody17">
+  <requires>
+    <import addon="xbmc.addon" version="12.0.0"/>
+  </requires>
+  <extension point="xbmc.addon.repository" name="Dispatcharr PVR Client (Unofficial) Repository">
+    <dir minversion="21.0.0" maxversion="21.89.0">
+      <info compressed="false">@SITE_URL@kodi21/addons.xml</info>
+      <checksum verify="sha256">@SITE_URL@kodi21/addons.xml.sha256</checksum>
+      <datadir zip="true">@DOWNLOAD_URL@</datadir>
+      <artdir>@SITE_URL@kodi21/art/</artdir>
+      <hashes>false</hashes>
+    </dir>
+    <dir minversion="21.90.0" maxversion="22.89.0">
+      <info compressed="false">@SITE_URL@kodi22/addons.xml</info>
+      <checksum verify="sha256">@SITE_URL@kodi22/addons.xml.sha256</checksum>
+      <datadir zip="true">@DOWNLOAD_URL@</datadir>
+      <artdir>@SITE_URL@kodi22/art/</artdir>
+      <hashes>false</hashes>
+    </dir>
+    <!--
+      The repository addon itself, for every Kodi, so it can update itself. Its index is in repo/, not beside the
+      zip at the site root: a user installs the zip by browsing the root as a file source, Kodi caches that listing
+      (only the zip), and CFile::Open then refuses any other file under the root without asking the server
+      (xbmc/filesystem/File.cpp, g_directoryCache.FileExists), so the whole repository failed to refresh. Seen live on
+      Kodi 21.3 before the move: no request reached the server.
+    -->
+    <dir>
+      <info compressed="false">@SITE_URL@repo/addons.xml</info>
+      <checksum verify="sha256">@SITE_URL@repo/addons.xml.sha256</checksum>
+      <datadir zip="true">@SITE_URL@</datadir>
+      <hashes>false</hashes>
+    </dir>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Installs and updates the unofficial Dispatcharr PVR client</summary>
+    <description lang="en_GB">
+      Installs the Dispatcharr PVR Client (Unofficial) and keeps it up to date: Kodi picks the build for your
+      platform and Kodi version. This is an unofficial, community-maintained repository; it is not affiliated with,
+      endorsed by, or supported by the Dispatcharr project or by Kodi/Team Kodi.
+    </description>
+    <platform>all</platform>
+    <license>GPL-2.0-or-later</license>
+    <source>https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial</source>
+  </extension>
+</addon>

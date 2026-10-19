@@ -87,14 +87,41 @@ Each has its own README with install steps.
 
 ## Installing
 
+### From the repository (recommended: Kodi keeps it up to date)
+
+The project's own Kodi repository (unofficial, like the addon) gives Kodi the right build for your platform and Kodi
+version and installs new releases automatically.
+
+1. In Kodi, allow add-ons from outside the official repository: **Settings -> System -> Add-ons -> Unknown sources**.
+2. **Settings -> File manager -> Add source**, enter `https://bruiserbrody17.github.io/pvr.dispatcharr-unofficial/`
+   and give it a name, for example `dispatcharr`.
+3. **Add-ons -> Install from zip file**, open that source and select
+   `repository.dispatcharr-unofficial-<version>.zip`.
+4. **Add-ons -> Install from repository -> Dispatcharr PVR Client (Unofficial) Repository -> PVR clients ->
+   Dispatcharr PVR Client (Unofficial) -> Install**.
+5. Enable and configure it (below).
+
+**Already installed it from a zip?** Kodi does not update an addon installed from a zip from any repository other
+than Kodi's own, so do step 4 once anyway. Kodi warns that the manually installed version will be uninstalled and
+replaced; answer **Yes**, then **No** when it asks whether to also remove the addon's data, which keeps your settings.
+
+Kodi checks the repository for new releases on its own schedule. After an upgrade from Kodi 21 to Kodi 22 it
+replaces the Kodi 21 build with the Kodi 22 one by itself. On Linux, the ARM build
+offered is the CoreELEC one; it has only been tested on CoreELEC.
+
+### From a zip
+
 1. Download the zip for your platform from the
    [latest release](https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/releases).
 2. In Kodi: **Add-ons -> Install from zip file**, and select the
-   downloaded zip.
-3. Enable and configure the addon under **Settings -> PVR & Live TV ->
-   General -> PVR client add-ons** (or **Add-ons -> My add-ons -> PVR
-   clients**, the same list either way): select **Dispatcharr PVR
-   Client (Unofficial)**, enable it, then **Configure** (see below).
+   downloaded zip. Updates are not installed automatically this way.
+
+### Enabling it
+
+Enable and configure the addon under **Settings -> PVR & Live TV ->
+General -> PVR client add-ons** (or **Add-ons -> My add-ons -> PVR
+clients**, the same list either way): select **Dispatcharr PVR
+Client (Unofficial)**, enable it, then **Configure** (see below).
 
 ## Configuration
 

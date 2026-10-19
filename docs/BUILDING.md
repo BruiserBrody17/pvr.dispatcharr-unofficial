@@ -91,8 +91,8 @@ macOS, both Android ABIs and CoreELEC (2026-10-15/16), and the hand-built zips w
    ```
    That zip (named e.g. `addon-pvr.dispatcharr-unofficial-0.1.0-osx-arm64.zip`) is
    what you install via Kodi's
-   "install from zip file" option, or publish in a self-hosted repository
-   (see the "Distribution" section below).
+   "install from zip file" option; a released one also reaches users through the project's Kodi repository
+   (see the "Distribution: the Kodi repository" section below).
 
 ### Rebuilding after an update
 
@@ -970,6 +970,8 @@ Cutting a release, in order:
    blocklist. Fix the cause and rebuild, never edit the gate to make
    a zip pass.
 5. Only then publish: `gh release create <tag> --title <tag> --notes-file <notes> <the eight zips>`. The release page and its notes are made by hand; the notes rules are below.
+6. Point the Kodi repository at the new release ("Distribution: the Kodi repository" below), from the same zips. A
+   pre-release is served too: the repository has no separate beta line.
 
 A zip that is rebuilt for any reason goes through steps 3 and 4 again; the gate checks the zip that will be
 uploaded, not an earlier copy.
@@ -1003,14 +1005,81 @@ machine's timezone.) Run the gate on it, `gh release upload <tag> <zip> --clobbe
 no new addon build), then add a dated addendum to the release notes inlining the fix and correct any now-false "neither
 plugin changed" sentence.
 
-## Distribution (Windows/macOS, once built)
+## Distribution: the Kodi repository
 
-Kodi installs binary addons either as a manual zip, or from a self-hosted
-repository (a small `repository.xml`-style addon whose own zip contains an
-`addons.xml` index pointing at your built zips, served over `https://` or
-GitHub Pages). Claude Code can generate that repository structure once the
-desktop builds above are working, if you want "install from repository"
-rather than "install from zip file."
+*(Added 2026-10-19.)* Besides the zips on each release, the addon is offered through a Kodi repository, so Kodi picks
+the build itself and installs new releases automatically (README.md's "Installing"). It is a static site built by
+`tools/build_kodi_repo.py` and served by GitHub Pages from the public repository's `gh-pages` branch, at
+`https://bruiserbrody17.github.io/pvr.dispatcharr-unofficial/`:
+
+| Path | What |
+| --- | --- |
+| `index.html` | the page a user opens as a Kodi file source; its one Kodi-readable link is the repository zip |
+| `repository.dispatcharr-unofficial-<v>.zip` | the repository addon (source: `kodi-repository/repository.dispatcharr-unofficial/addon.xml.in`) |
+| `repo/addons.xml`, `.sha256` | the repository addon's own index, so it can update itself |
+| `kodi21/addons.xml`, `.sha256`, `art/` | the Kodi 21 build of each platform, from the latest `Omega` release |
+| `kodi22/addons.xml`, `.sha256`, `art/` | the same for Kodi 22, from the latest `Piers` release |
+
+The addon zips are not copied to the site. Each index entry names its zip under
+`https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/releases/download/` with a `<path>` (`<tag>/<asset>`),
+so Kodi downloads the release assets that passed the gate, following GitHub's redirect. There are no per-zip hashes
+(Kodi's `<hashes>` would need a `.sha256` next to every zip, extra release assets); the zips come over HTTPS.
+
+**Updating it, after a release is published** (step 5 of "Release assets" above; never before, or the index names
+zips that are not there yet). Rewrite only the line that released, from the same eight gated zips (the plugin zips
+are skipped):
+
+```bash
+git clone --branch gh-pages https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial.git site
+python3 tools/build_kodi_repo.py index --kodi 22 --tag 0.14.1-Piers --site site <the eight zips>
+git -C site add -A && git -C site commit -m "Kodi 22: 0.14.1" && git -C site push
+```
+
+The tool refuses a zip whose version is not the tag's (CoreELEC's `.1` revision allowed), whose PVR API is the other
+Kodi's (`kodi.binary.instance.pvr` 8.x is Kodi 21, 9.x Kodi 22), whose own `<platform>` contradicts its file name, an
+unknown asset name, or two builds of one platform; a failed run leaves the old index in place.
+
+**Changing the repository addon itself:** edit `addon.xml.in` and raise its `version` (the fourth version number,
+next to the addon's and the two plugins'; it moves only when this file changes), then
+`python3 tools/build_kodi_repo.py repository --site site` (entry times come from the file's last commit, so the zip
+is reproducible), run `python3 tools/check_release_zip.py --require-blocklist site/repository.dispatcharr-unofficial-*.zip`
+(without `--expect-release`: it is not one of a release's eight assets), and commit to `gh-pages`. Installed copies
+update themselves from `repo/addons.xml`.
+
+What the index and the repository addon do, and why (read from Kodi's source, then confirmed live on 2026-10-19 on a
+Linux Kodi 21.3 and the same machine's Kodi 22.0 RC1, the site served from that machine with the zips fetched from the
+real GitHub releases):
+
+- **Platform.** Kodi drops every index entry whose `<platform>` does not name the running platform
+  (`CAddonInfoBuilder::PlatformSupportsAddon`). The zips' own tags are too vague for that (the Linux build says
+  `linux`, which an ARM Linux also matches, and the CoreELEC zip's tag is empty, "every platform"; see the CoreELEC
+  section above), so the index sets them from the asset name: `linux-x86_64` for the Linux build, `linux-aarch64` /
+  `linux-armv7` for CoreELEC, the zip's own tag otherwise. Live, the Linux Kodi kept exactly the `linux-x86_64` entry.
+  An ARM Linux that is not CoreELEC is offered the CoreELEC build (README.md says so).
+- **Kodi version.** A repository `<dir>` is used only when Kodi's `xbmc.addon` version (`ADDON_API` in Kodi's
+  `version.txt`: 21.3.0 for Kodi 21.3, 21.90.901 for 22.0 RC1) lies within its `minversion`..`maxversion`
+  (`CRepository::CRepository`). Live, Kodi 21.3 fetched only `kodi21/` and `repo/`, Kodi 22 only `kodi22/` and
+  `repo/`.
+- **Origin.** Kodi updates an addon only from the repository it was installed from; an addon installed from a zip has
+  an empty origin and is checked against Kodi's official repository only (`CAddonRepos::DoAddonUpdateCheck`). Live, a
+  zip-installed 0.12.0 was offered nothing although the index had 0.13.0. Installing it once from the repository
+  (README.md's steps) asks to uninstall and replace the "manually installed" copy and then whether to remove its data;
+  with No, the addon's `settings.xml` was byte-identical afterwards and the origin became the repository.
+- **Updates.** With the origin set, changing the index from 0.12.0 to 0.13.0 and refreshing made Kodi install 0.13.0
+  by itself within seconds (default "install updates automatically"), and starting Kodi 22 on the same profile
+  replaced the now-incompatible Kodi 21 build with 0.14.0 from the `0.14.0-Piers` release.
+- **The repository's own index is in `repo/`, not at the site root.** A user installs the zip by browsing the root as
+  a file source; Kodi caches that listing (just the zip), and `CFile::Open` then answers "no such file" for anything
+  else in that directory without asking the server (`g_directoryCache.FileExists` in `xbmc/filesystem/File.cpp`).
+  With the index at the root, the repository failed to refresh in that session ("failed read ...addons.xml.sha256",
+  no request in the server log). `tools/tests/test_build_kodi_repo.py` keeps every index out of the root.
+- **The host must answer range requests.** Installing a zip straight from a web source reads it in place
+  (`zip://http...`), with `Range` requests; Python's `http.server` ignores them and the install failed ("Requested
+  range was not delivered by the server"; Kodi 21.3 then exited). GitHub Pages answers them (206), so a local test
+  needs a range-capable server.
+
+The site holds nothing a release does not already publish: the indexes are the zips' own `addon.xml` files plus a
+path and platform, and the repository zip passes the same gate.
 
 ## What Windows TLS this addon actually uses (2026-10-02)
 
