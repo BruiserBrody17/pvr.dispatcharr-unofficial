@@ -6,6 +6,29 @@
 
 ### Fixed
 
+#### Kodi 22's thumbnail loader made the "no file for this recording" notice pop up while browsing
+
+**Opened 2026-10-18, a question from the live check of the leftover-`_hls_dir` fix; confirmed live.** The notice
+"Dispatcharr has no file for this recording..." (`DescribeRecordingOpenFailure()`, added 2026-10-06 for a viewer
+pressing Play) is queued by any failed open, and Kodi 22's thumbnail loader opens recordings on its own to read their
+stream details. Reproduced on Kodi 22.0-RC1 against the lab server, with a forwarder answering 404 for the files of five
+finished recordings: opening the recordings window and Home, with nothing played, made 14 opens of those five in about
+70 s, and Kodi logged 14 queued notices; a screenshot shows the red pop-up over the recordings list.
+
+**Closed 2026-10-18 on `Piers`, confirmed with a unit test, the glue harness and live.** Kodi asks
+`GetRecordingStreamProperties()` only when it is about to play a recording (`CPVRPlaybackState::StartPlayback()` on Kodi
+21, `OnPreparePlayback()` on Kodi 22, both read in the source); the thumbnail loader opens the stream without it. The
+addon notes which recording the last properties call was for, and `OpenRecordedStream()` passes `notifyViewer` only for
+an open of that recording within three minutes (`dispatcharr::IsViewerRequestedOpen()`, tested), using the call up. Any
+other failed open is in the log only. The glue scenario `no_file_notice` fails on the old code (a probe showed the
+notice). The read-path notices ("can't be read any more", a dropped Range) are unchanged: they need several reads, which
+a probe is unlikely to make. Kodi 21 is not affected and `Omega` needs no port: its `CDVDFileInfo::CanExtract()` refuses
+every PVR recording ("pvr recording thumbnail extraction does not work (reliably)"), while Kodi 22's probes one when the
+addon supports several recorded streams (`PVR::UTILS::ProvidesStreamForMetaDataExtraction()`), which `Piers` does. Live,
+the same day, with the PR's CI build in the same setup: browsing made 28 opens of the five recordings, all with no
+properties call before them, and no notice; pressing Play on one queued exactly one, shown beside Kodi's own "Playback
+failed" dialog.
+
 #### An interrupted recording with a leftover `_hls_dir` is opened as in progress, and fails again and again
 
 **Opened 2026-10-18, found during the live check of the audit's fixes (Kodi 22.0-RC1 against the lab server); confirmed
@@ -28,8 +51,10 @@ file whenever the file exists. What changed is the failure: `DecideInProgressCol
 `kFinishedPlaylistGone` outcome (the playlist is gone and the lookup says the recording has ended), and
 `OpenRecordedStream()` then opens the finished file. That fallback passes `notifyViewer` false to
 `OpenRecordingStream()`, so a recording with no file at all still fails as before, in the log only: Kodi 22's thumbnail
-loader makes opens nobody asked to watch, and a notification on each would be new. The glue scenario `finished_hls_gone`
-fails on the old code ("did not open"). Not done: the error line per open for an empty recording stays.
+loader makes opens nobody asked to watch, and a notification on each would be new. (Since the same day it passes whether
+the viewer asked for the open; see "Kodi 22's thumbnail loader made the "no file for this recording" notice pop up while
+browsing".) The glue scenario `finished_hls_gone` fails on the old code ("did not open"). Not done: the error line per
+open for an empty recording stays.
 
 #### Integer overflows in pure helpers, two of them 32-bit-only
 

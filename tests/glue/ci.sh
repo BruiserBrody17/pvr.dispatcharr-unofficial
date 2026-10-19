@@ -52,6 +52,7 @@ run "destroy with streams open"  TMO=30 T=120 -- dtor_inflight
 run "PVR surface: functional"    BIN=pvr_harness T=180 -- functional
 run "PVR: several recorded streams" BIN=pvr_harness T=60 -- streams2
 run "PVR: finished recording, playlist gone" BIN=pvr_harness T=60 -- finished_hls_gone
+run "PVR: no-file notice only on Play" BIN=pvr_harness T=60 -- no_file_notice
 run "PVR: Off mode starts the channel first" BIN=pvr_harness T=90 TMO=5 -- warm_up
 run "PVR: M3U refresh event"       BIN=pvr_harness T=60 -- refresh_events
 run "PVR: server offset vs table"   BIN=pvr_harness T=60 -- offset_cross_check

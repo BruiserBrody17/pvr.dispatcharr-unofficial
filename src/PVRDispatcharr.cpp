@@ -3880,6 +3880,11 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
   bool isRealTime = false;
   {
     int id = std::atoi(recording.GetRecordingId().c_str());
+    {
+      std::lock_guard<std::mutex> lock(m_viewerOpenMutex);
+      m_lastStreamPropertiesRecordingId = id;
+      m_lastStreamPropertiesAt = std::chrono::steady_clock::now();
+    }
     Recording rec;
     if (FindRecordingById(id, rec))
     {
@@ -4090,10 +4095,23 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
             "pvr.dispatcharr-unofficial: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d "
             "hlsDirStillPresent=%d",
             recording.GetRecordingId().c_str(), id, rec.isInProgress ? 1 : 0, rec.hlsDirStillPresent ? 1 : 0);
+  // A file that cannot be opened is explained in a notification only when the viewer pressed Play on this recording,
+  // not when Kodi's thumbnail loader probes it (dispatcharr::IsViewerRequestedOpen()). A properties call is used once.
+  bool viewerAsked = false;
+  {
+    std::lock_guard<std::mutex> lock(m_viewerOpenMutex);
+    constexpr std::chrono::minutes kViewerOpenWindow{3};
+    viewerAsked = dispatcharr::IsViewerRequestedOpen(m_lastStreamPropertiesRecordingId, m_lastStreamPropertiesAt, id,
+                                                     std::chrono::steady_clock::now(), kViewerOpenWindow);
+    if (viewerAsked)
+      m_lastStreamPropertiesRecordingId = 0;
+  }
+  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: OpenRecordedStream: recording %d viewerAsked=%d", id,
+            viewerAsked ? 1 : 0);
   bool finishedPlaylistGone = false;
   bool opened = useGrowingBuffer ? m_client.OpenInProgressRecordingStream(id, recording.GetRecordingTime(), streamId,
                                                                           error, &finishedPlaylistGone)
-                                 : m_client.OpenRecordingStream(id, streamId, error);
+                                 : m_client.OpenRecordingStream(id, streamId, error, viewerAsked);
   // A leftover `_hls_dir` sent a finished recording down the HLS path (see
   // InProgressColdStartStep::kFinishedPlaylistGone); whatever is left of it is the finished file.
   if (!opened && finishedPlaylistGone)
@@ -4104,7 +4122,7 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
               id, error.c_str());
     error.clear();
     useGrowingBuffer = false;
-    opened = m_client.OpenRecordingStream(id, streamId, error, /*notifyViewer=*/false);
+    opened = m_client.OpenRecordingStream(id, streamId, error, viewerAsked);
   }
   kodi::Log(ADDON_LOG_DEBUG,
             "pvr.dispatcharr-unofficial: OpenRecordedStream: opened=%d inProgress=%d streamId=%lld openStreams=%zu",

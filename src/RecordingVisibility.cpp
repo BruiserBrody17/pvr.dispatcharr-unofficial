@@ -25,6 +25,14 @@ bool ShouldUseGrowingBufferPlayback(const Recording& rec)
   return rec.isInProgress || rec.hlsDirStillPresent;
 }
 
+bool IsViewerRequestedOpen(int lastPropertiesRecordingId, std::chrono::steady_clock::time_point lastPropertiesAt,
+                           int recordingId, std::chrono::steady_clock::time_point now,
+                           std::chrono::steady_clock::duration window)
+{
+  return lastPropertiesRecordingId != 0 && lastPropertiesRecordingId == recordingId && now >= lastPropertiesAt &&
+         now - lastPropertiesAt <= window;
+}
+
 bool ResolveInProgressFinished(bool lookupOk, bool isInProgress, bool previousFinished, bool allProbesSucceeded)
 {
   if (!lookupOk)

@@ -1227,6 +1227,12 @@ HLS path. Unit-tested in `tests/test_recording_visibility.cpp`; the glue scenari
 recording through the C function table (its playlist redirecting to the file: the file's bytes, not real-time; no
 playlist and no file: a failure with no notification) and fails on the code before the change.
 
+`IsViewerRequestedOpen()` (2026-10-18): an open is the viewer's own only when the last `GetRecordingStreamProperties()`
+call was for the same recording, at most three minutes before (Kodi makes that call only before playing; its thumbnail
+loader opens without it), so the "no file" notice is shown only then. Found live: on Kodi 22, browsing the recordings
+list showed it 14 times in about 70 s. Unit-tested in `tests/test_recording_visibility.cpp`; the glue scenario
+`no_file_notice` (a probe: none; Play: one; the next probe: none) fails on the code before the change.
+
 ### `RecurringRuleEdit`
 
 `RecurringRuleEdit` is `ComputeRecurringRuleEditPatch()`, `RecurringRuleEditPatch` and `ComputeEndDateForOpenEndedRuleEdit()` (added 2026-10-02, fixing

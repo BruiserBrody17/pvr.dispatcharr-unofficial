@@ -142,6 +142,36 @@ TEST_CASE("IsMissedOccurrence is true when upcoming and the end time has already
 }
 
 // ---------------------------------------------------------------------
+// IsViewerRequestedOpen
+// ---------------------------------------------------------------------
+
+TEST_CASE("IsViewerRequestedOpen: a properties call for the same recording, just before, is the viewer's",
+          "[RecordingVisibility]")
+{
+  using namespace std::chrono;
+  const steady_clock::time_point t0{seconds(1000)};
+  CHECK(IsViewerRequestedOpen(42, t0, 42, t0, minutes(3)));
+  CHECK(IsViewerRequestedOpen(42, t0, 42, t0 + seconds(40), minutes(3)));
+  CHECK(IsViewerRequestedOpen(42, t0, 42, t0 + minutes(3), minutes(3)));
+}
+
+TEST_CASE("IsViewerRequestedOpen: the thumbnail loader's opens are not -- no call, another recording, or too long ago",
+          "[RecordingVisibility]")
+{
+  // Confirmed live 2026-10-18 on Kodi 22: browsing the recordings list opened five file-less recordings 14 times in
+  // about 70 s with no properties call, each one showing "Dispatcharr has no file for this recording".
+  using namespace std::chrono;
+  const steady_clock::time_point t0{seconds(1000)};
+  CHECK_FALSE(IsViewerRequestedOpen(0, steady_clock::time_point{}, 42, t0, minutes(3)));
+  CHECK_FALSE(IsViewerRequestedOpen(7, t0, 42, t0 + seconds(1), minutes(3)));
+  CHECK_FALSE(IsViewerRequestedOpen(42, t0, 42, t0 + minutes(3) + seconds(1), minutes(3)));
+  // A clock that went backwards (or a call recorded after the open) is not trusted either.
+  CHECK_FALSE(IsViewerRequestedOpen(42, t0, 42, t0 - seconds(1), minutes(3)));
+  // Id 0 never matches, even an open of a recording parsed as 0.
+  CHECK_FALSE(IsViewerRequestedOpen(0, t0, 0, t0, minutes(3)));
+}
+
+// ---------------------------------------------------------------------
 // ShouldUseGrowingBufferPlayback
 // ---------------------------------------------------------------------
 

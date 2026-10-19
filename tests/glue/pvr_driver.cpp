@@ -1302,7 +1302,59 @@ int main(int argc, char** argv)
     }
     if (g_notifyCount != notifiesBefore)
       FAIL("the failed fallback showed %ld notification(s)", g_notifyCount - notifiesBefore);
+    // Pressed Play on it instead (a properties call first): the viewer is told there is no file.
+    abi::RecordingStreamPropertyCount(I(), &r);
+    const long playBefore = g_notifyCount;
+    if (abi::OpenRecorded(I(), &r, empty))
+    {
+      FAIL("a finished recording with no playlist and no file opened on Play");
+      abi::CloseRecorded(I(), empty);
+    }
+    if (g_notifyCount - playBefore != 1)
+      FAIL("Play on a recording with no file showed %ld notification(s), expected 1", g_notifyCount - playBefore);
     ctl("ip_state=&ip_hls_key=0&ip_nodir=0");
+  }
+  else if (what == "no_file_notice")
+  {
+    // A finished recording whose file is gone (rec_status=404). Kodi asks GetRecordingStreamProperties() only before
+    // playing a recording; its thumbnail loader opens recordings without it, and on Kodi 22 did so 14 times in about
+    // 70 s for five such recordings (found live 2026-10-18), each one showing "Dispatcharr has no file". The notice is
+    // for the viewer's own open only, once per properties call.
+    ctl("rec_status=404");
+    PVR_RECORDING r{};
+    abi::setf(r.strRecordingId, "%d", 5);
+    PVR_RECORDING other{};
+    abi::setf(other.strRecordingId, "%d", 6);
+    auto opensWithNotices = [&](const char* label) -> long
+    {
+      const long before = g_notifyCount;
+      abi::RecordedStream st;
+      if (abi::OpenRecorded(I(), &r, st))
+      {
+        FAIL("%s: a recording whose file answers 404 opened", label);
+        abi::CloseRecorded(I(), st);
+      }
+      return g_notifyCount - before;
+    };
+    if (const long n = opensWithNotices("a thumbnail probe"))
+      FAIL("an open with no properties call showed %ld notification(s)", n);
+    abi::RecordingStreamPropertyCount(I(), &r);
+    if (const long n = opensWithNotices("the viewer's Play"); n != 1)
+      FAIL("the viewer's own open showed %ld notification(s), expected 1", n);
+    if (const long n = opensWithNotices("a probe right after Play"))
+      FAIL("an open after the properties call was used showed %ld notification(s)", n);
+    abi::RecordingStreamPropertyCount(I(), &other);
+    if (const long n = opensWithNotices("a probe after Play on another recording"))
+      FAIL("an open after a properties call for another recording showed %ld notification(s)", n);
+    {
+      std::lock_guard<std::mutex> lock(g_notifyMu);
+      bool said = false;
+      for (const auto& m : g_notifyMessages)
+        said = said || m.find("no file for this recording") != std::string::npos;
+      if (!said)
+        FAIL("the viewer's notification did not say the recording has no file");
+    }
+    ctl("rec_status=0");
   }
   else if (what == "warm_up")
   {

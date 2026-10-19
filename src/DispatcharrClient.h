@@ -1007,8 +1007,8 @@ public:
   // an error value, never another stream's data.
   //
   // `notifyViewer` false keeps an HTTP failure in the log only, without DescribeRecordingOpenFailure()'s notification:
-  // the fallback from a gone HLS playlist (PVRDispatcharr::OpenRecordedStream()) also runs for opens nobody asked to
-  // watch, such as Kodi 22's thumbnail loader, which retried one empty recording about ten times in ten minutes.
+  // PVRDispatcharr::OpenRecordedStream() passes it only for an open the viewer asked for
+  // (dispatcharr::IsViewerRequestedOpen()), since Kodi's thumbnail loader also opens recordings, repeatedly.
   bool OpenRecordingStream(int recordingId, int64_t& streamIdOut, std::string& error, bool notifyViewer = true);
 
   // Growing, seekable byte-stream access to the server-side live timeshift

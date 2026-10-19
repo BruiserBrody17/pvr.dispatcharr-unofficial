@@ -12,6 +12,7 @@ docs/BUILDING.md|function|find_library
 docs/BUILDING.md|function|target_link_libraries
 docs/CATCHUP.md|setting|tv_archive_duration
 docs/CLOSED_ITEMS.md|function|AbortDemux
+docs/CLOSED_ITEMS.md|function|CanExtract
 docs/CLOSED_ITEMS.md|function|CloseFile
 docs/CLOSED_ITEMS.md|function|CloseInProgressRecordingStream
 docs/CLOSED_ITEMS.md|function|ClosePVRStream
@@ -26,7 +27,6 @@ docs/CLOSED_ITEMS.md|function|GetText
 docs/CLOSED_ITEMS.md|function|GetTimezoneBias
 docs/CLOSED_ITEMS.md|function|IsApiKeyValidFor
 docs/CLOSED_ITEMS.md|function|MatchDayOfWeek
-docs/CLOSED_ITEMS.md|function|OnPreparePlayback
 docs/CLOSED_ITEMS.md|function|PlatformSupportsAddon
 docs/CLOSED_ITEMS.md|function|ProvidesStreamForMetaDataExtraction
 docs/CLOSED_ITEMS.md|function|SetConnectionState

@@ -21,6 +21,9 @@ compare against.
 
 ### Fixed
 
+- **No more "no file for this recording" pop-ups while browsing** (Kodi 22): Kodi opens recordings by itself to
+  read their details, and each failed open showed the message. It now appears only when you press Play on such a
+  recording.
 - **A finished recording whose live copy is gone opens from its file**: the server can leave a recording marked as
   still having its live copy after it ended, and the addon then failed to open it; it now plays the finished file.
 - **A recording that finishes while you watch it is no longer re-checked segment by segment right afterwards** (Kodi

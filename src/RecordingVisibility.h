@@ -74,6 +74,17 @@ bool IsMissedOccurrence(bool isUpcoming, time_t endTime, time_t now);
 // still being actively written by the concat).
 bool ShouldUseGrowingBufferPlayback(const Recording& rec);
 
+// Whether an open of `recordingId` is one the viewer asked for, so that a failure may be told to them in a
+// notification. Kodi asks GetRecordingStreamProperties() only when it is about to play a recording
+// (CPVRPlaybackState::StartPlayback() on Kodi 21, OnPreparePlayback() on Kodi 22; checked in both sources), while the
+// thumbnail loader's stream-details probe opens the stream without it. Confirmed live 2026-10-18 on Kodi 22: browsing
+// the recordings list opened five file-less recordings 14 times in about 70 s, each time showing "Dispatcharr has no
+// file for this recording". So an open is the viewer's when the latest properties call was for the same recording and
+// no longer ago than `window` (the call itself can take a full request timeout on a slow server).
+bool IsViewerRequestedOpen(int lastPropertiesRecordingId, std::chrono::steady_clock::time_point lastPropertiesAt,
+                           int recordingId, std::chrono::steady_clock::time_point now,
+                           std::chrono::steady_clock::duration window);
+
 // Fix for a real, confirmed bug in
 // RefreshInProgressRecordingManifest()'s own fresh in-progress check:
 // `finished = !(GetRecordingById(...) && rec.isInProgress)` treated a

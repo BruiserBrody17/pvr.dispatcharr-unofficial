@@ -490,6 +490,13 @@ private:
   // single-active-stream-at-a-time code area (Kodi never opens more than
   // one recording stream concurrently per instance), no extra locking.
   bool m_apiKeyOwnershipVerified = false;
+  // The recording Kodi last asked GetRecordingStreamProperties() for, and when: Kodi asks only before playing it, so
+  // OpenRecordedStream() tells the viewer about a failure only for that open (dispatcharr::IsViewerRequestedOpen()).
+  // Cleared by the open that uses it. Written on Kodi's main thread, read on the open's; Kodi 22 may run opens on
+  // several threads at once (the thumbnail loader), hence the mutex.
+  std::mutex m_viewerOpenMutex;
+  int m_lastStreamPropertiesRecordingId = 0;
+  std::chrono::steady_clock::time_point m_lastStreamPropertiesAt{};
   // Same spurious-renotification guard as m_lastAppliedConfig above,
   // applied to the DVR padding settings -- a real, confirmed bug fixed
   // by this pair: OnAddonSettingChanged()'s own recording_pre/post_offset_minutes
