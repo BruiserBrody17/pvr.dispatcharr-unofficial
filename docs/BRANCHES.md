@@ -37,6 +37,7 @@ Until 2026-10-14 `Omega` was merged into `Piers` (last merge: `890ed3b`), becaus
 override signatures. The multiple-recorded-streams change (`147334e`, Piers only) rewrote the recorded-stream state in
 `DispatcharrClient` and its callers, so a merge would conflict on every `Omega` fix touching those functions. From then on
 **an `Omega` fix is ported to `Piers` by hand**: `git cherry-pick -x` where it applies, a hand port where it does not.
+A fix made on `Piers` first goes the other way in the same manner; both directions are logged below.
 
 What differs between the branches, beyond comments (a handful of comments name `ReadRecordingStreamImpl()` and the like):
 
@@ -52,7 +53,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`b129c23`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`c52f392`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -69,6 +70,26 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `4340b7d` | already on `Piers` as `b342957` | Background tasks refused during shutdown, made on `Piers` first; the code applied cleanly, `dtor_late_report` was merged into `Omega`'s glue harness by hand. |
 | `14db1cf` | already on `Piers` as `7abb9d9` | Nested JSON read in place, made on `Piers` first; applied cleanly apart from the running docs. |
 | `b129c23` | not ported: `Piers` already lists them | The two open items from the 2026-10-19 live check (`ef2492c`), copied to `Omega`'s `OPEN_ITEMS.md` and checked against its code. |
+| `639ae6e`, `d70d857`, `c52f392` | already on `Piers` as `984df9c`, `1c7d817`, `d9a3e74` | Ports from `Piers`; see the table below. |
+
+### Ported to Omega
+
+Last `Piers` commit accounted for: **`b1ab0ed`**. As above, in the other direction: list every `Piers` commit after it
+(`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
+commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
+with nothing to port; the first sweep (2026-10-19) went back to the split.
+
+| `Piers` commit | On `Omega` | Notes |
+|---|---|---|
+| `dd77977`, `147334e`, `aa805aa`, `3c63eb4`, `506811b` | not ported: Kodi 22 only | The port to Kodi 22's addon API, the recorded-stream registry keyed by Kodi 22's stream id, and this branch's `0.14.0` line and CoreELEC checksum. |
+| `184128c`, `aba6bd4`, `f9c6970`, `db1e067`, `5fb5295`, `ed07865`, `1594bfa`, `222ab1a`, `20d9aca` | not ported: Kodi 22 only | The Kodi 22 RC1 live checks and platform builds, the README's Kodi 22 line, the Kodi 22 open item's release note, and a privacy rewording of three of those records. |
+| `f9e4f67` | not ported: Kodi 22 only | The Off and Local mode warm-up. The 503 comes from Kodi 22's extra probe requests; Kodi 21 sends one plain `GET` and plays (`CLOSED_ITEMS.md`, "Kodi 22: the first attempt to play a channel nobody is watching failed in Off mode"). |
+| `789184e`, `6538c1e`, `ef4760b` | not ported: Kodi 22 only | Two streams of one in-progress recording, the segment cache kept for Kodi 22's stream-details probe of a finished recording, and the no-file notice shown only on Play. Kodi 21 opens one recorded stream at a time and never opens a recording for its thumbnail (`8c69f44`). |
+| `984df9c` | `639ae6e` (`git cherry-pick -x`; `TEST_COVERAGE.md` by hand) | The smoke harness waits for a seekable player in its recording seek checks. The slow start was the device's, not Kodi 22's. |
+| `1c7d817` | `d70d857` (`git cherry-pick -x`) | The troubleshooting entry for the Kodi 21 to 22 guide database upgrade failure: the people who hit it are Kodi 21 users, who read `Omega`'s docs. |
+| `d9a3e74` | `c52f392` (by hand) | The live check of four audit fixes ran on Kodi 22; `Omega`'s closed entries now say what it showed and that it was not repeated there. The open item it found was fixed on both (`3a0897b`, `7ae30bb`). |
+| `b26412c`, `48764de`, `ffe8c16`, `cf80c8e`, `9e6061b`, `59123ca`, `3a0897b`, `67ca439`, `f87f4cb`, `b342957`, `7abb9d9`, `ef2492c` | their counterparts in the table above | Made on `Piers` first and already logged there. |
+| `b1ab0ed` | not yet | The Kodi repository; ported after its first publish, step (5) of `OPEN_ITEMS.md`'s "The Kodi repository is built but not published". |
 
 ## Dependencies that differ by Kodi release
 
