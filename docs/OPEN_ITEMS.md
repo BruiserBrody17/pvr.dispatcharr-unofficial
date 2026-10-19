@@ -4,10 +4,9 @@
 
 ## Status at a glance
 
-**22 open, 323 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**21 open, 324 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one is open from a user
-report. Two came from the 2026-10-19 live check of four audit fixes on `Piers`, and hold here too. The other 17 come
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers`, and hold here too. The other 17 come
 from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the same day (all 21 held here;
 three are worded for `Omega`; four fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each marked with how sure the
 audit was: *confirmed* (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the
@@ -16,14 +15,14 @@ trigger is not demonstrated) or *low confidence*.
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 6 |
+| Open: Fix known, not yet done | 5 |
 | Open: Architectural / concurrency | 3 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 2 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 7 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 281 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 282 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -41,10 +40,6 @@ it does not, one `curl_global_init(CURL_GLOBAL_ALL)` in the addon's create path 
 the fix.
 
 ### Fix known, not yet done
-
-#### Support Kodi 22 (Piers): the addon is refused by Kodi 22 RC1
-
-**Opened 2026-10-12, from a user's report: on Kodi 22 RC1 (a Windows laptop) the addon "is not supported yet".** Kodi 22's PVR API is 9.2.0 with a minimum of 9.2.0 (Omega, which this branch builds against: 8.3.0, minimum 8.2.0), and its main and general APIs moved to 2.0.4 and 1.0.5, so the addon's declared imports and an Omega-built binary are refused outright; it must be rebuilt against Kodi 22's headers. A syntax-only compile of every `src/` file against the Piers dev-kit headers (branch `Piers`, 2026-10-11) gave six errors, all in `PVRDispatcharr.h`: the five recorded-stream overrides (`OpenRecordedStream()` now also returns a stream id, `ReadRecordedStream()`, `SeekRecordedStream()`, `LengthRecordedStream()` and `CloseRecordedStream()` take it), and `GetChannelStreamProperties()`, which gains a `PVR_SOURCE` argument (regular live, or playing a guide entry as live). The C++ wrapper hides the rest of the change (the C structs now hold string pointers instead of fixed arrays, EDL and timer-type lists are heap arrays), so most of `src/` compiles unchanged. What the port still needs: (1) the stream id means Kodi may hold more than one recorded stream open, but `DispatcharrClient` keeps one `m_recordingStream` and one `m_inProgressRecordingStream`, so either the state is keyed by id or a second open is refused deliberately; (2) the glue harness's stub and driver use the C structs directly and need the new shapes; (3) new optional calls worth a look, `GetRecordedStreamTimes()`, `IsRecordedStreamRealTime()` and `PauseRecordedStream()`, which bear on how an in-progress recording behaves in the player and on the open item about watching live while a recording runs; (4) `addon.xml.in` import versions, `KODI_COMMIT` and `KODI_BRANCH` in the workflow, and the Windows, Android and CoreELEC builds against Piers (`docs/BUILDING.md` notes `coreelec-22` tracks it); (5) the branching policy in `CLAUDE.md`: branch `Piers` off `Omega` once the source differs, keep `Omega` as the Kodi 21 maintenance branch, and decide how fixes flow between them (merge `Omega` into `Piers`; the six signatures are the only divergence so far). Confirm live on Kodi 22 RC1 with a Windows build: the addon loads, channels and guide appear, a live channel plays in each timeshift mode, a recording plays (completed and in progress) and seeks, and the timers dialog works.
 
 #### `PersistApiKeyIfChanged()` writes three settings on the stream read thread
 
