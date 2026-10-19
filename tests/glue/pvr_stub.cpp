@@ -27,11 +27,24 @@ static char* dupstr(const std::string& s)
 {
   return strdup(s.c_str());
 }
+// A log line is the only place a driver can hold one of the addon's own threads at a chosen point. The first line
+// containing g_logGate parks the thread that logs it (g_logGateHit) until a driver sets g_logGateOpen.
+// g_logWatchCount counts the lines containing g_logWatch.
+std::atomic<const char*> g_logGate{nullptr}, g_logWatch{nullptr};
+std::atomic<bool> g_logGateHit{false}, g_logGateOpen{false};
+std::atomic<int> g_logWatchCount{0};
 static void my_log(const KODI_ADDON_BACKEND_HDL, const int lvl, const char* msg)
 {
   static int minLvl = getenv("GLUE_LOG") ? atoi(getenv("GLUE_LOG")) : 99;
   if (lvl >= minLvl)
     fprintf(stderr, "[kodi %d] %s\n", lvl, msg);
+  const char* watch = g_logWatch.load();
+  if (watch && strstr(msg, watch))
+    g_logWatchCount++;
+  const char* gate = g_logGate.load();
+  if (gate && strstr(msg, gate) && !g_logGateHit.exchange(true))
+    while (!g_logGateOpen.load())
+      usleep(10000);
 }
 static void my_free(const KODI_ADDON_BACKEND_HDL, char* s)
 {

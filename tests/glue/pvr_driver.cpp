@@ -39,6 +39,9 @@ struct Collected
   std::vector<PVR_RECORDING> recordings;
   std::vector<PVR_TIMER> timers;
 };
+extern std::atomic<const char*> g_logGate, g_logWatch;
+extern std::atomic<bool> g_logGateHit, g_logGateOpen;
+extern std::atomic<int> g_logWatchCount;
 
 static int g_port;
 static std::atomic<int> g_fail{0};
@@ -1213,6 +1216,40 @@ int main(int argc, char** argv)
       FAIL("the failed fallback showed %ld notification(s)", g_notifyCount - notifiesBefore);
     ctl("ip_state=&ip_hls_key=0&ip_nodir=0");
   }
+  else if (what == "dtor_late_report")
+  {
+    // The connection report the channel/EPG thread schedules when it learns the account's DVR access level late
+    // (RetryDeferredServerSyncs()) must not be started once the destructor has drained the detached-thread list: that
+    // thread is stopped only after the drain, and a task tracked after it was a joinable std::thread destroyed with the
+    // list, which is std::terminate. The fake fails /users/me/ (CTL me_status=500) until the first background cycle has
+    // gone past the retry (the guide is fetched only by that thread, after it); then the level becomes readable as
+    // view-only, which logs a line, a wake makes the thread retry at once, and the log gate parks the thread on that
+    // line, between learning the level and scheduling the report. The destroy below starts while it is parked and
+    // opens the gate once the drain is done.
+    long began = ms();
+    auto epgFetches = []
+    {
+      const std::string stats = http("/__stats");
+      const size_t at = stats.find("\"GET /output/epg\": ");
+      return at == std::string::npos ? 0 : atoi(stats.c_str() + at + 19);
+    };
+    while (ms() - began < 20000 && epgFetches() < 1)
+      sleep_ms(100);
+    if (epgFetches() < 1)
+      FAIL("the background thread never fetched the guide, so its first retry of the access level was not seen");
+    g_logGate = "DVR access is view-only";
+    g_logWatch = "a background task was not started";
+    ctl("me_status=0&user_level=1");
+    A()->OnSystemWake(I());
+    Collected c;
+    A()->GetEPGForChannel(I(), (PVR_HANDLE)&c, 1, time(nullptr) - 3600, time(nullptr) + 3600);
+    began = ms();
+    while (ms() - began < 10000 && !g_logGateHit)
+      sleep_ms(50);
+    INFO("access level learned on the background thread: %d (after %ld ms)", g_logGateHit ? 1 : 0, ms() - began);
+    if (!g_logGateHit)
+      FAIL("the background thread did not retry the access level after the wake");
+  }
   else if (what == "dtor_busy")
   {
     // destroy while Kodi-facing calls are idle but the addon's own threads are mid-fetch (slow server)
@@ -1225,8 +1262,21 @@ int main(int argc, char** argv)
     faultT.join();
   INFO("final api_key setting '%s'", g_settings["api_key"].c_str());
   long d0 = ms();
+  std::thread gateOpener;
+  if (what == "dtor_late_report")
+    gateOpener = std::thread(
+        []
+        {
+          sleep_ms(500);
+          g_logGateOpen = true;
+        });
   delete pvr;
   INFO("destroyed in %ld ms", ms() - d0);
+  if (gateOpener.joinable())
+    gateOpener.join();
+  if (what == "dtor_late_report" && g_logGateHit && g_logWatchCount < 1)
+    FAIL("the connection report scheduled during the destroy was not refused (no 'not started' line), so the late "
+         "schedule did not happen inside the shutdown");
   printf("stats=%s\n", http("/__stats").c_str());
   printf("RESULT fails=%d\n", (int)g_fail);
   curl_global_cleanup();

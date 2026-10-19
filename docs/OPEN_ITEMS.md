@@ -4,11 +4,11 @@
 
 ## Status at a glance
 
-**22 open, 321 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**21 open, 322 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one is open from a user
-report. The other 19 come from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the
-same day (all 21 held here; three are worded for `Omega`; two fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed*
+report. The other 18 come from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the
+same day (all 21 held here; three are worded for `Omega`; three fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed*
 (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the trigger is not demonstrated)
 or *low confidence*.
 
@@ -16,13 +16,13 @@ or *low confidence*.
 |---|---|
 | Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 6 |
-| Open: Architectural / concurrency | 4 |
+| Open: Architectural / concurrency | 3 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 7 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 279 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 280 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -93,19 +93,6 @@ whether the container runs as root). (4) `RefreshToken.for_user` may add a datab
 `token_blacklist` app is installed (low confidence; not checked on a real server).
 
 ### Architectural / concurrency
-
-#### A background task scheduled during shutdown can crash Kodi
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
-reading, narrow window.** The destructor moves `m_detachedThreads` out and joins it *before* it stops the three worker
-threads, and `TrackDetachedThread()` has no shutdown check. Two callers can still add a thread after that drain:
-`RetryDeferredServerSyncs()` calls `ScheduleConnectionReport()` without checking `m_shuttingDown`, on the channel/EPG
-thread that is still running, and `OnConnectionObserved()` checks the flag and then schedules, which races the flag
-being set. A joinable `std::thread` left in the vector when it is destroyed calls `std::terminate`, and the task holds
-`this` while the object is being torn down. The closed fix for this list covered only the `AddTimer` and settings
-callers; the connection-report caller came later. Fix: in `TrackDetachedThread()`, check `m_shuttingDown` under
-`m_detachedThreadsMutex` and drop the task (or run it inline); drain the list a second time after the
-`StopWorkerThread()` calls. Glue harness, not a unit test.
 
 #### timeshift_buffer: a teardown that outlasts its grace period can delete a restarted buffer
 

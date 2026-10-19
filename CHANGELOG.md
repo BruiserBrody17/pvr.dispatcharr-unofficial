@@ -18,6 +18,8 @@ compare against.
   Kodi waited the whole connection timeout (30 s by default, up to 3 minutes) before playback started or failed. A
   recording now skips that check entirely, and a catch-up programme gives up after a few seconds. Catch-up also asks
   for the programme's full length instead of up to a minute less.
+- **A rare crash when Kodi exits or the addon restarts**: if the addon was just about to tell Kodi the connection
+  state at that moment, Kodi could crash while closing it.
 - **A finished recording whose live copy is gone opens from its file**: the server can leave a recording marked as
   still having its live copy after it ended, and the addon then failed to open it; it now plays the finished file.
 - **Realtime updates work behind a server or proxy that writes `Upgrade:websocket` without a space.** The addon looked

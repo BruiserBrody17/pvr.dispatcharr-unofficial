@@ -182,6 +182,8 @@ def pvr_route(h, method, p, q, body):
     if p == "/api/core/version/":
         return h.J(200, {"version": "0.31.0"})
     if p == "/api/accounts/users/me/":
+        if ctl_int("me_status"):
+            return h.J(ctl_int("me_status"), {"detail": "boom"})
         # user_level 1 with no custom_properties.dvr_access is Dispatcharr's view-only default.
         return h.J(
             200,

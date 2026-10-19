@@ -54,6 +54,7 @@ run "PVR: connection, no POST at login" BIN=pvr_harness T=60 CTL="login_status=4
 run "PVR: connection, login answers without a token" BIN=pvr_harness T=60 CTL="login_status=200" -- connection_state 4000 mismatch
 run "PVR: view-only account, known at start" BIN=pvr_harness T=60 CTL="user_level=1" -- dvr_access 8000
 run "PVR: view-only account, learned late" BIN=pvr_harness T=150 CTL="user_level=1&api_down=1" -- dvr_access 120000 late
+run "PVR: connection report scheduled during destroy" BIN=pvr_harness T=60 CTL="me_status=500" -- dtor_late_report
 run "PVR: connection, lost mid-session" BIN=pvr_harness T=120 -- connection_loss
 run "PVR: connection, five-second blip" BIN=pvr_harness T=60 -- connection_blip
 [ "$failed" -eq 0 ] && echo "all glue scenarios passed" || { echo "$failed glue scenario(s) failed"; exit 1; }

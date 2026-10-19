@@ -842,8 +842,8 @@ bool PVRDispatcharr::SleepUnlessShuttingDown(std::chrono::seconds duration)
 
 void PVRDispatcharr::OnConnectionObserved(dispatcharr::ConnectionReport report)
 {
-  // The shutdown abort makes requests fail with no response, which says nothing about the server; and a task started
-  // now could outlive the join in the destructor.
+  // The shutdown abort makes requests fail with no response, which says nothing about the server (and
+  // TrackDetachedThread() would refuse the report anyway).
   if (m_shuttingDown)
     return;
   if (m_connectionLatch.Observe(report))
@@ -919,6 +919,21 @@ PVRDispatcharr::~PVRDispatcharr()
   // is a network call; AddTimer's delayed refresh wakes at once, see
   // SleepUnlessShuttingDown()) and nothing else needs
   // that mutex once the instance is being destroyed anyway.
+  JoinDetachedThreads();
+
+  StopWorkerThread(m_recordingRefreshMutex, m_stopRecordingRefreshThread, m_recordingRefreshCv,
+                   m_recordingRefreshThread);
+  StopWorkerThread(m_channelEpgRefreshMutex, m_stopChannelEpgRefreshThread, m_channelEpgRefreshCv,
+                   m_channelEpgRefreshThread);
+  StopWorkerThread(m_realtimeUpdateMutex, m_stopRealtimeUpdateThread, m_realtimeUpdateCv, m_realtimeUpdateThread);
+  // Again, now that no worker thread is left to schedule anything: TrackDetachedThread() refuses new tasks once
+  // m_shuttingDown is set, so the list should be empty here, but a joinable std::thread still in it when the member is
+  // destroyed would be std::terminate, so that is not left to the check alone.
+  JoinDetachedThreads();
+}
+
+void PVRDispatcharr::JoinDetachedThreads()
+{
   std::vector<DetachedThreadEntry> detachedThreads;
   {
     std::lock_guard<std::mutex> lock(m_detachedThreadsMutex);
@@ -929,12 +944,6 @@ PVRDispatcharr::~PVRDispatcharr()
     if (entry.thread.joinable())
       entry.thread.join();
   }
-
-  StopWorkerThread(m_recordingRefreshMutex, m_stopRecordingRefreshThread, m_recordingRefreshCv,
-                   m_recordingRefreshThread);
-  StopWorkerThread(m_channelEpgRefreshMutex, m_stopChannelEpgRefreshThread, m_channelEpgRefreshCv,
-                   m_channelEpgRefreshThread);
-  StopWorkerThread(m_realtimeUpdateMutex, m_stopRealtimeUpdateThread, m_realtimeUpdateCv, m_realtimeUpdateThread);
 }
 
 namespace
@@ -964,6 +973,17 @@ void PVRDispatcharr::TrackDetachedThread(std::function<void()> work, bool runInl
   bool started = false;
   {
     std::lock_guard<std::mutex> lock(m_detachedThreadsMutex);
+    // The destructor sets m_shuttingDown before it takes this mutex to drain the list, so a call that gets here after
+    // the drain always sees it. Without this, a task scheduled from a worker thread the destructor had not stopped yet
+    // (the channel/EPG thread's connection report, found by the 2026-10-18 audit) went into a list nobody joined
+    // again: a joinable std::thread destroyed with the member is std::terminate, and the task held `this` meanwhile.
+    // Dropped rather than run inline: every request fails once the shutdown abort has run, and what each caller would
+    // have done (a connection report, a padding push, a refresh) is moot for an instance being destroyed.
+    if (m_shuttingDown)
+    {
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: shutting down, a background task was not started");
+      return;
+    }
     // Opportunistic prune: join and drop every earlier entry that's
     // already finished, so this list doesn't grow unbounded over a long
     // Kodi uptime with many timers added / many settings saves -- see this
