@@ -46,3 +46,33 @@ TEST_CASE("ResolveCatchupPlaybackUrl leaves an absolute http(s) URL alone", "[Ca
   CHECK(ResolveCatchupPlaybackUrl("/redirect?to=http://x", "http://d.example") ==
         "http://d.example/redirect?to=http://x");
 }
+
+TEST_CASE("CatchupSessionDurationMinutes rounds a part minute up", "[CatchupSessionRequest]")
+{
+  const time_t start = 1767268800;
+  CHECK(CatchupSessionDurationMinutes(start, start + 90 * 60) == 90);
+  // A 90 m 30 s programme asked for 90 minutes when this was plain integer division.
+  CHECK(CatchupSessionDurationMinutes(start, start + 90 * 60 + 30) == 91);
+  CHECK(CatchupSessionDurationMinutes(start, start + 90 * 60 + 1) == 91);
+  CHECK(CatchupSessionDurationMinutes(start, start + 59) == 1);
+  CHECK(CatchupSessionDurationMinutes(start, start + 1) == 1);
+}
+
+TEST_CASE("CatchupSessionDurationMinutes gives 0 (no duration sent) when the end is not after the start",
+          "[CatchupSessionRequest]")
+{
+  const time_t start = 1767268800;
+  CHECK(CatchupSessionDurationMinutes(start, start) == 0);
+  CHECK(CatchupSessionDurationMinutes(start, start - 60) == 0);
+  CHECK(CatchupSessionDurationMinutes(start, 0) == 0);
+}
+
+TEST_CASE("CatchupSessionDurationMinutes caps a long span at the API's maximum before narrowing it",
+          "[CatchupSessionRequest]")
+{
+  const time_t start = 1767268800;
+  CHECK(CatchupSessionDurationMinutes(start, start + 480 * 60) == 480);
+  CHECK(CatchupSessionDurationMinutes(start, start + 480 * 60 + 1) == kMaxCatchupSessionDurationMinutes);
+  // A span whose minute count does not fit an int must not wrap into a small or negative value.
+  CHECK(CatchupSessionDurationMinutes(0, static_cast<time_t>(0x7fffffff)) == kMaxCatchupSessionDurationMinutes);
+}

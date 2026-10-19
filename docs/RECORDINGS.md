@@ -1299,7 +1299,10 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   byte address space exactly like `RefreshLiveManifest()` does.
   `GetRecordingStreamProperties()` is now drastically simpler as a result
   -- it only ever sets `ISREALTIMESTREAM`, `STREAMURL` is never populated
-  for either recording flavour -- and `LocalPlaylistServer.cpp`/`.h`, the
+  for either recording flavour (since 2026-10-19 it sets nothing and makes
+  no lookup: Kodi takes the real-time answer from the open stream instead,
+  `docs/CLOSED_ITEMS.md`'s "Pressing Play on a recording can freeze the UI
+  for the full request timeout") -- and `LocalPlaylistServer.cpp`/`.h`, the
   mode-choice context-menu hook, and the two now-dead
   `PendingLiveMode`-style settings/strings were all deleted rather than
   kept alongside the new path.

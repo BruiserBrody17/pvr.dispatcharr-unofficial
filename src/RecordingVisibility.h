@@ -60,8 +60,7 @@ bool IsListedAsTimer(const Recording& rec, time_t now);
 // never treated as missed -- there's nothing to compare `now` against.
 bool IsMissedOccurrence(bool isUpcoming, time_t endTime, time_t now);
 
-// Shared by PVRDispatcharr::GetRecordingStreamProperties()/
-// OpenRecordedStream() -- whether a recording needs the growing-buffer
+// Used by PVRDispatcharr::OpenRecordedStream() -- whether a recording needs the growing-buffer
 // (native-demuxer, still-being-written) read path rather than the
 // completed-recording one. hlsDirStillPresent alongside isInProgress:
 // see Recording::hlsDirStillPresent's own comment above -- a

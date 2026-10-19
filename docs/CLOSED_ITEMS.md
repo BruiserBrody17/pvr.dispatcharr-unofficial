@@ -37,6 +37,7 @@ ticks with a moving buffer-wide stamp: the viewer is dropped, nothing is torn do
 viewer and buffer-wide heartbeat are both stale is ended exactly once, and that the phantom case ends the buffer one idle
 timeout after the last segment read, not before; one pins the declined write-back. The first three fail against the
 0.8.14 code.
+
 **Confirmed live (2026-10-19)** against a real Dispatcharr 0.32.0 and a Kodi 22 RC1 client in Server-side mode, through a
 proxy that answered 429 to every `heartbeat` and `get_live_manifest` call for 75 s while segment reads went straight
 through; the viewer had paused for three minutes first, so it had segments to keep reading. Under a 0.8.14 reaper the
@@ -49,6 +50,64 @@ leadership, after the import (`docs/TIMESHIFT.md`, "Picking up a new copy of the
 **Ported to `Omega` (2026-10-19)** with `git cherry-pick -x`: the plugin is the same file on both branches, so the
 code and its tests are unchanged; the live check above was made with a Kodi 22 client, and nothing in it depends on
 the Kodi version.
+
+#### Pressing Play on a recording can freeze the UI for the full request timeout
+
+**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
+reading.** `GetRecordingStreamProperties()` ran a
+full-timeout `GetRecordingById()` (which can also log in and retry once on a 401) on Kodi's main thread, where Kodi calls
+it while preparing playback, so a hung server froze the UI for 30 to 180 s before playback started. Its only output was
+ISREALTIMESTREAM. Same shape, smaller: `GetEPGTagStreamProperties()` made the catch-up POST on the main thread with the
+full timeout, and its duration in minutes was `(end - start) / 60`, which rounds down, so a programme that is not a whole
+number of minutes asked for a session up to 59 s short.
+
+**Closed 2026-10-19 on `Piers`, confirmed by reading Kodi's source, a unit test, the glue harness and live.** (1) The lookup is gone: on `Piers`, `GetRecordingStreamProperties()` now only notes which recording the viewer
+pressed Play on (for the Kodi 22 thumbnail notice's check) and returns no properties. Read in the Kodi 22 RC1 source: `CDVDInputStream`'s
+constructor reads ISREALTIMESTREAM from the file item into `m_realtime` (`DVDInputStream.cpp`), but
+`CInputStreamPVRBase::IsRealtime()` overrides that answer for every PVR stream (`InputStreamPVRBase.cpp`), and for a
+recording `CInputStreamPVRRecording` (`InputStreamPVRRecording.cpp`) asks `CPVRClient::IsRecordedStreamRealTime()`, which
+calls the addon's `IsRecordedStreamRealTime()` per stream id when the addon supports several recorded streams
+(`PVRClient.cpp`), as `Piers` does. That answer comes from the stream `OpenRecordedStream()` actually opened (in progress
+or finished), which also makes its own lookup right before choosing the read path. Nothing else reads the property, and
+`OnPreparePlayback()` accepts an empty property list (`PVRPlaybackState.cpp`). Kodi 21 behaves the same way through the
+legacy call: its `CInputStreamPVRBase::IsRealtime()` asks the addon's `IsRealTimeStream()`, which on `Omega` answers from
+the open stream, so `Omega` can drop the lookup too. (2) The catch-up request (its sign-in and its POST) is bounded by
+`ShortRequestTimeoutMs()` (5 s at the default timeout; the POST measured about 0.3 s against a real instance, see
+`docs/TEST_COVERAGE.md`). (3) The duration is rounded up (`dispatcharr::CatchupSessionDurationMinutes()`,
+`CatchupSessionRequest.h`), which also caps a long span before narrowing it to an int. This was looked at before and
+closed as harmless ("Catch-up sessions cut short by up to 59 s from rounding", under "Closed without a change"),
+because Dispatcharr adds five minutes to whatever duration it is sent; rounding up stops the addon depending on that.
+**Tests:** `tests/test_catchup_session_request.cpp`'s three new cases fail on the old division (90 for a 90 m 30 s
+programme, 0 for a span under a minute). The glue harness (Kodi 22 headers, ASan + UBSan) passes all of `ci.sh`,
+including `no_file_notice`, which drives `GetRecordingStreamProperties()`; it does not drive catch-up, and the bounded
+timeouts are not exercised against a hung server there. **Confirmed live (2026-10-19)** on a Kodi 22 RC1 Linux client
+against a real Dispatcharr 0.32.0, through a proxy that could hold one request open. Holding a finished recording's
+`GET /api/channels/recordings/<id>/` while Play was pressed froze the UI twice for 30.3 s each on the previous build (a
+JSON-RPC info-label call, which needs the main thread, took that long to answer): first this function's lookup, then an
+`OpenRecordedStream()` that Kodi made on its main thread (`viewerAsked=0`) as playback began, which only the old build's
+non-empty property list was seen to prompt. The fixed build's worst answer over two runs was 0.4 s, and Kodi made no
+main-thread open. With `videoplayer.usedisplayasclock` on, `Player.TempoEnabled` (Kodi sets it from
+`CanTempo() && !realtime`) read true for a finished recording and false for an in-progress one, so Kodi still treats the
+in-progress recording as real-time with no property sent; that recording kept playing near its growing end and resumed
+after a 45 s pause. Catch-up played; with the session POST held, the UI waited 5.1 s, the addon logged the timeout and
+Kodi went back to Home (the previous build's full-timeout POST was not run against the held request).
+
+**Ported to `Omega` (2026-10-19)** with `git cherry-pick -x` and a hand port of `GetRecordingStreamProperties()`:
+`Omega` has no thumbnail-notice check (that notice is Kodi 22's), so there the function makes no lookup, notes nothing and returns no properties. Read in the Kodi 21 source (`Omega` branch): Kodi calls it from
+`CPVRPlaybackState::StartPlayback()` on the PVR play actions, copies the property list only when it is not empty, and
+`CInputStreamPVRBase::IsRealtime()` asks `CPVRClient::IsRealTimeStream()`, the addon's `IsRealTimeStream()`, which on
+`Omega` answers from the open stream (`IsInProgressRecordingStreamOpen()`); the property's only other reader,
+`CDVDInputStream`'s constructor, is overridden by it. The catch-up comment names Kodi 21's call chain
+(`StartPlayback()`, and `CPVRGUIActionsPlayback::PlayEpgTag()` before it). The duration test and the timeout bound are
+the same code on both branches. **Live (2026-10-19)**, a Kodi 21.3 Linux client running this port's build against a real
+Dispatcharr 0.32.0, through the same holding proxy: with a finished recording's `GET /api/channels/recordings/<id>/`
+held for 39 s while Play was pressed, the slowest JSON-RPC info-label call took 0.9 s, and the held request came from
+the thread that opens the stream (`OpenRecordedStream()`), not Kodi's main thread. With `videoplayer.usedisplayasclock`
+on, `Player.TempoEnabled` read true for a finished recording and false for an in-progress one, which played near its
+growing end and resumed after a 45 s pause. Catch-up played; with the session POST held, Kodi 21 asked for the
+properties twice (`PlayEpgTag()`, then `StartPlayback()`), each attempt gave up after 5 s, and Kodi showed its
+playback-failed dialog (`Player.Open` over JSON-RPC runs on its own thread, so the UI calls answered within 0.3 s
+throughout). The previous build was not run on Kodi 21 for comparison.
 
 #### An interrupted recording with a leftover `_hls_dir` is opened as in progress, and fails again and again
 
@@ -7210,6 +7269,8 @@ buffer to whatever duration the client sends
 five full minutes comfortably absorbs the addon's own up-to-59-second
 rounding-down error, so the catch-up stream's own playable window is
 never actually cut short by this.
+**Update (2026-10-19):** rounded up anyway, so the addon no longer depends on that buffer (`Fixed`, "Pressing Play on a
+recording can freeze the UI for the full request timeout").
 
 #### 500 ms manifest refresh throttle never engages during sustained failure
 

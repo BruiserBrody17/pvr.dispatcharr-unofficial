@@ -636,9 +636,8 @@ private:
   // happens under the lock, the file I/O after it.
   void SaveRecordingEpgLinksIfDirty();
   // Looks up one recording by id -- shared by
-  // GetRecordingStreamProperties()/OpenRecordedStream() (both need a
-  // recording's isInProgress/hlsDirStillPresent flags right before
-  // playback) and UpdateTimer()'s extend-recording branch (needs
+  // OpenRecordedStream() (needs the recording's
+  // isInProgress/hlsDirStillPresent flags right before playback) and UpdateTimer()'s extend-recording branch (needs
   // currentEndTime). A direct single-item REST call
   // (DispatcharrClient::GetRecordingById()), not a scan of
   // m_cachedRecordings -- these callers want this recording's truly

@@ -4,25 +4,25 @@
 
 ## Status at a glance
 
-**23 open, 320 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**22 open, 321 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one is open from a user
-report. The other 20 come from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the
-same day (all 21 held here; three are worded for `Omega`; one fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed*
+report. The other 19 come from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the
+same day (all 21 held here; three are worded for `Omega`; two fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed*
 (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the trigger is not demonstrated)
 or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 7 |
+| Open: Fix known, not yet done | 6 |
 | Open: Architectural / concurrency | 4 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 7 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 278 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 279 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -59,17 +59,6 @@ kNull;` fallback (or pointers) so nothing is copied, verified to depth 100000; o
 `ParseJsonResponseBody()`. Regression test: a 100000-deep value parsed on a 1 MiB-stack thread in
 `tests/test_recording_parser.cpp`.
 
-#### Pressing Play on a recording can freeze the UI for the full request timeout
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
-reading.** `GetRecordingStreamProperties()` runs a full-timeout `GetRecordingById()` (which can also log in and retry
-once on a 401) on Kodi's main thread, where Kodi calls it while preparing playback, so a hung server freezes the UI for
-30 to 180 s before playback starts. On Kodi 21 its only output, ISREALTIMESTREAM, is ignored for a PVR recording:
-`CInputStreamPVRBase::IsRealtime()` asks the addon's `IsRealTimeStream()` instead of reading the property (checked
-against the Kodi 21 source). Fix: drop the lookup, or bound it with `ShortRequestTimeoutMs()`, or answer from the cached
-recordings. Same shape, smaller: `GetEPGTagStreamProperties()` makes the catch-up POST on the main thread with the full
-timeout, and its duration in minutes is `(end - start) / 60`, which rounds down, so a programme that is not a whole
-number of minutes asks for a session up to 59 s short. Live-only (no unit test).
 
 #### `PersistApiKeyIfChanged()` writes three settings on the stream read thread
 
