@@ -10,6 +10,13 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## `repository.dispatcharr-unofficial` [0.1.0] - 2026-10-23
+
+New: a Kodi repository for the addon (unofficial, like the addon). Install it once and Kodi installs the right build
+for your platform and Kodi version and keeps it up to date, including switching to the Kodi 22 build after an upgrade
+from Kodi 21. Steps in README.md's "Installing"; an addon installed from a zip needs to be installed once from the
+repository to start getting updates.
+
 ## [0.13.1] - 2026-10-22
 
 For Kodi 21. The release tags now carry the branch they were cut from (`0.13.1-Omega`; the Kodi 22 releases end in

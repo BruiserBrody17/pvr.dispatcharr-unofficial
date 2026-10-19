@@ -1,5 +1,5 @@
-"""Cross-file consistency check for the three independent version numbers
-(CLAUDE.md, "Three independent version numbers, decoupled since 1.0.1").
+"""Cross-file consistency check for the independent version numbers that live in more than one file
+(CLAUDE.md, "Independent version numbers, decoupled since 1.0.1"; the Kodi repository addon's lives in one file only).
 
 Each piece has two places its version must move together, and missing one is
 documented there as a real, easy mistake: the addon's addon.xml.in and the

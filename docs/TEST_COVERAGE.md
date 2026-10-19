@@ -2995,6 +2995,17 @@ UTF-16 refusal, non-ASCII terms against UTF-8 content, a missing explicit path a
 `check_release_contents` over a synthetic eight-zip release (a stale addon zip, CoreELEC's revision suffix, a plugin
 whose two versions disagree). 33 of the new cases fail on the old gate. The gate passes over the shipped 0.13.0 release (and `Piers`'s 0.14.0).
 
+2026-10-19: `tools/tests/test_build_kodi_repo.py` covers `tools/build_kodi_repo.py`, which builds the Kodi repository's
+site (`docs/BUILDING.md`, "Distribution: the Kodi repository"). It mirrors what Kodi does with the output, read from
+Kodi's source: each of seven platforms' accepted `<platform>` names is offered exactly its own build from an index built
+from zips tagged the way the real 0.14.0 release zips are (and the zips' own tags are shown to fail that), every Kodi
+`ADDON_API` from 20.2 to a Kodi 23 pre-release reads only its own line's `<dir>` plus the repository's own, no index sits
+in the directory users browse (the directory-cache failure seen live), and the landing page parses to just the
+repository zip under Kodi's HTTP-directory rules. It also checks the refusals (version, PVR API of the other Kodi,
+contradicting platform, unknown asset, duplicate platform, bad tag), that a failed run leaves the old index, that one
+line's rewrite leaves the other alone, art copying, and that the repository zip is reproducible and passes
+`check_release_zip.py`. The behaviour in Kodi itself was confirmed live (that section of `docs/BUILDING.md`).
+
 ### `kodi_smoke_test.py`
 
 `tools/kodi_smoke_test.py` (added 2026-09-29, fixing several real,

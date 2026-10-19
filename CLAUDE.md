@@ -24,6 +24,8 @@ is the shorter, more direct version of what's below.
   installed through Kodi at all. Each has its own README and `plugin.json`.
 - `packaging/coreelec/` -- out-of-tree CoreELEC package definition (not
   used by the GitHub Actions build).
+- `kodi-repository/` -- the Kodi repository addon; `tools/build_kodi_repo.py` builds the site Kodi installs and updates
+  the addon from (served by GitHub Pages from `gh-pages`; `docs/BUILDING.md`, "Distribution: the Kodi repository").
 - `docs/` -- engineering history: root causes, live-confirmed API
   behavior, things tried and reverted. Not user-facing.
 - `docs/OPEN_ITEMS.md` -- the project's running punch-list; add new open
@@ -157,7 +159,7 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   or Python changes; `ruff check dispatcharr-plugin/ tools/ tests/glue/` catches some real bugs
   (unused variables, etc.), not just style. `.clang-format`'s `SortIncludes: false` is deliberate: a couple of files rely
   on include order for `#if defined(_WIN32)` blocks.
-- **Three independent version numbers, decoupled since 1.0.1**: the addon and each plugin version separately. Bump only the
+- **Independent version numbers, decoupled since 1.0.1**: the addon, each plugin and the Kodi repository addon version separately. Bump only the
   piece whose files changed, and move all of that piece's version locations together:
   - Addon: `pvr.dispatcharr-unofficial/addon.xml.in` (`<addon version="...">`) and
     `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk` (`PKG_VERSION`, with `PKG_SHA256` reset to the all-zeros
@@ -166,6 +168,9 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   - Each plugin: `plugin.json` **and** the `Plugin` class `version` attribute in its `plugin.py`. `plugin.json` is only the
     not-yet-trusted import preview; the class attribute is what Dispatcharr runs. Bumping only `plugin.json` is the
     easy mistake.
+
+  - The Kodi repository addon: the `version` in `kodi-repository/repository.dispatcharr-unofficial/addon.xml.in` only,
+    moved only when that file changes.
 
   A tag/release is addon-version-scoped (it triggers CI, which builds everything and publishes nothing) and carries both plugin zips whether or not their version moved.
   `CHANGELOG.md` says which piece(s) moved in an entry.
