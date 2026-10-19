@@ -2992,30 +2992,15 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_trac
                         # otherwise have its registration silently
                         # overwritten by this stale write-back. A viewer
                         # whose heartbeat moved since is kept.
-                        dropped = {}
-
-                        def drop_stale(fresh_state, gone=stale, dropped=dropped):
-                            dropped["any"] = _drop_stale_viewers(fresh_state, gone)
-                            return fresh_state
-
-                        outcome, written = _update_buffer_state(uuid, drop_stale)
-                        # The stale viewer(s) were the last ones: nobody is watching, and stop_buffer no longer prunes
-                        # a phantom itself, so the buffer ends here rather than waiting out the buffer-wide timeout.
-                        # Re-checked atomically with the stopping marker: a viewer that registered, or a heartbeat
-                        # that landed, since the write above keeps it.
-                        if outcome == "written" and dropped.get("any") and not written.get("viewers"):
-                            seen_heartbeat = written.get("last_heartbeat", 0)
-                            if _teardown_buffer(
-                                written,
-                                logger,
-                                abort_if=lambda fresh, seen=seen_heartbeat: bool(fresh.get("viewers"))
-                                or fresh.get("last_heartbeat", 0) != seen,
-                            ):
-                                logger.info(
-                                    "timeshift_buffer: stopped the buffer for channel %s, its last viewers went stale",
-                                    uuid,
-                                )
-                                continue
+                        #
+                        # Dropping the last viewer does not end the buffer by itself: the buffer-wide check below does,
+                        # once segment reads stop too. A viewer whose API heartbeats fail (a 429, the addon skipping
+                        # one on an expired token) while its segment reads keep working is still watching, and the
+                        # addon relies on those reads alone to keep the buffer alive (DispatcharrClient.h,
+                        # SendTimeshiftHeartbeat()). Ending it here stopped such a buffer mid-playback (0.8.15).
+                        _update_buffer_state(
+                            uuid, lambda fresh, gone=stale: fresh if _drop_stale_viewers(fresh, gone) else None
+                        )
                     last_heartbeat = state.get("last_heartbeat", 0)
                     buffer_age = tracker.age(("buffer", uuid), last_heartbeat)
                     if buffer_age > idle_timeout:
@@ -3168,7 +3153,7 @@ def _ensure_reaper_running(settings_dict, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "0.8.14"
+    version = "0.8.15"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."
@@ -3810,7 +3795,8 @@ class Plugin:
             # "alive" in the buffer-wide heartbeat by the others' fetches) is not pruned in this request: a worker has
             # no memory between calls, so the only test it has is "now minus a stamp", which a host clock step
             # misjudges for every viewer at once (0.8.14, docs/CLOSED_ITEMS.md). The reaper, which can age the
-            # stamps on a monotonic clock, drops the phantom and ends the buffer within one tick (_reaper_loop).
+            # stamps on a monotonic clock, drops the phantom, and its buffer-wide idle check ends the buffer once
+            # nobody fetches segments any more (_reaper_loop).
             def drop_viewer(current):
                 current_viewers = current.get("viewers", [])
                 if viewer_id in current_viewers:

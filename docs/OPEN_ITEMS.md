@@ -4,25 +4,25 @@
 
 ## Status at a glance
 
-**24 open, 319 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**23 open, 320 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one is open from a user
-report. The other 21 come from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the
-same day (all 21 hold here; three are worded for `Omega`), each marked with how sure the audit was: *confirmed*
+report. The other 20 come from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the
+same day (all 21 held here; three are worded for `Omega`; one fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed*
 (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the trigger is not demonstrated)
 or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 8 |
+| Open: Fix known, not yet done | 7 |
 | Open: Architectural / concurrency | 4 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 7 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 277 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 278 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -70,17 +70,6 @@ against the Kodi 21 source). Fix: drop the lookup, or bound it with `ShortReques
 recordings. Same shape, smaller: `GetEPGTagStreamProperties()` makes the catch-up POST on the main thread with the full
 timeout, and its duration in minutes is `(end - start) / 60`, which rounds down, so a programme that is not a whole
 number of minutes asks for a session up to 59 s short. Live-only (no unit test).
-
-#### The timeshift reaper can end a buffer that is still being read
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); the logic
-confirmed, the trigger plausible.** Since `timeshift_buffer` 0.8.14, when every viewer of a buffer goes stale,
-`_reaper_loop` tears the buffer down; its `abort_if` only checks that the buffer-wide heartbeat did not *change* during
-the teardown, not whether it is recent. Segment reads on the file server keep that buffer-wide heartbeat fresh, and
-`DispatcharrClient.h` assumes they alone keep the buffer alive. So if the viewer heartbeats on the API port fail for 30
-s or more (a 429, the expired-token skip) while segment reads keep working, the buffer is stopped mid-playback. Fix:
-tear down only if the buffer-wide heartbeat is also stale; otherwise just drop the stale viewers. Regression test in the
-plugin's `tests/`.
 
 #### `PersistApiKeyIfChanged()` writes three settings on the stream read thread
 

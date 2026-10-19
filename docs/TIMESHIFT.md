@@ -1827,7 +1827,13 @@ were still watching. It is gone; `_stop_buffer()` removes only the stopping
 viewer and the reaper (`_stale_viewers()`, `_IdleTracker`) ages the stamps on
 a monotonic clock. When it drops the last viewer it ends the buffer in that
 tick, so a phantom viewer left by a crash still frees the provider slot within
-one reaper interval.)* A viewer with no recorded heartbeat yet -- state
+one reaper interval. Changed again in 0.8.15: dropping the last viewer no
+longer ends the buffer by itself, because a viewer whose API heartbeats fail
+while its segment reads go on is still watching; the buffer-wide idle check
+ends it once segment reads stop too, so in that phantom case the slot is freed
+up to the idle timeout plus one reaper interval after the last segment read,
+`docs/CLOSED_ITEMS.md`'s "The timeshift reaper can end a buffer that is still
+being read".)* A viewer with no recorded heartbeat yet -- state
 written by a pre-upgrade plugin version, or a `start_buffer` call that
 landed the same instant -- is treated as fresh as of "now", not already
 stale, so a rolling upgrade can't mass-prune viewers that simply haven't
@@ -3611,4 +3617,11 @@ make every running worker use the new code: the plugin's file server and reaper 
 code that started them. `POST /api/plugins/plugins/reload/` (reloads all plugins, no plugin key needed) re-imports it,
 and since 0.6.7 the first `run()` of a new import stops the previous copy's threads ("A reloaded plugin stops what its
 previous copy started" above); a per-plugin enable/disable toggle isn't enough. A Dispatcharr restart is the one step
-that always works, which is why the plugin's README gives only that.
+that always works, which is why the plugin's README gives only that. On Dispatcharr 0.32.0 (checked live 2026-10-19)
+neither an import nor `reload/` reaches every worker: each takes effect only in the worker process that served that
+request, and the others keep the plugin instance they already had, old code and old threads included, until something
+reloads there. A throwaway probe plugin that reported each worker's pid, its reaper threads and the version of the
+module each thread came from found one worker still running, and leading with, the previous version's reaper about a
+quarter of an hour after the import. Sending `reload/` as a burst of parallel requests (more than there are workers),
+then one burst of parallel `run()` calls so each worker's new copy stops its predecessor's threads, reached all four
+workers in that check; a restart is still the step that needs no checking.
