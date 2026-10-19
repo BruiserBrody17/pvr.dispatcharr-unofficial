@@ -4,21 +4,22 @@
 
 ## Status at a glance
 
-**20 open, 323 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**22 open, 323 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one is open from a user
-report. The other 17 come from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the
-same day (all 21 held here; three are worded for `Omega`; four fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each
-marked with how sure the audit was: *confirmed* (reproduced, or the whole code path read end to end), *plausible* (the
-logic is there, the trigger is not demonstrated) or *low confidence*.
+report. Two came from the 2026-10-19 live check of four audit fixes on `Piers`, and hold here too. The other 17 come
+from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the same day (all 21 held here;
+three are worded for `Omega`; four fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each marked with how sure the
+audit was: *confirmed* (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the
+trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 5 |
+| Open: Fix known, not yet done | 6 |
 | Open: Architectural / concurrency | 3 |
 | Open: Design decision needed | 1 |
-| Open: Release, CI and manual testing | 1 |
+| Open: Release, CI and manual testing | 2 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 7 |
@@ -77,6 +78,19 @@ input has no I/O timeout; add `-rw_timeout` (low confidence that it helps with t
 whether the container runs as root). (4) `RefreshToken.for_user` may add a database row per buffer start if Django's
 `token_blacklist` app is installed (low confidence; not checked on a real server).
 
+#### A failed live-manifest refresh skips the 500 ms throttle
+
+**Opened 2026-10-19 on `Piers`, from the live check of the timeshift reaper fix; measured live there, and `Omega`'s
+`RefreshLiveManifest()` is the same code (checked by reading).** `RefreshLiveManifest()` sets `lastManifestFetch` only
+after a successful fetch, so after a failed one (a 429, a timeout) `ShouldThrottleRefresh()` (`Staleness.h`) never
+applies and every `GetStreamTimes()` poll goes to the server. Measured on a Kodi 22 RC1 client in Server-side mode while
+a proxy answered 429 to `get_live_manifest` for 75 s: about 4.9 calls a second, against about 1.6 when the calls
+succeed, so a server that is asking for less got three times as much. The in-progress recording path met the same trap
+and guards against it (`contentGone`, and the comment above it in `RefreshInProgressRecordingManifest()`). Fix: record
+the attempt time on a failure too (or back off for longer after a 429) so the throttle covers it, keeping `force`
+refreshes from `ReadLiveTimeshiftStream()` at the tail as they are. The attempt-time choice is testable beside
+`ShouldThrottleRefresh()`.
+
 ### Architectural / concurrency
 
 #### timeshift_buffer: a teardown that outlasts its grace period can delete a restarted buffer
@@ -123,6 +137,16 @@ ordinary user. Decision: keep it as is, or require the resolved root to be insid
 directories.
 
 ### Release, CI and manual testing
+
+#### The glue harness's TSan build crashes at start about one run in four
+
+**Opened 2026-10-19 on `Piers`, seen while checking the shutdown-task fix.** On unmodified `Piers`, `BIN=pvr_harness
+tests/glue/run_tsan.sh functional` exited with rc 139 before printing "constructed" in 3 of 12 runs, with no
+ThreadSanitizer report; the fix's branch showed the same (2 of 12). `run_tsan.sh` retries only on TSan's "unexpected
+memory mapping", so these count as failures. Probably the same address-space layout problem showing as a segfault rather
+than that message; not investigated. The TSan variant is run by hand, not in CI, so it costs reruns, not red builds.
+Candidates: retry on a signal exit with no output as well, or start the harness with address randomisation turned off.
+`Omega`'s `run_tsan.sh`, `run.sh` and `build.sh` are the same files; not yet run here.
 
 #### The 32-bit unit tests run without UBSan
 
