@@ -52,7 +52,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`8c69f44`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`14db1cf`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -64,6 +64,10 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `66722df` | not ported: `Piers` already lists them | The read-only audit's 21 open items, copied to `Omega`'s `OPEN_ITEMS.md` and checked against its code (three reworded for `Omega`). |
 | `7ae30bb` | already on `Piers` as `3a0897b` | A finished recording's file opened when its leftover HLS playlist is gone; made on `Piers` first and ported to `Omega` by hand (one recorded-stream slot there). |
 | `8c69f44` | not ported: `Omega`-only wording | Says Kodi 21 never opens PVR recordings for thumbnails, so its quiet no-file fallback is a safeguard there; `Piers` has the Kodi 22 side in `ef4760b`. |
+| `ad7e720` | already on `Piers` as `67ca439` | The timeshift reaper fix (`timeshift_buffer` 0.8.15), made on `Piers` first; `git cherry-pick -x` to `Omega`, only the running docs needed a hand fix. |
+| `c51d455` | already on `Piers` as `f87f4cb` | Play and catch-up off Kodi's main thread, made on `Piers` first; on `Omega` `GetRecordingStreamProperties()` was ported by hand (no thumbnail-notice bookkeeping there) and the catch-up comment names Kodi 21's call chain. |
+| `4340b7d` | already on `Piers` as `b342957` | Background tasks refused during shutdown, made on `Piers` first; the code applied cleanly, `dtor_late_report` was merged into `Omega`'s glue harness by hand. |
+| `14db1cf` | already on `Piers` as `7abb9d9` | Nested JSON read in place, made on `Piers` first; applied cleanly apart from the running docs. |
 
 ## Dependencies that differ by Kodi release
 
