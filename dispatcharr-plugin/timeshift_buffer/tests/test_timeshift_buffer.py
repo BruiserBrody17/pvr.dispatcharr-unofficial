@@ -4080,26 +4080,73 @@ def _stale_last_viewer_store(**overrides):
     return base
 
 
-def test_the_reaper_ends_a_buffer_whose_last_viewer_went_stale_without_waiting_for_the_buffer_wide_timeout(monkeypatch):
-    """stop_buffer no longer prunes a phantom viewer itself (a wall-clock comparison), so when the last real viewer
-    stopped and left only the phantom, the reaper drops it and ends the buffer in that same tick, even though a
-    fetch refreshed the buffer-wide heartbeat a moment ago."""
+def test_the_reaper_keeps_a_buffer_whose_viewers_all_went_stale_while_its_segments_are_still_being_read(monkeypatch):
+    """The viewer's API heartbeats fail (a 429, the addon skipping one on an expired token) while its segment reads go
+    on refreshing the buffer-wide heartbeat: it is still watching. The reaper drops the stale viewer but must not end
+    the buffer; before 0.8.15 it did, in the same tick, and playback stopped."""
     store = {"abc": _stale_last_viewer_store()}
 
     def states(i):
-        # the buffer-wide stamp keeps moving (a late fetch), so the buffer-wide idle check alone would keep it
+        # the buffer-wide stamp keeps moving: segment reads are still arriving
         store["abc"] = {**store["abc"], "last_heartbeat": 1000.0 + i}
         return [dict(store["abc"])]
 
     monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(store[uuid]))
     monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: store.update({uuid: s}))
-    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=4, step=15.0)
-    assert len(teardowns) == 1  # exactly one: not again from the buffer-wide check in the same tick
+    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=6, step=15.0)
+    assert teardowns == []
+    assert store["abc"]["viewers"] == []  # the stale viewer itself is still dropped
+    assert store["abc"]["viewer_heartbeats"] == {}
+
+
+def test_the_reaper_ends_a_buffer_whose_viewers_and_buffer_wide_heartbeat_all_went_stale_exactly_once(monkeypatch):
+    """Nobody reads segments any more and the last viewer is silent too (it crashed): the buffer-wide idle check ends
+    the buffer, once, with the abort_if that spares it if a heartbeat lands before the stopping marker."""
+    store = {"abc": _stale_last_viewer_store()}
+
+    def states(i):
+        return [dict(store["abc"])]  # nothing moves
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(store[uuid]))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: store.update({uuid: s}))
+    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=4, step=15.0)  # ages 0, 15, 30, 45
+    assert len(teardowns) == 1
     state, kwargs = teardowns[0]
-    assert state["viewers"] == []
-    assert kwargs["abort_if"]({"viewers": ["new"], "last_heartbeat": state["last_heartbeat"]}) is True  # a viewer came
+    assert state["channel_uuid"] == "abc"
     assert kwargs["abort_if"]({"viewers": [], "last_heartbeat": state["last_heartbeat"] + 1}) is True  # a heartbeat
     assert kwargs["abort_if"]({"viewers": [], "last_heartbeat": state["last_heartbeat"]}) is False
+    assert store["abc"]["viewers"] == []
+
+
+def test_the_reaper_ends_a_buffer_left_with_a_stale_viewer_once_segment_reads_stop(monkeypatch):
+    """The phantom-viewer case 0.8.14 sped up: the last real viewer stopped, leaving a crashed one behind. The phantom
+    is dropped once stale; the buffer ends when the buffer-wide heartbeat has not moved for the idle timeout."""
+    store = {"abc": _stale_last_viewer_store()}
+    stamps = [1000.0, 1001.0, 1002.0, 1002.0, 1002.0, 1002.0]  # the last segment read lands before the third tick
+
+    def states(i):
+        store["abc"] = {**store["abc"], "last_heartbeat": stamps[i]}
+        return [dict(store["abc"])]
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(store[uuid]))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: store.update({uuid: s}))
+    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=6, step=15.0)
+    # stamp 1002.0 is first seen at tick 2; its ages at ticks 3, 4, 5 are 15, 30 (kept) and 45 (reaped)
+    assert len(teardowns) == 1 and teardowns[0][0]["last_heartbeat"] == 1002.0
+    assert store["abc"]["viewers"] == []
+
+
+def test_the_reaper_writes_nothing_back_when_the_stale_viewer_heartbeated_before_the_drop(monkeypatch):
+    def states(i):
+        return [_stale_last_viewer_store(last_heartbeat=1000.0 + i)]
+
+    fresh = {"abc": _stale_last_viewer_store(viewer_heartbeats={"ghost": 1040.0})}  # it moved in the gap
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(fresh[uuid]))
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: saved.update({uuid: s}))
+    teardowns, _t, _c = _drive_reaper(monkeypatch, states, ticks=4, step=15.0)
+    assert teardowns == []
+    assert saved == {}  # the drop found nothing to remove and declined, rather than rewriting an unchanged state
 
 
 def test_the_reaper_keeps_a_buffer_when_a_stale_viewer_is_dropped_but_another_remains(monkeypatch):

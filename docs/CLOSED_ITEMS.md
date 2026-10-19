@@ -6,6 +6,46 @@
 
 ### Fixed
 
+#### The timeshift reaper can end a buffer that is still being read
+
+**Opened 2026-10-18, from the read-only audit; the logic confirmed, the trigger plausible.** Since `timeshift_buffer`
+0.8.14, when every viewer of a buffer goes stale, `_reaper_loop` tears the buffer down; its `abort_if` only checks that the
+buffer-wide heartbeat did not *change* during the teardown, not whether it is recent. Segment reads on the file server
+keep that buffer-wide heartbeat fresh, and `DispatcharrClient.h` assumes they alone keep the buffer alive. So if the
+viewer heartbeats on the API port fail for 30 s or more (a 429, the expired-token skip) while segment reads keep
+working, the buffer is stopped mid-playback. Fix: tear down only if the buffer-wide heartbeat is also stale; otherwise
+just drop the stale viewers. Regression test in the plugin's `tests/`.
+
+**Fixed 2026-10-19 (`timeshift_buffer` 0.8.15), confirmed with the plugin's unit tests and live against a real
+Dispatcharr.** The reaper no longer ends a buffer when its drop of stale viewers leaves none: it drops them and leaves the
+decision to the buffer-wide idle check in the same tick, which ends a buffer only when `last_heartbeat` has not moved for
+longer than `idle_timeout_seconds` (with the same `abort_if` on a heartbeat that lands before the stopping marker).
+Ending a buffer whose viewers all went stale while the buffer-wide heartbeat was stale too was already that check's job,
+so the early teardown only ever acted when the buffer-wide heartbeat was fresh, which is the bug; it was removed rather
+than given a second staleness test. A viewer whose API heartbeats come back is re-added by `_apply_heartbeat()`, as
+before, and a `stop_buffer` from a viewer that was dropped meanwhile still ends the buffer, because the list it leaves is
+empty. The drop's write-back now declines when it found nothing to remove (a viewer that heartbeated in the gap) instead
+of rewriting an unchanged state. The cost is in 0.8.14's phantom-viewer case (a viewer that crashed less than the idle
+timeout before the last real viewer stopped cleanly): the provider slot is freed up to the idle timeout plus one reaper
+tick (45 s at the defaults) after the last segment read, instead of at the tick that drops the phantom. A phantom that
+crashed earlier is dropped while the other viewer is still watching, so that viewer's own stop ends the buffer at once,
+as before. **Confirmed:** the test that pinned the early teardown
+(`test_the_reaper_ends_a_buffer_whose_last_viewer_went_stale_without_waiting_for_the_buffer_wide_timeout`) became
+`test_the_reaper_keeps_a_buffer_whose_viewers_all_went_stale_while_its_segments_are_still_being_read` (six real reaper
+ticks with a moving buffer-wide stamp: the viewer is dropped, nothing is torn down); two more pin that a buffer whose
+viewer and buffer-wide heartbeat are both stale is ended exactly once, and that the phantom case ends the buffer one idle
+timeout after the last segment read, not before; one pins the declined write-back. The first three fail against the
+0.8.14 code.
+**Confirmed live (2026-10-19)** against a real Dispatcharr 0.32.0 and a Kodi 22 RC1 client in Server-side mode, through a
+proxy that answered 429 to every `heartbeat` and `get_live_manifest` call for 75 s while segment reads went straight
+through; the viewer had paused for three minutes first, so it had segments to keep reading. Under a 0.8.14 reaper the
+buffer was ended about 80 s into the fault (`list_buffers` showed one viewer and an idle time of 0 until then), the next
+segment read got a 403, the manifest answered `fatal` and playback stopped. Under 0.8.15 the reaper dropped the viewer
+about 33 s in (`viewers` 1 to 0, idle still 0), the buffer stayed, playback ran through the fault, the first heartbeat
+after it re-added the viewer, and the buffer ended within 5 s of Stop. Two earlier 0.8.15 runs failed the way 0.8.14 did,
+and were not the fix failing: a throwaway probe plugin showed one worker still running the 0.8.14 reaper, and holding
+leadership, after the import (`docs/TIMESHIFT.md`, "Picking up a new copy of the plugin").
+
 #### Kodi 22's thumbnail loader made the "no file for this recording" notice pop up while browsing
 
 **Opened 2026-10-18, a question from the live check of the leftover-`_hls_dir` fix; confirmed live.** The notice

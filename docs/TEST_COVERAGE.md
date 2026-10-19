@@ -2859,6 +2859,16 @@ pins one teardown and its `abort_if`; others pin a remaining viewer, a never-reg
 `test_run_stop_buffer_leaves_other_viewers_to_the_reaper...` pins a stamp far behind the shared clock being left alone, and the boundary and
 integer-id tests moved onto `_stale_viewers()`. The first and last of those fail against the previous plugin code.
 
+2026-10-19 (`timeshift_buffer` 0.8.15): that early teardown ended a buffer whose viewers' API heartbeats had failed while
+their segment reads still kept the buffer-wide heartbeat moving (`docs/CLOSED_ITEMS.md`, "The timeshift reaper can end a
+buffer that is still being read"). It is gone; the drop leaves the decision to the buffer-wide idle check. The test that
+pinned it became `test_the_reaper_keeps_a_buffer_whose_viewers_all_went_stale_while_its_segments_are_still_being_read`
+(the viewer dropped, nothing torn down over six ticks of a moving stamp);
+`test_the_reaper_ends_a_buffer_whose_viewers_and_buffer_wide_heartbeat_all_went_stale_exactly_once` and
+`test_the_reaper_ends_a_buffer_left_with_a_stale_viewer_once_segment_reads_stop` pin when it does end, and
+`test_the_reaper_writes_nothing_back_when_the_stale_viewer_heartbeated_before_the_drop` the declined write-back. The
+first three fail against 0.8.14.
+
 ## Tools
 
 ### `tools/tests/`

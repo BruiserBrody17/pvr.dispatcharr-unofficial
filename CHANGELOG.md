@@ -41,6 +41,19 @@ compare against.
   for 60 minutes at 10 Mbit/s), and the port check now says that a `404` for the bare address means the server is
   reachable (the README and the troubleshooting guide said to expect `403`).
 
+## `timeshift_buffer` [0.8.15] - Unreleased
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **A buffer that is still being watched is no longer stopped when the viewer's check-ins fail for a while.** If the
+  addon's periodic check-ins to the plugin failed for longer than the idle timeout (the server refusing requests for a
+  moment, an expired login) while playback itself kept working, the buffer was stopped mid-playback. It now stays up as
+  long as playback is reading from it. A viewer that crashed just before the last other viewer stopped now frees its
+  provider slot up to the idle timeout plus 15 seconds after playback stopped, instead of up to 15 seconds.
+
 ## [0.14.0] - 2026-10-17
 
 The first release for Kodi 22 ("Piers"), built against Kodi 22.0 RC1. **It works with Kodi 22 only**: Kodi 22 refuses a
