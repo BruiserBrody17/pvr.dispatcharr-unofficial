@@ -52,7 +52,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`7ae30bb`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`8c69f44`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -63,6 +63,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `fe85ce3` | already on `Piers` as `59123ca` | The read-only audit's pure-logic fixes and two doc errors, made on `Piers` first and cherry-picked to `Omega`; only `OPEN_ITEMS.md`, `CLOSED_ITEMS.md` and `CHANGELOG.md` needed a hand fix there. |
 | `66722df` | not ported: `Piers` already lists them | The read-only audit's 21 open items, copied to `Omega`'s `OPEN_ITEMS.md` and checked against its code (three reworded for `Omega`). |
 | `7ae30bb` | already on `Piers` as `3a0897b` | A finished recording's file opened when its leftover HLS playlist is gone; made on `Piers` first and ported to `Omega` by hand (one recorded-stream slot there). |
+| `8c69f44` | not ported: `Omega`-only wording | Says Kodi 21 never opens PVR recordings for thumbnails, so its quiet no-file fallback is a safeguard there; `Piers` has the Kodi 22 side in `ef4760b`. |
 
 ## Dependencies that differ by Kodi release
 
