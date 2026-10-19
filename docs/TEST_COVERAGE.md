@@ -2283,6 +2283,13 @@ opened through Add-ons -> Configure, not `GUI.ActivateWindow`); the realtime
 thread refreshes timers and recordings on a reconnect. That is threading and
 Kodi-settings glue, confirmed live rather than unit-tested -- see `docs/EPG.md`.
 
+`TrackDetachedThread()` starts nothing once `m_shuttingDown` is set, and the destructor drains the detached-thread
+list again after it stops the worker threads (2026-10-19, `docs/CLOSED_ITEMS.md`'s "A background task scheduled during
+shutdown can crash Kodi"): the channel/EPG thread, stopped only after the first drain, could schedule a connection
+report into a list nobody joined again, a joinable `std::thread` destroyed with it. Pinned by the glue scenario
+`dtor_late_report` (in CI), which parks that thread with the stub's log gate until the drain is done; it ended in
+`std::terminate` on the old code.
+
 ### Test-extraction passes and hardening sweeps
 
 A test-extraction pass on 2026-10-03 (a pure refactor, no behaviour change;

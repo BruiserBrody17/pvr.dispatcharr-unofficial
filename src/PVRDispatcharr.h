@@ -517,14 +517,15 @@ private:
   std::atomic<int> m_lastAppliedPreOffsetMinutes{0};
   std::atomic<int> m_lastAppliedPostOffsetMinutes{0};
   // Tracks the detached, self-contained worker threads OnAddonSettingChanged()'s
-  // DVR-padding push and AddTimer()'s delayed recording-refresh each spawn
-  // (see each call site's own comment) -- both capture `this`/`m_client`,
-  // and neither has a natural join point of its own the way the three named
+  // DVR-padding push, AddTimer()'s delayed recording-refresh and
+  // ScheduleConnectionReport() each spawn
+  // (see each call site's own comment) -- all capture `this`/`m_client`,
+  // and none has a natural join point of its own the way the three named
   // worker threads below do (this addon has no long-lived "settings push" or
   // "delayed refresh" thread to fold them into). Real use-after-free risk
   // without this, confirmed by code reading rather than live reproduction:
   // if this instance is destroyed (e.g. an ADDON_STATUS_NEED_RESTART from an
-  // unrelated setting change tears it down) while either thread is still
+  // unrelated setting change tears it down) while any of them is still
   // running, its captured `this` becomes dangling the instant the destructor
   // returns -- these used to just .detach() with no join at all.
   // TrackDetachedThread() records each one so the destructor can join every
@@ -543,7 +544,12 @@ private:
   // across this instance's entire lifetime.
   // When no thread can be created the task is dropped, or run on the calling thread when
   // `runInlineIfThreadFails` (for work that must not be lost and does not sleep).
+  // Once m_shuttingDown is set it starts nothing (and runs nothing inline): the destructor has drained, or is about
+  // to drain, the list for the last time.
   void TrackDetachedThread(std::function<void()> work, bool runInlineIfThreadFails = false);
+  // Moves the list out under its mutex and joins every entry outside it (join() can block on a network call); the
+  // destructor calls it before and after it stops the worker threads.
+  void JoinDetachedThreads();
   struct DetachedThreadEntry
   {
     std::thread thread;

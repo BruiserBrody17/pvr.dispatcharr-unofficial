@@ -4,25 +4,25 @@
 
 ## Status at a glance
 
-**22 open, 326 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**21 open, 327 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. The other 19 come from the 2026-10-18 read-only audit of the whole
+work on `Piers`: what remains of Kodi 22 support. The other 18 come from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
-day and two on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
+day and three on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
 path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 5 |
-| Open: Architectural / concurrency | 4 |
+| Open: Architectural / concurrency | 3 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 2 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 7 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 284 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 285 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -84,18 +84,6 @@ before it compares the start ticks (low confidence; depends on whether the conta
 confidence; not checked on a real server).
 
 ### Architectural / concurrency
-
-#### A background task scheduled during shutdown can crash Kodi
-
-**Opened 2026-10-18, from the read-only audit; confirmed by reading, narrow window.** The destructor moves
-`m_detachedThreads` out and joins it *before* it stops the three worker threads, and `TrackDetachedThread()` has no
-shutdown check. Two callers can still add a thread after that drain: `RetryDeferredServerSyncs()` calls
-`ScheduleConnectionReport()` without checking `m_shuttingDown`, on the channel/EPG thread that is still running, and
-`OnConnectionObserved()` checks the flag and then schedules, which races the flag being set. A joinable `std::thread`
-left in the vector when it is destroyed calls `std::terminate`, and the task holds `this` while the object is being torn
-down. The closed fix for this list covered only the `AddTimer` and settings callers; the connection-report caller came
-later. Fix: in `TrackDetachedThread()`, check `m_shuttingDown` under `m_detachedThreadsMutex` and drop the task (or run it
-inline); drain the list a second time after the `StopWorkerThread()` calls. Glue harness, not a unit test.
 
 #### timeshift_buffer: a teardown that outlasts its grace period can delete a restarted buffer
 

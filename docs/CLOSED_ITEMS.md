@@ -87,6 +87,35 @@ in-progress recording as real-time with no property sent; that recording kept pl
 after a 45 s pause. Catch-up played; with the session POST held, the UI waited 5.1 s, the addon logged the timeout and
 Kodi went back to Home (the previous build's full-timeout POST was not run against the held request).
 
+#### A background task scheduled during shutdown can crash Kodi
+
+**Opened 2026-10-18, from the read-only audit; confirmed by reading, narrow window.** The destructor moves
+`m_detachedThreads` out and joins it *before* it stops the three worker threads, and `TrackDetachedThread()` has no
+shutdown check. Two callers can still add a thread after that drain: `RetryDeferredServerSyncs()` calls
+`ScheduleConnectionReport()` without checking `m_shuttingDown`, on the channel/EPG thread that is still running, and
+`OnConnectionObserved()` checks the flag and then schedules, which races the flag being set. A joinable `std::thread`
+left in the vector when it is destroyed calls `std::terminate`, and the task holds `this` while the object is being torn
+down. The closed fix for this list covered only the `AddTimer` and settings callers; the connection-report caller came
+later.
+
+**Closed 2026-10-19 on `Piers`, reproduced and confirmed with the glue harness.** `TrackDetachedThread()` now checks
+`m_shuttingDown` under `m_detachedThreadsMutex` and drops the task (logged at debug), for every caller: the destructor
+sets the flag before it takes that mutex to drain, so a call that locks after the drain always sees it, and one that
+locked before it is joined by it. Dropped rather than run inline, the padding push's `runInlineIfThreadFails` included:
+every request fails once the shutdown abort has run, and a report, a push or a refresh is moot for an instance being
+destroyed. The destructor also drains the list a second time after the `StopWorkerThread()` calls (`JoinDetachedThreads()`).
+The new glue scenario `dtor_late_report` makes the window wide on purpose: the fake fails `/api/accounts/users/me/`
+(`me_status=500`) until the first background cycle is past its retry, then answers view-only, a wake makes the
+channel/EPG thread retry, and the stub's log gate parks that thread on the "DVR access is view-only" line, between
+learning the level and scheduling the report, until the destroy has drained the list. On the old code it ended in
+`terminate called without an active exception` (rc 134); with the fix it passes five runs out of five, and asserts the
+refused task was logged, so the late schedule really happened inside the shutdown. Kodi 21 has the same code: `Omega`
+needs the port.
+**Live (2026-10-19)**, a Kodi 22 RC1 Linux client against a real Dispatcharr 0.32.0: this build quit cleanly ("Exiting
+the application...", no crash log) 3, 10 and 60 s after start and after about six and a half minutes, each within 5 s.
+With the account-level request held from start and let through 0 to 2 s after the quit, this build and the previous one
+both exited cleanly, so the window did not open on a real client; `dtor_late_report` is the reproduction.
+
 #### Kodi 22's thumbnail loader made the "no file for this recording" notice pop up while browsing
 
 **Opened 2026-10-18, a question from the live check of the leftover-`_hls_dir` fix; confirmed live.** The notice
