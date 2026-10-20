@@ -677,6 +677,10 @@ private:
   // SetSettingString() below), persists the new key so a later restart of
   // this install doesn't immediately invalidate it again.
   void PersistApiKeyIfChanged(const std::string& keyBefore);
+  // Writes api_key_host/api_key_username from this instance's owner stamps where the stored values differ. Called with
+  // every real key change (PersistApiKeyIfChanged()) and wherever ObtainApiKey() confirms the key for a changed owner
+  // (the constructor, OpenRecordedStream()), since that key is often the one already held.
+  void WriteApiKeyOwnerStampsIfChanged();
   // Writes the key in use to the stored setting again while a dropped write is outstanding. Background thread only,
   // never from OnAddonSettingChanged() (see its comment on why no SetSetting*() may be called there).
   void ReassertApiKeySetting();

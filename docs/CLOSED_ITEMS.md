@@ -6,6 +6,41 @@
 
 ### Fixed
 
+#### The owner stamps are not rewritten when the address changes but the key does not
+
+**Opened 2026-10-20, noticed while recording the live check of the owner-stamp fix; confirmed by reading, not seen
+live.** At start the constructor compares `api_key_host` and `api_key_username` with the instance's own server address
+and username. When they differ it calls `ObtainApiKey()`, which adopts the account's existing key, and saves through
+`PersistApiKeyIfChanged()`. That function returns at once when the key itself has not changed, so the stamps keep their
+old values. After the address changes form for the same server and account (a hostname for an IP address, say), every
+start finds the mismatch again and makes one extra API-key lookup. Nothing is regenerated and playback is unaffected.
+Fix: on the constructor's success path, write the stamps that differ even when the key is unchanged (the same
+compare-then-write `PersistApiKeyIfChanged()` uses). Regression test in the glue harness: start with a stale
+`api_key_host` and the right key, then check the stamp was rewritten.
+
+**Fixed 2026-10-20, confirmed with a new glue scenario that fails on the old code.** The stamp writes moved into
+`WriteApiKeyOwnerStampsIfChanged()`, which `PersistApiKeyIfChanged()` still calls on a key change, and which the
+constructor and `OpenRecordedStream()` now also call once `ObtainApiKey()` has confirmed the key for this instance's
+owner. `OpenRecordedStream()` had the same gap: it re-checks the key when the constructor could not (a server
+unreachable at start), and an unchanged key returned before the stamps there too. **Confirmed:** the glue scenario
+`owner_stamps` (in CI) starts with the fake's own key and `api_key_host` naming the server as `localhost` while the
+addon is set to `127.0.0.1`. On the old code the stamp stayed `localhost` and a second start looked the key up again
+(two lookups); with the fix, one lookup, the stamp rewritten, and none at the second start. Its `late` variant (the
+server unreachable while the constructor runs, the key confirmed by the first recording open) failed and passed the
+same way.
+
+**Confirmed live 2026-10-20 on Kodi 22.0 RC1 and Kodi 21.3.** A Linux test machine ran the PR's CI build (`Piers`)
+beside the build of its base (`b53484f`, the same addon source as `Piers`), and a hand build of `Omega` with the change
+beside `Omega`'s CI build of `955c4ae` (the same source as its tip). The addon reached the lab's Dispatcharr through a
+proxy on the Kodi machine while its owner stamps held the server's real address, so the address differed and the key
+did not; the proxy counted the key lookups (`GET /api/accounts/api-keys/`). Started twice with the proxy up: every
+build looked the key up at the first start, but only the fixed builds rewrote `api_key_host` (to the proxy's address),
+and at the second start the old builds looked it up again while the fixed builds did not. Started with the proxy down,
+then up, then a finished recording opened: the open made the one lookup on every build, playback started, and again
+only the fixed builds rewrote the stamp and skipped the lookup at the next start. Nothing was regenerated: afterwards
+the account's key on the server was still the one stored in the profile saved before the check. The machine's profile
+was restored afterwards.
+
 #### A live stream marked fatal leaves Kodi buffering instead of ending
 
 **Opened 2026-10-20, seen in the live check of the manifest throttle fix on Kodi 22.0 RC1; first noted on 2026-09-28
