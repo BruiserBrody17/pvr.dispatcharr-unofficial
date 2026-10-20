@@ -176,6 +176,24 @@ EDL_ENTRIES = {
 }
 
 
+# A listener that only counts connections, the target of the epg_redirect=ftp knob (`ftp_trap_connects` in /__stats).
+FTP_TRAP = {"port": 0, "connects": 0}
+
+
+def _ftp_trap():
+    trap = socket.socket()
+    trap.bind(("127.0.0.1", 0))
+    trap.listen(8)
+    FTP_TRAP["port"] = trap.getsockname()[1]
+    while True:
+        conn, _ = trap.accept()
+        FTP_TRAP["connects"] += 1
+        conn.close()
+
+
+threading.Thread(target=_ftp_trap, daemon=True).start()
+
+
 def pvr_route(h, method, p, q, body):
     if CTL["pvr_api_500"] == "1":
         return h.J(500, {"detail": "boom"})
@@ -212,6 +230,10 @@ def pvr_route(h, method, p, q, body):
         return h.J(200, [{"id": 1, "name": "G1"}, {"id": 2, "name": "G2"}, {"id": 3, "name": "Empty"}])
     if p == "/output/epg":
         LAST_EPG_QUERY["q"] = {k: v[0] for k, v in q.items()}
+        if CTL["epg_redirect"] == "loop":  # a proxy that redirects the guide to itself, forever
+            return h.send(302, b"", extra={"Location": "/output/epg"})
+        if CTL["epg_redirect"] == "ftp":  # a redirect to another scheme; the trap counts any connection it gets
+            return h.send(302, b"", extra={"Location": "ftp://127.0.0.1:%d/epg.xml" % FTP_TRAP["port"]})
         if CTL["epg_slow_ms"]:
             time.sleep(ctl_int("epg_slow_ms") / 1000.0)
         return h.send(200, xmltv(), "application/xml")
@@ -504,7 +526,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/ws/" and self.headers.get("Upgrade", "").lower() == "websocket":
             return self.websocket()
         if p == "/__stats":
-            return self.J(200, dict(counts))
+            return self.J(200, dict(counts, ftp_trap_connects=FTP_TRAP["connects"]))
         if p == "/__epgquery":
             return self.J(200, LAST_EPG_QUERY["q"])
         if p == "/__ctl":
@@ -660,6 +682,8 @@ class H(BaseHTTPRequestHandler):
                     )
                 if CTL["manifest_500"] == "1":
                     return self.J(500, {"detail": "x"})
+                if ctl_int("manifest_status"):  # any other status, e.g. a proxy's 429
+                    return self.J(ctl_int("manifest_status"), {"detail": "x"})
                 n = live_count()
                 w = ctl_int("window", 12)
                 segs = []

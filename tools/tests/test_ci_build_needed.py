@@ -119,6 +119,45 @@ def test_a_forced_push_over_an_unknown_base_builds_through_the_real_git(tmp_path
     assert result.stdout.split() == ["build=true", "plugins=true"]
 
 
+def _git(cwd, *args):
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+@pytest.mark.parametrize("target", ["docs/Staleness.h", "tools/old_ci_build_needed.py"])
+def test_a_file_renamed_out_of_a_build_path_builds_through_the_real_git(tmp_path, target):
+    # Rename detection would list only the new path, which no build step reads.
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@example.invalid")
+    _git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "Staleness.h").write_text("#pragma once\n" + "// a line\n" * 40)
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    base = _git(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / target).parent.mkdir(exist_ok=True)
+    _git(tmp_path, "mv", "src/Staleness.h", target)
+    _git(tmp_path, "commit", "-q", "-m", "move")
+    head = _git(tmp_path, "rev-parse", "HEAD")
+    result = subprocess.run(
+        ["python3", str(REPO_ROOT / "tools" / "ci_build_needed.py"), "push", "refs/heads/Piers", base, head],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert "build=true" in result.stdout.split()
+
+
+def test_the_decide_step_runs_with_pipefail_and_the_jobs_build_on_an_empty_answer():
+    # A crash of the script piped through tee must fail the step, not leave empty outputs that skip every build job.
+    workflow = (REPO_ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+    step = workflow[workflow.index("id: decide") :]
+    step = step[: step.index("\n\n")]
+    assert re.search(r"^\s+shell: bash$", step, re.M)
+    assert "outputs.build == 'true'" not in workflow and "outputs.plugins == 'true'" not in workflow
+    assert workflow.count("needs.changes.outputs.build != 'false'") == 3
+    assert workflow.count("needs.changes.outputs.plugins != 'false'") == 1
+
+
 @pytest.mark.parametrize(
     "path",
     [

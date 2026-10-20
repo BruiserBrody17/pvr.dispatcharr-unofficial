@@ -4,25 +4,25 @@
 
 ## Status at a glance
 
-**17 open, 328 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**10 open, 335 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers`, and hold here too. The other 13 come
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers` and held here too; one, the manifest throttle, was fixed the same day. The other 7 come
 from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the same day (all 21 held here;
-three are worded for `Omega`; eight fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each marked with how sure the
+three are worded for `Omega`; 14 fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each marked with how sure the
 audit was: *confirmed* (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the
 trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 5 |
-| Open: Architectural / concurrency | 3 |
+| Open: Fix known, not yet done | 2 |
+| Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 1 |
-| Open: Release, CI and manual testing | 2 |
+| Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 3 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 286 |
+| Open: Tooling (tools/) | 1 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 293 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -41,20 +41,6 @@ the fix.
 
 ### Fix known, not yet done
 
-#### `PersistApiKeyIfChanged()` writes three settings on the stream read thread
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
-reading.** Each write is a `settings.xml` save plus a full re-delivery of the settings to the addon. Write the owner
-stamps only when they actually change.
-
-#### The XMLTV download follows redirects with no limit or protocol restriction
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); hardening
-only.** `GetXmlTvGuide()` sets `CURLOPT_FOLLOWLOCATION` with no redirect limit (`CURLOPT_MAXREDIRS`) and no protocol
-restriction. No credentials go with that request, so nothing leaks; it can loop or be sent to a non-HTTP scheme. Set
-both (the protocol option's name depends on the curl version: the Windows build bundles 7.67.0), or follow hops by hand
-under `RedirectPolicy` as the authenticated requests already do.
-
 #### timeshift_buffer: a corrupt buffer state aborts the orphan scrub, and client disconnects print tracebacks
 
 **Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
@@ -72,19 +58,6 @@ input has no I/O timeout; add `-rw_timeout` (low confidence that it helps with t
 `_is_process_alive` treats a `PermissionError` as alive before it compares the start ticks (low confidence; depends on
 whether the container runs as root). (4) `RefreshToken.for_user` may add a database row per buffer start if Django's
 `token_blacklist` app is installed (low confidence; not checked on a real server).
-
-#### A failed live-manifest refresh skips the 500 ms throttle
-
-**Opened 2026-10-19 on `Piers`, from the live check of the timeshift reaper fix; measured live there, and `Omega`'s
-`RefreshLiveManifest()` is the same code (checked by reading).** `RefreshLiveManifest()` sets `lastManifestFetch` only
-after a successful fetch, so after a failed one (a 429, a timeout) `ShouldThrottleRefresh()` (`Staleness.h`) never
-applies and every `GetStreamTimes()` poll goes to the server. Measured on a Kodi 22 RC1 client in Server-side mode while
-a proxy answered 429 to `get_live_manifest` for 75 s: about 4.9 calls a second, against about 1.6 when the calls
-succeed, so a server that is asking for less got three times as much. The in-progress recording path met the same trap
-and guards against it (`contentGone`, and the comment above it in `RefreshInProgressRecordingManifest()`). Fix: record
-the attempt time on a failure too (or back off for longer after a 429) so the throttle covers it, keeping `force`
-refreshes from `ReadLiveTimeshiftStream()` at the tail as they are. The attempt-time choice is testable beside
-`ShouldThrottleRefresh()`.
 
 ### Architectural / concurrency
 
@@ -113,13 +86,6 @@ the times map and refills it rule by rule, so an `UpdateTimer()` in that gap fal
 back the DST time-shift edit. Fix: keep the snapshot the dialog was opened from per rule, and build the times map
 locally and swap it in under one lock. The baseline choice is testable in `RecurringRuleEdit`.
 
-#### An unsynchronised spot in `PVRDispatcharr`'s padding sync
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); harmless in
-practice.** The padding sync checks under the mutex but writes after releasing it, so a timer-dialog edit that lands in
-that window can be overwritten and then latched. (`Piers`'s entry has a second spot, `m_apiKeyOwnershipVerified` written
-by concurrent recorded-stream opens; `Omega` opens one recorded stream at a time, so it does not apply here.)
-
 ### Design decision needed
 
 #### recording_edl: a DVR path template may resolve outside the recordings root
@@ -142,14 +108,6 @@ memory mapping", so these count as failures. Probably the same address-space lay
 than that message; not investigated. The TSan variant is run by hand, not in CI, so it costs reruns, not red builds.
 Candidates: retry on a signal exit with no output as well, or start the harness with address randomisation turned off.
 `Omega`'s `run_tsan.sh`, `run.sh` and `build.sh` are the same files; not yet run here.
-
-#### The 32-bit unit tests run without UBSan
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day).**
-`unit-tests-32bit` builds with `-m32` only, and `unit-tests-sanitized` is 64-bit, so an overflow that only happens with
-a 32-bit `time_t` or `long` is caught only when it gives a wrong answer a test checks, never as the overflow itself (the
-`catchup_days` one, fixed in `CLOSED_ITEMS.md`'s "Integer overflows in pure helpers, two of them 32-bit-only", has a
-test that fails there by its wrong answer). Add `-fsanitize=undefined` to the 32-bit job.
 
 ### Upstream (Dispatcharr) or documentation accuracy
 
@@ -174,22 +132,6 @@ plugins, non-admin otherwise) against one server from one Kodi; the migration st
 handling in `OnAddonSettingChanged()` are the work. Not started.
 
 ### Tooling (tools/)
-
-#### `scrub_zip_paths.py` can leave a username when a string ends at the prefix
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
-reading.** A string that ends exactly at `/home/<user>` (no trailing slash) keeps the name. Fix the pattern to match end
-of string too; test in `tools/tests/`.
-
-#### CI skips the build when a file is renamed out of a build path
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed in a
-scratch repo.** `tools/ci_build_needed.py` runs `git diff --name-only`, which detects renames and prints only the new
-path, so `git mv src/Foo.cpp docs/` (or renaming a tool the workflow calls) reports no build needed and skips the very
-jobs that would fail. Fix: add `--no-renames`; test in `tools/tests/test_ci_build_needed.py`. Related, in the workflow:
-the `changes` step pipes the script through `tee` with no `pipefail`, so if the script crashes the outputs are empty and
-every build job is skipped silently; use `shell: bash` and make the job conditions `!= 'false'` so an empty output
-builds.
 
 #### Lab scripts put passwords on command lines
 

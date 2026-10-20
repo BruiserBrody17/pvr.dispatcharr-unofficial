@@ -33,6 +33,15 @@ compare against.
   a series rule's weekday outside Monday to Sunday and a login reply without a usable token are rejected instead of
   passed on; a few date and catch-up calculations that could overflow on 32-bit devices no longer do; and search terms
   in requests are always escaped.
+- **A struggling server is no longer asked more often**: while the server was failing to answer (an error, or a proxy
+  saying "too many requests"), the addon asked again for a live timeshift buffer's or an in-progress recording's
+  playlist on every progress-bar update, about three times as often as when everything works. It now waits at least
+  half a second between tries either way.
+- **The guide download follows at most five redirects, and only to `http`/`https` addresses**, so a misconfigured proxy
+  that redirects in a loop fails at once instead of at the timeout.
+- **Fewer settings-file writes during playback**: when the API key was renewed while a recording opened, the addon
+  rewrote two other settings that had not changed (each write makes Kodi save the settings file and hand every setting
+  back to the addon).
 - **`timeshift_buffer` README**: the disk use per buffered channel is up to about twice the earlier estimate (about 9 GB
   for 60 minutes at 10 Mbit/s), and the port check now says that a `404` for the bare address means the server is
   reachable (the README and the troubleshooting guide said to expect `403`).

@@ -90,6 +90,23 @@ def test_the_last_component_stays_for_a_literal_the_linker_merged_into_its_tail(
     assert _HOME not in out and b"xbmc-depends" not in out and b"android-build" not in out
 
 
+@pytest.mark.parametrize(
+    "string",
+    [
+        _HOME,  # the home directory itself, e.g. a configure line's --prefix
+        b"HOME=" + _HOME,
+        b"-I" + _HOME + b"/a -L" + _HOME,  # the last of two occurrences ends the string
+        _HOME + b"-old",  # no `/` after the prefix at all
+    ],
+)
+def test_a_string_ending_at_the_prefix_keeps_nothing_of_it(string):
+    # Its last `/` is inside the prefix, so keeping "the last component" kept the user name.
+    data = b"\x00" + string + b"\x00after\x00"
+    out, count = scrub.scrub_bytes(data, [_HOME])
+    assert count == 1 and len(out) == len(data) and out.endswith(b"\x00after\x00")
+    assert b"someone" not in out
+
+
 def test_two_occurrences_in_one_string_are_one_blanking():
     data = b"\x00cflags: -I" + _HOME + b"/a -isystem " + _HOME + b"/b\x00after\x00"
     out, count = scrub.scrub_bytes(data, [_HOME])

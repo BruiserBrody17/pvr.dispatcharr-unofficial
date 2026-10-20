@@ -53,7 +53,8 @@ def _is_text_byte(b: int) -> bool:
 
 
 def _blank_c_strings(data: bytes, prefixes: list) -> tuple:
-    """(new bytes, count): the string around each prefix becomes `/build` + NULs, same size, up to its last `/`.
+    """(new bytes, count): the string around each prefix becomes `/build` + NULs, same size, up to its last `/` (or to
+    the end of the last prefix in it, when that is further).
 
     The last `/` and what follows it stay, because the linker merges string tails: libcurl's `"1.1"` HTTP version
     literal was the tail of an OpenSSL `.../engines-1.1` path, so blanking the whole path sent every request as
@@ -82,7 +83,9 @@ def _blank_c_strings(data: bytes, prefixes: list) -> tuple:
             length = end - begin
             if length > MAX_BLANKED_STRING:
                 raise ValueError("a string containing the prefix is %d bytes long; refusing to blank it" % length)
-            keep_from = out.rfind(b"/", begin, end)
+            # The kept tail may not reach back into a prefix: a string that ends at the prefix (`/home/<user>` and no
+            # more) would keep the user name as its "last component".
+            keep_from = max(out.rfind(b"/", begin, end), out.rfind(prefix, begin, end) + len(prefix))
             blank = keep_from - begin if keep_from > begin else 0
             out[begin : begin + blank] = (b"/build" + bytes(blank))[:blank] if blank >= 6 else bytes(blank)
             count += 1

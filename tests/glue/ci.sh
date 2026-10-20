@@ -29,6 +29,7 @@ run "live (silent server at open)" TMO=5 T=120 -- live_silent_open
 run "live (silent server, 30 s timeout)" TMO=30 T=120 -- live_silent_open
 run "live (file server unreachable)" TMO=30 T=120 -- live_fileserver_unreachable
 run "live (first segment after 25 s)" TMO=30 T=120 -- live_late_start
+run "live (refresh throttle on 429)" TMO=30 T=120 -- live_refresh_throttle
 run "live (6 s API latency)"     TMO=30 T=300 -- live_slow_open
 run "completed recording"        TMO=30 T=120 -- rec
 run "recording, Range dropped"   TMO=30 T=120 -- rec_range_dropped
@@ -40,6 +41,8 @@ run "in-progress, hung API"      TMO=30 T=300 -- ip_blackhole_close
 run "in-progress, 500 blip"      TMO=30 T=120 IP_EXPECT_RESUME=1 -- ip 9000 "2000:ip_seg_status=500;5500:ip_seg_status=0"
 run "destroy with streams open"  TMO=30 T=120 -- dtor_inflight
 run "PVR surface: functional"    BIN=pvr_harness T=180 -- functional
+run "PVR: guide redirect loop"     BIN=pvr_harness T=60 CTL="epg_redirect=loop" -- epg_redirect
+run "PVR: guide redirect to FTP"   BIN=pvr_harness T=60 CTL="epg_redirect=ftp" -- epg_redirect
 run "PVR: M3U refresh event"       BIN=pvr_harness T=60 -- refresh_events
 run "PVR: server offset vs table"   BIN=pvr_harness T=60 -- offset_cross_check
 run "PVR: finished recording, playlist gone" BIN=pvr_harness T=60 -- finished_hls_gone

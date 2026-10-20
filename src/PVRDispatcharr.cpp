@@ -397,6 +397,14 @@ bool PVRDispatcharr::SyncDvrPaddingFromDispatcharr()
   const int storedPost = kodi::addon::GetSettingInt("recording_post_offset_minutes", post);
   m_lastAppliedPreOffsetMinutes = storedPre;
   m_lastAppliedPostOffsetMinutes = storedPost;
+  // The check above was made before the writes, under a lock they cannot hold (Kodi re-delivers the settings from
+  // inside SetSettingInt()). An edit that landed in between may have just been overwritten with the server's older
+  // value, so this does not count as synced: the next cycle waits for that edit's push and reads the server again.
+  {
+    std::lock_guard<std::mutex> lock(m_paddingPushMutex);
+    if (!dispatcharr::IsSafeToSyncPaddingFromServer(m_paddingPush, editSeqAtStart))
+      return false;
+  }
   return storedPre == pre && storedPost == post;
 }
 
@@ -3881,8 +3889,13 @@ void PVRDispatcharr::PersistApiKeyIfChanged(const std::string& keyBefore)
   // what m_client was actually constructed with -- always correct for
   // this instance's entire lifetime, safe to read from any thread with
   // no lock at all.
-  kodi::addon::SetSettingString("api_key_host", m_apiKeyOwnerHost);
-  kodi::addon::SetSettingString("api_key_username", m_apiKeyOwnerUsername);
+  //
+  // Only when they differ: each write is a settings.xml save and a re-delivery of every setting to this addon, and
+  // this can run on a stream's read thread, where the stamps are almost always unchanged.
+  if (kodi::addon::GetSettingString("api_key_host") != m_apiKeyOwnerHost)
+    kodi::addon::SetSettingString("api_key_host", m_apiKeyOwnerHost);
+  if (kodi::addon::GetSettingString("api_key_username") != m_apiKeyOwnerUsername)
+    kodi::addon::SetSettingString("api_key_username", m_apiKeyOwnerUsername);
 }
 
 void PVRDispatcharr::ReassertApiKeySetting()

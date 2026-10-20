@@ -45,7 +45,9 @@ def changed_files(event, ref, base, head, run_git=None):
         return None
     run_git = run_git or _git
     try:
-        return run_git(["diff", "--name-only", base, head]).splitlines()
+        # --no-renames: with rename detection a file moved out of a build path is listed only under its new name, so
+        # `git mv src/Foo.cpp docs/` would skip the very jobs that fail without it.
+        return run_git(["diff", "--name-only", "--no-renames", base, head]).splitlines()
     except (subprocess.CalledProcessError, OSError):
         return None
 

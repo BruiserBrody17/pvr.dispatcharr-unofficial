@@ -52,6 +52,9 @@ jobs:
           REF: ${{ github.ref }}
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        # bash with pipefail (an explicit `shell: bash` adds it; the default does not), so a crash of the script fails
+        # this job rather than leaving its outputs empty; the jobs below also build on an empty output (`!= 'false'`).
+        shell: bash
         run: python3 tools/ci_build_needed.py "$EVENT" "$REF" "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
 
   # Enforces CLAUDE.md's "run clang-format/ruff format before committing"
@@ -170,7 +173,9 @@ jobs:
   # The same suite built for a 32-bit x86 target (-m32), where time_t, long and size_t are 32 bits wide. Every other job
   # here runs on a 64-bit host, where a date past 2038 and an int64 -> long narrowing both behave, so a 32-bit
   # regression in the pure modules (the date parsers, the time-zone table, the size arithmetic) was invisible until
-  # the 32-bit Android and ARM builds this project ships were tried by hand.
+  # the 32-bit Android and ARM builds this project ships were tried by hand. With UBSan, so an overflow that only a 32-bit
+  # time_t or long can produce fails as the overflow itself, not only when a test happens to check the wrong answer
+  # (unit-tests-sanitized is 64-bit).
   unit-tests-32bit:
     runs-on: ubuntu-latest
     steps:
@@ -194,13 +199,14 @@ jobs:
       - name: Configure
         run: >
           cmake -S tests -B build-tests-32 -DCMAKE_BUILD_TYPE=Release
-          "-DCMAKE_CXX_FLAGS=-m32 -I/tmp/curl32/root/usr/include/i386-linux-gnu"
+          "-DCMAKE_CXX_FLAGS=-m32 -fsanitize=undefined,float-cast-overflow,float-divide-by-zero -fno-sanitize-recover=all -I/tmp/curl32/root/usr/include/i386-linux-gnu"
+          "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=undefined,float-cast-overflow,float-divide-by-zero"
           -DCURL_INCLUDE_DIR=/tmp/curl32/root/usr/include
           -DCURL_LIBRARY=/usr/lib/i386-linux-gnu/libcurl.so.4
 
       - name: Check the build is really 32-bit
         run: |
-          grep -m1 'CMAKE_CXX_FLAGS:STRING=-m32' build-tests-32/CMakeCache.txt
+          grep -m1 'CMAKE_CXX_FLAGS:STRING=-m32 -fsanitize=undefined' build-tests-32/CMakeCache.txt
           grep -m1 'CURL_LIBRARY.*=/usr/lib/i386-linux-gnu' build-tests-32/CMakeCache.txt
           printf '#include <ctime>\nstatic_assert(sizeof(time_t) == 4, "time_t must be 32-bit here");\nint main(){}\n' > /tmp/t32.cpp
           g++ -m32 -o /tmp/t32 /tmp/t32.cpp
@@ -338,7 +344,7 @@ jobs:
   # tree the build jobs compile. The TSan variant, the plugin integration run and the longer fault matrices stay by hand.
   glue-harness:
     needs: changes
-    if: needs.changes.outputs.build == 'true'
+    if: needs.changes.outputs.build != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -380,7 +386,7 @@ jobs:
   # section, same release-time checklist CoreELEC already has.
   build-unix:
     needs: changes
-    if: needs.changes.outputs.build == 'true'
+    if: needs.changes.outputs.build != 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Check out addon source
@@ -490,7 +496,7 @@ jobs:
   # call with "Plugin not found" (see each plugin's own README).
   package-dispatcharr-plugins:
     needs: changes
-    if: needs.changes.outputs.plugins == 'true'
+    if: needs.changes.outputs.plugins != 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
@@ -551,7 +557,7 @@ jobs:
   # fails closed (a skipped required check is visible, a compromised release builder is not).
   build-windows:
     needs: changes
-    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: needs.changes.outputs.build != 'false' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: windows-latest
     steps:
       # Needed before any git clone happens on this runner, including the
