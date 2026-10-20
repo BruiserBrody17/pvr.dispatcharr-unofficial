@@ -4,10 +4,10 @@
 
 ## Status at a glance
 
-**13 open, 339 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**12 open, 340 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One came from the 2026-10-20 live check of the manifest throttle fix. One tracks publishing the Kodi repository added on 2026-10-19. The other 7 come from the 2026-10-18 read-only audit of the whole
+work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One tracks publishing the Kodi repository added on 2026-10-19. The other 7 come from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
 day and 14 on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
 path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
@@ -15,14 +15,14 @@ path read end to end), *plausible* (the logic is there, the trigger is not demon
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 3 |
+| Open: Fix known, not yet done | 2 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 3 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 1 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 297 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 298 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -39,19 +39,6 @@ initialisation covers the addon's copy on those platforms. If it does not, one `
 addon's create path (and the matching cleanup on destroy) is the fix.
 
 ### Fix known, not yet done
-
-#### A live stream marked fatal leaves Kodi buffering instead of ending
-
-**Opened 2026-10-20, seen in the live check of the manifest throttle fix on Kodi 22.0 RC1; first noted on 2026-09-28
-(`CLOSED_ITEMS.md`'s "Dead live-timeshift buffer: infinite tight segment-fetch retry", the caveat at its end).** Once
-`ReadLiveTimeshiftStream()` marks the stream fatal it answers -1 on every later call (`docs/TIMESHIFT.md`'s stall table),
-and Kodi treats -1 as a read to try again, the same answer the live-tail wait gives so a stop can land. Kodi logs "Stream
-stalled, start buffering" and stays there. In the live check the server ended the buffer during a pause (a fault window
-longer than the plugin's idle timeout); on resuming, the first segment fetch got a 403, the manifest said no buffer was
-running, the stream went fatal, and Kodi showed it buffering with no message for 80 s until it was stopped by hand. No
-notification is shown unless the file server itself is unreachable. Probable fix: answer 0 (end of stream) once the
-stream is fatal, as at an ended buffer's tail, so Kodi ends playback, and tell the viewer why. First check why the fatal
-path answers -1, and confirm live that Kodi then leaves fullscreen.
 
 #### timeshift_buffer: a corrupt buffer state aborts the orphan scrub, and client disconnects print tracebacks
 

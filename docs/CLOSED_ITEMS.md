@@ -6,6 +6,38 @@
 
 ### Fixed
 
+#### A live stream marked fatal leaves Kodi buffering instead of ending
+
+**Opened 2026-10-20, seen in the live check of the manifest throttle fix on Kodi 22.0 RC1; first noted on 2026-09-28
+(`CLOSED_ITEMS.md`'s "Dead live-timeshift buffer: infinite tight segment-fetch retry", the caveat at its end).** Once
+`ReadLiveTimeshiftStream()` marks the stream fatal it answers -1 on every later call (`docs/TIMESHIFT.md`'s stall table),
+and Kodi treats -1 as a read to try again, the same answer the live-tail wait gives so a stop can land. Kodi logs "Stream
+stalled, start buffering" and stays there. In the live check the server ended the buffer during a pause (a fault window
+longer than the plugin's idle timeout); on resuming, the first segment fetch got a 403, the manifest said no buffer was
+running, the stream went fatal, and Kodi showed it buffering with no message for 80 s until it was stopped by hand. No
+notification is shown unless the file server itself is unreachable. Probable fix: answer 0 (end of stream) once the
+stream is fatal, as at an ended buffer's tail, so Kodi ends playback, and tell the viewer why. First check why the fatal
+path answers -1, and confirm live that Kodi then leaves fullscreen.
+
+**Fixed 2026-10-20, confirmed against Kodi's source and with new glue scenarios.** In Kodi 21 and 22 alike, a PVR
+channel's `NextPVRStream()` (`CInputStreamPVRChannel`) asks the player to retry a read error until the stream is at end
+of file, and only a 0 from the addon sets that (`CInputStreamPVRBase::Read()`); a recording answers `NEXTSTREAM_NONE`, so
+the recorded readers were never affected. The -1 came from `e09c6b4` (2026-09-06), which chose it "so Kodi can actually
+recognize the stream ended" without triggering the path live. Every read of a fatal live stream now answers 0: the
+short-circuit at the top of `ReadLiveTimeshiftStreamOnce()`, the segment-failure give-up, the tail wait's fatal refresh,
+and the two "wrong bytes" cases (a range ignored, a size mismatch). The viewer is told once ("This channel's timeshift
+buffer can't be read from Dispatcharr any more. Play the channel again to restart it."), unless the file-server notice
+already explained it. **Confirmed:** the glue scenario `live_fatal_ends` (in CI), at the live edge and behind it with a
+403 segment and a fatal manifest (the live case): the first 0 comes within 2 ms, every later read answers 0 at once, and
+one notice is shown. On the old code both variants answered -1 for the whole 30 s and showed nothing.
+
+**Confirmed live 2026-10-20** on Kodi 22.0 RC1 (Linux) with this change's CI build, the same way the failure was seen: a
+live channel in Server-side mode, paused, a proxy answering 429 to `get_live_manifest` for 75 s (longer than the
+plugin's 30 s idle timeout, so the server ended the buffer), then resumed. The first segment fetch got a 403, the
+manifest said no buffer was running, the stream went fatal, and Kodi logged "eof, waiting for queues to empty" 4 s later
+(the video it had buffered) and ended playback: 5 s from resume to Kodi's Home screen, with the notice showing, where
+the build before it sat buffering for 80 s until stopped by hand.
+
 #### A failed live-manifest refresh skips the 500 ms throttle
 
 **Opened 2026-10-19, from the live check of the timeshift reaper fix; measured live, confirmed by reading.**

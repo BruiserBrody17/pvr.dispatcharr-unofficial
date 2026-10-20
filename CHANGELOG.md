@@ -21,6 +21,10 @@ compare against.
 
 ### Fixed
 
+- **A live channel whose timeshift buffer is gone on the server now ends with a message instead of buffering forever**
+  (Server-side mode): when Dispatcharr had ended the buffer, for example after it stopped hearing from Kodi during a
+  long pause, Kodi showed the channel buffering until you stopped it. Playback now ends and says the buffer can't be
+  read any more; playing the channel again starts a new one.
 - **Pressing Play on a recording or a catch-up programme no longer freezes Kodi when the server stops answering**:
   Kodi waited the whole connection timeout (30 s by default, up to 3 minutes) before playback started or failed. A
   recording now skips that check entirely, and a catch-up programme gives up after a few seconds. Catch-up also asks
