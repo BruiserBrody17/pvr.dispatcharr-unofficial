@@ -430,7 +430,7 @@ def test_a_stale_zip_renamed_to_the_new_version_fails(tmp_path):
 
 @pytest.mark.parametrize("found", ["9.9.9", "9.9.8.1", "9.9.9.x"])
 def test_the_coreelec_zip_must_carry_the_version_plus_its_revision(tmp_path, found):
-    coreelec = gate.PREFIX + "9.9.9-coreelec-aarch64.zip"
+    coreelec = next(n for n in _concrete("9.9.9") if "-coreelec-" in n)
     problems = gate.check_release_contents(_release(tmp_path, "9.9.9", {coreelec: found}), "9.9.9")
     assert any("coreelec" in p for p in problems)
 
