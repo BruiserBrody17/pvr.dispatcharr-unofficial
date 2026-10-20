@@ -95,6 +95,16 @@ re-delivery of the settings to the addon. Write the owner stamps only when they 
 already written only on a real key change. The glue suite (which drives the recorded-stream opens through the stub
 settings store) passes unchanged.
 
+**Confirmed live 2026-10-20 on both branches.** A Linux test machine ran Kodi 22.0 RC1 with `Piers`'s CI build of
+`7219c8e` and Kodi 21.3 with `Omega`'s of `5b148f6`, each beside its branch's build from before the fix (`7abb9d9`,
+`14db1cf`). The stored `api_key` was replaced with one the account does not have, the owner stamps left correct, and a
+watch on the addon's settings directory (inotify) counted the `settings.xml` saves while a finished recording played.
+Its first request got a 401, the addon adopted the account's key (nothing regenerated) and playback carried on. The
+before build saved three times on both Kodi versions, the fix once (the key alone). On Kodi 22 with the before build
+the thumbnail loader's open at start met the 401 first: the same function, from another of Kodi's threads. A second
+run of the fix with a stale `api_key_username` as well saved twice, the key and that stamp, so a stamp that really
+changed is still written.
+
 #### The XMLTV download follows redirects with no limit or protocol restriction
 
 **Opened 2026-10-18, from the read-only audit; hardening only.** `GetXmlTvGuide()` sets `CURLOPT_FOLLOWLOCATION` with no
@@ -114,8 +124,16 @@ the proxy answered the guide request with a 302 to itself, to an `ftp://` URL on
 or once to the real guide. Kodi 22.0 RC1 with the before build followed the loop 31 times in 30 ms and connected to the
 FTP listener; with the fix, Kodi 22.0 RC1 and Kodi 21.3 both stopped the loop at 6 requests ("Number of redirects hit
 maximum amount" in the log), refused the FTP redirect ("Unsupported protocol") with no connection, and loaded the full
-guide through the single redirect. The Windows build's older-curl branch of the protocol option is compiled in
-CI but was not run live.
+guide through the single redirect.
+
+**The Windows build's older-curl branch, confirmed live 2026-10-20.** The Windows builds of both branches bundle
+libcurl 7.67.0, so they compile and run the bitmask option. A Windows test machine ran Kodi 21.3 with `Omega`'s CI
+Windows builds of `5b148f6` and of `14db1cf` (before the fix), through the same proxy reached over the network; no
+Kodi 22 was available on Windows, and `Piers`'s Windows build has the same code and the same curl. Before the fix,
+curl 7.67 has no default redirect limit (the limit of 30 arrived in curl 8.3), so the loop was followed 35,659 times
+until the guide request's 120 s timeout ("Timeout was reached"), and the FTP redirect connected to the listener. With
+the fix: 6 requests ("Number of redirects hit maximum amount"), the FTP redirect refused ("Unsupported protocol") with
+no connection, and the full guide loaded through the single redirect.
 
 #### Two small unsynchronised spots in `PVRDispatcharr`
 
@@ -132,6 +150,16 @@ settled, and writes the server's (now the user's) value, instead of the sync lat
 `m_apiKeyOwnershipVerified` is a `std::atomic<bool>`, and its comment no longer claims one recorded stream at a time
 (Kodi 22 opens several). Two concurrent opens can still both regenerate the key before either sets the flag, which costs
 a request.
+
+**(1) confirmed live 2026-10-20 on Kodi 21.3, with throwaway builds of `Omega`'s fix (`5b148f6`, the same change as
+here) and of its parent.** The window is microseconds wide, so each build added a 15 s pause between the first check
+and the writes, and skipped the constructor's sync so the background thread's ran instead (as after a server that was
+unreachable at start). Five seconds into the pause a throwaway script addon set `recording_pre_offset_minutes` through
+Kodi's Python API. Kodi delivered that to the addon as a settings save, and the addon pushed it to the server. Before
+the fix the sync then wrote the server's older value over the edit and counted itself done: Kodi showed the old
+padding and the server the edit, with nothing left to reconcile them. With the fix the sync counted itself not done.
+The background thread's next pass, 16 s later, read the edit back from the server and stored it, so both sides
+agreed. The server's padding was set back afterwards. (2) is not observable from outside.
 
 #### The 32-bit unit tests run without UBSan
 
