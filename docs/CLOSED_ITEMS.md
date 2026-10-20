@@ -38,6 +38,11 @@ manifest said no buffer was running, the stream went fatal, and Kodi logged "eof
 (the video it had buffered) and ended playback: 5 s from resume to Kodi's Home screen, with the notice showing, where
 the build before it sat buffering for 80 s until stopped by hand.
 
+**On `Omega`:** cherry-picked from `Piers`'s `b53484f` on 2026-10-20 (applied unchanged apart from the running counts;
+the glue scenario fails the same way on `Omega`'s old code). Confirmed live the same day on Kodi 21.3 with the port's CI
+build and the same steps: fatal on the first segment fetch after resume, the notice showing over the last of the
+buffered video, and Kodi's Home screen 9.3 s after resume (Kodi 21 played out about 8 s of buffer, Kodi 22 about 4).
+
 #### A failed live-manifest refresh skips the 500 ms throttle
 
 **Opened 2026-10-19 on `Piers`, from the live check of the timeshift reaper fix; measured live there, and `Omega`'s
