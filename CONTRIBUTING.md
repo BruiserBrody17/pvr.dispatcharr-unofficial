@@ -99,7 +99,7 @@ handled here.
   isn't a formality: getting this wrong after the fact means a git
   history rewrite, not just an edit.
 - **Explain what you changed and why in the PR description**, including
-  how you tested it (or that you couldn't, and why). This project's own
+  how you tested it (or that you couldn't, and why). The PR template asks for both. This project's own
   commit history favors a real explanation over a one-line summary --
   a short PR that just says "fixes bug" with no context is much harder
   to review with only a narrow test suite backing it up.
@@ -134,6 +134,11 @@ An accepted change is applied as a single squash commit that credits you as
 co-author. Your PR will then be closed with a link to that commit rather than
 shown as "merged", and your original commits won't appear in the history; that
 is how every change lands here, not a judgement on yours.
+
+## Code of conduct
+
+Everyone taking part here is expected to follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) (the Contributor Covenant).
+It says how to report a problem privately.
 
 ## Reporting a security issue
 
