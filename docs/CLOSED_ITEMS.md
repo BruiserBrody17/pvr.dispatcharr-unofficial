@@ -6,6 +6,113 @@
 
 ### Fixed
 
+#### A failed live-manifest refresh skips the 500 ms throttle
+
+**Opened 2026-10-19, from the live check of the timeshift reaper fix; measured live, confirmed by reading.**
+`RefreshLiveManifest()` sets `lastManifestFetch` only after a successful fetch, so after a failed one (a 429, a timeout)
+`ShouldThrottleRefresh()` (`Staleness.h`) never applies and every `GetStreamTimes()` poll goes to the server. Measured
+on a Kodi 22 RC1 client in Server-side mode while a proxy answered 429 to `get_live_manifest` for 75 s: about 4.9 calls a
+second, against about 1.6 when the calls succeed, so a server that is asking for less got three times as much. The
+in-progress recording path met the same trap and guards against it (`contentGone`, and the comment above it in
+`RefreshInProgressRecordingManifest()`). Fix: record the attempt time on a failure too (or back off for longer after a
+429) so the throttle covers it, keeping `force` refreshes from `ReadLiveTimeshiftStream()` at the tail as they are. The
+attempt-time choice is testable beside `ShouldThrottleRefresh()`.
+
+**Fixed 2026-10-19, confirmed with a new glue scenario; not re-measured on a real Kodi.** Both refresh paths now stamp
+`lastManifestFetch` when an attempt starts, not when it succeeds, so `ShouldThrottleRefresh()` covers a failed fetch as
+well; a `force` refresh (a reader waiting at the tail, the cold-start loops) still goes through. The in-progress path had
+the same gap for anything but the 404 that `contentGone` catches (a 5xx or 429 on the lookup or the playlist), so it got
+the same change. This reverses the 2026-09-30 reasoning in "500 ms manifest refresh throttle never engages during
+sustained failure" (below, under Closed without a change): that a failure was only polled at the rate the throttle
+allows anyway. `GetStreamTimes()` asks for both the length and the duration, and each ran a refresh, which is how the
+live measurement came out at three times the healthy rate. The read path's not-forced refresh after an unexplained
+segment 404 relied on a failed refresh never arming the throttle; it does not need to, since one refresh that sees both
+the lookup and the playlist gone confirms `contentGone`. **Confirmed:** the glue scenario `live_refresh_throttle` (in
+CI) polls the length and the duration every 20 ms for 3 s, healthy and then with the fake answering 429 to
+`get_live_manifest`, and allows at most seven requests per phase: 5 healthy and 280 under 429 on the old code, 5 and 6
+with the fix.
+
+#### `PersistApiKeyIfChanged()` writes three settings on the stream read thread
+
+**Opened 2026-10-18, from the read-only audit; confirmed by reading.** Each write is a `settings.xml` save plus a full
+re-delivery of the settings to the addon. Write the owner stamps only when they actually change.
+
+**Fixed 2026-10-19, confirmed by reading; the Kodi settings calls are outside every test.** `api_key_host` and
+`api_key_username` are written only when the stored value differs from the instance's owner stamp. `api_key` itself was
+already written only on a real key change. The glue suite (which drives the recorded-stream opens through the stub
+settings store) passes unchanged.
+
+#### The XMLTV download follows redirects with no limit or protocol restriction
+
+**Opened 2026-10-18, from the read-only audit; hardening only.** `GetXmlTvGuide()` sets `CURLOPT_FOLLOWLOCATION` with no
+redirect limit (`CURLOPT_MAXREDIRS`) and no protocol restriction. No credentials go with that request, so nothing leaks;
+it can loop or be sent to a non-HTTP scheme. Set both (the protocol option's name depends on the curl version: the
+Windows build bundles 7.67.0), or follow hops by hand under `RedirectPolicy` as the authenticated requests already do.
+
+**Fixed 2026-10-19, confirmed with a new glue scenario.** `GetXmlTvGuide()` sets `CURLOPT_MAXREDIRS` to 5 and limits
+redirects to HTTP and HTTPS: `CURLOPT_REDIR_PROTOCOLS_STR` from curl 7.85, the older bitmask option below that (the
+Windows build's 7.67.0). **Confirmed:** the glue scenario `epg_redirect` (in CI) runs with the fake's guide endpoint
+redirecting to itself and, separately, to an `ftp://` URL on a listener that counts connections. On the old code the
+first fetch made 31 requests (curl 8.5's own default limit of 30) and the second connected to the FTP listener; with the
+fix, 6 requests and no connection.
+
+#### Two small unsynchronised spots in `PVRDispatcharr`
+
+**Opened 2026-10-18, from the read-only audit; harmless in practice.** (1) The padding sync checks under the mutex but
+writes after releasing it, so a timer-dialog edit that lands in that window can be overwritten and then latched. (2)
+`m_apiKeyOwnershipVerified` is a plain `bool` written by concurrent recorded-stream opens; make it `std::atomic<bool>`
+and correct its comment.
+
+**Fixed 2026-10-19, confirmed by reading; neither is reachable by a test (Kodi's settings calls, Kodi's threads).** (1)
+`SyncDvrPaddingFromDispatcharr()` cannot hold `m_paddingPushMutex` across its writes, since Kodi re-delivers the
+settings from inside `SetSettingInt()`, so it checks `IsSafeToSyncPaddingFromServer()` again after them and reports the
+sync as not done when an edit arrived in between. The background thread then tries again after that edit's push has
+settled, and writes the server's (now the user's) value, instead of the sync latching with the edit overwritten. (2)
+`m_apiKeyOwnershipVerified` is a `std::atomic<bool>`, and its comment no longer claims one recorded stream at a time
+(Kodi 22 opens several). Two concurrent opens can still both regenerate the key before either sets the flag, which costs
+a request.
+
+#### The 32-bit unit tests run without UBSan
+
+**Opened 2026-10-18, from the read-only audit.** `unit-tests-32bit` builds with `-m32` only, and `unit-tests-sanitized`
+is 64-bit, so an overflow that only happens with a 32-bit `time_t` or `long` is caught only when it gives a wrong answer
+a test checks, never as the overflow itself (the `catchup_days` one, fixed in `CLOSED_ITEMS.md`'s "Integer overflows in
+pure helpers, two of them 32-bit-only", has a test that fails there by its wrong answer). Add `-fsanitize=undefined` to the 32-bit job.
+
+**Fixed 2026-10-19, confirmed by building and running the job's configuration locally.** `unit-tests-32bit` builds
+with `-fsanitize=undefined,float-cast-overflow,float-divide-by-zero -fno-sanitize-recover=all` beside `-m32`, and its
+build check requires the flag. Built here with the packages the job installs (gcc 13's 32-bit `libubsan` comes with
+`g++-multilib`): all 1503 tests pass, the binary is 32-bit and carries the UBSan runtime, and a deliberate 32-bit signed
+overflow built the same way stops with a UBSan report.
+
+#### `scrub_zip_paths.py` can leave a username when a string ends at the prefix
+
+**Opened 2026-10-18, from the read-only audit; confirmed by reading.** A string that ends exactly at `/home/<user>` (no
+trailing slash) keeps the name. Fix the pattern to match end of string too; test in `tools/tests/`.
+
+**Fixed 2026-10-19, confirmed with tests that fail on the old code.** In a binary member the kept tail of a string now
+starts no earlier than the end of the last prefix in it, so a string that is the home directory, ends with it, or
+continues with no `/` after it keeps nothing of it. A string with a `/` after the prefix keeps its last component as
+before (the merged-tail rule). `test_a_string_ending_at_the_prefix_keeps_nothing_of_it` covers four forms, all four
+failing on the old code.
+
+#### CI skips the build when a file is renamed out of a build path
+
+**Opened 2026-10-18, from the read-only audit; confirmed in a scratch repo.** `tools/ci_build_needed.py` runs
+`git diff --name-only`, which detects renames and prints only the new path, so `git mv src/Foo.cpp docs/` (or renaming a
+tool the workflow calls) reports no build needed and skips the very jobs that would fail. Fix: add `--no-renames`; test in
+`tools/tests/test_ci_build_needed.py`. Related, in the workflow: the `changes` step pipes the script through `tee` with no
+`pipefail`, so if the script crashes the outputs are empty and every build job is skipped silently; use `shell: bash`
+and make the job conditions `!= 'false'` so an empty output builds.
+
+**Fixed 2026-10-19, confirmed with tests that fail on the old code.** `ci_build_needed.py` runs
+`git diff --name-only --no-renames`, so a rename lists both paths; the `changes` step runs under `shell: bash` (which adds
+`pipefail`), so a crash of the script fails that job instead of leaving its outputs empty; and the four build jobs run
+on `!= 'false'`, so an empty output builds. `test_a_file_renamed_out_of_a_build_path_builds_through_the_real_git`
+renames a file out of `src/` (and the tool itself out of the trigger list) in a real repository, failing on the old code
+in both cases; `test_the_decide_step_runs_with_pipefail_and_the_jobs_build_on_an_empty_answer` pins the workflow
+side.
+
 #### The release gate does not catch local-clock entry timestamps
 
 **Opened 2026-10-18, from the read-only audit; confirmed with a crafted zip.** The gate only catches the UT/ux extra-field
@@ -7555,6 +7662,11 @@ wanted. Arming the throttle on those would only cap the failure rate at the
 ~2 polls a second `GetStreamTimes()` already makes, which is the rate the
 throttle itself allows -- no reduction worth the risk to the non-sticky
 `finished` mechanism the entry describes.
+
+**Superseded (2026-10-19):** measured live, a failing live refresh was polled at three times the healthy rate, not at
+the throttle's rate (`GetStreamTimes()` asks for the length and the duration, and each ran a refresh). Both paths now
+arm the throttle on every attempt; forced refreshes and the `finished` mechanism are unchanged (`Fixed`, "A failed
+live-manifest refresh skips the 500 ms throttle").
 
 #### Series rule title over 1023 bytes duplicates on edit
 

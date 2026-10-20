@@ -29,6 +29,7 @@ run "live (silent server at open)" TMO=5 T=120 -- live_silent_open
 run "live (silent server, 30 s timeout)" TMO=30 T=120 -- live_silent_open
 run "live (file server unreachable)" TMO=30 T=120 -- live_fileserver_unreachable
 run "live (first segment after 25 s)" TMO=30 T=120 -- live_late_start
+run "live (refresh throttle on 429)" TMO=30 T=120 -- live_refresh_throttle
 run "live (6 s API latency)"     TMO=30 T=300 -- live_slow_open
 run "completed recording"        TMO=30 T=120 -- rec
 run "recording, Range dropped"   TMO=30 T=120 -- rec_range_dropped
@@ -54,6 +55,8 @@ run "PVR: several recorded streams" BIN=pvr_harness T=60 -- streams2
 run "PVR: finished recording, playlist gone" BIN=pvr_harness T=60 -- finished_hls_gone
 run "PVR: no-file notice only on Play" BIN=pvr_harness T=60 -- no_file_notice
 run "PVR: Off mode starts the channel first" BIN=pvr_harness T=90 TMO=5 -- warm_up
+run "PVR: guide redirect loop"     BIN=pvr_harness T=60 CTL="epg_redirect=loop" -- epg_redirect
+run "PVR: guide redirect to FTP"   BIN=pvr_harness T=60 CTL="epg_redirect=ftp" -- epg_redirect
 run "PVR: M3U refresh event"       BIN=pvr_harness T=60 -- refresh_events
 run "PVR: server offset vs table"   BIN=pvr_harness T=60 -- offset_cross_check
 run "PVR surface: threads"       BIN=pvr_harness T=180 -- surface 6000

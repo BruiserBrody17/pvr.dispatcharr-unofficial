@@ -1624,6 +1624,7 @@ private:
     // sub-segment-precise; see GetLiveTimeshiftStreamWallClockAnchor()'s
     // own comment for what actually depends on it being non-zero at all.
     time_t wallClockAnchor = 0;
+    // When the last refresh was attempted, whether or not it succeeded: the 500 ms throttle's clock.
     std::chrono::steady_clock::time_point lastManifestFetch{};
     // Set by SeekLiveTimeshiftStream() on every call. ReadLiveTimeshiftStream()
     // uses this to tell "this read is likely one of ffmpeg's own internal
@@ -1789,6 +1790,7 @@ private:
     // When `finished` was first held back for want of an #EXT-X-ENDLIST --
     // see dispatcharr::GateFinishedOnEndList().
     std::optional<std::chrono::steady_clock::time_point> endListWaitingSince;
+    // When the last refresh was attempted, whether or not it succeeded: the 500 ms throttle's clock.
     std::chrono::steady_clock::time_point lastManifestFetch{};
     // When the last lookup-and-playlist fetch this stream used began, its own or one shared by another stream of the
     // recording (m_inProgressManifestSnapshots) -- see dispatcharr::CanReuseSharedInProgressManifest().

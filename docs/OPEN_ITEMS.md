@@ -4,25 +4,25 @@
 
 ## Status at a glance
 
-**19 open, 332 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**12 open, 339 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. Two came from the 2026-10-19 live check of four audit fixes. One tracks publishing the Kodi repository added on 2026-10-19. The other 13 come from the 2026-10-18 read-only audit of the whole
+work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One tracks publishing the Kodi repository added on 2026-10-19. The other 7 come from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
-day and eight on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
+day and 14 on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
 path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 5 |
-| Open: Architectural / concurrency | 3 |
+| Open: Fix known, not yet done | 2 |
+| Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 1 |
-| Open: Release, CI and manual testing | 4 |
+| Open: Release, CI and manual testing | 3 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 3 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 290 |
+| Open: Tooling (tools/) | 1 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 297 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -40,18 +40,6 @@ addon's create path (and the matching cleanup on destroy) is the fix.
 
 ### Fix known, not yet done
 
-#### `PersistApiKeyIfChanged()` writes three settings on the stream read thread
-
-**Opened 2026-10-18, from the read-only audit; confirmed by reading.** Each write is a `settings.xml` save plus a full
-re-delivery of the settings to the addon. Write the owner stamps only when they actually change.
-
-#### The XMLTV download follows redirects with no limit or protocol restriction
-
-**Opened 2026-10-18, from the read-only audit; hardening only.** `GetXmlTvGuide()` sets `CURLOPT_FOLLOWLOCATION` with no
-redirect limit (`CURLOPT_MAXREDIRS`) and no protocol restriction. No credentials go with that request, so nothing leaks;
-it can loop or be sent to a non-HTTP scheme. Set both (the protocol option's name depends on the curl version: the
-Windows build bundles 7.67.0), or follow hops by hand under `RedirectPolicy` as the authenticated requests already do.
-
 #### timeshift_buffer: a corrupt buffer state aborts the orphan scrub, and client disconnects print tracebacks
 
 **Opened 2026-10-18, from the read-only audit; confirmed by reading.** (1) A buffer state key in Redis that is not valid
@@ -68,18 +56,6 @@ confidence that it helps with the provider streams in use). (3) `_is_process_ali
 before it compares the start ticks (low confidence; depends on whether the container runs as root). (4)
 `RefreshToken.for_user` may add a database row per buffer start if Django's `token_blacklist` app is installed (low
 confidence; not checked on a real server).
-
-#### A failed live-manifest refresh skips the 500 ms throttle
-
-**Opened 2026-10-19, from the live check of the timeshift reaper fix; measured live, confirmed by reading.**
-`RefreshLiveManifest()` sets `lastManifestFetch` only after a successful fetch, so after a failed one (a 429, a timeout)
-`ShouldThrottleRefresh()` (`Staleness.h`) never applies and every `GetStreamTimes()` poll goes to the server. Measured
-on a Kodi 22 RC1 client in Server-side mode while a proxy answered 429 to `get_live_manifest` for 75 s: about 4.9 calls a
-second, against about 1.6 when the calls succeed, so a server that is asking for less got three times as much. The
-in-progress recording path met the same trap and guards against it (`contentGone`, and the comment above it in
-`RefreshInProgressRecordingManifest()`). Fix: record the attempt time on a failure too (or back off for longer after a
-429) so the throttle covers it, keeping `force` refreshes from `ReadLiveTimeshiftStream()` at the tail as they are. The
-attempt-time choice is testable beside `ShouldThrottleRefresh()`.
 
 ### Architectural / concurrency
 
@@ -107,13 +83,6 @@ fix was meant to stop. Smaller race in the same code: `GetTimers()` clears the t
 an `UpdateTimer()` in that gap falls back to re-derived times and brings back the DST time-shift edit. Fix: keep the
 snapshot the dialog was opened from per rule, and build the times map locally and swap it in under one lock. The baseline
 choice is testable in `RecurringRuleEdit`.
-
-#### Two small unsynchronised spots in `PVRDispatcharr`
-
-**Opened 2026-10-18, from the read-only audit; harmless in practice.** (1) The padding sync checks under the mutex but
-writes after releasing it, so a timer-dialog edit that lands in that window can be overwritten and then latched. (2)
-`m_apiKeyOwnershipVerified` is a plain `bool` written by concurrent recorded-stream opens; make it `std::atomic<bool>`
-and correct its comment.
 
 ### Design decision needed
 
@@ -148,13 +117,6 @@ memory mapping", so these count as failures. Probably the same address-space lay
 than that message; not investigated. The TSan variant is run by hand, not in CI, so it costs reruns, not red builds.
 Candidates: retry on a signal exit with no output as well, or start the harness with address randomisation turned off.
 
-#### The 32-bit unit tests run without UBSan
-
-**Opened 2026-10-18, from the read-only audit.** `unit-tests-32bit` builds with `-m32` only, and `unit-tests-sanitized`
-is 64-bit, so an overflow that only happens with a 32-bit `time_t` or `long` is caught only when it gives a wrong answer
-a test checks, never as the overflow itself (the `catchup_days` one, fixed in `CLOSED_ITEMS.md`'s "Integer overflows in
-pure helpers, two of them 32-bit-only", has a test that fails there by its wrong answer). Add `-fsanitize=undefined` to the 32-bit job.
-
 #### Kodi 22 (`Piers`): the pinned Kodi commit, checks still missing, and the pre-release mark
 
 **Opened 2026-10-15, what is left of the Kodi 22 port once the addon was confirmed on Kodi 22.0-RC1** (the closed entry "Kodi 22 (Piers) refused the addon" in `CLOSED_ITEMS.md` has what was done and how it was checked, including the other platforms' builds, their device runs and the first release). (1) Raise the pinned Kodi commit (`KODI_COMMIT`) from the `22.0rc1-Piers` tag to 22.0 final when it ships, and repeat the smoke run. (2) Not checked on Kodi 22: audio passthrough, a long soak and HEVC. (3) When Kodi 22.0 final ships and (1) is done: take the pre-release mark off `0.14.0-Piers` (or cut `0.14.1` from the final) so the newest-release badge can follow Kodi 22, and decide whether the repository's default branch should move from `Omega` to `Piers` (it stays on `Omega` while most users are on Kodi 21: the badge and the front-page README should send a Kodi 21 user to a build that works).
@@ -184,20 +146,6 @@ plugins, non-admin otherwise) against one server from one Kodi; the migration st
 handling in `OnAddonSettingChanged()` are the work. Not started.
 
 ### Tooling (tools/)
-
-#### `scrub_zip_paths.py` can leave a username when a string ends at the prefix
-
-**Opened 2026-10-18, from the read-only audit; confirmed by reading.** A string that ends exactly at `/home/<user>` (no
-trailing slash) keeps the name. Fix the pattern to match end of string too; test in `tools/tests/`.
-
-#### CI skips the build when a file is renamed out of a build path
-
-**Opened 2026-10-18, from the read-only audit; confirmed in a scratch repo.** `tools/ci_build_needed.py` runs
-`git diff --name-only`, which detects renames and prints only the new path, so `git mv src/Foo.cpp docs/` (or renaming a
-tool the workflow calls) reports no build needed and skips the very jobs that would fail. Fix: add `--no-renames`; test in
-`tools/tests/test_ci_build_needed.py`. Related, in the workflow: the `changes` step pipes the script through `tee` with no
-`pipefail`, so if the script crashes the outputs are empty and every build job is skipped silently; use `shell: bash`
-and make the job conditions `!= 'false'` so an empty output builds.
 
 #### Lab scripts put passwords on command lines
 

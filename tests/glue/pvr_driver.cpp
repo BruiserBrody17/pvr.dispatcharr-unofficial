@@ -1560,6 +1560,34 @@ int main(int argc, char** argv)
     if (!g_logGateHit)
       FAIL("the background thread did not retry the access level after the wake");
   }
+  else if (what == "epg_redirect")
+  {
+    // The guide download is the one request curl follows redirects for itself (it carries no credentials). Run with
+    // CTL="epg_redirect=loop" (a redirect to itself, forever) or "epg_redirect=ftp" (a redirect to an FTP URL): the
+    // first must stop after five redirects, the second must never connect (before the limits, curl's default of 30
+    // and its default protocols, FTP among them). Waits for the background thread's first guide fetch, which the
+    // failure then holds off for a minute, so every request counted is that one fetch's.
+    auto stat = [](const char* key)
+    {
+      const std::string stats = http("/__stats");
+      const std::string needle = std::string("\"") + key + "\": ";
+      const size_t at = stats.find(needle);
+      return at == std::string::npos ? 0 : atoi(stats.c_str() + at + needle.size());
+    };
+    long began = ms();
+    while (ms() - began < 20000 && stat("GET /output/epg") < 1)
+      sleep_ms(100);
+    sleep_ms(3000);
+    const int requests = stat("GET /output/epg");
+    const int ftpConnects = stat("ftp_trap_connects");
+    INFO("guide requests %d, connections to the FTP target %d", requests, ftpConnects);
+    if (requests < 1)
+      FAIL("the background thread never fetched the guide");
+    if (requests > 6)
+      FAIL("%d guide requests for one fetch: the redirects were not limited to five", requests);
+    if (ftpConnects != 0)
+      FAIL("the guide fetch followed a redirect to FTP (%d connection(s))", ftpConnects);
+  }
   else if (what == "dtor_busy")
   {
     // destroy while Kodi-facing calls are idle but the addon's own threads are mid-fetch (slow server)

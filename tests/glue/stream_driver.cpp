@@ -977,6 +977,51 @@ static void ip_cascade(DispatcharrClient& cl)
   expect_all_closed(cl);
 }
 
+static long live_manifest_requests()
+{
+  const auto stats = nlohmann::json::parse(http("/__stats"), nullptr, false);
+  return stats.is_object() && stats.contains("action get_live_manifest") ? stats["action get_live_manifest"].get<long>()
+                                                                         : 0;
+}
+
+// Kodi polls GetStreamTimes() (the length and the duration, back to back) for as long as it shows a stream, paused or
+// not. A failed refresh must arm the 500 ms throttle as a successful one does: before, it did not, and a server
+// answering 429 got about three times the healthy request rate (measured live on Kodi 22, docs/CLOSED_ITEMS.md). Polls
+// every 20 ms for 3 s while healthy and then while the manifest answers 429; either phase may cost at most one request
+// per 500 ms plus one.
+static void live_refresh_throttle(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  constexpr long kPhaseMs = 3000;
+  const long kMaxRequests = kPhaseMs / 500 + 1;
+  auto poll = [&](const char* label)
+  {
+    const long before = live_manifest_requests();
+    const long t0 = ms();
+    while (ms() - t0 < kPhaseMs)
+    {
+      cl.GetLiveTimeshiftStreamLength();
+      cl.GetLiveTimeshiftStreamDurationMs();
+      sleep_ms(20);
+    }
+    const long n = live_manifest_requests() - before;
+    INFO("%s: %ld manifest requests in %ld ms of polling", label, n, kPhaseMs);
+    if (n > kMaxRequests)
+      FAIL("%s: %ld manifest requests in %ld ms, more than the throttle allows (%ld)", label, n, kPhaseMs,
+           kMaxRequests);
+  };
+  poll("healthy");
+  ctl("manifest_status=429");
+  poll("answering 429");
+  ctl("manifest_status=0");
+  cl.CloseLiveTimeshiftStream();
+}
+
 // An API that answers every request slowly (above the 5 s bound steady-state refreshes get) must still be able to
 // start a stream: Open's cold-start wait uses the configured timeout (found by the live check of the fifteenth
 // hardening sweep: with 6 s of latency every cold-start refresh timed out and Open failed after about 165 s).
@@ -1774,6 +1819,8 @@ int main(int argc, char** argv)
       silent_open(*cl, true);
     else if (what == "live_fileserver_unreachable")
       live_fileserver_unreachable(*cl);
+    else if (what == "live_refresh_throttle")
+      live_refresh_throttle(*cl);
     else if (what == "live_slow_open")
       live_slow_open(*cl);
     else if (what == "live_late_start")

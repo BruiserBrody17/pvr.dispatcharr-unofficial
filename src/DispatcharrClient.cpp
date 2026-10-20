@@ -869,7 +869,16 @@ bool DispatcharrClient::GetXmlTvGuide(std::string& xmlOut, std::string& error, l
   // timeout, which overrides the standard one.
   ApplyStandardCurlOptions(curl, GetCurlShare());
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds * 4));
+  // Followed by curl, unlike the authenticated requests (RedirectPolicy.h): this one carries no credentials. Still
+  // bounded, and kept to HTTP(S): with no limit a redirect loop was followed until the timeout, and a redirect could
+  // send the request to any scheme the linked curl speaks (FTP by default).
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+#if LIBCURL_VERSION_NUM >= 0x075500
+  curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+  curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+#endif
   CURLcode res = curl_easy_perform(curl);
   long httpCode = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
@@ -2736,9 +2745,8 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   // Nothing left to ask once the server has confirmed this recording's
   // content gone: every request would only be answered with another 404
   // (found live: ~7.8/sec for as long as Kodi kept the stream open, ~100s).
-  // Checked before anything else, including the throttle -- the failure
-  // paths below never update lastManifestFetch, so the throttle alone never
-  // slowed this down.
+  // Checked before anything else, including the throttle, which would still
+  // let one request through every 500 ms.
   if (st.contentGone)
   {
     error = "this recording's HLS content is gone on the server";
@@ -2772,6 +2780,9 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   // own comment.
   if (ShouldThrottleRefresh(force, st.lastManifestFetch, now, kMinRefreshInterval))
     return true;
+  // On the attempt, as in RefreshLiveManifest(): a 5xx or 429 on the lookup or the playlist would otherwise let every
+  // poll through while the server is failing. contentGone above still ends a recording that is gone for good.
+  st.lastManifestFetch = now;
 
   // Another open stream of this recording may have fetched its lookup and playlist a moment ago (Kodi 22 can hold two
   // open): use those instead of asking the server again -- see dispatcharr::CanReuseSharedInProgressManifest().
@@ -3208,8 +3219,6 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
             totalSec, shared ? "lookup and playlist from another stream" : "own lookup and playlist", fetchPlaylistSec,
             newSegmentsProbed, probeSegmentsSec, newSegmentsProbeFailed, sizedFromCache, getRecordingsSec,
             static_cast<long long>(st.totalBytes), static_cast<long long>(st.totalDurationMs), st.finished ? 1 : 0);
-
-  st.lastManifestFetch = now;
   return true;
 }
 
@@ -3677,12 +3686,11 @@ int DispatcharrClient::ReadInProgressRecordingStreamImpl(InProgressRecordingStre
         // gave up on it). A refresh asks the server directly and answers
         // definitively when it is gone; anything it can't explain still
         // fails the read the way it always did. Deliberately not forced:
-        // an unexplained 404 (the playlist still fine) makes the refresh
-        // succeed, which arms its own throttle, so Kodi's near-immediate
-        // retries of the failed read don't multiply into a lookup and a
-        // playlist fetch per retry on top of the segment fetch -- while the
-        // gone case, whose refresh fails and so never arms it, is checked
-        // on every attempt until it is confirmed.
+        // every refresh attempt arms the 500 ms throttle, so Kodi's
+        // near-immediate retries of the failed read don't multiply into a
+        // lookup and a playlist fetch per retry on top of the segment fetch.
+        // The gone case needs no retry here: one refresh that sees both the
+        // lookup and the playlist missing confirms it.
         if (outcome == InProgressSegmentOutcome::kSegmentNotFound)
         {
           std::string refreshError;
@@ -4309,6 +4317,11 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
     constexpr auto kMinRefreshInterval = std::chrono::milliseconds(500);
     if (ShouldThrottleRefresh(force, m_liveTimeshiftStream.lastManifestFetch, now, kMinRefreshInterval))
       return true;
+    // Stamped on the attempt, not on success: a failed fetch (a 429, a timeout) used to leave it untouched, so every
+    // GetStreamTimes() poll went to the server while it was failing -- measured live at three times the healthy rate
+    // against a proxy answering 429 (docs/CLOSED_ITEMS.md, "A failed live-manifest refresh skips the 500 ms
+    // throttle"). A reader waiting at the tail still forces its refreshes through.
+    m_liveTimeshiftStream.lastManifestFetch = now;
 
     session = m_liveSession;
     channelUuid = m_liveTimeshiftStream.channelUuid;
@@ -4415,8 +4428,6 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
   // index or pointer into it across an unlock (the read path copies a segment's
   // fields out before it releases the lock).
   PruneRolledOffLiveSegments(m_liveTimeshiftStream.segments, m_liveTimeshiftStream.oldestAvailableSequence);
-
-  m_liveTimeshiftStream.lastManifestFetch = now;
   return true;
 }
 

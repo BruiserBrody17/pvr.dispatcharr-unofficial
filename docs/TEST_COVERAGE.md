@@ -2310,6 +2310,17 @@ report into a list nobody joined again, a joinable `std::thread` destroyed with 
 `dtor_late_report` (in CI), which parks that thread with the stub's log gate until the drain is done; it ended in
 `std::terminate` on the old code.
 
+The manifest refresh throttle is stamped on every attempt, not on success (2026-10-19, `docs/CLOSED_ITEMS.md`'s "A
+failed live-manifest refresh skips the 500 ms throttle"), in both `RefreshLiveManifest()` and
+`RefreshInProgressRecordingManifest()`. Member state, so not a unit test: the glue scenario `live_refresh_throttle` (in
+CI) polls the length and the duration as `GetStreamTimes()` does and counts `get_live_manifest` calls on the fake, with
+it answering 429 (280 in 3 s before the fix, 6 after). The guide download's redirect limits (same day, "The XMLTV
+download follows redirects with no limit or protocol restriction") are pinned the same way by `epg_redirect`, run once
+with a redirect loop and once with a redirect to an `ftp://` listener. `SyncDvrPaddingFromDispatcharr()`'s second
+`IsSafeToSyncPaddingFromServer()` check after its writes, and `PersistApiKeyIfChanged()` skipping unchanged owner
+stamps, are Kodi-settings glue and stay untested ("Two small unsynchronised spots in `PVRDispatcharr`",
+"`PersistApiKeyIfChanged()` writes three settings on the stream read thread").
+
 ### Test-extraction passes and hardening sweeps
 
 A test-extraction pass on 2026-10-03 (a pure refactor, no behaviour change;
@@ -2953,6 +2964,14 @@ repository zip under Kodi's HTTP-directory rules. It also checks the refusals (v
 contradicting platform, unknown asset, duplicate platform, bad tag), that a failed run leaves the old index, that one
 line's rewrite leaves the other alone, art copying, and that the repository zip is reproducible and passes
 `check_release_zip.py`. The behaviour in Kodi itself was confirmed live (that section of `docs/BUILDING.md`).
+
+2026-10-19: `tools/tests/test_scrub_zip_paths.py`'s `test_a_string_ending_at_the_prefix_keeps_nothing_of_it` pins that a
+binary string ending at the prefix (`/home/<user>` with nothing after it, or no `/` after it) keeps nothing of the
+user name, which the keep-the-last-component rule used to keep. `tools/tests/test_ci_build_needed.py` renames a file out
+of a build path in a real repository (rename detection had listed only the new path and skipped the build) and pins the
+workflow's `changes` step to `shell: bash` (pipefail) with the jobs building on an empty answer. CI's `unit-tests-32bit`
+job now builds under UBSan, so a 32-bit-only overflow fails as the overflow, not only through a wrong answer a test
+happens to check (`docs/CLOSED_ITEMS.md`, "The 32-bit unit tests run without UBSan").
 
 2026-10-19: `tools/tests/test_check_release_zip.py` covers the gate's hardening from the 2026-10-18 audit
 (`docs/CLOSED_ITEMS.md`'s four release-gate entries of that date): one timestamp per zip and one across the addon zips;
