@@ -53,7 +53,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`5b148f6`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`c08f1c4`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -73,10 +73,11 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `639ae6e`, `d70d857`, `c52f392` | already on `Piers` as `984df9c`, `1c7d817`, `d9a3e74` | Ports from `Piers`; see the table below. |
 | `1542cd3` | not ported: `Piers` closed it on 2026-10-15 | `Omega`'s copy of the Kodi 22 support item, still open there after `Piers` resolved it, moved to `Omega`'s `CLOSED_ITEMS.md` with a pointer to `Piers`'s entry and this file. |
 | `426ebd5`, `5b148f6` | already on `Piers` as `056ba0b`, `7219c8e` | Ports from `Piers`; see the table below. |
+| `c08f1c4` | already on `Piers` as `59a13fc` | The live check of the throttle and guide redirect fixes; see the table below. |
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`7219c8e`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`59a13fc`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -94,6 +95,8 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `b1ab0ed` | not yet | The Kodi repository; ported after its first publish, step (5) of `OPEN_ITEMS.md`'s "The Kodi repository is built but not published". |
 | `056ba0b` | `426ebd5` (`git cherry-pick -x`; one test and the running docs by hand) | The release-gate hardening. One test named `Piers`'s `coreelec-aarch64` zip; it now takes the CoreELEC name from the gate's own list on both branches. The hardened gate passes over the shipped 0.13.0 release. |
 | `7219c8e` | `5b148f6` (`git cherry-pick -x`; by hand where noted) | The manifest throttle and six audit quick wins. `Omega`'s single in-progress stream state took the attempt stamp by hand; `m_apiKeyOwnershipVerified` stays a plain `bool` there (Kodi 21 opens one recorded stream at a time); the glue harness took only the new scenarios, with an `nlohmann/json.hpp` include its stream driver lacked. The new scenarios give the same numbers on both. |
+| `5352d79` | already in `426ebd5` | Its one code change, the CoreELEC name in a release-contents test, was made the same way in the port; the rest is this file. |
+| `59a13fc` | `c08f1c4` (by hand, the same text) | The live check of the throttle and guide redirect fixes on Kodi 22.0 RC1 and Kodi 21.3, and the open item for a fatal live stream that leaves Kodi buffering, which applies to both. |
 
 ## Dependencies that differ by Kodi release
 
