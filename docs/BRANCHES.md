@@ -100,6 +100,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `5352d79` | already in `426ebd5` | Its one code change, the CoreELEC name in a release-contents test, was made the same way in the port; the rest is this file. |
 | `59a13fc` | `c08f1c4` (by hand, the same text) | The live check of the throttle and guide redirect fixes on Kodi 22.0 RC1 and Kodi 21.3, and the open item for a fatal live stream that leaves Kodi buffering, which applies to both. |
 | `b53484f` | `955c4ae` (`git cherry-pick -x`; the running counts by hand), then `5174a8c` | A fatal live stream answers 0 and tells the viewer, so Kodi ends playback; the same reader code on both. Confirmed live on Kodi 21.3 as well. |
+| `46598ae` | `aded040` (by hand, the same results) | The live check of three of `7219c8e`'s fixes: owner stamps written only when they change (Kodi 21.3 and 22.0 RC1), the padding re-check (throwaway `Omega` builds on Kodi 21.3) and the Windows build's older-curl redirect options (`Omega`'s Windows build on Kodi 21.3). |
 
 ## Dependencies that differ by Kodi release
 
