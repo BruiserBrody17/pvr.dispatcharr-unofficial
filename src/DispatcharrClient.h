@@ -1597,7 +1597,13 @@ private:
     // to a user, playback just froze indefinitely with no explanation.
     // Checked up front so a confirmed-dead buffer short-circuits
     // immediately, without paying for another doomed network round trip.
+    // A fatal stream answers every read with 0, the only answer that ends a PVR channel in Kodi: its
+    // NextPVRStream() asks the player to retry a read error (-1) forever unless the stream is at EOF, which is
+    // what the -1 this used to answer did (docs/CLOSED_ITEMS.md, "A live stream marked fatal leaves Kodi
+    // buffering instead of ending").
     bool fatal = false;
+    // The viewer has been told the stream is dead (once per stream; the file-server notice counts).
+    bool fatalNotified = false;
     // This Open() session's own running count of segment-body fetches that
     // have failed with an HTTP status other than 200/206/404 in a row --
     // reset to 0 by any 200/206/404 response. See
@@ -1667,9 +1673,11 @@ private:
   // (SegmentFetchFailure.h) for the full incident and design -- this owns
   // the RefreshLiveManifest() call and the bounded-retry-vs-fatal
   // decision, returning the value ReadLiveTimeshiftStream() itself should
-  // return (kRetrySegmentFetch to retry within the same call, -1 once given up and
+  // return (kRetrySegmentFetch to retry within the same call, 0 once given up and
   // m_liveTimeshiftStream.fatal is set).
   int HandleLiveTimeshiftSegmentFetchFailure();
+  // Tells the viewer once that the live stream is dead, after a read answered 0 for a fatal stream.
+  void NotifyLiveStreamFatalOnce();
   // One pass of ReadLiveTimeshiftStream(); returns kRetrySegmentFetch when a segment fetch failed and the
   // caller should try again.
   int ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int size);

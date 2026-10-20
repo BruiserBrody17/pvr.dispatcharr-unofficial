@@ -4562,8 +4562,15 @@ int DispatcharrClient::HandleLiveTimeshiftSegmentFetchFailure()
     // A file server that stopped answering mid-session (the container restarted without the port, a firewall rule)
     // looks the same to the viewer as any dead stream; name it when that is what it is.
     if (!probeUrl.empty() && !ProbeTimeshiftFileServer(probeUrl))
+    {
+      {
+        std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
+        if (m_liveSession == session)
+          m_liveTimeshiftStream.fatalNotified = true;
+      }
       kodi::QueueNotification(QUEUE_ERROR, "", BuildTimeshiftFileServerUnreachableMessage(probePort));
-    return -1;
+    }
+    return 0;
   }
 
   // Bounded retry with a growing delay, then another try inside the same Read() call -- see
@@ -4572,6 +4579,21 @@ int DispatcharrClient::HandleLiveTimeshiftSegmentFetchFailure()
   // Kodi treats the stream as ended, however long the outage really is.
   std::this_thread::sleep_for(std::chrono::milliseconds(SegmentFetchRetryDelayMs(failures)));
   return kRetrySegmentFetch;
+}
+
+void DispatcharrClient::NotifyLiveStreamFatalOnce()
+{
+  {
+    std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
+    if (!m_liveTimeshiftStream.open || !m_liveTimeshiftStream.fatal || m_liveTimeshiftStream.fatalNotified)
+      return;
+    m_liveTimeshiftStream.fatalNotified = true;
+  }
+  // Kodi ends the stream on this 0 and goes back to where the viewer started it; without a word the viewer cannot
+  // tell a dead buffer from a channel that simply stopped.
+  kodi::QueueNotification(QUEUE_ERROR, "",
+                          "This channel's timeshift buffer can't be read from Dispatcharr any more. Play the channel "
+                          "again to restart it.");
 }
 
 int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int size)
@@ -4588,7 +4610,11 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   {
     const int result = ReadLiveTimeshiftStreamOnce(buffer, size);
     if (result != kRetrySegmentFetch)
+    {
+      if (result == 0)
+        NotifyLiveStreamFatalOnce();
       return result;
+    }
     const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
     if (m_abortRequests || !ShouldKeepRetryingTransientRead(waited, kOutageReadBudget))
       return 0;
@@ -4606,9 +4632,9 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
   auto stillSameStream = [&]() { return m_liveTimeshiftStream.open && m_liveSession == session; };
   // See LiveTimeshiftStreamState::fatal's own comment -- a confirmed-dead
   // buffer short-circuits here instead of paying for another doomed
-  // network round trip on every single Read() call.
+  // network round trip on every single Read() call, and answers 0 so Kodi ends the stream.
   if (m_liveTimeshiftStream.fatal)
-    return -1;
+    return 0;
 
   // A position behind the oldest segment the plugin still has (a long pause,
   // or playback simply left far behind live, while its rolling buffer moved
@@ -4796,7 +4822,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
       }
     }
     if (m_liveTimeshiftStream.fatal)
-      return -1;
+      return 0; // see LiveTimeshiftStreamState::fatal: only 0 ends a PVR channel in Kodi
     if (IsAtEndedTail(m_liveTimeshiftStream.ended, m_liveTimeshiftStream.position, m_liveTimeshiftStream.totalBytes))
       return 0; // learned during the loop above; EOF
     bool caughtUp = m_liveTimeshiftStream.position < m_liveTimeshiftStream.totalBytes;
@@ -4993,7 +5019,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
               "drops it?); marking the stream fatal rather than play the wrong bytes (url=%s)",
               static_cast<long long>(offsetInSegment), redactedUrl.c_str());
     m_liveTimeshiftStream.fatal = true;
-    return -1;
+    return 0;
   }
   if (outcome == LiveSegmentOutcome::kUnexpectedStatus)
   {
@@ -5039,7 +5065,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
               segFilename.c_str(), static_cast<long long>(segSequence), static_cast<long long>(serverReportedTotal),
               static_cast<long long>(segByteSize));
     m_liveTimeshiftStream.fatal = true;
-    return -1;
+    return 0;
   }
 
   // A seek (or a close) that landed while the state lock was released for the transfer: the bytes in the caller's

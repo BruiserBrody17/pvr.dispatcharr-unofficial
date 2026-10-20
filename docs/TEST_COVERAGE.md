@@ -2286,6 +2286,13 @@ with a redirect loop and once with a redirect to an `ftp://` listener. `SyncDvrP
 stamps, are Kodi-settings glue and stay untested ("An unsynchronised spot in `PVRDispatcharr`'s padding sync",
 "`PersistApiKeyIfChanged()` writes three settings on the stream read thread").
 
+A fatal live stream answers 0, not -1 (2026-10-20, `docs/CLOSED_ITEMS.md`'s "A live stream marked fatal leaves Kodi
+buffering instead of ending"): Kodi retries a channel's -1 until end of file, so only a 0 ends it. Member state and a
+Kodi notification, so not a unit test: the glue scenario `live_fatal_ends` (in CI, `tail` and `behind`) turns the fake's
+manifest fatal with the reader at the live edge, or behind it with its next segment answering 403, and requires a 0
+within 5 s, a 0 at once on every later read, and exactly one notification about the timeshift buffer (the stream
+harness's stub now counts notifications, as the PVR one does).
+
 ### Test-extraction passes and hardening sweeps
 
 A test-extraction pass on 2026-10-03 (a pure refactor, no behaviour change;

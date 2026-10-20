@@ -62,6 +62,9 @@ sides) and make sure the Kodi device can reach it. To check by hand from the Kod
 - **Server-side mode:** if a channel's stream stops sending data without closing, Dispatcharr switches to the channel's
   next stream after about a minute. The addon waits up to 70 seconds for that, so the picture freezes and then resumes by
   itself. If the channel has no other stream, playback ends after about a minute. Stop works throughout.
+- **Server-side mode, "This channel's timeshift buffer can't be read from Dispatcharr any more":** the server ended the
+  channel's buffer, most often because it stopped hearing from Kodi for 30 seconds (the server was busy or unreachable
+  while playback was paused). Playback ends with that message; play the channel again to start a new buffer.
 - **Off and Local mode:** Kodi's own player decides how long to wait.
 - **Stalls that come from the provider** (a CDN that pauses, a timestamp break) can't be repaired by a client. If the
   addon's log shows nothing wrong and another player stalls the same way, look at the server. Dispatcharr's plugin hub

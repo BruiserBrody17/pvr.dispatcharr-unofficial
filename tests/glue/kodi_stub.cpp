@@ -3,6 +3,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
+#include <mutex>
+#include <string>
 AddonGlobalInterface* kodi::addon::CPrivateBase::m_interface = nullptr;
 static void my_log(const KODI_ADDON_BACKEND_HDL, const int lvl, const char* msg)
 {
@@ -13,9 +16,18 @@ static void my_free(const KODI_ADDON_BACKEND_HDL, char* s)
 {
   free(s);
 }
+// Read by stream_driver.cpp's scenarios that check what the viewer is told.
+std::atomic<long> g_notifyCount{0};
+std::mutex g_notifyMutex;
+std::string g_lastNotify;
 static bool my_notify(void*, int, const char* h, const char* m, const char*, unsigned int, bool, unsigned int)
 {
   fprintf(stderr, "[notify] %s: %s\n", h, m);
+  {
+    std::lock_guard<std::mutex> lock(g_notifyMutex);
+    g_lastNotify = m ? m : "";
+  }
+  g_notifyCount++;
   return true;
 }
 static AddonToKodiFuncTable_kodi g_kodi;

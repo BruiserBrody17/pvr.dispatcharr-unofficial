@@ -3393,19 +3393,22 @@ timeout (`WebSocketClient` aside). A manifest refresh made while a stream is pla
 (`ShortRequestTimeoutMs()`: the setting divided by six, clamped to 5 to 30 s, so 5 s by default). `ReadLiveStream()`,
 `SeekLiveStream()` and `ReadRecordedStream()` in `PVRDispatcharr.cpp` hand the client's return value to Kodi unchanged and
 add no timing of their own. In the tables, **0** is the end-of-stream answer (Kodi treats a few in quick succession as the
-stream ended), **-1** is a read error that Kodi retries at once and eventually gives up on.
+stream ended), **-1** is a read error. Kodi ends a recording after one (`CInputStreamPVRRecording::NextPVRStream()`
+answers `NEXTSTREAM_NONE`), but retries a live channel's read every 100 ms until the stream reaches end of file
+(`CInputStreamPVRChannel::NextPVRStream()` answers `NEXTSTREAM_RETRY` until then, the same in Kodi 21 and 22), so on a
+channel only a 0 ends playback; a -1 there means "nothing yet, ask again".
 
 ### Live timeshift (server-side mode), `ReadLiveTimeshiftStream()`
 
 | Stalled means | Tolerated for | Answer |
 |---|---|---|
 | A segment fetch fails (server unreachable, gateway error, 401/403/5xx) | Retried inside one `Read()` with a delay doubling from 250 ms to 2 s, for up to 25 s (`kOutageReadBudget`); the failure streak carries across calls | 0 when the 25 s is used up |
-| The same failures keep going | Four in a row and 30 s since the first (`kMaxConsecutiveSegmentFetchFailures`, `kMinSegmentFetchFailureStreak`), or at once when a manifest refresh reports the buffer gone | -1 on this and every later call, stream marked fatal, logged at error level |
+| The same failures keep going | Four in a row and 30 s since the first (`kMaxConsecutiveSegmentFetchFailures`, `kMinSegmentFetchFailureStreak`), or at once when a manifest refresh reports the buffer gone | 0 on this and every later call, stream marked fatal, logged at error level, the viewer told once (-1 until 2026-10-20, which left Kodi buffering) |
 | Reader at the live tail, no new segment yet (normal for up to a segment's length) | One-second slices (`kLiveTailWaitSliceMs`) so a close can land between reads; budget 3 times the estimated segment length (mean of the last five, 6 s with no samples, floor 1.5 s, cap 60 s), counted across the slices of one episode at one position, **or 70 s (`kLiveStallWaitBudgetMs`) while the plugin keeps answering** (the last forced refresh got a manifest, so the ffmpeg is alive and a silent stall may be healed by Dispatcharr switching streams; since 2026-10-13, see "Upstream failover on a buffered channel: measured"), with the refresh pause slowing from 250 ms to one per slice once the ordinary budget is spent; a call is also capped at twice the budget's own sleep time, at most 120 s | -1 per slice, 0 once the budget is used up, at once when the plugin reports the ffmpeg ended, and after the ordinary budget when a refresh fails; a seek probe gets one attempt, then 0 |
 | The buffer's ffmpeg has exited | Not a wait: the reader keeps playing what is on disk | 0 at the tail (`IsAtEndedTail`) |
-| A manifest refresh during the wait says the buffer is dead | - | -1, fatal |
+| A manifest refresh during the wait says the buffer is dead | - | 0, fatal |
 | The segment was recycled, or the read sits in a gap | - | 0 |
-| The segment server ignores a range or sends the wrong size | - | -1, fatal |
+| The segment server ignores a range or sends the wrong size | - | 0, fatal |
 
 A sustained live outage therefore ends in two steps: the first `Read()` returns 0 after about 25 s, and if Kodi calls
 again the failure streak passes 30 s within that call and the stream is marked fatal. Measured live (`docs/CLOSED_ITEMS.md`,

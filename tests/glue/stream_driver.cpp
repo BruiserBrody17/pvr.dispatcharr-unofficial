@@ -2,6 +2,7 @@
 // in-progress-recording paths against fake_dispatcharr.py, from several threads, verifying every byte.
 #include "DispatcharrClient.h"
 #include "RequestTimeout.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -532,6 +533,91 @@ static void live_tail_ended(DispatcharrClient& cl)
     FAIL("the stream returned 0 (after %ld ms at the tail) before the buffer was marked ended", zeroAt - tailStart);
   else if (zeroAt - endedSetAt > 4000)
     FAIL("the wait ran %ld ms past the buffer being marked ended; it must stop at once", zeroAt - endedSetAt);
+}
+
+extern std::atomic<long> g_notifyCount;
+extern std::mutex g_notifyMutex;
+extern std::string g_lastNotify;
+
+// A buffer the server has given up on (the plugin answers `fatal`) must end the stream: Kodi ends a PVR channel only
+// on a 0, and treats -1 as a read to try again, so a fatal stream that answered -1 left the player buffering with no
+// message until someone stopped it (seen live on Kodi 22.0 RC1, docs/CLOSED_ITEMS.md). `tail`: the reader is waiting
+// at the live edge when the manifest turns fatal. `behind`: the reader is behind the edge, its next segment answers
+// 403 and the manifest says the buffer is gone, as when the server reaps a buffer during a long pause. Either way the
+// read must answer 0 within a few seconds, every later read must answer 0 at once, and the viewer is told once.
+static void live_fatal_ends(DispatcharrClient& cl, const std::string& where)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  const long notifiesBefore = g_notifyCount;
+  std::vector<uint8_t> buf(1 << 20);
+  long fatalAt = -1;
+  if (where == "tail")
+  {
+    ctl("live_freeze=1");
+    const long start = ms();
+    while (ms() - start < 30000)
+    {
+      if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) < 0)
+        break; // parked at the tail
+    }
+    ctl("live_fatal=1");
+  }
+  else
+  {
+    ctl("seg_status=403");
+    ctl("live_fatal=1");
+  }
+  fatalAt = ms();
+  int n = 1;
+  long zeroAt = -1;
+  while (ms() - fatalAt < 30000)
+  {
+    n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n == 0)
+    {
+      zeroAt = ms();
+      break;
+    }
+  }
+  int later = 0;
+  long laterMs = 0;
+  for (int i = 0; i < 5 && zeroAt >= 0; ++i)
+  {
+    const long t0 = ms();
+    later = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    laterMs = std::max(laterMs, ms() - t0);
+    if (later != 0)
+      break;
+  }
+  ctl("live_fatal=0");
+  ctl("seg_status=0");
+  ctl("live_freeze=0");
+  const long notified = g_notifyCount - notifiesBefore;
+  std::string message;
+  {
+    std::lock_guard<std::mutex> lock(g_notifyMutex);
+    message = g_lastNotify;
+  }
+  INFO("fatal (%s): first 0 after %ld ms, later reads %d (slowest %ld ms), %ld notification(s): %s", where.c_str(),
+       zeroAt < 0 ? -1 : zeroAt - fatalAt, later, laterMs, notified, message.c_str());
+  if (zeroAt < 0)
+    FAIL("a fatal stream was not ended within 30 s (last read answered %d)", n);
+  else if (zeroAt - fatalAt > 5000)
+    FAIL("a fatal stream took %ld ms to end", zeroAt - fatalAt);
+  if (zeroAt >= 0 && later != 0)
+    FAIL("a read after the stream ended answered %d, not 0", later);
+  if (laterMs > 200)
+    FAIL("a read after the stream ended took %ld ms", laterMs);
+  if (notified != 1)
+    FAIL("the viewer was told %ld times, expected once", notified);
+  else if (message.find("timeshift buffer") == std::string::npos)
+    FAIL("the notification did not say the timeshift buffer is gone: %s", message.c_str());
+  cl.CloseLiveTimeshiftStream();
 }
 
 // The end of the stall budget itself, by hand because it runs about 70 s: a quiet buffer on an answering plugin is
@@ -1284,6 +1370,8 @@ int main(int argc, char** argv)
       live_tail_close(*cl);
     else if (what == "live_tail_bound")
       live_tail_bound(*cl);
+    else if (what == "live_fatal_ends")
+      live_fatal_ends(*cl, arg ? arg : "tail");
     else if (what == "live_tail_ended")
       live_tail_ended(*cl);
     else if (what == "live_tail_giveup")
