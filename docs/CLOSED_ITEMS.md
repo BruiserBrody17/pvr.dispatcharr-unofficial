@@ -18,7 +18,7 @@ in-progress recording path met the same trap and guards against it (`contentGone
 429) so the throttle covers it, keeping `force` refreshes from `ReadLiveTimeshiftStream()` at the tail as they are. The
 attempt-time choice is testable beside `ShouldThrottleRefresh()`.
 
-**Fixed 2026-10-19, confirmed with a new glue scenario; not re-measured on a real Kodi.** Both refresh paths now stamp
+**Fixed 2026-10-19, confirmed with a new glue scenario and then live (below).** Both refresh paths now stamp
 `lastManifestFetch` when an attempt starts, not when it succeeds, so `ShouldThrottleRefresh()` covers a failed fetch as
 well; a `force` refresh (a reader waiting at the tail, the cold-start loops) still goes through. The in-progress path had
 the same gap for anything but the 404 that `contentGone` catches (a 5xx or 429 on the lookup or the playlist), so it got
@@ -31,6 +31,27 @@ the lookup and the playlist gone confirms `contentGone`. **Confirmed:** the glue
 CI) polls the length and the duration every 20 ms for 3 s, healthy and then with the fake answering 429 to
 `get_live_manifest`, and allows at most seven requests per phase: 5 healthy and 280 under 429 on the old code, 5 and 6
 with the fix.
+
+**Confirmed live 2026-10-20 on both branches.** A Linux test machine ran Kodi 22.0 RC1 with `Piers`'s CI build of
+`7219c8e` and Kodi 21.3 with `Omega`'s of `5b148f6`, each beside its branch's build from before the fix (`7abb9d9`,
+`14db1cf`: the same addon source as the fix's parent), in Server-side mode. A proxy on the Kodi machine passed everything
+through to the lab's Dispatcharr, counted the requests, and answered 429 to `get_live_manifest` for 20 s at a time while
+a live channel played, paused and resumed. Manifest requests a second:
+
+| Phase | Kodi 22, before | Kodi 22, after | Kodi 21, before | Kodi 21, after |
+|---|---|---|---|---|
+| Paused, healthy | 1.58 | 1.58 | 1.55 | 1.58 |
+| Paused, 429 for 20 s | 4.72 | 1.63 | 4.73 | 1.62 |
+| Playing behind the live edge, healthy | 1.58 | 1.58 | 1.58 | 1.58 |
+| Playing behind the live edge, 429 for 20 s | 4.78 | 1.63 | 4.83 | 1.63 |
+
+Playback carried on through every window and after it, on every build. Two things the check also showed, neither
+changed by the fix: a reader waiting at the live edge forces its refreshes as intended (one fixed-build run on Kodi 21
+whose player sat at the edge for its first minute made 4 to 5 requests a second with a healthy server; a repeat that did
+not sit there made 1.58), and a 429 window longer than the plugin's idle timeout (30 s by default) ends the buffer on the
+server, because the plugin takes the viewer's manifest calls as its liveness and the proxy kept them from it. A first
+60 s window did that on the before build; on resuming, the stream went fatal and Kodi then sat buffering until it was
+stopped (`OPEN_ITEMS.md`, "A live stream marked fatal leaves Kodi buffering instead of ending").
 
 #### `PersistApiKeyIfChanged()` writes three settings on the stream read thread
 
@@ -55,6 +76,14 @@ Windows build's 7.67.0). **Confirmed:** the glue scenario `epg_redirect` (in CI)
 redirecting to itself and, separately, to an `ftp://` URL on a listener that counts connections. On the old code the
 first fetch made 31 requests (curl 8.5's own default limit of 30) and the second connected to the FTP listener; with the
 fix, 6 requests and no connection.
+
+**Confirmed live 2026-10-20 on both branches,** with the same builds, machine and proxy as the throttle entry above:
+the proxy answered the guide request with a 302 to itself, to an `ftp://` URL on a listener that counted connections,
+or once to the real guide. Kodi 22.0 RC1 with the before build followed the loop 31 times in 30 ms and connected to the
+FTP listener; with the fix, Kodi 22.0 RC1 and Kodi 21.3 both stopped the loop at 6 requests ("Number of redirects hit
+maximum amount" in the log), refused the FTP redirect ("Unsupported protocol") with no connection, and loaded the full
+guide through the single redirect. The Windows build's older-curl branch of the protocol option is compiled in
+CI but was not run live.
 
 #### Two small unsynchronised spots in `PVRDispatcharr`
 
