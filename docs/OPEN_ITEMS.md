@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**11 open, 336 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**11 open, 338 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers` and held here too; one, the manifest throttle, was fixed the same day. One was noticed while recording the 2026-10-20 live check of three more audit fixes. The other 7 come
 from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the same day (all 21 held here;
@@ -23,7 +23,7 @@ trigger is not demonstrated) or *low confidence*.
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 1 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 294 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 35 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open

@@ -7409,6 +7409,35 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 ### Closed without a change (refuted, explained or harmless)
 
+#### The live timeshift access token lands in kodi.log from `ReadLiveTimeshiftStream`
+
+**Raised 2026-10-20 by an outside review of the code and commits; not reproduced, closed without a change the same
+day.** The finding said the per-buffer access token, which lets anyone holding it read that buffer's segments from the
+plugin's file server, is written to `kodi.log` by `ReadLiveTimeshiftStream`. **By reading:** the token goes into the
+segment URL only for the request itself. Every log line in the read path prints `redactedUrl`, which ends
+`?token=REDACTED`, and has done so in every release tag (0.12.0, 0.13.0, 0.14.0-Piers). The plugin's response messages
+never contain the token. The playlist URL that carries it (`BuildTimeshiftPlaylistUrl()`) is never logged, and the
+plugin's own file server redacts the query in its access log (`_redact_token_query_param()`). In-progress recordings
+send their key as an `X-API-Key` header, so their logged segment URLs hold no credentials. **Live:** a Linux test
+machine ran Kodi 21.3 in Server-side mode with debug logging on, once with the shipped 0.12.0 and once with `Omega`'s current
+build, and played a live channel with a pause, a resume and a seek back. In `kodi.log` the segment fetches
+appeared 151 and 162 times, every one with `token=REDACTED`, and no string of the token's shape (43 URL-safe base64
+characters) and no JWT appeared anywhere, in the addon's lines or Kodi's own. The error paths (a failed segment fetch,
+a range ignored, an unexpected status) were not triggered, and print the same `redactedUrl`. Reopen with the exact log
+line and the addon version if it is seen again.
+
+#### `timeshift_buffer` mints a JWT for whatever `params["username"]` names
+
+**Raised 2026-10-20 by an outside review ("not a big issue"); closed without a change the same day, harmless.**
+`_stream_attribution_headers()` creates an access token for the account `start_buffer`'s `username` parameter names,
+without checking that the caller is that account. The check is not possible here: the plugin `run/` endpoint is
+admin-only (`IsAdmin` for `POST`), and the context Dispatcharr gives a plugin holds only `settings`, `logger` and
+`actions`, with no request user (`docs/DISPATCHARR_SOURCE_REVIEW.md`). The token's only use is the buffer's own ffmpeg
+connection to `/proxy/ts/stream/`, so that Dispatcharr's Stats screen shows the stream under that user. It lives
+120 s (`_STREAM_TOKEN_LIFETIME_SECONDS`, "The timeshift plugin put a long-lived access token on ffmpeg's command
+line" above), and a caller who can reach this already holds an admin account, which can change any user's password. The
+remaining exposure is the token on ffmpeg's command line, covered by that entry.
+
 #### Watching live while a recording runs on the channel starts a second buffer
 
 **Opened 2026-10-12 from a user's report (Server-side mode; they were recording a programme, then tuned the channel and answered "live" at Kodi's "play recording or tune to live" prompt); analysed and measured 2026-10-13; decided by the maintainer the same day: leave it, document the two mitigations.** In Server-side mode every live open starts or joins the `timeshift_buffer` plugin's own buffer for the channel, a second ffmpeg and a rolling buffer on disk next to the recording's own. The reporter's expectation, from Tvheadend, was that the in-progress recording should serve the live view with pause and rewind and no buffer.
