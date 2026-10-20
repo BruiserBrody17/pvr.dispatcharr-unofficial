@@ -45,6 +45,8 @@ run "destroy with streams open"  TMO=30 T=120 -- dtor_inflight
 run "PVR surface: functional"    BIN=pvr_harness T=180 -- functional
 run "PVR: guide redirect loop"     BIN=pvr_harness T=60 CTL="epg_redirect=loop" -- epg_redirect
 run "PVR: guide redirect to FTP"   BIN=pvr_harness T=60 CTL="epg_redirect=ftp" -- epg_redirect
+run "PVR: owner stamps, address form changed" BIN=pvr_harness T=60 -- owner_stamps
+run "PVR: owner stamps, confirmed on a recording open" BIN=pvr_harness T=120 CTL="api_down=1" -- owner_stamps 8000 late
 run "PVR: M3U refresh event"       BIN=pvr_harness T=60 -- refresh_events
 run "PVR: server offset vs table"   BIN=pvr_harness T=60 -- offset_cross_check
 run "PVR: finished recording, playlist gone" BIN=pvr_harness T=60 -- finished_hls_gone

@@ -2293,6 +2293,13 @@ manifest fatal with the reader at the live edge, or behind it with its next segm
 within 5 s, a 0 at once on every later read, and exactly one notification about the timeshift buffer (the stream
 harness's stub now counts notifications, as the PVR one does).
 
+The API-key owner stamps are written whenever the key is confirmed for a changed owner, not only when the key itself
+changes (2026-10-20, `docs/CLOSED_ITEMS.md`'s "The owner stamps are not rewritten when the address changes but the key
+does not"): `WriteApiKeyOwnerStampsIfChanged()`, from `PersistApiKeyIfChanged()`, the constructor and
+`OpenRecordedStream()`. It needs Kodi's stored values and a server lookup, so not a unit test: the glue scenario
+`owner_stamps` (in CI, plain and `late`) starts with the right key and a stale `api_key_host`, and requires one lookup,
+the stamp rewritten and no lookup at a second start; on the old code the stamp stayed and every start looked the key up.
+
 ### Test-extraction passes and hardening sweeps
 
 A test-extraction pass on 2026-10-03 (a pure refactor, no behaviour change;

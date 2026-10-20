@@ -773,6 +773,11 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     if (m_client.ObtainApiKey(key, error))
     {
       PersistApiKeyIfChanged(keyBefore);
+      // PersistApiKeyIfChanged() stops at an unchanged key, and the key is unchanged whenever only the address's form
+      // changed (a hostname for an IP address on the same server): without this the stamps kept the old address, and
+      // every later start found the same mismatch and looked the key up again (docs/CLOSED_ITEMS.md, "The owner
+      // stamps are not rewritten when the address changes but the key does not").
+      WriteApiKeyOwnerStampsIfChanged();
       m_apiKeyOwnershipVerified = true;
     }
     else
@@ -3889,7 +3894,11 @@ void PVRDispatcharr::PersistApiKeyIfChanged(const std::string& keyBefore)
   // what m_client was actually constructed with -- always correct for
   // this instance's entire lifetime, safe to read from any thread with
   // no lock at all.
-  //
+  WriteApiKeyOwnerStampsIfChanged();
+}
+
+void PVRDispatcharr::WriteApiKeyOwnerStampsIfChanged()
+{
   // Only when they differ: each write is a settings.xml save and a re-delivery of every setting to this addon, and
   // this can run on a stream's read thread, where the stamps are almost always unchanged.
   if (kodi::addon::GetSettingString("api_key_host") != m_apiKeyOwnerHost)
@@ -4124,7 +4133,11 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   {
     std::string genKey, genError;
     if (m_client.ObtainApiKey(genKey, genError))
+    {
+      // As in the constructor: an unchanged key never reaches PersistApiKeyIfChanged()'s stamp writes below.
+      WriteApiKeyOwnerStampsIfChanged();
       m_apiKeyOwnershipVerified = true;
+    }
     else
       kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to obtain an API key before opening recording: %s",
                 genError.c_str());

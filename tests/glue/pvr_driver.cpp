@@ -369,6 +369,13 @@ int main(int argc, char** argv)
   set("timeout", getenv("TMO") ? getenv("TMO") : "5");
   set("live_timeshift_mode", "2");
   set("api_key", "");
+  if (what == "owner_stamps")
+  {
+    // The account's own key (the fake's), stamped for the same server under another form of its address.
+    set("api_key", "K1");
+    set("api_key_host", "http://localhost:" + std::to_string(g_port));
+    set("api_key_username", "u");
+  }
   set("enable_realtime_updates", getenv("RT") || what == "refresh_events" ? "true" : "false");
   if (what == "offset_cross_check")
   {
@@ -1277,6 +1284,63 @@ int main(int argc, char** argv)
       FAIL("%d guide requests for one fetch: the redirects were not limited to five", requests);
     if (ftpConnects != 0)
       FAIL("the guide fetch followed a redirect to FTP (%d connection(s))", ftpConnects);
+  }
+  else if (what == "owner_stamps")
+  {
+    // The stored api_key_host names the server as localhost while the addon is set to 127.0.0.1, so the constructor
+    // sees an owner mismatch, looks the key up and gets the same key back. Before the fix the unchanged key returned
+    // before the stamps were written: api_key_host kept the old form and every later start looked the key up again.
+    auto stat = [](const char* key)
+    {
+      const std::string stats = http("/__stats");
+      const std::string needle = std::string("\"") + key + "\": ";
+      const size_t at = stats.find(needle);
+      return at == std::string::npos ? 0 : atoi(stats.c_str() + at + needle.size());
+    };
+    auto setting = [](const char* key)
+    {
+      std::lock_guard<std::mutex> g(g_setMu);
+      return g_settings[key];
+    };
+    const std::string want = "http://127.0.0.1:" + std::to_string(g_port);
+    if (argc > 4 && std::string(argv[4]) == "late")
+    {
+      // Run with CTL="api_down=1": the server is unreachable while the constructor runs, so the key is confirmed by
+      // the first recording open instead (OpenRecordedStream()), which had the same gap. Whether that open then plays
+      // does not matter; the check comes first. Opened again until the login back-off lets a login through.
+      if (stat("GET /api/accounts/api-keys/") != 0)
+        FAIL("the key was looked up although the server was unreachable");
+      ctl("api_down=0");
+      long began = ms();
+      while (ms() - began < 60000 && stat("GET /api/accounts/api-keys/") < 1)
+      {
+        PVR_RECORDING r{};
+        abi::setf(r.strRecordingId, "%d", 5);
+        r.recordingTime = time(nullptr) - 600;
+        abi::RecordedStream st;
+        if (abi::OpenRecorded(I(), &r, st))
+          abi::CloseRecorded(I(), st);
+        sleep_ms(1000);
+      }
+    }
+    const int first = stat("GET /api/accounts/api-keys/");
+    INFO("first start: %d key lookup(s), api_key_host '%s'", first, setting("api_key_host").c_str());
+    if (first != 1)
+      FAIL("expected one key lookup at the first start, got %d", first);
+    if (setting("api_key_host") != want)
+      FAIL("api_key_host is '%s' after the key was confirmed, not '%s'", setting("api_key_host").c_str(), want.c_str());
+    delete pvr;
+    inst = MakePvrInstanceStruct();
+    {
+      kodi::addon::IInstanceInfo info(inst);
+      pvr = new PVRDispatcharr(info);
+    }
+    const int second = stat("GET /api/accounts/api-keys/");
+    INFO("second start: %d key lookup(s) in all", second);
+    if (second != first)
+      FAIL("the second start looked the key up again (%d lookups in all)", second);
+    if (setting("api_key") != "K1")
+      FAIL("api_key is '%s', not the account's key", setting("api_key").c_str());
   }
   else if (what == "dtor_busy")
   {

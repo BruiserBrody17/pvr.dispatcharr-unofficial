@@ -14,6 +14,10 @@ compare against.
 
 ### Fixed
 
+- **No extra API-key lookup at every start after changing how the server's address is written**: when the Dispatcharr
+  address in the settings changed form but still reached the same server and account (a name instead of an IP address,
+  say), the addon looked its API key up again each time Kodi started. It now records the new address the first time
+  and stops asking.
 - **A live channel whose timeshift buffer is gone on the server now ends with a message instead of buffering forever**
   (Server-side mode): when Dispatcharr had ended the buffer, for example after it stopped hearing from Kodi during a
   long pause, Kodi showed the channel buffering until you stopped it. Playback now ends and says the buffer can't be
