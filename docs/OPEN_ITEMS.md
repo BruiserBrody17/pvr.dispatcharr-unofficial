@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**13 open, 340 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**13 open, 342 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
 work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One tracks publishing the Kodi repository added on 2026-10-19. One was noticed while recording the 2026-10-20 live check of three more audit fixes. The other 7 come from the 2026-10-18 read-only audit of the whole
@@ -23,7 +23,7 @@ path read end to end), *plausible* (the logic is there, the trigger is not demon
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 1 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 298 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 35 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
