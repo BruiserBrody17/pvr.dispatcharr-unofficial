@@ -4,10 +4,10 @@
 
 ## Status at a glance
 
-**12 open, 340 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**13 open, 340 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One tracks publishing the Kodi repository added on 2026-10-19. The other 7 come from the 2026-10-18 read-only audit of the whole
+work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One tracks publishing the Kodi repository added on 2026-10-19. One was noticed while recording the 2026-10-20 live check of three more audit fixes. The other 7 come from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
 day and 14 on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
 path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
@@ -15,7 +15,7 @@ path read end to end), *plausible* (the logic is there, the trigger is not demon
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 2 |
+| Open: Fix known, not yet done | 3 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 3 |
@@ -56,6 +56,18 @@ confidence that it helps with the provider streams in use). (3) `_is_process_ali
 before it compares the start ticks (low confidence; depends on whether the container runs as root). (4)
 `RefreshToken.for_user` may add a database row per buffer start if Django's `token_blacklist` app is installed (low
 confidence; not checked on a real server).
+
+#### The owner stamps are not rewritten when the address changes but the key does not
+
+**Opened 2026-10-20, noticed while recording the live check of the owner-stamp fix; confirmed by reading, not seen
+live.** At start the constructor compares `api_key_host` and `api_key_username` with the instance's own server address
+and username. When they differ it calls `ObtainApiKey()`, which adopts the account's existing key, and saves through
+`PersistApiKeyIfChanged()`. That function returns at once when the key itself has not changed, so the stamps keep their
+old values. After the address changes form for the same server and account (a hostname for an IP address, say), every
+start finds the mismatch again and makes one extra API-key lookup. Nothing is regenerated and playback is unaffected.
+Fix: on the constructor's success path, write the stamps that differ even when the key is unchanged (the same
+compare-then-write `PersistApiKeyIfChanged()` uses). Regression test in the glue harness: start with a stale
+`api_key_host` and the right key, then check the stamp was rewritten.
 
 ### Architectural / concurrency
 
