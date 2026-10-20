@@ -106,6 +106,15 @@ settings store) passes unchanged.
 
 **On `Omega`:** cherry-picked from `Piers`'s `7219c8e` on 2026-10-20 (applied unchanged); `Omega`'s glue suite passes.
 
+**Confirmed live 2026-10-20 on both branches.** A Linux test machine ran Kodi 21.3 with `Omega`'s CI build of
+`5b148f6` and Kodi 22.0 RC1 with `Piers`'s of `7219c8e`, each beside its branch's build from before the fix (`14db1cf`,
+`7abb9d9`). The stored `api_key` was replaced with one the account does not have, the owner stamps left correct, and a
+watch on the addon's settings directory (inotify) counted the `settings.xml` saves while a finished recording played.
+Its first request got a 401, the addon adopted the account's key (nothing regenerated) and playback carried on. The
+before build saved three times on both Kodi versions, the fix once (the key alone). A second run of the fix (on Kodi
+22) with a stale `api_key_username` as well saved twice, the key and that stamp, so a stamp that really changed is
+still written.
+
 #### The XMLTV download follows redirects with no limit or protocol restriction
 
 **Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); hardening
@@ -128,8 +137,15 @@ the proxy answered the guide request with a 302 to itself, to an `ftp://` URL on
 or once to the real guide. Kodi 22.0 RC1 with the before build followed the loop 31 times in 30 ms and connected to the
 FTP listener; with the fix, Kodi 22.0 RC1 and Kodi 21.3 both stopped the loop at 6 requests ("Number of redirects hit
 maximum amount" in the log), refused the FTP redirect ("Unsupported protocol") with no connection, and loaded the full
-guide through the single redirect. The Windows build's older-curl branch of the protocol option is compiled in
-CI but was not run live.
+guide through the single redirect.
+
+**The Windows build's older-curl branch, confirmed live 2026-10-20.** `Omega`'s Windows build bundles libcurl 7.67.0,
+so it compiles and runs the bitmask option. A Windows test machine ran Kodi 21.3 with the CI Windows builds of
+`5b148f6` and of `14db1cf` (before the fix), through the same proxy reached over the network. Before the fix, curl 7.67
+has no default redirect limit (the limit of 30 arrived in curl 8.3), so the loop was followed 35,659 times until the
+guide request's 120 s timeout ("Timeout was reached"), and the FTP redirect connected to the listener. With the fix: 6
+requests ("Number of redirects hit maximum amount"), the FTP redirect refused ("Unsupported protocol") with no
+connection, and the full guide loaded through the single redirect.
 
 #### An unsynchronised spot in `PVRDispatcharr`'s padding sync
 
@@ -147,6 +163,16 @@ settled, and writes the server's (now the user's) value, instead of the sync lat
 **On `Omega`:** cherry-picked from `Piers`'s `7219c8e` on 2026-10-20. `Piers`'s entry also makes
 `m_apiKeyOwnershipVerified` atomic for Kodi 22's concurrent recorded-stream opens; `Omega` keeps the plain `bool`,
 since Kodi 21 opens one recorded stream at a time.
+
+**Confirmed live 2026-10-20 on Kodi 21.3, with throwaway builds of `5b148f6` and of its parent.** The window is
+microseconds wide, so each build added a 15 s pause between the first check and the writes, and skipped the
+constructor's sync so the background thread's ran instead (as after a server that was unreachable at start). Five
+seconds into the pause a throwaway script addon set `recording_pre_offset_minutes` through Kodi's Python API. Kodi
+delivered that to the addon as a settings save, and the addon pushed it to the server. Before the fix the sync then
+wrote the server's older value over the edit and counted itself done: Kodi showed the old padding and the server the
+edit, with nothing left to reconcile them. With the fix the sync counted itself not done. The background thread's next
+pass, 16 s later, read the edit back from the server and stored it, so both sides agreed. The server's padding was set
+back afterwards.
 
 #### The 32-bit unit tests run without UBSan
 
