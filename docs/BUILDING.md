@@ -318,7 +318,9 @@ Windows build machine, not just a CI-specific patch.
    Python 3: `python3 tools/normalize_zip.py "$(git log -1 --format=%ct)" <zip>`,
    then `python3 tools/normalize_zip.py --check <zip>` (CI's Linux leg and the
    plugin zips run both; the Linux leg's zip shipped unnormalized until the
-   pre-release sweep of 0.12.0 found it).
+   pre-release sweep of 0.12.0 found it). The gate also requires every entry of a
+   zip to carry one timestamp, so a zip that skipped this step fails there
+   (since 2026-10-19; before, a zip with local-clock times and no extra field passed).
 
 ## CoreELEC on an ODROID N2+ (Amlogic S922X)
 
@@ -897,10 +899,16 @@ Cutting a release, in order:
    ```bash
    python3 tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>
    ```
-   It fails on a build-machine path (`/home/`, `/Users/`, `C:\`, a CI runner's work directory) or a blocklist
-   term anywhere in a member (as text and as UTF-16), any extra field in the zip (timezone, uid/gid), a zip
-   comment, an unsafe entry name, a debug or log file, an ELF library that is not stripped, and a release that is
-   missing an asset or carries an unexpected one. The handful of upstream strings it has to allow (the Windows
+   It fails on a build-machine path (`/home/`, `/Users/`, `/media/`, `/Volumes/`, `C:\` or `C:/`, a UNC path, a CI
+   runner's work directory) or a blocklist term anywhere in a member (as text, as UTF-8 for a non-ASCII term, and as
+   UTF-16), any extra field in the zip (timezone, uid/gid; in the central directory or in a local header), entries
+   with more than one timestamp, a zip comment, an unsafe entry name, a symlink out of the zip, an archive inside
+   it, a debug or log file (also anything in a `.dSYM` bundle), an ELF library that is not stripped (`.debug_*`,
+   `.zdebug_*`, `.symtab`), and a release that is missing an asset or carries an unexpected one. With
+   `--expect-release` it also opens the zips: each addon zip's `addon.xml` must carry the version (CoreELEC's, the
+   version plus its package revision), the six addon zips must share one timestamp, and each plugin zip's
+   `plugin.json` version must equal its `Plugin` class version. A `--blocklist` path that does not exist, a list with
+   no terms (with `--require-blocklist`) and a UTF-16 list are errors. The handful of upstream strings it has to allow (the Windows
    zip's two prebuilt DLLs carry Kodi's own dependency-build path) are listed in the script with the reason each
    is safe. CI runs the pattern half of the same gate on every zip it builds; only a local run has the
    blocklist. Fix the cause and rebuild, never edit the gate to make
@@ -932,10 +940,11 @@ it publishes to the public release. When it applies, do not wait for the next re
 
 ```bash
 TZ=UTC zip -X -r "../dist/${plugin}.zip" "$plugin" -x "$plugin/tests/*" -x "*/__pycache__/*"
+cd .. && python3 tools/normalize_zip.py "$(git log -1 --format=%ct)" "dist/${plugin}.zip"
 ```
 
 (`TZ=UTC` and `-X` matter: a bare `zip` stores the local and the UTC time of every entry, which publishes the build
-machine's timezone.) Run the gate on it, `gh release upload <tag> <zip> --clobber` onto the existing release (no new tag,
+machine's timezone; the normalisation gives every entry the commit's time, which the gate requires.) Run the gate on it, `gh release upload <tag> <zip> --clobber` onto the existing release (no new tag,
 no new addon build), then add a dated addendum to the release notes inlining the fix and correct any now-false "neither
 plugin changed" sentence.
 
