@@ -4,12 +4,12 @@
 
 ## Status at a glance
 
-**23 open, 328 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**19 open, 332 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. Two came from the 2026-10-19 live check of four audit fixes. One tracks publishing the Kodi repository added on 2026-10-19. The other 17 come from the 2026-10-18 read-only audit of the whole
+work on `Piers`: what remains of Kodi 22 support. Two came from the 2026-10-19 live check of four audit fixes. One tracks publishing the Kodi repository added on 2026-10-19. The other 13 come from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
-day and four on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
+day and eight on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
 path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
@@ -21,8 +21,8 @@ path read end to end), *plausible* (the logic is there, the trigger is not demon
 | Open: Release, CI and manual testing | 4 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 7 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 286 |
+| Open: Tooling (tools/) | 3 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 290 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 33 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -184,38 +184,6 @@ plugins, non-admin otherwise) against one server from one Kodi; the migration st
 handling in `OnAddonSettingChanged()` are the work. Not started.
 
 ### Tooling (tools/)
-
-#### The release gate does not catch local-clock entry timestamps
-
-**Opened 2026-10-18, from the read-only audit; confirmed with a crafted zip.** The gate only catches the UT/ux extra-field
-form of a timestamp; a zip whose DOS times are local clock time and carry no extra field passes (exit 0), and the
-difference against the public commit or upload time gives away the offset. That is what a zip made without
-`tools/normalize_zip.py` looks like (Python's `shutil`, Explorer). `CLOSED_ITEMS.md` describes the time zone in entry
-timestamps as mechanically gated, which this narrows. The 0.14.0 zips are clean. Fix: require one shared `date_time`
-across all entries, and with `--expect-release`, optionally require it to equal the tag commit's time. Test in
-`tools/tests/`.
-
-#### `--expect-release` checks file names only
-
-**Opened 2026-10-18, from the read-only audit; confirmed by reading.** `check_release_set` never opens a zip, so a stale
-zip renamed to the new version's name passes. Fix: read `addon.xml` in each addon zip and require the version (CoreELEC:
-the version plus its revision), and in each plugin zip cross-check `plugin.json` against the `Plugin` class `version` in
-`plugin.py`. Test in `tools/tests/`.
-
-#### `--require-blocklist` can pass with a list that blocks nothing
-
-**Opened 2026-10-18, from the read-only audit; confirmed, all latent with today's list.** In `load_blocklist`: an empty,
-comments-only or UTF-16 file passes; a mistyped explicit `--blocklist` path silently falls back to `$PRIVACY_BLOCKLIST` or
-the home-directory list; a byte-order mark sticks to the first term so it never matches; and a non-ASCII term never
-matches UTF-8 content. Fix: an error on a missing explicit path, a failure on zero terms, reading with `utf-8-sig` and
-refusing NUL bytes, and searching each term's UTF-8 bytes. Test in `tools/tests/`.
-
-#### The release gate's path, debug and structure checks have gaps
-
-**Opened 2026-10-18, from the read-only audit.** Paths it does not recognise: `C:/...` with a forward slash, UNC paths,
-`/media/<user>`, `/run/media` and `/Volumes`. Debug content it misses: members inside a `.dSYM` bundle and `.zdebug_*`
-sections. Zip structure it does not look at: extra fields only in the local headers, nested archives, symlink entries and
-drive-letter entry names. Each is a small pattern or check plus a test in `tools/tests/`.
 
 #### `scrub_zip_paths.py` can leave a username when a string ends at the prefix
 

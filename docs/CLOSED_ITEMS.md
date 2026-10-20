@@ -6,6 +6,67 @@
 
 ### Fixed
 
+#### The release gate does not catch local-clock entry timestamps
+
+**Opened 2026-10-18, from the read-only audit; confirmed with a crafted zip.** The gate only catches the UT/ux extra-field
+form of a timestamp; a zip whose DOS times are local clock time and carry no extra field passes (exit 0), and the
+difference against the public commit or upload time gives away the offset. That is what a zip made without
+`tools/normalize_zip.py` looks like (Python's `shutil`, Explorer). `CLOSED_ITEMS.md` describes the time zone in entry
+timestamps as mechanically gated, which this narrows. The 0.14.0 zips are clean. Fix: require one shared `date_time`
+across all entries, and with `--expect-release`, optionally require it to equal the tag commit's time. Test in
+`tools/tests/`.
+
+**Fixed 2026-10-19, confirmed with tests that fail on the old gate.** Every entry of a zip must carry one
+timestamp, and with `--expect-release` the six addon zips must share one (they come from one tag, normalised to its
+time). The plugin zips are left out of the cross-zip rule because a plugin-only fix replaces its zip in a shipped release
+(`docs/BUILDING.md`, "Release assets"). Not done: comparing the stamp with the tag commit's time, which needs git and a
+tag the gate is not given; a zip normalised to the wrong commit still passes on its own, but not beside five that agree.
+Found while checking the real zips: CI's plugin zips were never normalised (`zip` stored each file's checkout time, and
+0.14.0's shared one only because the checkout fell inside one two-second tick), so `package-dispatcharr-plugins` and the
+by-hand replacement steps now stamp them with the commit's time like the other legs. Run over the shipped 0.14.0 release (`--require-blocklist --expect-release 0.14.0`, all eight zips) and the staged 0.12.0 and CI-built zips still on disk: all clean, which took two rounds of narrowing (Dispatcharr's own `/media/` URL route in `timeshift_buffer`'s text, and a `p://` cut from an inlined `http://` in the Linux library's machine code, both now pinned as must-pass noise).
+
+#### `--expect-release` checks file names only
+
+**Opened 2026-10-18, from the read-only audit; confirmed by reading.** `check_release_set` never opens a zip, so a stale
+zip renamed to the new version's name passes. Fix: read `addon.xml` in each addon zip and require the version (CoreELEC:
+the version plus its revision), and in each plugin zip cross-check `plugin.json` against the `Plugin` class `version` in
+`plugin.py`. Test in `tools/tests/`.
+
+**Fixed 2026-10-19, confirmed with tests that fail on the old gate.** `check_release_contents` (in `tools/check_release_zip.py`) opens each zip:
+the addon zips' `addon.xml` must carry the version (CoreELEC's, the version plus `.<revision>`, as 0.14.0's `0.14.0.1`
+does), and each plugin zip's `plugin.json` version must equal its `Plugin` class version (read with the same pattern as
+`tools/tests/test_version_sync.py`). Run over the shipped 0.14.0 release (`--require-blocklist --expect-release 0.14.0`, all eight zips) and the staged 0.12.0 and CI-built zips still on disk: all clean, which took two rounds of narrowing (Dispatcharr's own `/media/` URL route in `timeshift_buffer`'s text, and a `p://` cut from an inlined `http://` in the Linux library's machine code, both now pinned as must-pass noise).
+
+#### `--require-blocklist` can pass with a list that blocks nothing
+
+**Opened 2026-10-18, from the read-only audit; confirmed, all latent with today's list.** In `load_blocklist`: an empty,
+comments-only or UTF-16 file passes; a mistyped explicit `--blocklist` path silently falls back to `$PRIVACY_BLOCKLIST` or
+the home-directory list; a byte-order mark sticks to the first term so it never matches; and a non-ASCII term never
+matches UTF-8 content. Fix: an error on a missing explicit path, a failure on zero terms, reading with `utf-8-sig` and
+refusing NUL bytes, and searching each term's UTF-8 bytes. Test in `tools/tests/`.
+
+**Fixed 2026-10-19, confirmed with tests that fail on the old gate.** A `--blocklist` path that does not exist is
+an error (exit 2), not a fallback; a list with no terms fails `--require-blocklist`; the file is read as `utf-8-sig`, so a
+byte-order mark no longer sticks to the first term, and a file with NUL bytes (UTF-16) or invalid UTF-8 is refused; and
+each term is also searched as its UTF-8 bytes in the one-byte-per-character view (case folded for ASCII letters only),
+where a non-ASCII term never matched before.
+
+#### The release gate's path, debug and structure checks have gaps
+
+**Opened 2026-10-18, from the read-only audit.** Paths it does not recognise: `C:/...` with a forward slash, UNC paths,
+`/media/<user>`, `/run/media` and `/Volumes`. Debug content it misses: members inside a `.dSYM` bundle and `.zdebug_*`
+sections. Zip structure it does not look at: extra fields only in the local headers, nested archives, symlink entries and
+drive-letter entry names. Each is a small pattern or check plus a test in `tools/tests/`.
+
+**Fixed 2026-10-19, confirmed with tests that fail on the old gate.** New path patterns: `C:/` drive paths, UNC
+paths (exactly two backslashes: Kodi's prebuilt `libcurl.dll` has a long run of them before an OpenSSL source path), and
+`/media/`, `/run/media/` and `/Volumes/` at the root of a path with a component after it. Writing the tests found a gap
+the entry did not name: neither drive pattern matched a GitHub Windows runner's `D:\a\<repo>`, whose first component is
+one letter; after the first character a separator now counts as a path character. Members inside a `.dSYM` bundle and
+`.zdebug_*` sections fail. Structure: an extra field in a local header only, an archive inside the zip (by name or first
+bytes), a symlink whose target is absolute or climbs out (the Linux and macOS zips carry the library's version chain as
+symlinks, which still pass), and a drive-letter entry name. Run over the shipped 0.14.0 release (`--require-blocklist --expect-release 0.14.0`, all eight zips) and the staged 0.12.0 and CI-built zips still on disk: all clean, which took two rounds of narrowing (Dispatcharr's own `/media/` URL route in `timeshift_buffer`'s text, and a `p://` cut from an inlined `http://` in the Linux library's machine code, both now pinned as must-pass noise).
+
 #### The timeshift reaper can end a buffer that is still being read
 
 **Opened 2026-10-18, from the read-only audit; the logic confirmed, the trigger plausible.** Since `timeshift_buffer`

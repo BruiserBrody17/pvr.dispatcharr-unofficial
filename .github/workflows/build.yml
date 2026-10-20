@@ -530,8 +530,11 @@ jobs:
               echo "$entries" | grep -qx "${plugin}/${required}" || { echo "::error::${plugin}.zip lacks ${required}"; exit 1; }
             done
           done
-          # and no entry carries the build machine's timezone (the extended-timestamp field `zip -X` drops)
+          # and no entry carries the build machine's timezone (the extended-timestamp field `zip -X` drops). Stamped
+          # with the commit's time like the other legs: `zip` stores each file's checkout time, which the gate's
+          # one-timestamp-per-zip rule would fail whenever the checkout straddled a two-second tick.
           cd ..
+          python3 tools/normalize_zip.py "$(git log -1 --format=%ct)" dist/*.zip
           python3 tools/normalize_zip.py --check dist/*.zip
           python3 tools/check_release_zip.py dist/*.zip
 

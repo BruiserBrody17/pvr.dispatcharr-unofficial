@@ -2954,6 +2954,16 @@ contradicting platform, unknown asset, duplicate platform, bad tag), that a fail
 line's rewrite leaves the other alone, art copying, and that the repository zip is reproducible and passes
 `check_release_zip.py`. The behaviour in Kodi itself was confirmed live (that section of `docs/BUILDING.md`).
 
+2026-10-19: `tools/tests/test_check_release_zip.py` covers the gate's hardening from the 2026-10-18 audit
+(`docs/CLOSED_ITEMS.md`'s four release-gate entries of that date): one timestamp per zip and one across the addon zips;
+an extra field in a local header only (a zip written byte by byte, since `zipfile` writes the same field to both
+headers); a symlink out of the zip (and the in-zip version chain the Linux and macOS zips carry still passing); an
+archive inside the zip by name and by magic; a drive-letter entry name; a member inside a `.dSYM` bundle; `.zdebug_*`;
+the new path patterns, with the noise found in the shipped zips pinned as must-pass; the blocklist's byte-order mark,
+UTF-16 refusal, non-ASCII terms against UTF-8 content, a missing explicit path and an empty list; and
+`check_release_contents` over a synthetic eight-zip release (a stale addon zip, CoreELEC's revision suffix, a plugin
+whose two versions disagree). 33 of the new cases fail on the old gate. The gate passes over the shipped 0.14.0 release.
+
 ### `kodi_smoke_test.py`
 
 `tools/kodi_smoke_test.py` (added 2026-09-29, fixing several real,
