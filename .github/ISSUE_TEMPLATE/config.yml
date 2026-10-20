@@ -1,0 +1,9 @@
+# Blank issues stay on: the bug report is the only template, and a question or a feature idea needs somewhere to go.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/security/advisories/new
+    about: Please report it privately rather than in a public issue (see SECURITY.md).
+  - name: A problem with Dispatcharr itself
+    url: https://github.com/Dispatcharr/Dispatcharr/issues
+    about: This addon is unofficial and separate from Dispatcharr; a bug in the Dispatcharr server belongs with that project.
