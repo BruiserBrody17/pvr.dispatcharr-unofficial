@@ -101,6 +101,8 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `59a13fc` | `c08f1c4` (by hand, the same text) | The live check of the throttle and guide redirect fixes on Kodi 22.0 RC1 and Kodi 21.3, and the open item for a fatal live stream that leaves Kodi buffering, which applies to both. |
 | `b53484f` | `955c4ae` (`git cherry-pick -x`; the running counts by hand), then `5174a8c` | A fatal live stream answers 0 and tells the viewer, so Kodi ends playback; the same reader code on both. Confirmed live on Kodi 21.3 as well. |
 | `46598ae` | `aded040` (by hand, the same results) | The live check of three of `7219c8e`'s fixes: owner stamps written only when they change (Kodi 21.3 and 22.0 RC1), the padding re-check (throwaway `Omega` builds on Kodi 21.3) and the Windows build's older-curl redirect options (`Omega`'s Windows build on Kodi 21.3). |
+| `e177b55`, `93b189f` | `c28882c`, `202f7d3` (by hand, the same text) | Two closing notes and one open item: the owner stamps left stale when only the address changes (open), and two outside-review findings closed without a change (no token reaches `kodi.log`, checked live on Kodi 21.3; the plugin's JWT for `params["username"]`). |
+| `8f8b36f` | `1e259a1` (`git cherry-pick -x`, without `[skip ci]`) | The code of conduct, the PR template and the issue chooser's config. The templates are read from the default branch, `Omega`. |
 
 ## Dependencies that differ by Kodi release
 
