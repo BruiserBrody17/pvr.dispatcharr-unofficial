@@ -43,8 +43,15 @@ and the glue scenario `live_stop_token` (in CI).
 with a made-up `access_token` answered "this caller's buffer was already replaced; nothing stopped", and playback went
 on. A throwaway probe plugin that wrapped `_is_stale_access_token()` in every worker (recording only whether a token
 came and matched) saw every call from the addon carry the buffer's token, heartbeats and playlist requests included,
-up to the stop on Close; that stop removed the state and the directory within about 2.5 s and left no tombstone. Not
-reproduced live: a teardown slower than the grace period (a buffer of 46 segments went in well under a second).
+up to the stop on Close; that stop removed the state and the directory within about 2.5 s and left no tombstone. The
+race itself, with the probe making the plugin's next removal of a tombstone wait 45 s: buffer A stopped, its directory
+renamed and its state marked stopping; 35 s later a `start_buffer` for the same channel started buffer B beside the
+tombstone; when A's removal finished 46 s after the stop, only the tombstone went, B's state (its own pid and
+`started_at`) and directory were left, the directory kept growing, and B's manifest and playlist were served. The run
+also showed the tombstone named `.<uuid>.<8 hex digits>`, without the `removing-` the orphan scrub matches, so the
+leftover of a removal cut short was never cleaned up; fixed the same day by naming it as documented above, with
+`test_a_removal_cut_short_leaves_a_tombstone_the_scrub_recognises_and_removes`. Not checked live: that fix itself, and a
+worker dying mid-removal.
 
 #### timeshift_buffer: a corrupt buffer state aborts the orphan scrub, and client disconnects print tracebacks
 
@@ -65,8 +72,10 @@ handler error through the plugin logger with its traceback, instead of socketser
 `test_http_server_logs_*` tests check the line and that nothing reaches stderr. (1) checked live on 2026-10-21
 (Dispatcharr 0.32.0, the merged plugin in every worker): with two made-up buffer directories an hour old under
 `storage_path`, one with no Redis state and one whose state was not JSON, one `scrub_orphaned_buffers` removed the first
-and kept the second; a throwaway probe plugin made both and removed the second and its key afterwards. (2) not checked
-live.
+and kept the second; a throwaway probe plugin made both and removed the second and its key afterwards. (2) checked
+live the same day: ten segment downloads reset by the client after 32 KB, spread over the four workers' file servers
+(each worker binds the port with `SO_REUSEPORT`), each gave exactly one "client went away mid-response
+(ConnectionResetError)" debug line through the plugin logger (the probe wrapped it) and no traceback-level call.
 
 #### timeshift_buffer: smaller hardening (setting caps, ffmpeg I/O timeout, process liveness, token rows)
 
@@ -93,7 +102,13 @@ change: `RefreshToken.for_user` writes an `OutstandingToken` row only when `rest
 is installed, and Dispatcharr's `INSTALLED_APPS` does not include it. Regression tests for (1) and (3) fail on the old
 code: `test_start_buffer_caps_max_concurrent_buffers`, `test_start_ffmpeg_caps_buffer_minutes_at_a_day`,
 `test_scrub_action_caps_the_idle_timeout`, `test_reaper_caps_the_idle_timeout`,
-`test_is_process_alive_false_for_another_users_process_with_a_different_start_time`. Not checked live.
+`test_is_process_alive_false_for_another_users_process_with_a_different_start_time`. Checked live on 2026-10-21
+(Dispatcharr 0.32.0, the merged plugin in every worker; the settings overridden in memory by a throwaway probe plugin,
+the saved ones untouched): with `buffer_minutes` 5000, ffmpeg was started with `-hls_list_size 43200` (1440 minutes of
+2 s segments; 150000 uncapped); with `idle_timeout_seconds` 99999, a buffer nobody fetched from was reaped 307 s after it
+started. The workers run as a non-root user, so (3) is reachable there: signal 0 to process 1 raised
+`PermissionError`, and `_is_process_alive()` answered not alive with a wrong start time and alive with the real one or
+none. `max_concurrent_buffers` was not checked live (65 buffers).
 
 #### Lab scripts put passwords on command lines
 
