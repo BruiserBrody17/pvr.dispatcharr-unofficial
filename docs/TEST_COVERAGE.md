@@ -2890,6 +2890,18 @@ pinned it became `test_the_reaper_keeps_a_buffer_whose_viewers_all_went_stale_wh
 `test_the_reaper_writes_nothing_back_when_the_stale_viewer_heartbeated_before_the_drop` the declined write-back. The
 first three fail against 0.8.14.
 
+2026-10-21 (`timeshift_buffer` 0.8.15, `docs/CLOSED_ITEMS.md`'s two 2026-10-18 audit entries "a corrupt buffer state
+aborts the orphan scrub" and "smaller hardening"): `test_scrub_skips_a_channel_whose_state_is_not_valid_json_and_scrubs_the_rest`
+pins the scrub going on past a state that is not JSON; the `test_http_server_logs_*` tests call
+`_BufferHTTPServer.handle_error()` inside an `except` (a client gone is one debug line, anything else goes to the plugin
+logger, nothing to stderr); `test_start_buffer_caps_max_concurrent_buffers`, `test_start_ffmpeg_caps_buffer_minutes_at_a_day`,
+`test_scrub_action_caps_the_idle_timeout` and `test_reaper_caps_the_idle_timeout` (a real reaper tick) pin the three
+new upper limits where each value is read; `test_is_process_alive_false_for_another_users_process_with_a_different_start_time`
+pins a `PermissionError` reaching the start-time comparison, and two `test_is_process_alive_true_for_a_permission_error_*`
+tests that it still means "alive" with a matching start time or nothing to compare. All but those last two fail on the
+previous plugin code. Not covered: a real client disconnecting from the real server (the handler's error path is driven
+directly).
+
 ## Tools
 
 ### `tools/tests/`

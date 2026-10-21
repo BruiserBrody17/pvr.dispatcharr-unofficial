@@ -4,25 +4,25 @@
 
 ## Status at a glance
 
-**9 open, 340 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**7 open, 342 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers` and held here too; one, the manifest throttle, was fixed the same day. The other 6 come
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers` and held here too; one, the manifest throttle, was fixed the same day. The other 4 come
 from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the same day (all 21 held here;
-three are worded for `Omega`; 14 fixed on 2026-10-19 and one on 2026-10-21, all moved to `CLOSED_ITEMS.md`), each marked with how sure the
+three are worded for `Omega`; 14 fixed on 2026-10-19 and three on 2026-10-21, all moved to `CLOSED_ITEMS.md`), each marked with how sure the
 audit was: *confirmed* (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the
 trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 2 |
+| Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 296 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 298 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 35 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -41,23 +41,7 @@ the fix.
 
 ### Fix known, not yet done
 
-#### timeshift_buffer: a corrupt buffer state aborts the orphan scrub, and client disconnects print tracebacks
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
-reading.** (1) A buffer state key in Redis that is not valid JSON makes `_get_buffer_state` raise inside
-`_is_untracked_orphan`, which ends the whole scrub pass rather than skipping that one entry. (2) A client that
-disconnects mid-response raises `BrokenPipeError` or `ConnectionResetError` into `socketserver`'s default
-`handle_error`, which prints a raw traceback; override it on the file server to log one line. Regression tests in the
-plugin's `tests/`.
-
-#### timeshift_buffer: smaller hardening (setting caps, ffmpeg I/O timeout, process liveness, token rows)
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day).** (1)
-`buffer_minutes`, `max_concurrent_buffers` and `idle_timeout_seconds` have no upper limit; cap them. (2) The ffmpeg
-input has no I/O timeout; add `-rw_timeout` (low confidence that it helps with the provider streams in use). (3)
-`_is_process_alive` treats a `PermissionError` as alive before it compares the start ticks (low confidence; depends on
-whether the container runs as root). (4) `RefreshToken.for_user` may add a database row per buffer start if Django's
-`token_blacklist` app is installed (low confidence; not checked on a real server).
+None open.
 
 ### Architectural / concurrency
 

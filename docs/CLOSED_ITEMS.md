@@ -6,6 +6,51 @@
 
 ### Fixed
 
+#### timeshift_buffer: a corrupt buffer state aborts the orphan scrub, and client disconnects print tracebacks
+
+**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
+reading.** (1) A buffer state key in Redis that is not valid JSON makes `_get_buffer_state` raise inside
+`_is_untracked_orphan`, which ends the whole scrub pass rather than skipping that one entry. (2) A client that
+disconnects mid-response raises `BrokenPipeError` or `ConnectionResetError` into `socketserver`'s default
+`handle_error`, which prints a raw traceback; override it on the file server to log one line. Regression tests in the
+plugin's `tests/`.
+
+
+**Fixed 2026-10-21 (`timeshift_buffer` 0.8.15), confirmed by regression tests that fail on the old code.** (1)
+`_is_untracked_orphan()` catches the `ValueError` and skips that entry as if it were tracked (what an unreadable state
+described is unknown, and its key expires within `_BUFFER_STATE_TTL`), with one warning per key;
+`test_scrub_skips_a_channel_whose_state_is_not_valid_json_and_scrubs_the_rest` scrubs a second orphan in the same pass.
+(2) `_BufferHTTPServer.handle_error()` logs a `ConnectionError` or `TimeoutError` as one debug line and any other
+handler error through the plugin logger with its traceback, instead of socketserver's print to stderr; the
+`test_http_server_logs_*` tests check the line and that nothing reaches stderr. Not checked live.
+
+#### timeshift_buffer: smaller hardening (setting caps, ffmpeg I/O timeout, process liveness, token rows)
+
+**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day).** (1)
+`buffer_minutes`, `max_concurrent_buffers` and `idle_timeout_seconds` have no upper limit; cap them. (2) The ffmpeg
+input has no I/O timeout; add `-rw_timeout` (low confidence that it helps with the provider streams in use). (3)
+`_is_process_alive` treats a `PermissionError` as alive before it compares the start ticks (low confidence; depends on
+whether the container runs as root). (4) `RefreshToken.for_user` may add a database row per buffer start if Django's
+`token_blacklist` app is installed (low confidence; not checked on a real server).
+
+
+**Closed 2026-10-21 (`timeshift_buffer` 0.8.15): two parts fixed, two closed without a change after reading
+Dispatcharr's source (`0.32.0`, the `main` branch of 2026-10-19).** (1) Fixed: `buffer_minutes` at most 1440 (a day),
+`max_concurrent_buffers` at most 64, `idle_timeout_seconds` at most 300 (half of `_BUFFER_STATE_TTL`, which is meant
+to be the headroom past it); the help texts say so, and a value above is used as the limit. (3) Fixed: a
+`PermissionError` from the signal-0 check now goes on to the start-time comparison, so another user's process holding
+the recycled pid is seen as "not ours" when a start time was recorded (still "alive" when none was, or `/proc` is
+unreadable). (2) No change: Dispatcharr's live proxy bounds every silence on its own side. It sends keepalive packets
+every 0.5 s while the stream is unhealthy (for up to `MAX_KEEPALIVE_DURATION`, 300 s), disconnects a client after
+`stream_timeout` plus `failover_grace_period` without data (60 + 20 s by default), and ends the initial wait with an
+error packet after `client_wait_timeout` (60 s), so ffmpeg sees the end of the stream and exits. A fixed `-rw_timeout`
+would only add a second limit beneath those admin-configurable ones and could cut a wait an admin set longer. (4) No
+change: `RefreshToken.for_user` writes an `OutstandingToken` row only when `rest_framework_simplejwt.token_blacklist`
+is installed, and Dispatcharr's `INSTALLED_APPS` does not include it. Regression tests for (1) and (3) fail on the old
+code: `test_start_buffer_caps_max_concurrent_buffers`, `test_start_ffmpeg_caps_buffer_minutes_at_a_day`,
+`test_scrub_action_caps_the_idle_timeout`, `test_reaper_caps_the_idle_timeout`,
+`test_is_process_alive_false_for_another_users_process_with_a_different_start_time`. Not checked live.
+
 #### Lab scripts put passwords on command lines
 
 **Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
