@@ -94,8 +94,8 @@ arrived intact. Not run through `sshpass` (the lab's SSH accepts keys only), whi
 `KODI_JSONRPC_PASSWORD` and Dispatcharr's from `DISPATCHARR_PASSWORD`, asks at the terminal when one is unset, and
 refuses `--password`/`--dispatcharr-password` with that advice; `--https` and `--dispatcharr-https` switch either
 client to TLS (certificate verified; `SSL_CERT_FILE` for a self-signed one). Unit-tested in
-`tools/tests/test_kodi_smoke_test.py` (`_resolve_password`, `_base_url`, the refusal); not yet run against the lab
-Kodi.
+`tools/tests/test_kodi_smoke_test.py` (`_resolve_password`, `_base_url`, the refusal); run against the lab's
+Linux Kodi on 2026-10-21 with the password in `KODI_JSONRPC_PASSWORD` and `--skip-playback`: all eight checks passed.
 
 #### The owner stamps are not rewritten when the address changes but the key does not
 
