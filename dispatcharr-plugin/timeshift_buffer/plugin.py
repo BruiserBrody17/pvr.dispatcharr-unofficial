@@ -1974,7 +1974,7 @@ def _remove_channel_files(state: dict, logger):
     # and a start_buffer after that recreates this directory for its new ffmpeg -- which the old rmtree's final rmdir
     # used to remove as well (2026-10-18 audit). The rename is one step; whatever is left of an interrupted removal is
     # found by name by the orphan scrub (_scrub_tombstones()).
-    target = channel_dir.with_name(f"{_TOMBSTONE_PREFIX}{channel_dir.name}.{secrets.token_hex(4)}")
+    target = channel_dir.with_name(f"{_TOMBSTONE_PREFIX}{channel_dir.name}.removing-{secrets.token_hex(4)}")
     try:
         os.rename(channel_dir, target)
     except FileNotFoundError:

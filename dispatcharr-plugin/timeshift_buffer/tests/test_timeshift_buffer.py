@@ -6591,6 +6591,31 @@ def test_remove_channel_files_removes_in_place_when_it_cannot_move_the_directory
     assert [level for level, _msg in logger.calls] == ["exception"]
 
 
+def test_a_removal_cut_short_leaves_a_tombstone_the_scrub_recognises_and_removes(tmp_path, monkeypatch, start_locks):
+    """The tombstone was named `.<uuid>.<hex>` while the scrub looked for `.<uuid>.removing-<hex>`, so the leftover of a
+    removal cut short was never cleaned up (found by the 2026-10-21 live check). Uses the name the removal really
+    makes rather than one written out here."""
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    (channel_dir / "seg_00001.ts").write_bytes(b"old")
+    real_rmtree = shutil.rmtree
+    monkeypatch.setattr(timeshift_buffer_plugin.shutil, "rmtree", lambda path, *a, **kw: None)  # the worker died
+
+    timeshift_buffer_plugin._remove_channel_files({"storage_path": str(tmp_path), "channel_uuid": _UUID}, _FakeLogger())
+
+    (leftover,) = tmp_path.iterdir()
+    assert timeshift_buffer_plugin._is_tombstone_name(leftover.name)
+    monkeypatch.setattr(timeshift_buffer_plugin.shutil, "rmtree", real_rmtree)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    old_mtime = time.time() - 3600
+    os.utime(leftover, (old_mtime, old_mtime))
+
+    removed = timeshift_buffer_plugin._scrub_orphaned_dirs(str(tmp_path), min_age_seconds=60, logger=_FakeLogger())
+
+    assert removed == [leftover.name]
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_scrub_removes_an_idle_tombstone_and_keeps_a_busy_one_and_other_dot_directories(
     tmp_path, monkeypatch, start_locks
 ):

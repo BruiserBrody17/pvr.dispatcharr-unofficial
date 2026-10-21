@@ -2953,8 +2953,11 @@ keeps its new file), `test_remove_channel_files_removes_in_place_when_it_cannot_
 three `test_run_stop_buffer_*token*` tests (a stale token stops nothing, with or without a `viewer_id`; a replacement
 between the first read and the atomic update is caught there; the current token still stops). Six fail on the
 previous plugin code (the rest test new functions or the unchanged outcome). The addon's side, sending the token, is
-the glue scenario `live_stop_token`. Not covered: a real Redis running the scripts, and a real slow removal racing a
-real `start_buffer`.
+the glue scenario `live_stop_token`. Not covered here: a real Redis running the scripts, and a real slow removal racing a
+real `start_buffer` (both checked live on 2026-10-21, see that entry). The live run found that the tombstone the removal
+made, `.<uuid>.<hex>`, was not a name `_is_tombstone_name()` accepts (`.<uuid>.removing-<hex>`): the scrub test had built
+its tombstones by hand. `test_a_removal_cut_short_leaves_a_tombstone_the_scrub_recognises_and_removes` takes the name
+from `_remove_channel_files()` itself and fails on the code before the fix.
 
 ## Tools
 
