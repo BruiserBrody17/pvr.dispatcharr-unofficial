@@ -21,6 +21,9 @@ compare against.
 
 ### Fixed
 
+- **Stopping a live channel can no longer stop someone else's newer timeshift buffer** (Server-side mode): the addon
+  now tells the plugin which buffer it is stopping, so a late stop for a buffer the server has already replaced
+  leaves the new one alone. Needs the `timeshift_buffer` plugin 0.8.15; with an older plugin nothing changes.
 - **No extra API-key lookup at every start after changing how the server's address is written**: when the Dispatcharr
   address in the settings changed form but still reached the same server and account (a name instead of an IP address,
   say), the addon looked its API key up again each time Kodi started. It now records the new address the first time
@@ -91,6 +94,10 @@ Dispatcharr restart for every worker to pick it up.
 - **A viewer that stops mid-download no longer prints a traceback in the Dispatcharr log**: it is logged as one line.
 - **A buffer whose ffmpeg has gone is noticed even when its process number was reused by another account's process**;
   before, such a buffer was treated as still running.
+- **A channel restarted while its old buffer was still being removed keeps working.** Removing a large buffer can take
+  longer than half a minute; a viewer who started the same channel again in that time could have the new buffer's
+  record and folder removed by the old removal, and then saw playback fail. Also, a stop that arrives late for a buffer
+  that has since been replaced no longer stops the replacement (with the addon's matching change).
 
 ### Changed
 

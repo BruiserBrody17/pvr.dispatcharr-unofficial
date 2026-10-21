@@ -561,6 +561,30 @@ extern std::atomic<long> g_notifyCount;
 extern std::mutex g_notifyMutex;
 extern std::string g_lastNotify;
 
+// Close sends the buffer's own access token with stop_buffer, so the plugin can leave alone a buffer that replaced this
+// viewer's (docs/CLOSED_ITEMS.md, "a teardown that outlasts its grace period"). `token`: the fake's start_buffer token.
+static void live_stop_token(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  std::vector<uint8_t> buf(1 << 16);
+  cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+  cl.CloseLiveTimeshiftStream();
+  const auto stop = nlohmann::json::parse(http("/__laststop"), nullptr, false);
+  if (!stop.is_object())
+    FAIL("no stop_buffer request seen: %s", stop.dump().c_str());
+  else if (stop.value("access_token", "") != "tok1")
+    FAIL("stop_buffer carried access_token %s, not the start_buffer token", stop.dump().c_str());
+  else if (stop.value("viewer_id", "").empty())
+    FAIL("stop_buffer carried no viewer_id: %s", stop.dump().c_str());
+  else
+    INFO("stop_buffer params %s", stop.dump().c_str());
+}
+
 // A buffer the server has given up on (the plugin answers `fatal`) must end the stream: Kodi ends a PVR channel only
 // on a 0, and treats -1 as a read to try again, so a fatal stream that answered -1 left the player buffering with no
 // message until someone stopped it (seen live on Kodi 22.0 RC1, docs/CLOSED_ITEMS.md). `tail`: the reader is waiting
@@ -1883,6 +1907,8 @@ int main(int argc, char** argv)
       live_tail_close(*cl);
     else if (what == "live_tail_bound")
       live_tail_bound(*cl);
+    else if (what == "live_stop_token")
+      live_stop_token(*cl);
     else if (what == "live_fatal_ends")
       live_fatal_ends(*cl, arg ? arg : "tail");
     else if (what == "live_tail_ended")

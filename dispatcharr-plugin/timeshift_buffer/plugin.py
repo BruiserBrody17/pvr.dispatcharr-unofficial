@@ -295,6 +295,10 @@ def _update_buffer_state(channel_uuid, mutate):
 
 def _delete_buffer_state(channel_uuid):
     _redis().delete(_buffer_key(channel_uuid))
+    _forget_cached_manifest(channel_uuid)
+
+
+def _forget_cached_manifest(channel_uuid):
     # Single choke point for every "this buffer is gone" path (stop_buffer,
     # stop_all, the reaper, dead-buffer cleanup in start_buffer) -- drops
     # this worker's own cached manifest state (see _get_live_manifest's
@@ -305,6 +309,68 @@ def _delete_buffer_state(channel_uuid):
     # dropping it here is cheap and removes any doubt.
     with _manifest_cache_lock:
         _manifest_cache.pop(channel_uuid, None)
+
+
+# Deletes a key only if it still holds exactly the text the caller read: _CAS_SCRIPT's counterpart for a delete.
+_CAD_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == ARGV[1] then
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+return 0
+"""
+
+_cad_fallback_logged = False
+
+
+def _compare_and_delete_buffer_state(channel_uuid, expected) -> bool:
+    """Deletes the state only if it is still exactly `expected` (the JSON text it was read as); returns whether it was
+    deleted. Falls back to a plain delete when this Redis refuses scripts, as _cas_buffer_state() does."""
+    global _cad_fallback_logged
+    try:
+        deleted = bool(_redis().eval(_CAD_SCRIPT, 1, _buffer_key(channel_uuid), expected))
+    except Exception as exc:
+        if not _is_redis_response_error(exc):
+            raise
+        if not _cad_fallback_logged:
+            _cad_fallback_logged = True
+            logging.getLogger(__name__).warning(
+                "timeshift_buffer: this Redis refused the compare-and-delete script (%s) -- a slow teardown can "
+                "delete the state of a buffer started after it again",
+                exc,
+            )
+        _delete_buffer_state(channel_uuid)
+        return True
+    if deleted:
+        _forget_cached_manifest(channel_uuid)
+    return deleted
+
+
+def _delete_buffer_state_if_instance(channel_uuid, instance) -> str:
+    """Deletes this channel's state only while it still describes `instance` (_same_buffer_instance()). Returns
+    "deleted", "absent", "replaced" (another instance, or a state that cannot be read, is there now: left alone) or
+    "contended" (it kept changing under _STATE_UPDATE_ATTEMPTS tries: left for its TTL).
+
+    The end of a teardown (2026-10-18 audit): its unconditional delete ran after the segment removal, which on a large
+    buffer can outlast _TEARDOWN_GRACE_SECONDS, after which a start_buffer may already have replaced the buffer -- and
+    the old teardown then deleted the new state, leaving its viewer on 403s and its ffmpeg untracked."""
+    for _ in range(_STATE_UPDATE_ATTEMPTS):
+        try:
+            current = _get_buffer_state(channel_uuid)
+        except ValueError:
+            return "replaced"
+        if current is None:
+            _forget_cached_manifest(channel_uuid)
+            return "absent"
+        if not _same_buffer_instance(current, instance):
+            return "replaced"
+        expected = getattr(current, "raw", None)
+        if expected is None:
+            expected = json.dumps(current)
+        if _compare_and_delete_buffer_state(channel_uuid, expected):
+            return "deleted"
+    return "contended"
 
 
 def _list_buffer_keys():
@@ -1904,12 +1970,63 @@ def _remove_channel_files(state: dict, logger):
             "timeshift_buffer: refusing to remove files for invalid channel_uuid %r", state.get("channel_uuid")
         )
         return
+    # Renamed out of the way first, then removed: the removal of a large buffer can outlast _TEARDOWN_GRACE_SECONDS,
+    # and a start_buffer after that recreates this directory for its new ffmpeg -- which the old rmtree's final rmdir
+    # used to remove as well (2026-10-18 audit). The rename is one step; whatever is left of an interrupted removal is
+    # found by name by the orphan scrub (_scrub_tombstones()).
+    target = channel_dir.with_name(f"{_TOMBSTONE_PREFIX}{channel_dir.name}.{secrets.token_hex(4)}")
     try:
-        shutil.rmtree(channel_dir)
+        os.rename(channel_dir, target)
+    except FileNotFoundError:
+        return
+    except OSError:
+        logger.exception(
+            "timeshift_buffer: couldn't move %s aside before removing it -- removing it in place", channel_dir
+        )
+        target = channel_dir
+    try:
+        shutil.rmtree(target)
     except FileNotFoundError:
         pass
     except OSError:
-        logger.exception("timeshift_buffer: couldn't fully clean up %s", channel_dir)
+        logger.exception("timeshift_buffer: couldn't fully clean up %s", target)
+
+
+#: A buffer directory moved aside for removal is named `.<channel uuid>.removing-<8 hex digits>`.
+_TOMBSTONE_PREFIX = "."
+_TOMBSTONE_RE = re.compile(r"\.([0-9a-f-]{36})\.removing-[0-9a-f]{8}")
+
+
+def _is_tombstone_name(name: str) -> bool:
+    match = _TOMBSTONE_RE.fullmatch(name)
+    return match is not None and _is_canonical_uuid(match.group(1))
+
+
+def _scrub_tombstones(storage_path: str, min_age_seconds: int, logger) -> list:
+    """Removes buffer directories that _remove_channel_files() moved aside and never finished removing (the worker died
+    mid-removal). A removal in progress keeps changing its directory's mtime, so only one idle for `min_age_seconds` is
+    taken; tombstones are never reused, so no lock is needed."""
+    root = Path(storage_path)
+    if not root.is_dir():
+        return []
+    removed = []
+    now = time.time()
+    for entry in root.iterdir():
+        if not _is_tombstone_name(entry.name) or not entry.is_dir():
+            continue
+        try:
+            if now - entry.stat().st_mtime < min_age_seconds:
+                continue
+            shutil.rmtree(entry)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            logger.exception("timeshift_buffer: couldn't remove the leftover %s", entry)
+            continue
+        removed.append(entry.name)
+    if removed:
+        logger.info("timeshift_buffer: removed %d interrupted buffer removal(s): %s", len(removed), ", ".join(removed))
+    return removed
 
 
 #: How long _classify_existing_buffer() trusts a "stopping" marker as a
@@ -2115,7 +2232,22 @@ def _teardown_buffer(state: dict, logger, abort_if=None, holds_start_lock: bool 
         return _teardown_untracked_buffer(state, logger)
     _stop_ffmpeg(state, logger)
     _remove_channel_files(state, logger)
-    _delete_buffer_state(state["channel_uuid"])
+    if outcome == "absent":
+        # Inside the start lock, so nothing can have been started meanwhile.
+        _delete_buffer_state(state["channel_uuid"])
+        return True
+    deleted = _delete_buffer_state_if_instance(state["channel_uuid"], state)
+    if deleted == "replaced":
+        logger.warning(
+            "timeshift_buffer: channel %s was restarted while its old buffer was being removed -- leaving the new "
+            "buffer's state alone",
+            state["channel_uuid"],
+        )
+    elif deleted == "contended":
+        logger.warning(
+            "timeshift_buffer: couldn't delete the state of channel %s atomically -- it expires on its own",
+            state["channel_uuid"],
+        )
     return True
 
 
@@ -2289,7 +2421,7 @@ def _scrub_orphaned_dirs(storage_path: str, min_age_seconds: int, logger) -> lis
             "y" if len(removed) == 1 else "ies",
             ", ".join(removed),
         )
-    return removed
+    return removed + _scrub_tombstones(storage_path, min_age_seconds, logger)
 
 
 _manifest_cache = {}
@@ -3821,6 +3953,15 @@ class Plugin:
         if not state:
             return {"status": "ok", "message": "no buffer was running"}
 
+        # The caller's buffer token, when it sends one (the addon since 0.14.x): a stop that arrives after its buffer
+        # was replaced (it died and another start_buffer started a new one) must not stop the replacement
+        # (2026-10-18 audit). Checked again inside the atomic update below; past that, _teardown_buffer() refuses a
+        # different instance than the one read here.
+        supplied_token = params.get("access_token")
+        replaced = {"status": "ok", "message": "this caller's buffer was already replaced; nothing stopped"}
+        if _is_stale_access_token(state, supplied_token):
+            return replaced
+
         # Reference-counted stop, not unconditional -- confirmed live this
         # matters: an earlier version of this addon called stop_buffer
         # unconditionally on every Close(), which killed a second viewer's
@@ -3844,6 +3985,8 @@ class Plugin:
             # stamps on a monotonic clock, drops the phantom, and its buffer-wide idle check ends the buffer once
             # nobody fetches segments any more (_reaper_loop).
             def drop_viewer(current):
+                if _is_stale_access_token(current, supplied_token):
+                    return None
                 current_viewers = current.get("viewers", [])
                 if viewer_id in current_viewers:
                     current_viewers.remove(viewer_id)
@@ -3853,6 +3996,8 @@ class Plugin:
             outcome, state = _update_buffer_state(channel_uuid, drop_viewer)
             if outcome == "absent":
                 return {"status": "ok", "message": "no buffer was running"}
+            if outcome == "declined":
+                return replaced
             if outcome != "written":
                 return {
                     "status": "error",

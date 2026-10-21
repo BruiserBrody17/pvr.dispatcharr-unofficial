@@ -481,8 +481,12 @@ public:
   // original bug this reference-counted design itself fixes (a buffer
   // staying exhausted well after its only real viewer stopped, since
   // nothing used to proactively tell the plugin so). Best-effort:
-  // "nothing was running" is success, not an error.
-  bool StopTimeshiftBuffer(const std::string& channelUuid, const std::string& viewerId, std::string& error);
+  // "nothing was running" is success, not an error. `accessToken` is the buffer's own token from start_buffer (empty
+  // when there was none): the plugin then leaves alone a buffer that replaced this viewer's (another token).
+  bool StopTimeshiftBuffer(const std::string& channelUuid, const std::string& viewerId, const std::string& accessToken,
+                           std::string& error);
+  // The current live buffer's access token, read under m_liveStateMutex (empty before start_buffer has answered).
+  std::string LiveTimeshiftAccessToken() const;
   // Refreshes this specific viewer's own last-seen time on the plugin side
   // (plugin.py's heartbeat action, viewer_id param), separate from the
   // buffer-wide liveness that ordinary segment fetches already provide.

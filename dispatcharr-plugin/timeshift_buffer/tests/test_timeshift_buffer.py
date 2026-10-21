@@ -47,6 +47,7 @@ _spec.loader.exec_module(timeshift_buffer_plugin)
 # The real compare-and-set, kept before the autouse fixture below swaps in a
 # stand-in for every other test.
 _REAL_CAS = timeshift_buffer_plugin._cas_buffer_state
+_REAL_CAD = timeshift_buffer_plugin._compare_and_delete_buffer_state
 
 
 class _FakeLogger:
@@ -94,7 +95,18 @@ def _cas_over_patched_state_functions(monkeypatch):
         timeshift_buffer_plugin._set_buffer_state(channel_uuid, new_state)
         return True
 
+    def cad(channel_uuid, expected):
+        current = timeshift_buffer_plugin._get_buffer_state(channel_uuid)
+        if current is None:
+            return False
+        text = expected.decode() if isinstance(expected, bytes) else expected
+        if json.dumps(current) != text:
+            return False
+        timeshift_buffer_plugin._delete_buffer_state(channel_uuid)
+        return True
+
     monkeypatch.setattr(timeshift_buffer_plugin, "_cas_buffer_state", cas)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_compare_and_delete_buffer_state", cad)
 
 
 @pytest.fixture(autouse=True)
@@ -3590,14 +3602,17 @@ class _FakeStateRedis:
     def delete(self, key):
         self.store.pop(key, None)
 
-    def eval(self, script, numkeys, key, expected, new, ttl):  # noqa: ARG002
+    def eval(self, script, numkeys, key, expected, new=None, ttl=None):  # noqa: ARG002
         self.eval_calls += 1
         if self.eval_error is not None:
             raise self.eval_error
         if self.before_eval is not None:
             self.before_eval(key)
         if self.store.get(key) == expected:
-            self.store[key] = new
+            if script == timeshift_buffer_plugin._CAD_SCRIPT:
+                del self.store[key]
+            else:
+                self.store[key] = new
             return 1
         return 0
 
@@ -3607,6 +3622,7 @@ def state_redis(monkeypatch):
     client = _FakeStateRedis()
     monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
     monkeypatch.setattr(timeshift_buffer_plugin, "_cas_buffer_state", _REAL_CAS)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_compare_and_delete_buffer_state", _REAL_CAD)
     return client
 
 
@@ -3796,7 +3812,9 @@ def test_teardown_buffer_marks_stopping_atomically_and_keeps_a_concurrent_viewer
     state_redis.before_eval = record_marker
 
     assert timeshift_buffer_plugin._teardown_buffer(dict(state), _FakeLogger()) is True
-    assert marked == [None]  # the marker was written by the eval, after the read, over an unmarked state
+    # The marker was written by the first eval, after the read, over an unmarked state; the second is the delete's
+    # compare, which found the marked state still there.
+    assert marked == [None, True]
     assert timeshift_buffer_plugin._buffer_key(_UUID) not in state_redis.store  # and the state was then deleted
 
 
@@ -6473,3 +6491,174 @@ def test_reaper_caps_the_idle_timeout(monkeypatch):
     state = {"channel_uuid": "abc", "last_heartbeat": 500.0}
     teardowns, _tracker, _clock = _drive_reaper(monkeypatch, lambda i: [dict(state)], ticks=2, step=301.0, idle=10**9)
     assert len(teardowns) == 1
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-18 audit: a teardown that outlasts its grace period must not delete a restarted buffer
+# ---------------------------------------------------------------------------
+
+
+def test_a_slow_teardown_leaves_the_state_of_a_buffer_started_during_its_removal(state_redis, monkeypatch):
+    """The segment removal outlasted _TEARDOWN_GRACE_SECONDS, a start_buffer classified the old buffer dead and wrote
+    its own state, and the old teardown's unconditional delete then removed that."""
+    old = {"channel_uuid": _UUID, "pid": 100, "started_at": 5.0, "access_token": "old"}
+    new = {"channel_uuid": _UUID, "pid": 200, "started_at": 60.0, "access_token": "new"}
+    _seed(state_redis, old)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_ffmpeg", lambda s, logger: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_remove_channel_files", lambda s, logger: _seed(state_redis, new))
+    logger = _FakeLogger()
+
+    assert timeshift_buffer_plugin._teardown_buffer(dict(old), logger) is True
+
+    assert _stored(state_redis) == new
+    assert any(level == "warning" and "restarted while its old buffer" in msg for level, msg in logger.calls)
+
+
+def test_delete_buffer_state_if_instance_outcomes(state_redis):
+    instance = {"channel_uuid": _UUID, "pid": 100, "started_at": 5.0}
+    assert timeshift_buffer_plugin._delete_buffer_state_if_instance(_UUID, instance) == "absent"
+
+    _seed(state_redis, {**instance, "last_heartbeat": 9.0, "stopping": True})
+    assert timeshift_buffer_plugin._delete_buffer_state_if_instance(_UUID, instance) == "deleted"
+    assert state_redis.store == {}
+
+    state_redis.store[timeshift_buffer_plugin._buffer_key(_UUID)] = "not json"
+    assert timeshift_buffer_plugin._delete_buffer_state_if_instance(_UUID, instance) == "replaced"
+    assert state_redis.store  # left for its TTL
+
+
+def test_delete_buffer_state_if_instance_retries_a_heartbeat_that_lands_in_between(state_redis):
+    instance = {"channel_uuid": _UUID, "pid": 100, "started_at": 5.0}
+    _seed(state_redis, {**instance, "last_heartbeat": 1.0})
+    heartbeats = iter([2.0])
+
+    def heartbeat_once(key):
+        beat = next(heartbeats, None)
+        if beat is not None:
+            state_redis.store[key] = json.dumps({**instance, "last_heartbeat": beat})
+
+    state_redis.before_eval = heartbeat_once
+
+    assert timeshift_buffer_plugin._delete_buffer_state_if_instance(_UUID, instance) == "deleted"
+    assert state_redis.eval_calls == 2
+
+
+def test_delete_buffer_state_if_instance_falls_back_to_a_plain_delete_without_scripting(state_redis, monkeypatch):
+    instance = {"channel_uuid": _UUID, "pid": 100, "started_at": 5.0}
+    _seed(state_redis, instance)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_redis_response_error", lambda exc: True)
+    state_redis.eval_error = RuntimeError("unknown command 'EVAL'")
+
+    assert timeshift_buffer_plugin._delete_buffer_state_if_instance(_UUID, instance) == "deleted"
+    assert state_redis.store == {}
+
+
+def test_remove_channel_files_leaves_a_directory_recreated_while_it_was_removing(tmp_path, monkeypatch):
+    """The old rmtree ran on the channel directory itself; a start_buffer after the grace period recreated it for a
+    new ffmpeg, and the old rmtree removed that too."""
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    (channel_dir / "seg_00001.ts").write_bytes(b"old")
+    real_rmtree = shutil.rmtree
+
+    def rmtree_while_a_new_buffer_starts(path, *args, **kwargs):
+        channel_dir.mkdir(exist_ok=True)
+        (channel_dir / "seg_00000.ts").write_bytes(b"new")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(timeshift_buffer_plugin.shutil, "rmtree", rmtree_while_a_new_buffer_starts)
+
+    timeshift_buffer_plugin._remove_channel_files({"storage_path": str(tmp_path), "channel_uuid": _UUID}, _FakeLogger())
+
+    assert [p.name for p in channel_dir.iterdir()] == ["seg_00000.ts"]
+    assert [p.name for p in tmp_path.iterdir()] == [_UUID]  # the moved-aside copy is gone
+
+
+def test_remove_channel_files_removes_in_place_when_it_cannot_move_the_directory(tmp_path, monkeypatch):
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    (channel_dir / "seg_00001.ts").write_bytes(b"old")
+
+    def refuse(src, dst):
+        raise PermissionError("rename refused")
+
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "rename", refuse)
+    logger = _FakeLogger()
+
+    timeshift_buffer_plugin._remove_channel_files({"storage_path": str(tmp_path), "channel_uuid": _UUID}, logger)
+
+    assert not channel_dir.exists()
+    assert [level for level, _msg in logger.calls] == ["exception"]
+
+
+def test_scrub_removes_an_idle_tombstone_and_keeps_a_busy_one_and_other_dot_directories(
+    tmp_path, monkeypatch, start_locks
+):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    idle = tmp_path / f".{_UUID}.removing-0123abcd"
+    busy = tmp_path / ".22222222-2222-2222-2222-222222222222.removing-89abcdef"
+    other = tmp_path / ".snapshots"
+    for d in (idle, busy, other):
+        d.mkdir()
+        (d / "seg_00001.ts").write_bytes(b"x")
+    old_mtime = time.time() - 3600
+    for d in (idle, other):
+        os.utime(d, (old_mtime, old_mtime))
+
+    removed = timeshift_buffer_plugin._scrub_orphaned_dirs(str(tmp_path), min_age_seconds=60, logger=_FakeLogger())
+
+    assert removed == [idle.name]
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted([busy.name, other.name])
+
+
+def test_is_tombstone_name():
+    assert timeshift_buffer_plugin._is_tombstone_name(f".{_UUID}.removing-0123abcd")
+    for name in (_UUID, f"{_UUID}.removing-0123abcd", f".{_UUID}.removing-0123", ".X.removing-0123abcd", ".git"):
+        assert not timeshift_buffer_plugin._is_tombstone_name(name)
+
+
+@pytest.mark.parametrize("viewer_id", ["v1", None])
+def test_run_stop_buffer_with_a_stale_token_leaves_the_replacement_buffer_alone(monkeypatch, tmp_path, viewer_id):
+    """A stop that arrives after its caller's buffer was replaced: the replacement has another token."""
+    state = {"channel_uuid": _UUID, "pid": 200, "started_at": 60.0, "access_token": "new", "viewers": ["v1"]}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: pytest.fail("must not write"))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", lambda *a, **k: pytest.fail("must not tear down"))
+    params = {"channel_uuid": _UUID, "access_token": "old"}
+    if viewer_id:
+        params["viewer_id"] = viewer_id
+
+    result, _logger = _run(monkeypatch, "stop_buffer", params, {}, tmp_path)
+
+    assert result == {"status": "ok", "message": "this caller's buffer was already replaced; nothing stopped"}
+
+
+def test_run_stop_buffer_rechecks_the_token_inside_the_atomic_update(monkeypatch, tmp_path):
+    """Replaced between stop_buffer's first read and its update: the update declines."""
+    old = {"channel_uuid": _UUID, "pid": 100, "started_at": 5.0, "access_token": "old", "viewers": ["v1"]}
+    new = {"channel_uuid": _UUID, "pid": 200, "started_at": 60.0, "access_token": "new", "viewers": ["v9"]}
+    reads = iter([old])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(next(reads, new)))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: pytest.fail("must not write"))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", lambda *a, **k: pytest.fail("must not tear down"))
+
+    result, _logger = _run(
+        monkeypatch, "stop_buffer", {"channel_uuid": _UUID, "viewer_id": "v1", "access_token": "old"}, {}, tmp_path
+    )
+
+    assert result["message"] == "this caller's buffer was already replaced; nothing stopped"
+
+
+def test_run_stop_buffer_with_the_current_token_still_stops(monkeypatch, tmp_path):
+    state = {"channel_uuid": _UUID, "pid": 100, "started_at": 5.0, "access_token": "tok", "viewers": ["v1"]}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: state.update(s))
+    torn_down = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger, **k: torn_down.append(s) or True)
+
+    result, _logger = _run(
+        monkeypatch, "stop_buffer", {"channel_uuid": _UUID, "viewer_id": "v1", "access_token": "tok"}, {}, tmp_path
+    )
+
+    assert result == {"status": "ok", "message": "Buffer stopped"}
+    assert len(torn_down) == 1

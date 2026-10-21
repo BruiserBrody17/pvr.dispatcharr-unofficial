@@ -2769,7 +2769,12 @@ remaining window, letting a concurrent `start_buffer` spawn a brand-new,
 untracked ffmpeg that the still-in-flight *original* teardown then
 orphaned by deleting its state out from under it -- an ffmpeg left
 holding a provider stream slot until the container restarts, not just a
-theoretical race. The "stopping" refusal's own response also carries
+theoretical race. The grace period only covers a teardown shorter than
+`_TEARDOWN_GRACE_SECONDS`: one whose segment removal ran longer (a large
+buffer, slow storage) reopened the same race until 2026-10-21, when the
+teardown's last two steps stopped depending on it (`docs/CLOSED_ITEMS.md`,
+"a teardown that outlasts its grace period can delete a restarted
+buffer"; the tests are listed at the end of this section). The "stopping" refusal's own response also carries
 `retryable: True` -- the same structured-signal convention as
 `get_live_manifest`'s own `fatal` -- which is what lets the addon's own
 `OpenLiveTimeshiftStream()` retry briefly instead of failing outright
@@ -2936,6 +2941,20 @@ pins a `PermissionError` reaching the start-time comparison, and two `test_is_pr
 tests that it still means "alive" with a matching start time or nothing to compare. All but those last two fail on the
 previous plugin code. Not covered: a real client disconnecting from the real server (the handler's error path is driven
 directly).
+
+2026-10-21 (`timeshift_buffer` 0.8.15, `docs/CLOSED_ITEMS.md`'s "a teardown that outlasts its grace period can delete
+a restarted buffer"): `test_a_slow_teardown_leaves_the_state_of_a_buffer_started_during_its_removal` (a replacement
+written while the files are removed survives the teardown's delete, against the fake Redis with the real scripts'
+semantics), the `test_delete_buffer_state_if_instance_*` tests (absent, deleted, an unreadable state left alone, a
+heartbeat in between retried, the plain-delete fallback without scripting),
+`test_remove_channel_files_leaves_a_directory_recreated_while_it_was_removing` (a real directory recreated mid-removal
+keeps its new file), `test_remove_channel_files_removes_in_place_when_it_cannot_move_the_directory`,
+`test_scrub_removes_an_idle_tombstone_and_keeps_a_busy_one_and_other_dot_directories`, `test_is_tombstone_name`, and
+three `test_run_stop_buffer_*token*` tests (a stale token stops nothing, with or without a `viewer_id`; a replacement
+between the first read and the atomic update is caught there; the current token still stops). Six fail on the
+previous plugin code (the rest test new functions or the unchanged outcome). The addon's side, sending the token, is
+the glue scenario `live_stop_token`. Not covered: a real Redis running the scripts, and a real slow removal racing a
+real `start_buffer`.
 
 ## Tools
 
