@@ -110,6 +110,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -148,6 +149,14 @@ _START_SLOT_LOCK_ID = "__start_slot__"
 # buffer state entry (and whatever it points at) disappears on its own
 # instead of lingering forever pointing at a dead PID.
 _BUFFER_STATE_TTL = 600
+
+# Upper limits for the settings that had none (2026-10-18 audit): a mistyped extra digit or two is accepted as typed
+# otherwise. A day of buffer is already tens of thousands of segment files and tens of GB per channel; 64 buffers is far
+# past any provider's concurrent-stream limit; an idle timeout is capped at half the state TTL above, so that TTL stays
+# the headroom past it that its comment describes.
+_MAX_BUFFER_MINUTES = 24 * 60
+_MAX_CONCURRENT_BUFFERS = 64
+_MAX_IDLE_TIMEOUT_SECONDS = _BUFFER_STATE_TTL // 2
 
 _HTTP_THREAD_NAME = "timeshift_buffer_http"
 _REAPER_THREAD_NAME = "timeshift_buffer_reaper"
@@ -567,6 +576,11 @@ _SERVABLE_NAME_RE = re.compile(r"(live\.m3u8|seg_[0-9]+\.ts)")
 
 # Size of each piece of a response body written to the socket.
 _SEND_CHUNK_BYTES = 256 * 1024
+
+# What a viewer that disconnects or stops reading mid-response raises in a handler: logged as one line, not a traceback
+# (_BufferHTTPServer.handle_error()). BrokenPipeError and ConnectionResetError are ConnectionErrors; TimeoutError is a
+# socket deadline running out.
+_CLIENT_GONE_ERRORS = (ConnectionError, TimeoutError)
 
 
 def _is_servable_name(name: str) -> bool:
@@ -1056,6 +1070,20 @@ class _BufferHTTPServer(ThreadingHTTPServer):
             self._connection_slots.release()
             self._release_client_slot(client)
             raise
+
+    def handle_error(self, request, client_address):
+        # socketserver's default prints a full traceback to stderr for every exception a handler raises, and a viewer
+        # that stops mid-segment (a channel change, a seek) raises one into the body loop of do_GET().
+        exc = sys.exc_info()[1]
+        logger = getattr(self, "plugin_logger", None)
+        if isinstance(exc, _CLIENT_GONE_ERRORS):
+            if logger:
+                logger.debug("timeshift_buffer http: client went away mid-response (%s)", type(exc).__name__)
+            return
+        if logger:
+            logger.exception("timeshift_buffer http: error while serving a request")
+            return
+        super().handle_error(request, client_address)
 
     def process_request_thread(self, request, client_address):
         try:
@@ -1575,7 +1603,7 @@ def _clear_channel_dir(channel_dir: Path, logger):
 def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) -> dict:
     storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
     segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1)
-    buffer_minutes = _int_setting(settings_dict, "buffer_minutes", 60, minimum=1)
+    buffer_minutes = _int_setting(settings_dict, "buffer_minutes", 60, minimum=1, maximum=_MAX_BUFFER_MINUTES)
     base_url = _str_setting(settings_dict, "internal_base_url", "http://127.0.0.1:9191")
     http_port = _int_setting(settings_dict, "http_port", 9192, minimum=1, maximum=65535)
 
@@ -1819,9 +1847,13 @@ def _is_process_alive(pid, start_ticks: int | None = None) -> bool:
         os.killpg(pid, 0)
     except ProcessLookupError:
         return False
+    except PermissionError:
+        # Some other user's process holds this pid, so it is not the ffmpeg this plugin started under its own user: the
+        # start-time comparison below says so when one was recorded. This returned "alive" before reaching it, so a
+        # buffer whose pid was recycled into another user's process was never seen to die (2026-10-18 audit).
+        pass
     except Exception:
-        # e.g. PermissionError against a recycled, unrelated pid -- assume
-        # alive rather than reap something still running
+        # Anything else is unexplained -- assume alive rather than reap something still running.
         return True
 
     stat_text = _read_proc_pid_stat(pid)
@@ -2203,8 +2235,14 @@ def _is_untracked_orphan(entry: Path, min_age_seconds: int, now: float) -> bool:
     # before this check existed.
     if not _is_canonical_uuid(entry.name):
         return False
-    if _get_buffer_state(entry.name) is not None:
-        return False  # tracked -- not an orphan
+    try:
+        if _get_buffer_state(entry.name) is not None:
+            return False  # tracked -- not an orphan
+    except ValueError:
+        # A state that is not valid JSON raised out of here and ended the whole scrub pass, every tick, until its
+        # TTL ran out (2026-10-18 audit). Skipped as if tracked: what it described is unknown, and the key expires.
+        _log_unreadable_state_once(_buffer_key(entry.name))
+        return False
     try:
         age = now - entry.stat().st_mtime
     except OSError:
@@ -2959,7 +2997,9 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_trac
                 tracker.clear()
             if got_leadership:
                 settings_dict = settings_getter()
-                idle_timeout = _int_setting(settings_dict, "idle_timeout_seconds", 30, minimum=1)
+                idle_timeout = _int_setting(
+                    settings_dict, "idle_timeout_seconds", 30, minimum=1, maximum=_MAX_IDLE_TIMEOUT_SECONDS
+                )
                 reaper_storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
                 seen_keys = set()
                 for state in _iter_buffer_states():
@@ -3205,7 +3245,8 @@ class Plugin:
             "help_text": (
                 "How far back a viewer can rewind. Drives both "
                 "hls_list_size (what the playlist advertises) and "
-                "hls_delete_threshold (when old segment files are deleted)."
+                "hls_delete_threshold (when old segment files are deleted). "
+                "At most 1440 (a day)."
             ),
         },
         {
@@ -3236,7 +3277,8 @@ class Plugin:
                 "Stop, which tears the buffer down immediately regardless. "
                 "Kept short so an abandoned buffer doesn't occupy one of a "
                 "provider's concurrent-stream slots for long. See "
-                "pvr.dispatcharr-unofficial's docs/TIMESHIFT.md for details."
+                "pvr.dispatcharr-unofficial's docs/TIMESHIFT.md for details. "
+                "At most 300."
             ),
         },
         {
@@ -3244,7 +3286,9 @@ class Plugin:
             "label": "Max concurrent channel buffers",
             "type": "number",
             "default": 4,
-            "help_text": "Safety cap -- each active buffer is a real ffmpeg process plus continuous disk writes.",
+            "help_text": (
+                "Safety cap -- each active buffer is a real ffmpeg process plus continuous disk writes. At most 64."
+            ),
         },
         {
             "id": "internal_base_url",
@@ -3728,7 +3772,9 @@ class Plugin:
                 "message": "Another buffer is being started right now -- retry in a moment",
             }
         try:
-            max_concurrent = _int_setting(settings_dict, "max_concurrent_buffers", 4, minimum=1)
+            max_concurrent = _int_setting(
+                settings_dict, "max_concurrent_buffers", 4, minimum=1, maximum=_MAX_CONCURRENT_BUFFERS
+            )
             if len(_list_buffer_keys()) >= max_concurrent:
                 return {
                     "status": "error",
@@ -4009,7 +4055,9 @@ class Plugin:
 
     def _scrub_orphaned_buffers(self, settings_dict, logger):
         storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
-        idle_timeout = _int_setting(settings_dict, "idle_timeout_seconds", 30, minimum=1)
+        idle_timeout = _int_setting(
+            settings_dict, "idle_timeout_seconds", 30, minimum=1, maximum=_MAX_IDLE_TIMEOUT_SECONDS
+        )
         # Same floor as the reaper's own automatic pass -- see
         # _find_orphaned_channel_dirs' comment on why an orphan (no
         # tracked state to double-check against) gets more margin than

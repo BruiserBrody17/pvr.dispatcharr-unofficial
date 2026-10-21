@@ -1056,16 +1056,45 @@ def test_is_process_alive_false_when_process_lookup_error(monkeypatch):
 
 
 def test_is_process_alive_true_on_other_errors_conservatively(monkeypatch):
-    """Documented deliberate choice (see the function's own docstring):
-    e.g. a PermissionError against a recycled, unrelated pid should
-    assume the process is still alive rather than risk reaping something
-    still running."""
+    """An error other than "no such process" or "not yours" is unexplained, so the process is assumed
+    alive rather than risk reaping something still running."""
 
-    def raise_permission_error(pid, sig):
-        raise PermissionError
+    def raise_os_error(pid, sig):
+        raise OSError("unexpected")
 
-    monkeypatch.setattr(timeshift_buffer_plugin.os, "killpg", raise_permission_error)
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "killpg", raise_os_error)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: _stat(pid, "other", 222))
+    assert timeshift_buffer_plugin._is_process_alive(1234, 111) is True
+
+
+def _raise_permission_error(pid, sig):
+    raise PermissionError
+
+
+def test_is_process_alive_false_for_another_users_process_with_a_different_start_time(monkeypatch):
+    """The 2026-10-18 audit: a PermissionError (the pid is another user's) returned "alive" before the
+    start times were compared, so a buffer whose pid was recycled into such a process never died."""
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "killpg", _raise_permission_error)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: _stat(pid, "other", 222))
+
+    assert timeshift_buffer_plugin._is_process_alive(1234, 111) is False
+
+
+def test_is_process_alive_true_for_a_permission_error_when_the_start_time_matches(monkeypatch):
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "killpg", _raise_permission_error)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: _stat(pid, "ffmpeg", 111))
+
+    assert timeshift_buffer_plugin._is_process_alive(1234, 111) is True
+
+
+def test_is_process_alive_true_for_a_permission_error_it_cannot_check_further(monkeypatch):
+    """No recorded start time, or no readable /proc: still the conservative "alive"."""
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "killpg", _raise_permission_error)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: _stat(pid, "other", 222))
     assert timeshift_buffer_plugin._is_process_alive(1234) is True
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: None)
+    assert timeshift_buffer_plugin._is_process_alive(1234, 111) is True
 
 
 def test_is_process_alive_false_for_a_zombie(monkeypatch):
@@ -6346,3 +6375,101 @@ def test_the_reaper_trims_the_log_under_the_buffers_own_storage_path(monkeypatch
     timeshift_buffer_plugin._reaper_loop(settings_getter, _FakeLogger(), _OneShotStopEvent())
 
     assert trimmed == [f"/old/place/{_UUID}", f"/new/place/{_ORPHAN_UUID}"]
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-18 audit: a corrupt state stops the scrub, client disconnects, setting caps
+# ---------------------------------------------------------------------------
+
+
+def test_scrub_skips_a_channel_whose_state_is_not_valid_json_and_scrubs_the_rest(tmp_path, monkeypatch, start_locks):
+    """_get_buffer_state() raises ValueError on a value that is not JSON; that ended the whole scrub."""
+    corrupt = tmp_path / "55555555-5555-5555-5555-555555555555"
+    orphan = tmp_path / "66666666-6666-6666-6666-666666666666"
+    old_mtime = time.time() - 3600
+    for d in (corrupt, orphan):
+        d.mkdir()
+        os.utime(d, (old_mtime, old_mtime))
+
+    def get_state(uuid):
+        if uuid == corrupt.name:
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+        return None
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", get_state)
+
+    removed = timeshift_buffer_plugin._scrub_orphaned_dirs(str(tmp_path), min_age_seconds=60, logger=_FakeLogger())
+
+    assert removed == [orphan.name]
+    assert corrupt.exists()
+
+
+def _handle_error_while(exc):
+    logger = _FakeLogger()
+    server = types.SimpleNamespace(plugin_logger=logger)
+    try:
+        raise exc
+    except Exception:
+        timeshift_buffer_plugin._BufferHTTPServer.handle_error(server, None, ("192.0.2.1", 50000))
+    return logger
+
+
+@pytest.mark.parametrize(
+    "exc", [BrokenPipeError(32, "Broken pipe"), ConnectionResetError(104, "reset"), TimeoutError()]
+)
+def test_http_server_logs_a_client_that_went_away_as_one_debug_line(exc, capsys):
+    logger = _handle_error_while(exc)
+
+    assert logger.calls == [("debug", f"timeshift_buffer http: client went away mid-response ({type(exc).__name__})")]
+    assert capsys.readouterr().err == ""  # socketserver's default printed a traceback here
+
+
+def test_http_server_logs_any_other_handler_error_through_the_plugin_logger(capsys):
+    logger = _handle_error_while(RuntimeError("bug"))
+
+    assert [level for level, _msg in logger.calls] == ["exception"]
+    assert capsys.readouterr().err == ""
+
+
+def test_start_buffer_caps_max_concurrent_buffers(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [f"k{i}" for i in range(64)])
+
+    result, _logger = _run(
+        monkeypatch, "start_buffer", {"channel_uuid": _UUID}, {"max_concurrent_buffers": 10**9}, tmp_path
+    )
+
+    assert result["status"] == "error"
+    assert "(64)" in result["message"]
+
+
+def test_start_ffmpeg_caps_buffer_minutes_at_a_day(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: commands.append(cmd) or _FakeProc()
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: None)
+
+    timeshift_buffer_plugin._start_ffmpeg(
+        _UUID, {}, {"storage_path": str(tmp_path), "buffer_minutes": 10**7, "segment_seconds": 2}, _FakeLogger()
+    )
+
+    cmd = commands[0]
+    assert cmd[cmd.index("-hls_list_size") + 1] == str(24 * 60 * 60 // 2)
+
+
+def test_scrub_action_caps_the_idle_timeout(monkeypatch, tmp_path):
+    ages = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda path, min_age, logger: ages.append(min_age) or []
+    )
+
+    _run(monkeypatch, "scrub_orphaned_buffers", {}, {"idle_timeout_seconds": 10**9}, tmp_path)
+
+    assert ages == [300]
+
+
+def test_reaper_caps_the_idle_timeout(monkeypatch):
+    state = {"channel_uuid": "abc", "last_heartbeat": 500.0}
+    teardowns, _tracker, _clock = _drive_reaper(monkeypatch, lambda i: [dict(state)], ticks=2, step=301.0, idle=10**9)
+    assert len(teardowns) == 1

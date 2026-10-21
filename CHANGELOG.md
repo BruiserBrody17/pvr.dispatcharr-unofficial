@@ -86,6 +86,16 @@ Dispatcharr restart for every worker to pick it up.
   moment, an expired login) while playback itself kept working, the buffer was stopped mid-playback. It now stays up as
   long as playback is reading from it. A viewer that crashed just before the last other viewer stopped now frees its
   provider slot up to the idle timeout plus 15 seconds after playback stopped, instead of up to 15 seconds.
+- **One damaged buffer record no longer stops the cleanup of leftover buffer folders.** A record the plugin could not
+  read made the periodic cleanup give up for every channel until the record expired; it now skips just that one.
+- **A viewer that stops mid-download no longer prints a traceback in the Dispatcharr log**: it is logged as one line.
+- **A buffer whose ffmpeg has gone is noticed even when its process number was reused by another account's process**;
+  before, such a buffer was treated as still running.
+
+### Changed
+
+- **Limits on three settings**: Buffer length is at most 1440 minutes (a day), Max concurrent channel buffers at most
+  64, Idle timeout at most 300 seconds. A larger value is used as the limit.
 
 ## [0.14.0] - 2026-10-17
 
