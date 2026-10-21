@@ -4,12 +4,12 @@
 
 ## Status at a glance
 
-**12 open, 343 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**11 open, 344 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One tracks publishing the Kodi repository added on 2026-10-19. The other 7 come from the 2026-10-18 read-only audit of the whole
+work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One tracks publishing the Kodi repository added on 2026-10-19. The other 6 come from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
-day and 14 on 2026-10-19, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
+day, 14 on 2026-10-19 and one on 2026-10-21, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
 path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
@@ -21,8 +21,8 @@ path read end to end), *plausible* (the logic is there, the trigger is not demon
 | Open: Release, CI and manual testing | 3 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 1 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 299 |
+| Open: Tooling (tools/) | 0 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 300 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 35 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -147,9 +147,4 @@ handling in `OnAddonSettingChanged()` are the work. Not started.
 
 ### Tooling (tools/)
 
-#### Lab scripts put passwords on command lines
-
-**Opened 2026-10-18, from the read-only audit; confirmed by reading.** `tools/kodi_provision_windows.sh`'s
-`--enable-autologon` sends the account password inside the remote command, which contradicts the script's own header
-and breaks on a `"` in the password; send it over stdin. `tools/kodi_smoke_test.py` takes passwords as arguments (visible
-in the process list) and only speaks plain HTTP; take them from the environment or a prompt.
+None open.

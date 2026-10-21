@@ -541,3 +541,64 @@ def test_the_timer_checks_skip_instead_of_crashing_when_kodi_has_not_numbered_th
     with pytest.raises(kodi_smoke_test.SkipCheck, match="database ids"):
         kodi_smoke_test._add_and_verify_timer(rpc, 5, timerrule=timerrule)
     assert "PVR.AddTimer" not in [method for method, _ in rpc.calls]
+
+
+# ---------------------------------------------------------------------
+# Passwords from the environment or a prompt, never the command line; HTTPS (2026-10-18 audit)
+# ---------------------------------------------------------------------
+
+
+class _Stdin:
+    def __init__(self, tty):
+        self._tty = tty
+
+    def isatty(self):
+        return self._tty
+
+
+def test_resolve_password_prefers_the_environment_even_when_it_is_empty():
+    assert kodi_smoke_test._resolve_password("PW", "kodi", "Kodi", environ={"PW": 'x"y'}, stdin=_Stdin(True)) == 'x"y'
+    assert kodi_smoke_test._resolve_password("PW", "kodi", "Kodi", environ={"PW": ""}, stdin=_Stdin(True)) == ""
+
+
+def test_resolve_password_asks_at_a_terminal_when_the_variable_is_unset():
+    asked = []
+    password = kodi_smoke_test._resolve_password(
+        "PW", "kodi", "Kodi webserver", environ={}, stdin=_Stdin(True), prompt=lambda text: asked.append(text) or "pw"
+    )
+    assert password == "pw"
+    assert asked == ["Kodi webserver password for kodi: "]
+
+
+def test_resolve_password_exits_with_the_variable_name_when_it_cannot_ask():
+    with pytest.raises(SystemExit, match="set PW to the Kodi password for kodi"):
+        kodi_smoke_test._resolve_password("PW", "kodi", "Kodi", environ={}, stdin=_Stdin(False))
+
+
+def test_resolve_password_is_none_without_a_username():
+    assert kodi_smoke_test._resolve_password("PW", None, "Kodi", environ={"PW": "x"}, stdin=_Stdin(True)) is None
+
+
+def test_main_refuses_a_password_option(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["kodi_smoke_test.py", "--host", "192.0.2.1", "--password", "secret"])
+    with pytest.raises(SystemExit):
+        kodi_smoke_test.main()
+    assert "KODI_JSONRPC_PASSWORD" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("host", "port", "https", "expected"),
+    [
+        ("192.0.2.10", 8080, False, "http://192.0.2.10:8080"),
+        ("kodi.example", 8443, True, "https://kodi.example:8443"),
+        ("2001:db8::1", 80, False, "http://[2001:db8::1]:80"),
+        ("[2001:db8::1]", 443, True, "https://[2001:db8::1]:443"),
+    ],
+)
+def test_base_url(host, port, https, expected):
+    assert kodi_smoke_test._base_url(host, port, https) == expected
+
+
+def test_clients_use_https_when_asked():
+    assert kodi_smoke_test.JsonRpcClient("h", 1, None, None, https=True)._url == "https://h:1/jsonrpc"
+    assert kodi_smoke_test.DispatcharrApiClient("h", 2, "u", "p", https=True)._base == "https://h:2"

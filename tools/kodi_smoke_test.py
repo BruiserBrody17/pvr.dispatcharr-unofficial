@@ -20,7 +20,7 @@ gated behind --allow-mutations and print a loud warning first -- run
 those only against a Dispatcharr instance you're comfortable creating and
 immediately deleting a real timer/recording on.
 
-Passing --dispatcharr-host/--dispatcharr-username/--dispatcharr-password
+Passing --dispatcharr-host/--dispatcharr-username
 (alongside --allow-mutations) additionally enables a realtime-update-push
 check: it talks directly to Dispatcharr's own REST API -- the one
 deliberate exception to this script's usual Kodi-JSON-RPC-only boundary,
@@ -44,11 +44,17 @@ this project's own operator notes):
     below.
 
 Usage:
-    python3 tools/kodi_smoke_test.py --host 192.0.2.10 [--port 8080]
-        [--username kodi] [--password ...] [--channel-id N]
+    python3 tools/kodi_smoke_test.py --host 192.0.2.10 [--port 8080] [--https]
+        [--username kodi] [--channel-id N]
         [--recording-id N] [--allow-mutations]
-        [--dispatcharr-host 192.0.2.20 [--dispatcharr-port 80]
-         --dispatcharr-username ... --dispatcharr-password ...]
+        [--dispatcharr-host 192.0.2.20 [--dispatcharr-port 80] [--dispatcharr-https]
+         --dispatcharr-username ...]
+
+Passwords are never options, since a command line is visible to every user of the
+machine: the Kodi webserver's comes from KODI_JSONRPC_PASSWORD and Dispatcharr's from
+DISPATCHARR_PASSWORD, and is asked for at the terminal when the variable is unset.
+--https and --dispatcharr-https verify the server's certificate; for a self-signed one
+(Kodi's own webserver TLS) point SSL_CERT_FILE at a file holding it.
 
 Exit code is 0 only if every attempted check passed; a skipped check
 (e.g. no recordings exist to test against) does not fail the run.
@@ -59,7 +65,9 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import getpass
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -127,12 +135,33 @@ class JsonRpcError(RuntimeError):
     pass
 
 
+def _base_url(host: str, port: int, https: bool) -> str:
+    # A bare IPv6 address needs brackets in a URL; one that already has them is left alone.
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{'https' if https else 'http'}://{host}:{port}"
+
+
+def _resolve_password(env_var: str, username: str | None, what: str, environ=None, stdin=None, prompt=None):
+    """The password for `username` from `env_var`, else from a prompt when stdin is a terminal. None when there is no
+    username (Kodi's webserver without authentication). Exits with a message when it cannot ask."""
+    environ = os.environ if environ is None else environ
+    stdin = sys.stdin if stdin is None else stdin
+    if not username:
+        return None
+    if env_var in environ:
+        return environ[env_var]
+    if stdin is not None and stdin.isatty():
+        return (prompt or getpass.getpass)(f"{what} password for {username}: ")
+    raise SystemExit(f"error: set {env_var} to the {what} password for {username} (no terminal to ask on)")
+
+
 class JsonRpcClient:
     """One plain HTTP POST per call -- see the module docstring's note on
     why chained/reused connections aren't used here."""
 
-    def __init__(self, host: str, port: int, username: str | None, password: str | None):
-        self._url = f"http://{host}:{port}/jsonrpc"
+    def __init__(self, host: str, port: int, username: str | None, password: str | None, https: bool = False):
+        self._url = f"{_base_url(host, port, https)}/jsonrpc"
         self._headers = {"Content-Type": "application/json"}
         if username:
             token = base64.b64encode(f"{username}:{password or ''}".encode()).decode()
@@ -199,8 +228,8 @@ class DispatcharrApiClient:
     (both times "%Y-%m-%dT%H:%M:%SZ", matching DateTimeFormat.cpp's own
     IsoFromTime())."""
 
-    def __init__(self, host: str, port: int, username: str, password: str):
-        self._base = f"http://{host}:{port}"
+    def __init__(self, host: str, port: int, username: str, password: str, https: bool = False):
+        self._base = _base_url(host, port, https)
         self._username = username
         self._password = password
         self._token: str | None = None
@@ -1349,8 +1378,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--username")
-    parser.add_argument("--password")
+    parser.add_argument("--https", action="store_true", help="reach Kodi's webserver over TLS")
+    parser.add_argument("--username", help="Kodi webserver user; the password is read from KODI_JSONRPC_PASSWORD")
+    parser.add_argument("--password", help=argparse.SUPPRESS)
     parser.add_argument("--addon-id", default="pvr.dispatcharr-unofficial")
     parser.add_argument("--channel-id", type=int, help="skip auto-discovery, use this channel for playback checks")
     parser.add_argument("--recording-id", type=int, help="skip auto-discovery, use this recording for playback checks")
@@ -1363,12 +1393,28 @@ def main() -> int:
     parser.add_argument(
         "--dispatcharr-host",
         help="Dispatcharr server host/IP -- enables the realtime-update-push check "
-        "(also requires --allow-mutations and --dispatcharr-username/--dispatcharr-password)",
+        "(also requires --allow-mutations and --dispatcharr-username)",
     )
-    parser.add_argument("--dispatcharr-port", type=int, default=80)
-    parser.add_argument("--dispatcharr-username")
-    parser.add_argument("--dispatcharr-password")
+    parser.add_argument("--dispatcharr-port", type=int, help="default 80, or 443 with --dispatcharr-https")
+    parser.add_argument("--dispatcharr-https", action="store_true")
+    parser.add_argument(
+        "--dispatcharr-username", help="Dispatcharr user; the password is read from DISPATCHARR_PASSWORD"
+    )
+    parser.add_argument("--dispatcharr-password", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.password is not None or args.dispatcharr_password is not None:
+        parser.error(
+            "passwords are no longer options (a command line is visible to every user of the machine): "
+            "set KODI_JSONRPC_PASSWORD / DISPATCHARR_PASSWORD, or leave them unset to be asked"
+        )
+    if args.dispatcharr_port is None:
+        args.dispatcharr_port = 443 if args.dispatcharr_https else 80
+
+    kodi_password = _resolve_password("KODI_JSONRPC_PASSWORD", args.username, "Kodi webserver")
+    use_dispatcharr = bool(args.allow_mutations and args.dispatcharr_host and args.dispatcharr_username)
+    dispatcharr_password = (
+        _resolve_password("DISPATCHARR_PASSWORD", args.dispatcharr_username, "Dispatcharr") if use_dispatcharr else None
+    )
 
     if args.allow_mutations:
         mutation_warning = (
@@ -1383,7 +1429,7 @@ def main() -> int:
         )
         time.sleep(MUTATION_WARNING_DELAY_SECONDS)
 
-    rpc = JsonRpcClient(args.host, args.port, args.username, args.password)
+    rpc = JsonRpcClient(args.host, args.port, args.username, kodi_password, https=args.https)
     run = SmokeTestRun()
 
     run.record("connectivity", lambda: check_connectivity(rpc))
@@ -1461,16 +1507,20 @@ def main() -> int:
         run.record("add_delete_timer", lambda: check_add_delete_timer(rpc, channel_id))
         run.record("add_delete_recurring_rule", lambda: check_add_delete_recurring_rule(rpc, channel_id))
 
-        if args.dispatcharr_host and args.dispatcharr_username and args.dispatcharr_password:
+        if use_dispatcharr:
             dispatcharr = DispatcharrApiClient(
-                args.dispatcharr_host, args.dispatcharr_port, args.dispatcharr_username, args.dispatcharr_password
+                args.dispatcharr_host,
+                args.dispatcharr_port,
+                args.dispatcharr_username,
+                dispatcharr_password,
+                https=args.dispatcharr_https,
             )
             run.record("realtime_update_push", lambda: check_realtime_update_push(rpc, dispatcharr, channel_id))
         else:
             print(
                 "\nNOTE: WebSocket realtime-update push (a recording/timer change reflected "
                 "in Kodi without an addon restart) wasn't exercised -- pass --dispatcharr-host/"
-                "--dispatcharr-username/--dispatcharr-password to enable it.\n",
+                "--dispatcharr-username (password in DISPATCHARR_PASSWORD) to enable it.\n",
                 file=sys.stderr,
             )
 
