@@ -53,7 +53,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`cce3e4c`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`1bb7a2d`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -76,11 +76,11 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `c08f1c4` | already on `Piers` as `59a13fc` | The live check of the throttle and guide redirect fixes; see the table below. |
 | `955c4ae` | already on `Piers` as `b53484f` | A port from `Piers`; see the table below. |
 | `5174a8c` | not ported: `Omega`-only record | The Kodi 21.3 live check of the fatal-stream fix, noted under `Omega`'s copy of the entry; `Piers`'s has the Kodi 22 one. |
-| `aded040`, `c28882c`, `202f7d3`, `1e259a1`, `baec5ef`, `797bd83`, `f55a57c`, `ba08b01`, `0d113ae`, `cce3e4c` | already on `Piers` | Ports from `Piers`; see the table below. |
+| `aded040`, `c28882c`, `202f7d3`, `1e259a1`, `baec5ef`, `797bd83`, `f55a57c`, `ba08b01`, `0d113ae`, `cce3e4c`, `1bb7a2d` | already on `Piers` | Ports from `Piers`; see the table below. |
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`df0e9b1`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`bc64873`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -107,6 +107,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `bd9ff8e` | `baec5ef` (`git cherry-pick -x`; the running counts by hand, without `[skip ci]`) | The API-key owner stamps are rewritten when the key is confirmed unchanged, so a changed form of the server's address no longer costs a key lookup at every start. The same code on both; confirmed live on Kodi 22.0 RC1 and Kodi 21.3. |
 | `9fa1252`, `06980f5`, `7f56c6d`, `dd52033` | `797bd83`, `f55a57c`, `ba08b01`, `0d113ae` (`git cherry-pick -x`; the running counts by hand) | The lab scripts' passwords kept off command lines, and `timeshift_buffer` 0.8.15's hardening and teardown-race fix with the addon's matching stop token. The plugin is the same file on both; the addon and glue changes applied cleanly, and `Omega`'s glue harness passes the new `live_stop_token` scenario. `OPEN_ITEMS.md` keeps `Omega`'s own counts and wording. |
 | `df0e9b1` | `cce3e4c` (`git cherry-pick -x`) | The live check of those `timeshift_buffer` fixes, run with `Omega`'s build on Kodi 21.3; the plugin and the addon's stop code are the same on both. |
+| `bc64873` | `1bb7a2d` (`git cherry-pick -x`; applied cleanly) | The tombstone named the way the orphan scrub looks for it, found by the second live pass, and that pass's record. The same plugin file on both. |
 
 ## Dependencies that differ by Kodi release
 
