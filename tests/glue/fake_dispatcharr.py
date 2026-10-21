@@ -27,6 +27,7 @@ T0 = {"live": None, "ip": time.time()}
 LIVE_FROZEN_AT = {"n": None}
 IP_FROZEN_AT = {"n": None}
 TOKEN = {"v": "tok1"}
+LAST_STOP = {"params": None}  # the params of the last stop_buffer, for /__laststop
 WS_PUSHED = []  # realtime messages pushed through /__ctl?ws_push= (every connected client gets all of them)
 REC_SIZE = 3 * 1024 * 1024 + 5
 
@@ -529,6 +530,8 @@ class H(BaseHTTPRequestHandler):
             return self.J(200, dict(counts, ftp_trap_connects=FTP_TRAP["connects"]))
         if p == "/__epgquery":
             return self.J(200, LAST_EPG_QUERY["q"])
+        if p == "/__laststop":
+            return self.J(200, LAST_STOP["params"])
         if p == "/__ctl":
             for k, v in q.items():
                 CTL[k] = v[0]
@@ -635,7 +638,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/plugins/plugins/timeshift_buffer/run/":
             req = json.loads(b or b"{}")
             act = req.get("action")
-            req.get("params", {})
+            params = req.get("params", {})
             with lock:
                 counts["action " + str(act)] += 1
             if act == "start_buffer":
@@ -656,6 +659,8 @@ class H(BaseHTTPRequestHandler):
                     },
                 )
             if act == "stop_buffer":
+                with lock:
+                    LAST_STOP["params"] = params
                 return self.J(200, {"success": True, "result": {"status": "ok"}})
             if act == "heartbeat":
                 return self.J(200, {"success": True, "result": {"status": "ok"}})

@@ -23,6 +23,7 @@ run "live (reopen x5)"           TMO=30 T=120 -- live_reopen
 run "live (close at the tail)"   TMO=30 T=120 -- live_tail_close
 run "live (tail wait in slices)"  TMO=30 T=120 -- live_tail_bound
 run "live (stalled buffer, ffmpeg gone)" TMO=30 T=120 -- live_tail_ended
+run "live (stop sends the buffer token)" TMO=30 T=120 -- live_stop_token
 run "live (buffer dies at the tail)" TMO=30 T=120 -- live_fatal_ends tail
 run "live (buffer dies behind the tail)" TMO=30 T=120 -- live_fatal_ends behind
 run "live (hung API, close)"     TMO=30 T=120 -- live_blackhole_close

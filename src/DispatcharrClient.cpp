@@ -1140,7 +1140,7 @@ long DispatcharrClient::ShortRequestTimeoutMs() const
 }
 
 bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, const std::string& viewerId,
-                                            std::string& error)
+                                            const std::string& accessToken, std::string& error)
 {
   // Nothing to wait for once the client is shutting down: AbortInFlightRequests() ends a request in flight at
   // once, and the reaper handles the buffer.
@@ -1158,6 +1158,11 @@ bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, cons
   json params = {{"channel_uuid", channelUuid}};
   if (!viewerId.empty())
     params["viewer_id"] = viewerId;
+  // A stop that arrives after this viewer's buffer died and another start_buffer replaced it must not stop the
+  // replacement: the plugin compares this with the buffer it holds now (timeshift_buffer 0.8.15; an older plugin
+  // ignores it).
+  if (!accessToken.empty())
+    params["access_token"] = accessToken;
 
   json body = {
       {"action", "stop_buffer"},
@@ -1169,6 +1174,12 @@ bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, cons
     return false;
   json result;
   return UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error);
+}
+
+std::string DispatcharrClient::LiveTimeshiftAccessToken() const
+{
+  std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
+  return m_liveTimeshiftStream.accessToken;
 }
 
 void DispatcharrClient::SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId)
@@ -4295,7 +4306,7 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
     if (!lastAttemptRetryable)
     {
       std::string stopError;
-      StopTimeshiftBuffer(channelUuid, viewerId, stopError);
+      StopTimeshiftBuffer(channelUuid, viewerId, LiveTimeshiftAccessToken(), stopError);
     }
     {
       std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
@@ -4397,7 +4408,7 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
     // `fatal` case above (the plugin has already torn the buffer down
     // itself and this just gets back a "no buffer was running" reply).
     std::string stopError;
-    StopTimeshiftBuffer(channelUuid, viewerId, stopError);
+    StopTimeshiftBuffer(channelUuid, viewerId, LiveTimeshiftAccessToken(), stopError);
     {
       std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
       m_liveTimeshiftStream = LiveTimeshiftStreamState();
@@ -4426,7 +4437,7 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
       // Same cleanup as a cold start that never produced a manifest: the viewer registered above must not keep the
       // buffer (and a provider slot) running until the plugin's reaper notices.
       std::string stopError;
-      StopTimeshiftBuffer(channelUuid, viewerId, stopError);
+      StopTimeshiftBuffer(channelUuid, viewerId, LiveTimeshiftAccessToken(), stopError);
       {
         std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
         m_liveTimeshiftStream = LiveTimeshiftStreamState();
@@ -5303,12 +5314,13 @@ void DispatcharrClient::CloseLiveTimeshiftStream()
   // call site catching up to that same pattern.
   // Copied out so the stop request below (a network call) runs with no lock held.
   bool wasOpen;
-  std::string channelUuid, viewerId;
+  std::string channelUuid, viewerId, accessToken;
   {
     std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
     wasOpen = m_liveTimeshiftStream.open;
     channelUuid = m_liveTimeshiftStream.channelUuid;
     viewerId = m_liveTimeshiftStream.viewerId;
+    accessToken = m_liveTimeshiftStream.accessToken;
     // Forgotten from here on: the stop request below can take its whole bound, and a manifest refresh or heartbeat
     // issued meanwhile that still named this viewer would register it again (the plugin re-adds a viewer a heartbeat
     // names, since 0.6.5), leaving it on a buffer with other viewers until the reaper prunes it.
@@ -5317,7 +5329,7 @@ void DispatcharrClient::CloseLiveTimeshiftStream()
   if (wasOpen && !channelUuid.empty())
   {
     std::string stopError;
-    StopTimeshiftBuffer(channelUuid, viewerId, stopError);
+    StopTimeshiftBuffer(channelUuid, viewerId, accessToken, stopError);
   }
 
   // The curl mutex first: a segment fetch still in flight finishes before its handle is freed.

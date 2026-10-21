@@ -6,6 +6,38 @@
 
 ### Fixed
 
+#### timeshift_buffer: a teardown that outlasts its grace period can delete a restarted buffer
+
+**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); plausible.**
+`_teardown_buffer` ends with an unconditional `_delete_buffer_state` and does not hold the start lock; the "stopping"
+marker keeps `start_buffer` away for only `_TEARDOWN_GRACE_SECONDS` (30 s). If removing the segments takes longer
+(thousands of them, slow storage; with no cap on `buffer_minutes`), a `start_buffer` for the same channel classifies the
+buffer as dead and starts a new ffmpeg, and the old teardown then deletes the new state. The viewer gets 403s and the
+new ffmpeg holds a provider slot, untracked, until the orphan scrub about 300 s later; the final `rmdir` of the old
+rmtree can also remove the new directory. `docs/TEST_COVERAGE.md` describes this race as closed by the grace period,
+which does not cover a teardown longer than 30 s; correct it with the fix. Fix: a compare-and-delete for the state (a
+Lua script that deletes only if the pid and `started_at` still match), and rename the directory to a tombstone before
+removing it. In the same area: `stop_buffer` is not bound to one buffer instance, so a late stop can tear down a
+replacement; send and check its `access_token`. Regression tests in the plugin's `tests/`.
+
+
+**Fixed 2026-10-21 (`timeshift_buffer` 0.8.15, with the addon sending its token), confirmed by regression tests
+that fail on the old code; not checked live.** Three parts. (1) The state delete at the end of `_teardown_buffer()`
+goes through `_delete_buffer_state_if_instance()`: re-read, compare the instance (`pid`, `started_at`), then a Lua
+compare-and-delete on the exact text read (`_CAD_SCRIPT`, the delete counterpart of `_CAS_SCRIPT`, with the same
+plain-delete fallback when Redis refuses scripts). A replacement found there is left alone and logged; a state that
+cannot be read is left for its TTL. The lock-held path for a state already gone keeps its plain delete. (2)
+`_remove_channel_files()` renames the directory to `.<uuid>.removing-<8 hex digits>` first and removes that, so the
+old removal never touches a directory a later start recreated; if the rename fails it removes in place as before. A
+removal cut short (the worker died) leaves such a tombstone, which the orphan scrub (`_scrub_tombstones()`) removes
+once it has been idle for the scrub's minimum age. (3) `stop_buffer` takes an optional `access_token`; when it names a
+different buffer than the one tracked now (`_is_stale_access_token()`, checked before and again inside the atomic
+viewer update) nothing is stopped and the reply says so. The addon sends it from every `StopTimeshiftBuffer()` call
+(Close and the three cleanups in `OpenLiveTimeshiftStream()`); an older plugin ignores it, and an older addon that
+sends none keeps today's behaviour. The `TEST_COVERAGE.md` passage that called the race closed by the grace period now
+says where that stopped holding. Tests: `docs/TEST_COVERAGE.md`'s `timeshift_buffer` section, 2026-10-21 paragraph,
+and the glue scenario `live_stop_token` (in CI).
+
 #### timeshift_buffer: a corrupt buffer state aborts the orphan scrub, and client disconnects print tracebacks
 
 **Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by

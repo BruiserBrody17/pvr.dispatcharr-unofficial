@@ -4,11 +4,11 @@
 
 ## Status at a glance
 
-**7 open, 342 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**6 open, 343 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers` and held here too; one, the manifest throttle, was fixed the same day. The other 4 come
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers` and held here too; one, the manifest throttle, was fixed the same day. The other 3 come
 from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the same day (all 21 held here;
-three are worded for `Omega`; 14 fixed on 2026-10-19 and three on 2026-10-21, all moved to `CLOSED_ITEMS.md`), each marked with how sure the
+three are worded for `Omega`; 14 fixed on 2026-10-19 and four on 2026-10-21, all moved to `CLOSED_ITEMS.md`), each marked with how sure the
 audit was: *confirmed* (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the
 trigger is not demonstrated) or *low confidence*.
 
@@ -16,13 +16,13 @@ trigger is not demonstrated) or *low confidence*.
 |---|---|
 | Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 0 |
-| Open: Architectural / concurrency | 2 |
+| Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 298 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 299 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 35 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -44,20 +44,6 @@ the fix.
 None open.
 
 ### Architectural / concurrency
-
-#### timeshift_buffer: a teardown that outlasts its grace period can delete a restarted buffer
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); plausible.**
-`_teardown_buffer` ends with an unconditional `_delete_buffer_state` and does not hold the start lock; the "stopping"
-marker keeps `start_buffer` away for only `_TEARDOWN_GRACE_SECONDS` (30 s). If removing the segments takes longer
-(thousands of them, slow storage; with no cap on `buffer_minutes`), a `start_buffer` for the same channel classifies the
-buffer as dead and starts a new ffmpeg, and the old teardown then deletes the new state. The viewer gets 403s and the
-new ffmpeg holds a provider slot, untracked, until the orphan scrub about 300 s later; the final `rmdir` of the old
-rmtree can also remove the new directory. `docs/TEST_COVERAGE.md` describes this race as closed by the grace period,
-which does not cover a teardown longer than 30 s; correct it with the fix. Fix: a compare-and-delete for the state (a
-Lua script that deletes only if the pid and `started_at` still match), and rename the directory to a tombstone before
-removing it. In the same area: `stop_buffer` is not bound to one buffer instance, so a late stop can tear down a
-replacement; send and check its `access_token`. Regression tests in the plugin's `tests/`.
 
 #### A refresh while Kodi's timer dialog is open can revert another client's change to a series rule
 
