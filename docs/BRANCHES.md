@@ -103,6 +103,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `46598ae` | `aded040` (by hand, the same results) | The live check of three of `7219c8e`'s fixes: owner stamps written only when they change (Kodi 21.3 and 22.0 RC1), the padding re-check (throwaway `Omega` builds on Kodi 21.3) and the Windows build's older-curl redirect options (`Omega`'s Windows build on Kodi 21.3). |
 | `e177b55`, `93b189f` | `c28882c`, `202f7d3` (by hand, the same text) | Two closing notes and one open item: the owner stamps left stale when only the address changes (open), and two outside-review findings closed without a change (no token reaches `kodi.log`, checked live on Kodi 21.3; the plugin's JWT for `params["username"]`). |
 | `8f8b36f` | `1e259a1` (`git cherry-pick -x`, without `[skip ci]`) | The code of conduct, the PR template and the issue chooser's config. The templates are read from the default branch, `Omega`. |
+| `bd9ff8e` | `baec5ef` (`git cherry-pick -x`; the running counts by hand, without `[skip ci]`) | The API-key owner stamps are rewritten when the key is confirmed unchanged, so a changed form of the server's address no longer costs a key lookup at every start. The same code on both; confirmed live on Kodi 22.0 RC1 and Kodi 21.3. |
 
 ## Dependencies that differ by Kodi release
 
