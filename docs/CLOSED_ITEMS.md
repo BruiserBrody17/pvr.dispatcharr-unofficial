@@ -22,7 +22,7 @@ replacement; send and check its `access_token`. Regression tests in the plugin's
 
 
 **Fixed 2026-10-21 (`timeshift_buffer` 0.8.15, with the addon sending its token), confirmed by regression tests
-that fail on the old code; not checked live.** Three parts. (1) The state delete at the end of `_teardown_buffer()`
+that fail on the old code and checked live.** Three parts. (1) The state delete at the end of `_teardown_buffer()`
 goes through `_delete_buffer_state_if_instance()`: re-read, compare the instance (`pid`, `started_at`), then a Lua
 compare-and-delete on the exact text read (`_CAD_SCRIPT`, the delete counterpart of `_CAS_SCRIPT`, with the same
 plain-delete fallback when Redis refuses scripts). A replacement found there is left alone and logged; a state that
@@ -37,6 +37,14 @@ viewer update) nothing is stopped and the reply says so. The addon sends it from
 sends none keeps today's behaviour. The `TEST_COVERAGE.md` passage that called the race closed by the grace period now
 says where that stopped holding. Tests: `docs/TEST_COVERAGE.md`'s `timeshift_buffer` section, 2026-10-21 paragraph,
 and the glue scenario `live_stop_token` (in CI).
+
+**Checked live on 2026-10-21** (Dispatcharr 0.32.0 with the merged plugin in every worker; the lab's Kodi 21.3 with
+`Omega`'s build, whose stop code is the same as here, in Server-side mode): a `stop_buffer` for the playing channel
+with a made-up `access_token` answered "this caller's buffer was already replaced; nothing stopped", and playback went
+on. A throwaway probe plugin that wrapped `_is_stale_access_token()` in every worker (recording only whether a token
+came and matched) saw every call from the addon carry the buffer's token, heartbeats and playlist requests included,
+up to the stop on Close; that stop removed the state and the directory within about 2.5 s and left no tombstone. Not
+reproduced live: a teardown slower than the grace period (a buffer of 46 segments went in well under a second).
 
 #### timeshift_buffer: a corrupt buffer state aborts the orphan scrub, and client disconnects print tracebacks
 
@@ -54,7 +62,11 @@ described is unknown, and its key expires within `_BUFFER_STATE_TTL`), with one 
 `test_scrub_skips_a_channel_whose_state_is_not_valid_json_and_scrubs_the_rest` scrubs a second orphan in the same pass.
 (2) `_BufferHTTPServer.handle_error()` logs a `ConnectionError` or `TimeoutError` as one debug line and any other
 handler error through the plugin logger with its traceback, instead of socketserver's print to stderr; the
-`test_http_server_logs_*` tests check the line and that nothing reaches stderr. Not checked live.
+`test_http_server_logs_*` tests check the line and that nothing reaches stderr. (1) checked live on 2026-10-21
+(Dispatcharr 0.32.0, the merged plugin in every worker): with two made-up buffer directories an hour old under
+`storage_path`, one with no Redis state and one whose state was not JSON, one `scrub_orphaned_buffers` removed the first
+and kept the second; a throwaway probe plugin made both and removed the second and its key afterwards. (2) not checked
+live.
 
 #### timeshift_buffer: smaller hardening (setting caps, ffmpeg I/O timeout, process liveness, token rows)
 
