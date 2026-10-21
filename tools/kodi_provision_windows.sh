@@ -351,10 +351,14 @@ ssh_run "powershell -NoProfile -ExecutionPolicy Bypass -File \"${REMOTE_TMP_DIR}
 if [[ "$ENABLE_AUTOLOGON" -eq 1 ]]; then
   cat >"${TMPDIR_LOCAL}/autologon.ps1" <<'EOF'
 param(
-    [Parameter(Mandatory)][string]$AutologonUser,
-    [Parameter(Mandatory)][string]$AutologonPassword
+    [Parameter(Mandatory)][string]$AutologonUser
 )
 $ErrorActionPreference = 'Stop'
+
+# The password arrives on stdin, never as an argument: an argument is part of the remote command line, which the
+# Windows process list shows and which a `"` in the password broke.
+$AutologonPassword = [Console]::In.ReadLine()
+if ([string]::IsNullOrEmpty($AutologonPassword)) { throw 'no password on stdin' }
 
 # See this script's own header ("idle Windows session can lock itself")
 # for why this is needed at all, and why it's opt-in rather than
@@ -388,7 +392,8 @@ EOF
   fi
   echo "==> Configuring Windows Autologon and disabling idle-lock (--enable-autologon was passed)..."
   scp_run "${TMPDIR_LOCAL}/autologon.ps1" "${SSH_USER}@${HOST}:${REMOTE_TMP_DIR}\\autologon.ps1"
-  ssh_run "powershell -NoProfile -ExecutionPolicy Bypass -File \"${REMOTE_TMP_DIR}\\autologon.ps1\" -AutologonUser \"${SSH_USER}\" -AutologonPassword \"${SSHPASS}\""
+  printf '%s\n' "$SSHPASS" |
+    ssh_run "powershell -NoProfile -ExecutionPolicy Bypass -File \"${REMOTE_TMP_DIR}\\autologon.ps1\" -AutologonUser \"${SSH_USER}\""
 fi
 
 echo "==> Cleaning up remote temp files..."

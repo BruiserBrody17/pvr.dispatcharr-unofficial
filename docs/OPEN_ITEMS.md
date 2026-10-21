@@ -4,11 +4,11 @@
 
 ## Status at a glance
 
-**10 open, 339 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**9 open, 340 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers` and held here too; one, the manifest throttle, was fixed the same day. The other 7 come
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers` and held here too; one, the manifest throttle, was fixed the same day. The other 6 come
 from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the same day (all 21 held here;
-three are worded for `Omega`; 14 fixed on 2026-10-19 and moved to `CLOSED_ITEMS.md`), each marked with how sure the
+three are worded for `Omega`; 14 fixed on 2026-10-19 and one on 2026-10-21, all moved to `CLOSED_ITEMS.md`), each marked with how sure the
 audit was: *confirmed* (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the
 trigger is not demonstrated) or *low confidence*.
 
@@ -21,8 +21,8 @@ trigger is not demonstrated) or *low confidence*.
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 1 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 295 |
+| Open: Tooling (tools/) | 0 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 296 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 35 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -111,6 +111,8 @@ Candidates: retry on a signal exit with no output as well, or start the harness 
 
 ### Upstream (Dispatcharr) or documentation accuracy
 
+None open.
+
 ### Known gaps, deliberately deferred
 
 #### Wake-on-LAN for a Dispatcharr host that sleeps
@@ -133,10 +135,4 @@ handling in `OnAddonSettingChanged()` are the work. Not started.
 
 ### Tooling (tools/)
 
-#### Lab scripts put passwords on command lines
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
-reading.** `tools/kodi_provision_windows.sh`'s `--enable-autologon` sends the account password inside the remote
-command, which contradicts the script's own header and breaks on a `"` in the password; send it over stdin.
-`tools/kodi_smoke_test.py` takes passwords as arguments (visible in the process list) and only speaks plain HTTP; take
-them from the environment or a prompt.
+None open.

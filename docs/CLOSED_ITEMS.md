@@ -6,6 +6,26 @@
 
 ### Fixed
 
+#### Lab scripts put passwords on command lines
+
+**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); confirmed by
+reading.** `tools/kodi_provision_windows.sh`'s `--enable-autologon` sends the account password inside the remote
+command, which contradicts the script's own header and breaks on a `"` in the password; send it over stdin.
+`tools/kodi_smoke_test.py` takes passwords as arguments (visible in the process list) and only speaks plain HTTP; take
+them from the environment or a prompt.
+
+
+**Fixed 2026-10-21.** `kodi_provision_windows.sh` pipes the password into the remote `autologon.ps1`, which reads it
+with `[Console]::In.ReadLine()`; only the user name is still an argument. Checked on the Windows runner VM with a
+throwaway script of the same shape (`powershell -File` over SSH, a line piped in): a password holding `"` and `$`
+arrived intact. Not run through `sshpass` (the lab's SSH accepts keys only), which leaves its child's stdin alone, and
+`--enable-autologon` itself was not re-run. `kodi_smoke_test.py` takes the Kodi webserver password from
+`KODI_JSONRPC_PASSWORD` and Dispatcharr's from `DISPATCHARR_PASSWORD`, asks at the terminal when one is unset, and
+refuses `--password`/`--dispatcharr-password` with that advice; `--https` and `--dispatcharr-https` switch either
+client to TLS (certificate verified; `SSL_CERT_FILE` for a self-signed one). Unit-tested in
+`tools/tests/test_kodi_smoke_test.py` (`_resolve_password`, `_base_url`, the refusal); not yet run against the lab
+Kodi.
+
 #### The owner stamps are not rewritten when the address changes but the key does not
 
 **Opened 2026-10-20, noticed while recording the live check of the owner-stamp fix; confirmed by reading, not seen

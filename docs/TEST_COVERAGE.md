@@ -2982,6 +2982,11 @@ exactly as untested as before -- this is the same boundary as every
 other Kodi/Dispatcharr-touching code in this project, not a new
 exception to it.
 
+2026-10-21 (`docs/CLOSED_ITEMS.md`, "Lab scripts put passwords on command lines"): `_resolve_password` (environment
+first, even when empty; a prompt only at a terminal; an exit naming the variable otherwise; nothing without a user
+name), `_base_url` (scheme, IPv6 brackets) and `main` refusing `--password` are unit-tested; the HTTPS path itself
+is not driven against a TLS server.
+
 The recording seek checks (`_seek_within_recording_and_verify`) poll `canseek` for up to
 `RECORDING_CANSEEK_TIMEOUT_SECONDS` through `_wait_for_canseek`, the way the live timeshift check already did, instead of
 reading it once (2026-10-16): a 32-bit phone with a cold hardware decoder reported `canseek=false` for a while after
