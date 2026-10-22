@@ -1,6 +1,9 @@
 #include "RecurringRuleEdit.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <iterator>
 
 namespace dispatcharr
 {
@@ -80,6 +83,67 @@ RecurringRuleEditPatch ComputeRecurringRuleEditPatch(const std::optional<Recurri
   if (edited.enabled != baseline->enabled)
     patch.enabled = edited.enabled;
   return patch;
+}
+
+std::string ComputeReportedRecurringRuleToken(const ReportedRecurringRule& report)
+{
+  // FNV-1a over every reported value, each followed by a separator so adjacent fields cannot run together.
+  uint64_t h = 1469598103934665603ULL;
+  auto mix = [&h](const std::string& s)
+  {
+    for (unsigned char c : s)
+    {
+      h ^= c;
+      h *= 1099511628211ULL;
+    }
+    h ^= 0x1f;
+    h *= 1099511628211ULL;
+  };
+  const RecurringRuleFields& f = report.fields;
+  mix(std::to_string(f.channelId));
+  mix(f.name);
+  std::string days;
+  for (int d : f.daysOfWeek)
+    days += std::to_string(d) + ",";
+  mix(days);
+  mix(std::to_string(f.startTimeOfDaySeconds));
+  mix(std::to_string(f.endTimeOfDaySeconds));
+  mix(std::to_string(static_cast<long long>(f.startDate)));
+  mix(f.enabled ? "1" : "0");
+  mix(std::to_string(static_cast<long long>(report.start)));
+  mix(std::to_string(static_cast<long long>(report.end)));
+  char out[24];
+  std::snprintf(out, sizeof(out), "rr-%016llx", static_cast<unsigned long long>(h));
+  return out;
+}
+
+void ReportedRecurringRuleHistory::Record(const std::map<int, ReportedRecurringRule>& report)
+{
+  for (auto it = m_reports.begin(); it != m_reports.end();)
+    it = report.count(it->first) ? std::next(it) : m_reports.erase(it);
+  for (const auto& [ruleId, rule] : report)
+  {
+    std::vector<Entry>& entries = m_reports[ruleId];
+    std::string token = ComputeReportedRecurringRuleToken(rule);
+    entries.erase(std::remove_if(entries.begin(), entries.end(), [&token](const Entry& e) { return e.token == token; }),
+                  entries.end());
+    entries.push_back({std::move(token), rule});
+    if (entries.size() > kMaxReportsPerRule)
+      entries.erase(entries.begin(), entries.end() - static_cast<std::ptrdiff_t>(kMaxReportsPerRule));
+  }
+}
+
+std::optional<ReportedRecurringRule> ReportedRecurringRuleHistory::Find(int ruleId, const std::string& token) const
+{
+  auto it = m_reports.find(ruleId);
+  if (it == m_reports.end() || it->second.empty())
+    return std::nullopt;
+  for (const Entry& e : it->second)
+  {
+    if (e.token == token)
+      return e.report;
+  }
+  return it->second.back().report;
 }
 
 time_t ComputeEndDateForOpenEndedRuleEdit(time_t currentEndDate, time_t startDate, time_t now, int windowDays)

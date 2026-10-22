@@ -14,6 +14,10 @@ compare against.
 
 ### Fixed
 
+- **Editing a recurring recording no longer undoes a change made elsewhere while the edit dialog was open**: if the
+  rule was changed from Dispatcharr's web interface or another Kodi while you had Kodi's timer dialog open, and Kodi
+  refreshed its timers in the meantime, saving your edit could put the other change back. Only what you changed in
+  the dialog is sent now.
 - **Stopping a live channel can no longer stop someone else's newer timeshift buffer** (Server-side mode): the addon
   now tells the plugin which buffer it is stopping, so a late stop for a buffer the server has already replaced
   leaves the new one alone. Needs the `timeshift_buffer` plugin 0.8.15; with an older plugin nothing changes.

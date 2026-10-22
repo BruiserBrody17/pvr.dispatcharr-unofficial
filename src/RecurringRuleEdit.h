@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <ctime>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -78,6 +80,50 @@ RuleTimesOfDay ResolveRecurringRuleTimesOnEdit(const std::optional<RecurringRule
 
 RecurringRuleEditPatch ComputeRecurringRuleEditPatch(const std::optional<RecurringRuleFields>& baseline,
                                                      const RecurringRuleFields& edited);
+
+// What GetTimers() showed Kodi for one recurring rule: its fields (the name as the server has it, ownership tag
+// included) and the start and end instants it was displayed with.
+struct ReportedRecurringRule
+{
+  RecurringRuleFields fields;
+  time_t start = 0;
+  time_t end = 0;
+};
+
+// Names one report of a rule. GetTimers() puts it in the timer's series link, which Kodi copies into the clone its
+// timer dialog edits and hands back to UpdateTimer() untouched (the dialog has no control for it, and this timer type
+// does not set PVR_TIMER_TYPE_REQUIRES_EPG_SERIESLINK_ON_CREATE, the only thing that makes Kodi match on it; read in
+// Kodi 21's and 22.0-RC1's PVRGUIActionsTimers.cpp, PVRTimerInfoTag.cpp and PVRTimerRuleMatcher.cpp). The same
+// content always gives the same token, so a refresh that changes nothing does not make Kodi see a changed timer.
+std::string ComputeReportedRecurringRuleToken(const ReportedRecurringRule& report);
+
+// The baseline an edit of a recurring rule is diffed against. Kodi's dialog edits a copy taken when it opened, but a
+// GetTimers() that finishes while it is open (a WebSocket event, the periodic refresh) reports newer values; diffing
+// against those made a change another client made meanwhile look like the user's edit and sent the dialog's older
+// value back (docs/CLOSED_ITEMS.md, "A refresh while Kodi's timer dialog is open can revert another client's change
+// to a recurring rule"). So the last few distinct reports of each rule are kept, and an edit finds the one it was
+// opened from by the token it carries.
+class ReportedRecurringRuleHistory
+{
+public:
+  // A dialog left open across more changes than this falls back to the newest report.
+  static constexpr std::size_t kMaxReportsPerRule = 8;
+
+  // One GetTimers() report, by rule id. Each rule's report becomes its newest; a rule missing from it is forgotten.
+  void Record(const std::map<int, ReportedRecurringRule>& report);
+  // The report whose token Kodi handed back for `ruleId`; for a token not known (empty, evicted, or from before a
+  // restart) the rule's newest report, which is all a baseline could be before; nullopt for a rule never reported.
+  std::optional<ReportedRecurringRule> Find(int ruleId, const std::string& token) const;
+
+private:
+  struct Entry
+  {
+    std::string token;
+    ReportedRecurringRule report;
+  };
+  // Oldest first.
+  std::map<int, std::vector<Entry>> m_reports;
+};
 
 // The end date to send so an edit of an open-ended rule (no `end_date` on the
 // server) is accepted, or 0 when none is needed. Dispatcharr's serializer refuses

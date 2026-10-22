@@ -918,6 +918,63 @@ int main(int argc, char** argv)
       INFO(" timer idx=%u parent=%u type=%u ch=%d state=%d start=%ld end=%ld epg=%u title='%s' days=%u first=%ld",
            x.iClientIndex, x.iParentClientIndex, x.iTimerType, x.iClientChannelUid, x.state, (long)x.startTime - now,
            (long)x.endTime - now, x.iEpgUid, x.strTitle, x.iWeekdays, (long)x.firstDay);
+    // Kodi's timer dialog edits a copy of the rule taken when it opened. Another client renames the rule and a refresh
+    // reports that while the dialog is still open; the user then changes only the days. The rename must survive: the
+    // edit is diffed against what the dialog was filled from, found by the series link Kodi hands back.
+    {
+      const PVR_TIMER* daily = nullptr;
+      for (const auto& x : tt.timers)
+        if (x.iTimerType == 4 && abi::str(x.strTitle) == "Daily")
+          daily = &x;
+      if (!daily)
+        FAIL("the recurring rule 'Daily' was not listed as a timer");
+      else if (abi::str(daily->strSeriesLink).empty())
+        FAIL("the recurring rule was listed with no series link");
+      else
+      {
+        const PVR_TIMER opened = *daily;
+        ctl("recurring_rename=Daily:Renamed%20Elsewhere");
+        // Any change the addon makes invalidates its timer cache, as the realtime event or the periodic refresh would.
+        PVR_TIMER poke{};
+        poke.iTimerType = 1;
+        poke.iClientChannelUid = 4;
+        poke.state = PVR_TIMER_STATE_SCHEDULED;
+        poke.startTime = now + 14400;
+        poke.endTime = poke.startTime + 1800;
+        poke.iEpgUid = PVR_TIMER_NO_EPG_UID;
+        abi::setf(poke.strTitle, "Refresh poke");
+        mustAdd("refresh poke", &poke);
+        Collected refreshed;
+        A()->GetTimers(I(), (PVR_HANDLE)&refreshed);
+        bool sawRename = false;
+        for (const auto& x : refreshed.timers)
+          if (x.iTimerType == 4 && x.iClientIndex == opened.iClientIndex)
+          {
+            sawRename = abi::str(x.strTitle) == "Renamed Elsewhere";
+            if (abi::str(x.strSeriesLink) == abi::str(opened.strSeriesLink))
+              FAIL("the renamed rule kept the series link of the report before it");
+          }
+        if (!sawRename)
+          FAIL("the refresh did not report the rename made elsewhere");
+        // Only that the days changed: the harness's zones shift which server days Kodi's weekdays become.
+        auto ruleDays = [&]() -> std::string
+        {
+          const std::string db = http("/__db");
+          const size_t at = db.find("\"days_of_week\": ", db.find("\"recurring\": "));
+          return at == std::string::npos ? "" : db.substr(at, db.find(']', at) - at);
+        };
+        const std::string daysBefore = ruleDays();
+        PVR_TIMER edited = opened;
+        edited.iWeekdays = 0x60; // Saturday and Sunday
+        if (A()->UpdateTimer(I(), &edited) != PVR_ERROR_NO_ERROR)
+          FAIL("the days-only edit of the recurring rule was refused");
+        const std::string db = http("/__db");
+        if (db.find("Renamed Elsewhere") == std::string::npos)
+          FAIL("the edit from the dialog opened before the rename sent the old name back: %s", db.c_str());
+        if (daysBefore.empty() || ruleDays() == daysBefore)
+          FAIL("the days-only edit did not reach the server (%s): %s", daysBefore.c_str(), db.c_str());
+      }
+    }
     Collected rr;
     A()->GetRecordings(I(), (PVR_HANDLE)&rr, false);
     for (auto& x : rr.recordings)

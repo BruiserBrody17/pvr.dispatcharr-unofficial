@@ -6,6 +6,42 @@
 
 ### Fixed
 
+#### A refresh while Kodi's timer dialog is open can revert another client's change to a recurring rule
+
+**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); plausible.**
+`UpdateTimer()` diffs the dialog's values against `m_reportedRecurringRules` and `m_reportedRecurringRuleTimes`, but any
+`GetTimers()` that finishes while the dialog is open overwrites that baseline. If another client changes the rule's name or days meanwhile and a WebSocket event or the
+5-minute refresh picks it up, the dialog's old values look like edits and are PATCHed back: the revert the 2026-10-02
+fix was meant to stop. Smaller race in the same code: `GetTimers()` clears the times map and refills it rule by rule, so
+an `UpdateTimer()` in that gap falls back to re-derived times and brings back the DST time-shift edit. Fix: keep the
+snapshot the dialog was opened from per rule, and build the times map locally and swap it in under one lock. The baseline
+choice is testable in `RecurringRuleEdit`.
+
+**Fixed 2026-10-22, confirmed by regression tests that fail on the old code (unit and glue harness) and checked live
+(below).** Kodi's timer dialog edits a clone of the timer taken when it opens (Kodi's `PVRGUIActionsTimers.cpp`, read in
+Kodi 21's and 22.0-RC1's source), and the clone keeps the timer's series link: the dialog has no control for it and Kodi
+only matches on it for a type with `PVR_TIMER_TYPE_REQUIRES_EPG_SERIESLINK_ON_CREATE`, which the recurring type does not
+set. `GetTimers()` now puts a token naming each rule's report in that field (`ComputeReportedRecurringRuleToken()`,
+a hash of the reported fields and instants, so an unchanged refresh does not change it), and
+`m_reportedRecurringRules` is a `ReportedRecurringRuleHistory` (`RecurringRuleEdit.h`) keeping the last eight distinct
+reports of each rule. `UpdateTimer()` diffs against the report whose token the edit carries, with that report's own
+start and end instants; an unknown token (evicted, empty, from before a restart) falls back to the newest report, which
+is all the baseline was before. The smaller race went with it: the separate times map is gone, and `GetTimers()`
+builds its report locally and records it under one lock at the end, so an `UpdateTimer()` never sees it half-built.
+Unit tests in `tests/test_recurring_rule_edit.cpp`; the glue harness's `functional` scenario opens on a report,
+renames the rule on the fake from outside, refreshes, then saves a days-only edit from the old copy: the name the fake
+holds must stay the outside one (it went back to the old name with the token ignored).
+
+Live, the same day, on Kodi 22.0-RC1 (Linux) against a real Dispatcharr, with a disposable rule and the refresh interval
+at one minute, once with the build before the fix and once with the PR's CI build: the rule's edit dialog was opened
+through Kodi's timer-rules window, the rule renamed through the API, the refresh seen in `PVR.GetTimers` (5-10 s, the
+realtime event) while the dialog stayed open showing the old name, then "Enabled" switched off and saved. Before the
+fix the server's rule went back to the old name; with it the rename stayed and only `enabled` changed. A second save
+from a freshly opened dialog (switching it back on) changed only `enabled` too.
+
+Repeated on Kodi 21.3 (Linux) with `Omega`'s builds, the same steps: the build before the port reverted the outside
+rename, the port's CI build kept it and changed only `enabled`.
+
 #### timeshift_buffer: a teardown that outlasts its grace period can delete a restarted buffer
 
 **Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); plausible.**
@@ -7352,7 +7388,7 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 #### Editing a recurring rule whose start fell in a spring-forward gap re-sent its times
 
-**Fixed 2026-10-04 (the eighth hardening sweep), unit-tested.** A rule whose time of day does not exist on its first day in Kodi's own zone (inside the clock-forward gap) round-trips to a different time of day, so an edit that changed nothing about the times still differed from the stored ones and sent them, regenerating every occurrence. `GetTimers()` now remembers the instants it reported per rule (`m_reportedRecurringRuleTimes`) and `ResolveRecurringRuleTimesOnEdit()` (`RecurringRuleEdit.h`) keeps the rule's stored times of day whenever Kodi hands back exactly those instants.
+**Fixed 2026-10-04 (the eighth hardening sweep), unit-tested.** A rule whose time of day does not exist on its first day in Kodi's own zone (inside the clock-forward gap) round-trips to a different time of day, so an edit that changed nothing about the times still differed from the stored ones and sent them, regenerating every occurrence. `GetTimers()` now remembers the instants it reported per rule (`m_reportedRecurringRuleTimes`, kept with each report in `m_reportedRecurringRules` since 2026-10-22) and `ResolveRecurringRuleTimesOnEdit()` (`RecurringRuleEdit.h`) keeps the rule's stored times of day whenever Kodi hands back exactly those instants.
 
 #### Deleting a series rule could remove a source-pinned rule with the same title
 

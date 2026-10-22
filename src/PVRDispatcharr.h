@@ -609,16 +609,14 @@ private:
   // restarts so a finished recording's guide link outlives the EPG cache entry it
   // was found in -- see RecordingEpgLinks.h. Guarded by m_dataMutex, like the guide
   // cache it is the durable counterpart of.
-  // The recurring rules exactly as GetTimers() last handed them to Kodi, by id.
-  // Kodi's timer dialog is filled from that copy, so it -- not the cache, which
-  // may have been refreshed since -- is what an edit must be compared against to
-  // tell what the user changed. Diffing against the refreshed cache instead treated
-  // a change made elsewhere in between as the user's own edit and sent it back
-  // (caught live). Guarded by m_dataMutex.
-  std::map<int, dispatcharr::RecurringRule> m_reportedRecurringRules;
-  // The start and end instants GetTimers() handed Kodi for each of those rules, so UpdateTimer() can tell
-  // an edit that left them alone (see dispatcharr::ResolveRecurringRuleTimesOnEdit()). Guarded by m_dataMutex.
-  std::map<int, std::pair<time_t, time_t>> m_reportedRecurringRuleTimes;
+  // The recurring rules as GetTimers() handed them to Kodi, with the start and end instants they were shown with
+  // (see dispatcharr::ResolveRecurringRuleTimesOnEdit()). Kodi's timer dialog is filled from one of those reports, so
+  // it -- not the cache, which may have been refreshed since -- is what an edit must be compared against to tell what
+  // the user changed: diffing against the refreshed cache treated a change made elsewhere in between as the user's
+  // own edit and sent it back (caught live). Several reports per rule, because a refresh can also land while the
+  // dialog is open -- see ReportedRecurringRuleHistory. Updated in one step at the end of GetTimers(), so an
+  // UpdateTimer() never sees a half-built report. Guarded by m_dataMutex.
+  dispatcharr::ReportedRecurringRuleHistory m_reportedRecurringRules;
   dispatcharr::RecordingEpgLinkMap m_recordingEpgLinks;
   bool m_recordingEpgLinksDirty = false;
   // Held across serialize, write and rename in SaveRecordingEpgLinksIfDirty(): GetTimers() and

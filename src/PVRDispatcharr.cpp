@@ -114,6 +114,20 @@ std::string ComputeApiKeyOwnerServer(const Config& config)
   return (config.useHttps ? "https://" : "http://") + config.host + ":" + std::to_string(config.port);
 }
 
+// The fields of a rule an edit is diffed on, name as the server has it.
+RecurringRuleFields EditableFieldsOf(const RecurringRule& rule)
+{
+  RecurringRuleFields f;
+  f.channelId = rule.channelId;
+  f.name = rule.name;
+  f.daysOfWeek = rule.daysOfWeek;
+  f.startTimeOfDaySeconds = rule.startTimeOfDaySeconds;
+  f.endTimeOfDaySeconds = rule.endTimeOfDaySeconds;
+  f.startDate = rule.startDate;
+  f.enabled = rule.enabled;
+  return f;
+}
+
 } // namespace
 
 dispatcharr::Config PVRDispatcharr::LoadConfigFromSettings() const
@@ -4432,12 +4446,6 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
     recordings = m_cachedRecordings;
     rules = m_cachedTimerRules;
     recurringRules = m_cachedRecurringRules;
-    // What Kodi is about to be shown for each recurring rule, remembered as the
-    // baseline UpdateTimer() diffs an edit against -- see m_reportedRecurringRules.
-    m_reportedRecurringRules.clear();
-    m_reportedRecurringRuleTimes.clear();
-    for (const auto& rule : recurringRules)
-      m_reportedRecurringRules[rule.id] = rule;
   }
   // Before any rule below is given its display times, which read the effective offset.
   UpdateServerOffsetCrossCheck(recordings, recurringRules);
@@ -4614,6 +4622,9 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
   }
 
   {
+    // What Kodi is shown for each recurring rule, recorded below as the baseline UpdateTimer() diffs an edit
+    // against -- see m_reportedRecurringRules.
+    std::map<int, ReportedRecurringRule> reported;
     for (const auto& rule : recurringRules)
     {
       kodi::addon::PVRTimer timer;
@@ -4659,10 +4670,13 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
       timer.SetFirstDay(firstDay);
       timer.SetStartTime(startTime);
       timer.SetEndTime(endTime);
-      {
-        std::lock_guard<std::mutex> lock(m_dataMutex);
-        m_reportedRecurringRuleTimes[rule.id] = {startTime, endTime};
-      }
+      ReportedRecurringRule report;
+      report.fields = EditableFieldsOf(rule);
+      report.start = startTime;
+      report.end = endTime;
+      // Comes back with an edit from Kodi's timer dialog and names the report it was opened from.
+      timer.SetSeriesLink(ComputeReportedRecurringRuleToken(report));
+      reported[rule.id] = std::move(report);
       // Dispatcharr's days_of_week is in its own zone's calendar and Kodi
       // reads the weekday bitmask in its own (Kodi's offset for an instant
       // is libc's localtime() of it, dispatcharr::LocalUtcOffsetMinutes())
@@ -4705,6 +4719,8 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
                          : PVR_TIMER_STATE_SCHEDULED);
       results.Add(timer);
     }
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    m_reportedRecurringRules.Record(reported);
   }
 
   SaveRecordingEpgLinksIfDirty();
@@ -5184,18 +5200,12 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
     // The whole cached rule too: it is the baseline an edit is diffed against, see
     // dispatcharr::ComputeRecurringRuleEditPatch().
     RecurringRule cachedRule;
-    RecurringRule baselineRule;
+    RecurringRuleFields baselineRule;
     bool haveBaselineRule = false;
     // What GetTimers() showed Kodi as this rule's start and end -- see ResolveRecurringRuleTimesOnEdit().
     std::optional<time_t> reportedStart, reportedEnd;
     {
       std::lock_guard<std::mutex> lock(m_dataMutex);
-      const auto reportedTimes = m_reportedRecurringRuleTimes.find(ruleId);
-      if (reportedTimes != m_reportedRecurringRuleTimes.end())
-      {
-        reportedStart = reportedTimes->second.first;
-        reportedEnd = reportedTimes->second.second;
-      }
       for (const auto& cached : m_cachedRecurringRules)
       {
         if (cached.id == ruleId)
@@ -5208,18 +5218,19 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
           break;
         }
       }
-      // The baseline is what Kodi was last shown, not the cache -- see
+      // The baseline is what the dialog was filled from, not the cache -- see
       // m_reportedRecurringRules. Falls back to the cache only for a rule GetTimers()
       // never reported (it cannot be editable then, but be safe).
-      auto reported = m_reportedRecurringRules.find(ruleId);
-      if (reported != m_reportedRecurringRules.end())
+      if (auto reported = m_reportedRecurringRules.Find(ruleId, timer.GetSeriesLink()))
       {
-        baselineRule = reported->second;
+        baselineRule = reported->fields;
+        reportedStart = reported->start;
+        reportedEnd = reported->end;
         haveBaselineRule = true;
       }
       else if (foundCached)
       {
-        baselineRule = cachedRule;
+        baselineRule = EditableFieldsOf(cachedRule);
         haveBaselineRule = true;
       }
     }
@@ -5341,14 +5352,8 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
       std::optional<RecurringRuleFields> baselineFields;
       if (haveBaselineRule)
       {
-        RecurringRuleFields b;
-        b.channelId = baselineRule.channelId;
+        RecurringRuleFields b = baselineRule;
         b.name = StripManagedRuleMarker(baselineRule.name);
-        b.daysOfWeek = baselineRule.daysOfWeek;
-        b.startTimeOfDaySeconds = baselineRule.startTimeOfDaySeconds;
-        b.endTimeOfDaySeconds = baselineRule.endTimeOfDaySeconds;
-        b.startDate = baselineRule.startDate;
-        b.enabled = baselineRule.enabled;
         baselineFields = b;
       }
       // Times Kodi handed back exactly as shown are not an edit, whatever re-deriving them would give

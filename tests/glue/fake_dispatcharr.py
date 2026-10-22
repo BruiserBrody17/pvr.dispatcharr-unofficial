@@ -549,6 +549,12 @@ class H(BaseHTTPRequestHandler):
                 if k == "ws_push":
                     with lock:
                         WS_PUSHED.append(v[0])
+                if k == "recurring_rename":
+                    # A rename made from another client: "<old>:<new>" replaces <old> in every recurring rule's name.
+                    old_name, _, new_name = v[0].partition(":")
+                    with DBL:
+                        for r in DB["recurring"].values():
+                            r["name"] = r.get("name", "").replace(old_name, new_name)
                 if k == "seed_empty_title_rule":
                     # A description-only, channel-less series rule, as Dispatcharr's web interface can make one.
                     with DBL:
