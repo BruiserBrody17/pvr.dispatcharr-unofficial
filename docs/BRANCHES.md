@@ -80,7 +80,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`5208c53`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`7edeaa9`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -109,6 +109,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `df0e9b1` | `cce3e4c` (`git cherry-pick -x`) | The live check of those `timeshift_buffer` fixes, run with `Omega`'s build on Kodi 21.3; the plugin and the addon's stop code are the same on both. |
 | `bc64873` | `1bb7a2d` (`git cherry-pick -x`; applied cleanly) | The tombstone named the way the orphan scrub looks for it, found by the second live pass, and that pass's record. The same plugin file on both. |
 | `5208c53` | `fe141f3` (`git cherry-pick -x`; the running counts and the entry's opened line by hand) | A recurring-rule edit diffed against the report Kodi's timer dialog was opened from, found by a token in the timer's series link. The same code on both (the series link is a `char` array in Kodi 21's `PVR_TIMER`, behind the same wrappers); reproduced and confirmed fixed live on Kodi 22.0 RC1 and Kodi 21.3, each with its own branch's builds. |
+| `28aae26`, `7edeaa9` | `e7f409d` (one commit, by hand: `OPEN_ITEMS.md` and the glue README differ by branch) | `run_tsan.sh` retrying TSan's own start-up segfault (the script is the same file on both), and the `curl_global_init` and `recording_edl` scan-root audit items closed without a change, with the constructor comment at the first request (the same constructor on both). The glue README's note that `Piers` needs Kodi 22's headers is `Piers`-only. |
 
 ## Dependencies that differ by Kodi release
 
