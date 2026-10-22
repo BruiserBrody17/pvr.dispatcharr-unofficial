@@ -80,7 +80,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`bc64873`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`5208c53`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -108,6 +108,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `9fa1252`, `06980f5`, `7f56c6d`, `dd52033` | `797bd83`, `f55a57c`, `ba08b01`, `0d113ae` (`git cherry-pick -x`; the running counts by hand) | The lab scripts' passwords kept off command lines, and `timeshift_buffer` 0.8.15's hardening and teardown-race fix with the addon's matching stop token. The plugin is the same file on both; the addon and glue changes applied cleanly, and `Omega`'s glue harness passes the new `live_stop_token` scenario. `OPEN_ITEMS.md` keeps `Omega`'s own counts and wording. |
 | `df0e9b1` | `cce3e4c` (`git cherry-pick -x`) | The live check of those `timeshift_buffer` fixes, run with `Omega`'s build on Kodi 21.3; the plugin and the addon's stop code are the same on both. |
 | `bc64873` | `1bb7a2d` (`git cherry-pick -x`; applied cleanly) | The tombstone named the way the orphan scrub looks for it, found by the second live pass, and that pass's record. The same plugin file on both. |
+| `5208c53` | `fe141f3` (`git cherry-pick -x`; the running counts and the entry's opened line by hand) | A recurring-rule edit diffed against the report Kodi's timer dialog was opened from, found by a token in the timer's series link. The same code on both (the series link is a `char` array in Kodi 21's `PVR_TIMER`, behind the same wrappers); reproduced and confirmed fixed live on Kodi 22.0 RC1 and Kodi 21.3, each with its own branch's builds. |
 
 ## Dependencies that differ by Kodi release
 
