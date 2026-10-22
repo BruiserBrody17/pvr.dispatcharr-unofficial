@@ -53,7 +53,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`1bb7a2d`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`e7f409d`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -76,7 +76,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `c08f1c4` | already on `Piers` as `59a13fc` | The live check of the throttle and guide redirect fixes; see the table below. |
 | `955c4ae` | already on `Piers` as `b53484f` | A port from `Piers`; see the table below. |
 | `5174a8c` | not ported: `Omega`-only record | The Kodi 21.3 live check of the fatal-stream fix, noted under `Omega`'s copy of the entry; `Piers`'s has the Kodi 22 one. |
-| `aded040`, `c28882c`, `202f7d3`, `1e259a1`, `baec5ef`, `797bd83`, `f55a57c`, `ba08b01`, `0d113ae`, `cce3e4c`, `1bb7a2d` | already on `Piers` | Ports from `Piers`; see the table below. |
+| `aded040`, `c28882c`, `202f7d3`, `1e259a1`, `baec5ef`, `797bd83`, `f55a57c`, `ba08b01`, `0d113ae`, `cce3e4c`, `1bb7a2d`, `fe141f3`, `e7f409d` | already on `Piers` | Ports from `Piers`; see the table below. |
 
 ### Ported to Omega
 
