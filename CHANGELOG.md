@@ -10,7 +10,12 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased] -- addon
+## [0.13.1] - 2026-10-22
+
+For Kodi 21. The release tags now carry the branch they were cut from (`0.13.1-Omega`; the Kodi 22 releases end in
+`-Piers`); the addon version itself is the plain number. It bundles `timeshift_buffer` `0.8.15` (below), which needs
+redeploying to Dispatcharr for its fixes and for the late-stop fix in this list, and `recording_edl` `0.2.3` as it was
+in `0.13.0`. It carries the same eight downloads as `0.13.0`.
 
 ### Fixed
 
@@ -61,7 +66,7 @@ compare against.
   for 60 minutes at 10 Mbit/s), and the port check now says that a `404` for the bare address means the server is
   reachable (the README and the troubleshooting guide said to expect `403`).
 
-## `timeshift_buffer` [0.8.15] - Unreleased
+## `timeshift_buffer` [0.8.15] - 2026-10-22
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
 Dispatcharr restart for every worker to pick it up.

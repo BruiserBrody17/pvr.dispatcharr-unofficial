@@ -11,10 +11,15 @@
 # before building -- see the "CoreELEC on an ODROID N2+" section of
 # ../../../docs/BUILDING.md for the exact steps, including how to fill in
 # PKG_SHA256 once a release is tagged.
+#
+# PKG_VERSION is the tag name, branch suffix included (0.13.1-Omega), the way CoreELEC's own pvr.hts package uses
+# pvr.hts' branch-suffixed tags: CoreELEC unpacks the tarball into build/<PKG_NAME>-<PKG_VERSION>, and GitHub names a
+# tag archive's top directory after the tag. The addon's own version in addon.xml.in stays plain numeric (0.13.1), since Kodi reads
+# a "-suffix" in an addon version as a revision; tools/tests/test_version_sync.py checks that the two agree.
 
 PKG_NAME="pvr.dispatcharr-unofficial"
-PKG_VERSION="0.13.0"
-PKG_SHA256="95b545ccff8d9f65716550edba21f77a4c64535034f9315798a591ed59e8e2e0"
+PKG_VERSION="0.13.1-Omega"
+PKG_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
 PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL-2.0-or-later"

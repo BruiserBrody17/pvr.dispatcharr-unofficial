@@ -405,6 +405,8 @@ called out inline so a future rebuild doesn't have to rediscover them.
    sha256sum $S/pvr.dispatcharr-unofficial-<v>.tar.gz | cut -d' ' -f1 > $S/pvr.dispatcharr-unofficial-<v>.tar.gz.sha256
    echo "https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/archive/<v>.tar.gz" > $S/pvr.dispatcharr-unofficial-<v>.tar.gz.url
    ```
+   (`<v>` here is the package's `PKG_VERSION` exactly as `package.mk` spells it: from `0.13.1` on that is the tag name
+   with its suffix, `0.13.1-Omega`, which is also the directory name the tarball must unpack into.)
    then copy `package.mk` into the CoreELEC tree (step 3) with `PKG_SHA256` set to that tarball's checksum. Only the tree's
    copy gets it: the repository's `package.mk` keeps the all-zeros placeholder until the tag's source archive exists,
    whose checksum (a different gzip, so a different hash) is the one anyone else's build needs. The zip's contents do not
@@ -881,6 +883,10 @@ privacy gate passes on all of them together.**
 | `addon-pvr.dispatcharr-unofficial-<v>-osx-arm64.zip` | by hand on the Mac ("Linux / macOS" above) |
 | `addon-pvr.dispatcharr-unofficial-<v>-android-aarch64.zip`, `...-android-armv7.zip` | by hand ("Android" above) |
 | `addon-pvr.dispatcharr-unofficial-<v>-coreelec-armv7.zip` (the CoreELEC package, renamed from CoreELEC's `pvr.dispatcharr-unofficial-<v>.1.zip`; the `.1` is its own revision suffix and stays inside the zip's `addon.xml`) | by hand ("CoreELEC" below) |
+
+The tag is `<version>-Omega` (`0.13.1-Omega`; `0.13.0` predates the suffix, which keeps this branch's tags apart from
+the Kodi 22 branch's `-Piers` ones) and is the only place the branch appears: the zips' names, `--expect-release` and the
+CHANGELOG heading use the plain version.
 
 Cutting a release, in order:
 

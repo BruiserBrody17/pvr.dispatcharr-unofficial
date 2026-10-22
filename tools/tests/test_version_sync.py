@@ -21,6 +21,10 @@ ADDON_XML_IN = REPO_ROOT / "pvr.dispatcharr-unofficial" / "addon.xml.in"
 PACKAGE_MK = REPO_ROOT / "packaging" / "coreelec" / "pvr.dispatcharr-unofficial" / "package.mk"
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 PLUGINS = ("timeshift_buffer", "recording_edl")
+# The branch this tree is the release line of. A release tag carries it as a suffix (0.13.1-Omega) so Omega's and
+# Piers' tags never collide; the addon's own version stays plain numeric, since Kodi reads "-suffix" in an addon
+# version as a revision. CoreELEC's package.mk names the tag, so it carries the suffix too.
+RELEASE_TAG_SUFFIX = "-Omega"
 
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -58,7 +62,20 @@ def _plugin_py_version(plugin: str) -> str:
 def test_addon_version_is_semver_and_matches_the_coreelec_package():
     version = _addon_xml_version()
     assert _SEMVER.match(version), version
-    assert _package_mk_version() == version, "addon.xml.in and packaging/coreelec/.../package.mk disagree"
+    assert _package_mk_version() == version + RELEASE_TAG_SUFFIX, (
+        "addon.xml.in and packaging/coreelec/.../package.mk disagree (package.mk's PKG_VERSION is the release tag: "
+        "the addon version plus the branch suffix)"
+    )
+
+
+def test_coreelec_package_downloads_the_tag_it_names():
+    # CoreELEC unpacks the tarball into build/<PKG_NAME>-<PKG_VERSION> and GitHub names a tag archive's top directory
+    # after the tag, so the URL must be built from PKG_VERSION as is: a URL with its own suffix would unpack into a
+    # directory CoreELEC does not look in.
+    text = PACKAGE_MK.read_text(encoding="utf-8")
+    match = re.search(r'^PKG_URL="([^"]+)"', text, re.MULTILINE)
+    assert match, "no PKG_URL in package.mk"
+    assert match.group(1).endswith("/archive/${PKG_VERSION}.tar.gz"), match.group(1)
 
 
 def test_addon_version_has_a_changelog_entry():
