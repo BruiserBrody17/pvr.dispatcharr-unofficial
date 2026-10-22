@@ -7665,6 +7665,47 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 ### Closed without a change (refuted, explained or harmless)
 
+#### The addon never calls `curl_global_init` itself
+
+**Opened 2026-10-18, from the read-only audit; low confidence.** libcurl initialises itself lazily on the first
+`curl_easy_init`, which is not thread-safe before curl 7.84, and the addon starts transfers from several threads at once.
+The Windows build bundles curl 7.67.0 and Android links a static curl. To check: whether Kodi's own earlier
+initialisation covers the addon's copy on those platforms. If it does not, one `curl_global_init(CURL_GLOBAL_ALL)` in the
+addon's create path (and the matching cleanup on destroy) is the fix.
+
+**Closed 2026-10-22 without a change, explained.** The race needs two threads to make the first curl call of the same
+copy of libcurl at once, and that cannot happen on any platform the addon ships for. **Where the addon shares Kodi's
+curl** (Linux and CoreELEC link the system `libcurl.so`; Kodi 21's Windows build bundles the same 7.67.0
+`libcurl.dll` Kodi itself loads, `project/BuildDependencies/scripts/0_package.target-x64.list`), Kodi has already
+initialised it: `XCURL::DllLibCurlGlobal g_curlInterface` is a static object (`xbmc/SystemGlobals.cpp`) whose
+constructor calls `curl_global_init(CURL_GLOBAL_ALL)` (`xbmc/filesystem/DllLibCurl.cpp`), read in Kodi 21's source, so
+the lazy branch of `curl_easy_init` is never taken. **Where the addon carries its own copy** (Android links Kodi's
+depends-built static `libcurl.a`, and the same reasoning holds for any platform that does), the first call is the
+server-version request in the `PVRDispatcharr` constructor, made on Kodi's thread before any of the addon's worker
+threads exists (they start at the end of the constructor), so the first initialisation is single-threaded; a
+recreated instance finds curl already initialised, since nothing calls `curl_global_cleanup`. Android's curl is also
+8.10.0 (Kodi 21) and 8.20.0 (Kodi 22) by `tools/depends/target/curl/CURL-VERSION`, where the lazy initialisation is
+thread-safe anyway, and Kodi 22's Windows build no longer uses the 7.67.0 package. The constructor now says, at that
+call, that it has to stay the first request and come before the threads start.
+
+#### recording_edl: a DVR path template may resolve outside the recordings root
+
+**Opened 2026-10-18, from the read-only audit; deliberate today.** `_resolve_scan_root` refuses only the recordings root
+itself or an ancestor of it; a template that is absolute, or whose `..` segments lead somewhere else, is scanned and
+scrubbed there on purpose (its docstring explains why: such recordings' sidecars still need finding). Templates are set
+by a Dispatcharr admin, so this is not reachable by an ordinary user. Decision: keep it as is, or require the resolved
+root to be inside a configured allow-list of directories.
+
+**Closed 2026-10-22 without a change: kept as is, by design (the maintainer's decision).** An allow-list would guard
+against no one. Changing the DVR path templates (`CoreSettingsViewSet`'s writes, `IsAdmin`, `docs/API_NOTES.md`) and
+running a plugin action (the plugin `run/` endpoint, `IsAdmin` for `POST`, `docs/DISPATCHARR_SOURCE_REVIEW.md`) both
+need a Dispatcharr admin, who can already install a plugin, i.e. run any code in Dispatcharr's process. What is left is
+an admin's mistake, and its reach is narrow: the scrub walks only the directory a template names as the recordings
+library (where Dispatcharr itself writes those recordings), refuses the recordings root and its ancestors, and there
+removes only `.edl`/`.logo.txt` files with no same-named file beside them and empty directories that are not
+dot-prefixed, after a confirmation dialog. An allow-list would also stop the scrub for every absolute template outside
+it until configured, which is the case the absolute-path handling exists for.
+
 #### The live timeshift access token lands in kodi.log from `ReadLiveTimeshiftStream`
 
 **Raised 2026-10-20 by an outside review of the code and commits; not reproduced, closed without a change the same

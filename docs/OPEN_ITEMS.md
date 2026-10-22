@@ -4,39 +4,33 @@
 
 ## Status at a glance
 
-**6 open, 349 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**4 open, 351 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. One tracks publishing the Kodi repository added on 2026-10-19. The other 2 come from the 2026-10-18 read-only audit of the whole
-project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
-day, 14 on 2026-10-19, four on 2026-10-21 and one on 2026-10-22, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
-path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
+work on `Piers`: what remains of Kodi 22 support; one tracks publishing the Kodi repository added on 2026-10-19. Nothing
+is left from the 2026-10-18 read-only audit of the whole project (addon, both plugins, tools, CI and packaging; 28
+findings: seven fixed the same day, 14 on 2026-10-19, four on 2026-10-21, one on 2026-10-22 and the last two closed
+without a change on 2026-10-22, all in `CLOSED_ITEMS.md`).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
+| Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 1 |
+| Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 2 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 305 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 35 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 37 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
 
 ### Needs a live check
 
-#### The addon never calls `curl_global_init` itself
-
-**Opened 2026-10-18, from the read-only audit; low confidence.** libcurl initialises itself lazily on the first
-`curl_easy_init`, which is not thread-safe before curl 7.84, and the addon starts transfers from several threads at once.
-The Windows build bundles curl 7.67.0 and Android links a static curl. To check: whether Kodi's own earlier
-initialisation covers the addon's copy on those platforms. If it does not, one `curl_global_init(CURL_GLOBAL_ALL)` in the
-addon's create path (and the matching cleanup on destroy) is the fix.
+None open.
 
 ### Fix known, not yet done
 
@@ -48,13 +42,7 @@ None open.
 
 ### Design decision needed
 
-#### recording_edl: a DVR path template may resolve outside the recordings root
-
-**Opened 2026-10-18, from the read-only audit; deliberate today.** `_resolve_scan_root` refuses only the recordings root
-itself or an ancestor of it; a template that is absolute, or whose `..` segments lead somewhere else, is scanned and
-scrubbed there on purpose (its docstring explains why: such recordings' sidecars still need finding). Templates are set
-by a Dispatcharr admin, so this is not reachable by an ordinary user. Decision: keep it as is, or require the resolved
-root to be inside a configured allow-list of directories.
+None open.
 
 ### Release, CI and manual testing
 
