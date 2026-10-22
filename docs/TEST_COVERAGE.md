@@ -1261,6 +1261,16 @@ against `m_reportedRecurringRules` (the rules as `GetTimers()` last handed them 
 saving; the first version diffed against the cache and reverted a change made elsewhere, caught live), a no-change save sends nothing, and a rule with no `end_date` is given
 a rolling-window one because the server refuses any save of it otherwise. `BuildRecurringRuleUpdateBody()` now takes the patch (end_date only when it carries one). The diff compares times of day modulo one day and `ComputeRecurringRuleFields()` wraps its results into [0, 86400) (2026-10-03, see `docs/CLOSED_ITEMS.md`'s "Unchanged recurring-rule times were re-sent on every edit for a rule near UTC midnight"): the Kodi-derived side used to arrive unwrapped (-7200 for a 22:00 rule behind UTC, 108000 for a 06:00 rule far enough ahead) against the server's wrapped value, so an unchanged rule of that shape was re-sent -- and its occurrences regenerated -- on every edit (reproduced and re-verified live through Kodi's own timer dialog).
 
+`ComputeReportedRecurringRuleToken()` and `ReportedRecurringRuleHistory` (added 2026-10-22, fixing an audit finding
+reproduced live in Kodi 22's timer dialog before the fix and gone after it; `docs/CLOSED_ITEMS.md`, "A refresh while Kodi's timer dialog
+is open can revert another client's change to a recurring rule") replace the single last-reported baseline: Kodi's
+dialog edits a copy taken when it opened, so a refresh while it is open made the newest report the wrong baseline. The
+tests pin that the token follows every reported field and both instants (and only them), that an edit is diffed
+against the report it carries the token of rather than a newer one (fails with the token ignored), that the report's
+own instants come back with it, the newest-report fallback for an unknown token, forgetting a rule no longer reported,
+de-duplicating an unchanged refresh, and the eight-report bound. The glue harness's `functional` scenario runs the same
+sequence through the real `GetTimers()`/`UpdateTimer()` against the fake (`recurring_rename` knob).
+
 ### `RecurringRuleRenewal`
 
 `RecurringRuleRenewal` is `ShouldRenewRecurringRule()`, the per-rule

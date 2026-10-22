@@ -4,25 +4,25 @@
 
 ## Status at a glance
 
-**8 open, 347 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**7 open, 348 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One tracks publishing the Kodi repository added on 2026-10-19. The other 3 come from the 2026-10-18 read-only audit of the whole
+work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One tracks publishing the Kodi repository added on 2026-10-19. The other 2 come from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
-day, 14 on 2026-10-19 and four on 2026-10-21, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
+day, 14 on 2026-10-19, four on 2026-10-21 and one on 2026-10-22, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
 path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 0 |
-| Open: Architectural / concurrency | 1 |
+| Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 3 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 303 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 304 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 35 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -44,16 +44,7 @@ None open.
 
 ### Architectural / concurrency
 
-#### A refresh while Kodi's timer dialog is open can revert another client's change to a series rule
-
-**Opened 2026-10-18, from the read-only audit; plausible.** `UpdateTimer()` diffs the dialog's values against
-`m_reportedRecurringRules` and `m_reportedRecurringRuleTimes`, but any `GetTimers()` that finishes while the dialog is
-open overwrites that baseline. If another client changes the rule's name or days meanwhile and a WebSocket event or the
-5-minute refresh picks it up, the dialog's old values look like edits and are PATCHed back: the revert the 2026-10-02
-fix was meant to stop. Smaller race in the same code: `GetTimers()` clears the times map and refills it rule by rule, so
-an `UpdateTimer()` in that gap falls back to re-derived times and brings back the DST time-shift edit. Fix: keep the
-snapshot the dialog was opened from per rule, and build the times map locally and swap it in under one lock. The baseline
-choice is testable in `RecurringRuleEdit`.
+None open.
 
 ### Design decision needed
 

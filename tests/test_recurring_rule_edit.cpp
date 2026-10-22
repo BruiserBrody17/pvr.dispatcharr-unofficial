@@ -223,3 +223,136 @@ TEST_CASE("a baseline that lists a weekday twice is the same rule as an edit tha
   baseline.daysOfWeek = {0, 1};
   CHECK(ComputeRecurringRuleEditPatch(baseline, edited).IsEmpty());
 }
+
+namespace
+{
+ReportedRecurringRule Report(const RecurringRuleFields& fields = Rule())
+{
+  ReportedRecurringRule r;
+  r.fields = fields;
+  r.start = 1767304800; // 2026-01-01 22:00 UTC
+  r.end = 1767308400;
+  return r;
+}
+} // namespace
+
+TEST_CASE("a report's token follows its content", "[RecurringRuleEdit]")
+{
+  const std::string token = ComputeReportedRecurringRuleToken(Report());
+  CHECK(token.rfind("rr-", 0) == 0);
+  CHECK(ComputeReportedRecurringRuleToken(Report()) == token);
+
+  auto changed = [&token](void (*edit)(ReportedRecurringRule&))
+  {
+    ReportedRecurringRule r = Report();
+    edit(r);
+    return ComputeReportedRecurringRuleToken(r) != token;
+  };
+  CHECK(changed([](ReportedRecurringRule& r) { r.fields.channelId = 8; }));
+  CHECK(changed([](ReportedRecurringRule& r) { r.fields.name = "Late News"; }));
+  CHECK(changed([](ReportedRecurringRule& r) { r.fields.daysOfWeek = {0, 1, 2, 3}; }));
+  CHECK(changed([](ReportedRecurringRule& r) { r.fields.startTimeOfDaySeconds += 60; }));
+  CHECK(changed([](ReportedRecurringRule& r) { r.fields.endTimeOfDaySeconds += 60; }));
+  CHECK(changed([](ReportedRecurringRule& r) { r.fields.startDate += 86400; }));
+  CHECK(changed([](ReportedRecurringRule& r) { r.fields.enabled = false; }));
+  CHECK(changed([](ReportedRecurringRule& r) { r.start += 3600; }));
+  CHECK(changed([](ReportedRecurringRule& r) { r.end += 3600; }));
+  // Separators keep neighbouring values from running together.
+  ReportedRecurringRule a = Report(), b = Report();
+  a.fields.daysOfWeek = {1, 2};
+  b.fields.daysOfWeek = {12};
+  CHECK(ComputeReportedRecurringRuleToken(a) != ComputeReportedRecurringRuleToken(b));
+}
+
+TEST_CASE("an edit is diffed against the report its dialog was opened from, not a newer one", "[RecurringRuleEdit]")
+{
+  // The dialog opens on the first report; another client then renames the rule and a refresh reports that while
+  // the dialog is still open. The user changes only the days.
+  ReportedRecurringRule opened = Report();
+  RecurringRuleFields renamedElsewhere = Rule();
+  renamedElsewhere.name = "Renamed Elsewhere";
+  ReportedRecurringRuleHistory history;
+  history.Record({{5, opened}});
+  history.Record({{5, Report(renamedElsewhere)}});
+
+  RecurringRuleFields edited = Rule();
+  edited.daysOfWeek = {5, 6};
+  auto baseline = history.Find(5, ComputeReportedRecurringRuleToken(opened));
+  REQUIRE(baseline);
+  RecurringRuleEditPatch p = ComputeRecurringRuleEditPatch(baseline->fields, edited);
+  CHECK(p.daysOfWeek);
+  CHECK_FALSE(p.name); // diffed against the newest report, the old name was sent back
+}
+
+TEST_CASE("a report's times come back with its own fields", "[RecurringRuleEdit]")
+{
+  ReportedRecurringRule first = Report();
+  ReportedRecurringRule moved = Report();
+  moved.start += 3600;
+  moved.end += 3600;
+  ReportedRecurringRuleHistory history;
+  history.Record({{5, first}});
+  history.Record({{5, moved}});
+  auto found = history.Find(5, ComputeReportedRecurringRuleToken(first));
+  REQUIRE(found);
+  CHECK(found->start == first.start);
+  CHECK(found->end == first.end);
+}
+
+TEST_CASE("an unknown token falls back to the rule's newest report", "[RecurringRuleEdit]")
+{
+  RecurringRuleFields newer = Rule();
+  newer.name = "Newer";
+  ReportedRecurringRuleHistory history;
+  history.Record({{5, Report()}});
+  history.Record({{5, Report(newer)}});
+  for (const std::string token : {std::string(), std::string("rr-0000000000000000"), std::string("unrelated")})
+  {
+    auto found = history.Find(5, token);
+    REQUIRE(found);
+    CHECK(found->fields.name == "Newer");
+  }
+  CHECK_FALSE(history.Find(6, ""));
+}
+
+TEST_CASE("a rule missing from a report is forgotten", "[RecurringRuleEdit]")
+{
+  ReportedRecurringRuleHistory history;
+  history.Record({{5, Report()}, {6, Report()}});
+  history.Record({{6, Report()}});
+  CHECK_FALSE(history.Find(5, ComputeReportedRecurringRuleToken(Report())));
+  CHECK(history.Find(6, ""));
+}
+
+TEST_CASE("a report seen again becomes the newest without being kept twice", "[RecurringRuleEdit]")
+{
+  RecurringRuleFields other = Rule();
+  other.name = "Other";
+  ReportedRecurringRuleHistory history;
+  history.Record({{5, Report()}});
+  history.Record({{5, Report(other)}});
+  history.Record({{5, Report()}});
+  CHECK(history.Find(5, "")->fields.name == "Evening News");
+  CHECK(history.Find(5, ComputeReportedRecurringRuleToken(Report(other)))->fields.name == "Other");
+
+  // Unchanged refreshes do not push older reports out.
+  for (std::size_t i = 0; i < ReportedRecurringRuleHistory::kMaxReportsPerRule * 2; ++i)
+    history.Record({{5, Report()}});
+  CHECK(history.Find(5, ComputeReportedRecurringRuleToken(Report(other)))->fields.name == "Other");
+}
+
+TEST_CASE("only the newest reports of a rule are kept", "[RecurringRuleEdit]")
+{
+  ReportedRecurringRuleHistory history;
+  std::vector<std::string> tokens;
+  for (std::size_t i = 0; i <= ReportedRecurringRuleHistory::kMaxReportsPerRule; ++i)
+  {
+    RecurringRuleFields f = Rule();
+    f.name = "Name " + std::to_string(i);
+    tokens.push_back(ComputeReportedRecurringRuleToken(Report(f)));
+    history.Record({{5, Report(f)}});
+  }
+  const std::string newest = "Name " + std::to_string(ReportedRecurringRuleHistory::kMaxReportsPerRule);
+  CHECK(history.Find(5, tokens.front())->fields.name == newest); // evicted: newest instead
+  CHECK(history.Find(5, tokens[1])->fields.name == "Name 1");
+}
