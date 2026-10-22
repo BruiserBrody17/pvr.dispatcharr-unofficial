@@ -6,6 +6,27 @@
 
 ### Fixed
 
+#### The glue harness's TSan build crashes at start about one run in four
+
+**Opened 2026-10-19, seen while checking the shutdown-task fix.** On unmodified `Piers`,
+`BIN=pvr_harness tests/glue/run_tsan.sh functional` exited with rc 139 before printing "constructed" in 3 of 12 runs, with
+no ThreadSanitizer report; the fix's branch showed the same (2 of 12). `run_tsan.sh` retries only on TSan's "unexpected
+memory mapping", so these count as failures. Probably the same address-space layout problem showing as a segfault rather
+than that message; not investigated. The TSan variant is run by hand, not in CI, so it costs reruns, not red builds.
+Candidates: retry on a signal exit with no output as well, or start the harness with address randomisation turned off.
+
+**Fixed 2026-10-22: the crash is in TSan's own start-up, and `run_tsan.sh` now retries it.** The TSan `pvr_harness`
+started bare 60 times, with no fake server and no scenario argument (so a start that gets as far as `main()` dies at
+once on the missing argument): 36 refused the layout ("unexpected memory mapping"), 22 reached `main()`, and 2 segfaulted
+with no output at all. Nothing of the addon had run, so it is the runtime meeting the same randomised layouts that it
+sometimes fails to detect, not something in the code under test. `setarch -R` is still not permitted in this container,
+so turning randomisation off is not available. `run_tsan.sh` now also retries a run that died on a signal without
+printing a line (only `run.sh`'s own header, its `rc=` line and `timeout`'s "dumped core" note). Checked with a copy of
+the script that logged each retry: `BIN=pvr_harness run_tsan.sh functional` 16 times, all 16 passed (`fails=0`, no
+ThreadSanitizer warnings), with 5 start-up segfaults among the 21 starts that got past the layout check, each retried.
+A harness that crashes before printing for a real reason still fails, after 40 attempts, as "TSan never started".
+
+
 #### A refresh while Kodi's timer dialog is open can revert another client's change to a recurring rule
 
 **Opened 2026-10-18, from the read-only audit; plausible.** `UpdateTimer()` diffs the dialog's values against

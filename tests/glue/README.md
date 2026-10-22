@@ -26,7 +26,8 @@ tests/glue/run_tsan.sh ip 5000         # after build.sh tsan; retries while TSan
 ```
 
 `KODI_INCLUDE` points at `kodi-dev-kit/include` of a Kodi source checkout (default
-`~/kodi-build/kodi-source/xbmc/addons/kodi-dev-kit/include`, the tree `docs/BUILDING.md` sets up).
+`~/kodi-build/kodi-source/xbmc/addons/kodi-dev-kit/include`, the tree `docs/BUILDING.md` sets up). The checkout must
+match the branch's Kodi: on `Piers`, Kodi 21's headers fail in `PVRDispatcharr.h` (`PVR_SOURCE` not declared).
 `run.sh` takes `BIN` (`stream_harness` or `pvr_harness`), `VARIANT`, `T` (seconds before it is killed), `TMO` (the
 client's request timeout, seconds) and `CTL="knob=value&knob=value"` (faults set on the fake before the run).
 A run prints `RESULT fails=N` and `rc=0` when it passed.
@@ -95,8 +96,9 @@ the file. It exercises the same code the unit tests mock around.
 ## Limits
 
 * Run it on Linux with GNU `g++` and a Kodi checkout; ThreadSanitizer needs a no-PIE build and aborts with
-  "unexpected memory mapping" on roughly half of all starts on kernels with high mmap randomisation
-  (`run_tsan.sh` retries), `setarch -R` was not permitted where it was tried.
+  "unexpected memory mapping" on roughly half of all starts on kernels with high mmap randomisation, or now and
+  then segfaults inside its own start-up with no output (`run_tsan.sh` retries both), `setarch -R` was not
+  permitted where it was tried.
 * The fake is faithful to what this project has measured of Dispatcharr, not to Dispatcharr itself; a scenario
   passing here is not a substitute for the live checks in `docs/MANUAL_TESTING.md`.
 * Destroying the client with a stream still open leaks three curl handles and the share (LSan); Kodi's

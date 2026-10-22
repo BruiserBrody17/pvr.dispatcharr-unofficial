@@ -4,10 +4,10 @@
 
 ## Status at a glance
 
-**7 open, 348 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**6 open, 349 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support. One came from the 2026-10-19 live check of four audit fixes (a second, also from it, was fixed the same day). One tracks publishing the Kodi repository added on 2026-10-19. The other 2 come from the 2026-10-18 read-only audit of the whole
+work on `Piers`: what remains of Kodi 22 support. One tracks publishing the Kodi repository added on 2026-10-19. The other 2 come from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; findings only, nothing changed; 28 at first, seven fixed the same
 day, 14 on 2026-10-19, four on 2026-10-21 and one on 2026-10-22, all moved to `CLOSED_ITEMS.md`), each marked with how sure the audit was: *confirmed* (reproduced, or the whole code
 path read end to end), *plausible* (the logic is there, the trigger is not demonstrated) or *low confidence*.
@@ -18,11 +18,11 @@ path read end to end), *plausible* (the logic is there, the trigger is not demon
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 1 |
-| Open: Release, CI and manual testing | 3 |
+| Open: Release, CI and manual testing | 2 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 304 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 305 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 35 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -69,15 +69,6 @@ from `0.13.0` and for Kodi 22 from `0.14.0-Piers` (the gated zips), then `reposi
 check the site URL and a range request (206); (4) install the repository on a real Kodi from the public URL and
 install the addon from it. Then (5) port the tool, the repository addon and README.md's "Installing" to `Omega`
 (GitHub's default branch, whose README Kodi 21 users read), and record it in `docs/BRANCHES.md`.
-
-#### The glue harness's TSan build crashes at start about one run in four
-
-**Opened 2026-10-19, seen while checking the shutdown-task fix.** On unmodified `Piers`,
-`BIN=pvr_harness tests/glue/run_tsan.sh functional` exited with rc 139 before printing "constructed" in 3 of 12 runs, with
-no ThreadSanitizer report; the fix's branch showed the same (2 of 12). `run_tsan.sh` retries only on TSan's "unexpected
-memory mapping", so these count as failures. Probably the same address-space layout problem showing as a segfault rather
-than that message; not investigated. The TSan variant is run by hand, not in CI, so it costs reruns, not red builds.
-Candidates: retry on a signal exit with no output as well, or start the harness with address randomisation turned off.
 
 #### Kodi 22 (`Piers`): the pinned Kodi commit, checks still missing, and the pre-release mark
 
