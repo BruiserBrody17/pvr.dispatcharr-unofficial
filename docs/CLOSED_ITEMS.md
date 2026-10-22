@@ -6,6 +6,28 @@
 
 ### Fixed
 
+#### The glue harness's TSan build crashes at start about one run in four
+
+**Opened 2026-10-19, seen while checking the shutdown-task fix.** On unmodified `Piers`,
+`BIN=pvr_harness tests/glue/run_tsan.sh functional` exited with rc 139 before printing "constructed" in 3 of 12 runs, with
+no ThreadSanitizer report; the fix's branch showed the same (2 of 12). `run_tsan.sh` retries only on TSan's "unexpected
+memory mapping", so these count as failures. Probably the same address-space layout problem showing as a segfault rather
+than that message; not investigated. The TSan variant is run by hand, not in CI, so it costs reruns, not red builds.
+Candidates: retry on a signal exit with no output as well, or start the harness with address randomisation turned off.
+
+**Fixed 2026-10-22: the crash is in TSan's own start-up, and `run_tsan.sh` now retries it** (measured on `Piers`; the
+script is the same on `Omega`). The TSan `pvr_harness`
+started bare 60 times, with no fake server and no scenario argument (so a start that gets as far as `main()` dies at
+once on the missing argument): 36 refused the layout ("unexpected memory mapping"), 22 reached `main()`, and 2 segfaulted
+with no output at all. Nothing of the addon had run, so it is the runtime meeting the same randomised layouts that it
+sometimes fails to detect, not something in the code under test. `setarch -R` is still not permitted in this container,
+so turning randomisation off is not available. `run_tsan.sh` now also retries a run that died on a signal without
+printing a line (only `run.sh`'s own header, its `rc=` line and `timeout`'s "dumped core" note). Checked with a copy of
+the script that logged each retry: `BIN=pvr_harness run_tsan.sh functional` 16 times, all 16 passed (`fails=0`, no
+ThreadSanitizer warnings), with 5 start-up segfaults among the 21 starts that got past the layout check, each retried.
+A harness that crashes before printing for a real reason still fails, after 40 attempts, as "TSan never started".
+
+
 #### A refresh while Kodi's timer dialog is open can revert another client's change to a recurring rule
 
 **Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); plausible.**
@@ -7607,6 +7629,47 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 **Fixed 2026-10-06 (the last known gap).** The scope the entry set when it was parked was followed: the real event sequence was captured first (a passive listener on the lab's realtime socket, then an EPG source and an M3U account refreshed on demand, the same thing their scheduler does every three hours), `docs/EPG.md`'s new section records both, `ClassifyRefreshEvent()` (`RefreshEvents.h`) is the pure decision, and the reactions reuse existing machinery. A finished EPG refresh (`parsing_programs`, progress 100, status success; the earlier `parsing_channels` success is a step, not the end) schedules one guide fetch 330 s later through `m_epgRefetchDueAt`, past Dispatcharr's own 300 s cache of the exported guide, with several sources coalesced into the pending fetch; a finished M3U refresh whose channel auto-sync created, updated or deleted a channel (the counts are in the same final event) ages the channel list to just-stale and wakes the background thread. A refresh that changed nothing, a failed one and every progress event cost nothing. The "cost to watch" in the entry (a guide fetch is large) is bounded by construction: at most one fetch per 330 s window. Unit tests use the real event shapes with the numbers replaced (every mutant of the classifier and the schedule fails one), and the glue harness gained a minimal WebSocket in its fake server and `refresh_events` (it fails when the wiring is removed). `docs/MANUAL_TESTING.md` has the check a person runs. **Confirmed live the same day** (a real Kodi on the Linux test VM, realtime updates on, through a plain TCP forwarder so the WebSocket passes): an EPG refresh of the lab's XMLTV source finished on the server, the addon logged it at once, and the guide was downloaded again 392 s after the event (the 330 s schedule plus the background thread's one-minute check while a fetch is pending), against the 4-hour window it replaces; an M3U refresh was logged and the channel list was fetched 11 s later, finding a lineup change and resyncing Kodi.
 
 ### Closed without a change (refuted, explained or harmless)
+
+#### The addon never calls `curl_global_init` itself
+
+**Opened 2026-10-18, from the read-only audit; low confidence.** libcurl initialises itself lazily on the first
+`curl_easy_init`, which is not thread-safe before curl 7.84, and the addon starts transfers from several threads at once.
+The Windows build bundles curl 7.67.0 and Android links a static curl. To check: whether Kodi's own earlier
+initialisation covers the addon's copy on those platforms. If it does not, one `curl_global_init(CURL_GLOBAL_ALL)` in the
+addon's create path (and the matching cleanup on destroy) is the fix.
+
+**Closed 2026-10-22 without a change, explained.** The race needs two threads to make the first curl call of the same
+copy of libcurl at once, and that cannot happen on any platform the addon ships for. **Where the addon shares Kodi's
+curl** (Linux and CoreELEC link the system `libcurl.so`; Kodi 21's Windows build bundles the same 7.67.0
+`libcurl.dll` Kodi itself loads, `project/BuildDependencies/scripts/0_package.target-x64.list`), Kodi has already
+initialised it: `XCURL::DllLibCurlGlobal g_curlInterface` is a static object (`xbmc/SystemGlobals.cpp`) whose
+constructor calls `curl_global_init(CURL_GLOBAL_ALL)` (`xbmc/filesystem/DllLibCurl.cpp`), read in Kodi 21's source, so
+the lazy branch of `curl_easy_init` is never taken. **Where the addon carries its own copy** (Android links Kodi's
+depends-built static `libcurl.a`, and the same reasoning holds for any platform that does), the first call is the
+server-version request in the `PVRDispatcharr` constructor, made on Kodi's thread before any of the addon's worker
+threads exists (they start at the end of the constructor), so the first initialisation is single-threaded; a
+recreated instance finds curl already initialised, since nothing calls `curl_global_cleanup`. Android's curl is also
+8.10.0 (Kodi 21) and 8.20.0 (Kodi 22) by `tools/depends/target/curl/CURL-VERSION`, where the lazy initialisation is
+thread-safe anyway, and Kodi 22's Windows build no longer uses the 7.67.0 package. The constructor now says, at that
+call, that it has to stay the first request and come before the threads start.
+
+#### recording_edl: a DVR path template may resolve outside the recordings root
+
+**Opened 2026-10-18, from the read-only audit; deliberate today.** `_resolve_scan_root` refuses only the recordings root
+itself or an ancestor of it; a template that is absolute, or whose `..` segments lead somewhere else, is scanned and
+scrubbed there on purpose (its docstring explains why: such recordings' sidecars still need finding). Templates are set
+by a Dispatcharr admin, so this is not reachable by an ordinary user. Decision: keep it as is, or require the resolved
+root to be inside a configured allow-list of directories.
+
+**Closed 2026-10-22 without a change: kept as is, by design (the maintainer's decision).** An allow-list would guard
+against no one. Changing the DVR path templates (`CoreSettingsViewSet`'s writes, `IsAdmin`, `docs/API_NOTES.md`) and
+running a plugin action (the plugin `run/` endpoint, `IsAdmin` for `POST`, `docs/DISPATCHARR_SOURCE_REVIEW.md`) both
+need a Dispatcharr admin, who can already install a plugin, i.e. run any code in Dispatcharr's process. What is left is
+an admin's mistake, and its reach is narrow: the scrub walks only the directory a template names as the recordings
+library (where Dispatcharr itself writes those recordings), refuses the recordings root and its ancestors, and there
+removes only `.edl`/`.logo.txt` files with no same-named file beside them and empty directories that are not
+dot-prefixed, after a confirmation dialog. An allow-list would also stop the scrub for every absolute template outside
+it until configured, which is the case the absolute-path handling exists for.
 
 #### The live timeshift access token lands in kodi.log from `ReadLiveTimeshiftStream`
 

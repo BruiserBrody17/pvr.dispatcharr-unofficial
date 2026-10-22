@@ -86,8 +86,9 @@ the file. It exercises the same code the unit tests mock around.
 ## Limits
 
 * Run it on Linux with GNU `g++` and a Kodi checkout; ThreadSanitizer needs a no-PIE build and aborts with
-  "unexpected memory mapping" on roughly half of all starts on kernels with high mmap randomisation
-  (`run_tsan.sh` retries), `setarch -R` was not permitted where it was tried.
+  "unexpected memory mapping" on roughly half of all starts on kernels with high mmap randomisation, or now and
+  then segfaults inside its own start-up with no output (`run_tsan.sh` retries both), `setarch -R` was not
+  permitted where it was tried.
 * The fake is faithful to what this project has measured of Dispatcharr, not to Dispatcharr itself; a scenario
   passing here is not a substitute for the live checks in `docs/MANUAL_TESTING.md`.
 * Destroying the client with a stream still open leaks three curl handles and the share (LSan); Kodi's

@@ -4,40 +4,33 @@
 
 ## Status at a glance
 
-**5 open, 344 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**2 open, 347 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Both came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
-with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Two came from the 2026-10-19 live check of four audit fixes on `Piers` and held here too; one, the manifest throttle, was fixed the same day. The other 2 come
-from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code the same day (all 21 held here;
-three are worded for `Omega`; 14 fixed on 2026-10-19, four on 2026-10-21 and one on 2026-10-22, all moved to `CLOSED_ITEMS.md`), each marked with how sure the
-audit was: *confirmed* (reproduced, or the whole code path read end to end), *plausible* (the logic is there, the
-trigger is not demonstrated) or *low confidence*.
+with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the
+2026-10-19 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same
+day, and the TSan start-up crash, fixed on 2026-10-22) or from the 2026-10-18 read-only audit, made on `Piers` and
+checked against `Omega`'s code the same day (all 21 held here; 14 fixed on 2026-10-19, four on 2026-10-21, one on
+2026-10-22 and the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
+| Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 1 |
-| Open: Release, CI and manual testing | 1 |
+| Open: Design decision needed | 0 |
+| Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 300 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 35 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 301 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 37 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
 
 ### Needs a live check
 
-#### The addon never calls `curl_global_init` itself
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); low
-confidence.** libcurl initialises itself lazily on the first `curl_easy_init`, which is not thread-safe before curl
-7.84, and the addon starts transfers from several threads at once. The Windows build bundles curl 7.67.0 and Android
-links a static curl. To check: whether Kodi's own earlier initialisation covers the addon's copy on those platforms. If
-it does not, one `curl_global_init(CURL_GLOBAL_ALL)` in the addon's create path (and the matching cleanup on destroy) is
-the fix.
+None open.
 
 ### Fix known, not yet done
 
@@ -49,26 +42,11 @@ None open.
 
 ### Design decision needed
 
-#### recording_edl: a DVR path template may resolve outside the recordings root
-
-**Opened 2026-10-18, from the read-only audit of `Piers` (checked against `Omega`'s code the same day); deliberate
-today.** `_resolve_scan_root` refuses only the recordings root itself or an ancestor of it; a template that is absolute,
-or whose `..` segments lead somewhere else, is scanned and scrubbed there on purpose (its docstring explains why: such
-recordings' sidecars still need finding). Templates are set by a Dispatcharr admin, so this is not reachable by an
-ordinary user. Decision: keep it as is, or require the resolved root to be inside a configured allow-list of
-directories.
+None open.
 
 ### Release, CI and manual testing
 
-#### The glue harness's TSan build crashes at start about one run in four
-
-**Opened 2026-10-19 on `Piers`, seen while checking the shutdown-task fix.** On unmodified `Piers`, `BIN=pvr_harness
-tests/glue/run_tsan.sh functional` exited with rc 139 before printing "constructed" in 3 of 12 runs, with no
-ThreadSanitizer report; the fix's branch showed the same (2 of 12). `run_tsan.sh` retries only on TSan's "unexpected
-memory mapping", so these count as failures. Probably the same address-space layout problem showing as a segfault rather
-than that message; not investigated. The TSan variant is run by hand, not in CI, so it costs reruns, not red builds.
-Candidates: retry on a signal exit with no output as well, or start the harness with address randomisation turned off.
-`Omega`'s `run_tsan.sh`, `run.sh` and `build.sh` are the same files; not yet run here.
+None open.
 
 ### Upstream (Dispatcharr) or documentation accuracy
 

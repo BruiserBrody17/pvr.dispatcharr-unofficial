@@ -646,6 +646,11 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   LoadRecordingEpgLinks();
   LoadRecurringAdoptionState();
 
+  // Keep this the instance's first request, before any worker thread below starts: the addon never calls
+  // curl_global_init(), and where it carries its own libcurl (Android's static one) this call initialises it, which a
+  // libcurl before 7.84 does not do thread-safely (docs/CLOSED_ITEMS.md, "The addon never calls `curl_global_init`
+  // itself").
+  //
   // Public, no-auth endpoint (see GetServerVersion()'s own comment) --
   // fetched before login so GetBackendVersion() still has a real answer
   // even if authentication below fails outright. m_backendVersion keeps
