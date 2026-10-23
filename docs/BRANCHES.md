@@ -53,7 +53,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`64d0c41`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`2617019`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -79,10 +79,11 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `aded040`, `c28882c`, `202f7d3`, `1e259a1`, `baec5ef`, `797bd83`, `f55a57c`, `ba08b01`, `0d113ae`, `cce3e4c`, `1bb7a2d`, `fe141f3`, `e7f409d` | already on `Piers` | Ports from `Piers`; see the table below. |
 | `fc1a677`, `b4eba68` | not ported: `Omega` release line | `0.13.1` and its CoreELEC checksum. The tag suffix it brought to `Omega` (`RELEASE_TAG_SUFFIX`, `PKG_VERSION`, the `BUILDING.md` note) is what `Piers` already had. |
 | `64d0c41` | already on `Piers` as `b1ab0ed` | A port from `Piers`; see the table below. |
+| `2617019` | already on `Piers` as `873c98d` | A port from `Piers`; see the table below. |
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`e819d6e`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`873c98d`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -114,6 +115,8 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `28aae26`, `7edeaa9` | `e7f409d` (one commit, by hand: `OPEN_ITEMS.md` and the glue README differ by branch) | `run_tsan.sh` retrying TSan's own start-up segfault (the script is the same file on both), and the `curl_global_init` and `recording_edl` scan-root audit items closed without a change, with the constructor comment at the first request (the same constructor on both). The glue README's note that `Piers` needs Kodi 22's headers is `Piers`-only. |
 | `759dff9`, `41c4f31` | not ported: `Piers` release line | `0.14.1` and its CoreELEC checksum; `Omega` has its own `0.13.1` (`fc1a677`, `b4eba68`). |
 | `3bc23f4`, `e819d6e` | not ported: `Piers`-only item | The Kodi repository's open item lived on `Piers` alone: its release names, then its closure. The changelog date is already in `64d0c41`. |
+| `91666c9` | not ported: `Piers`-only item | The Kodi 22 install from the published repository, added to the closed entry that exists on `Piers` alone. |
+| `873c98d` | `2617019` (by hand: `BUILDING.md` only) | "The GitHub repository" instead of "the public repository"; the other five spots are in that `Piers`-only closed entry. |
 
 ## Dependencies that differ by Kodi release
 
