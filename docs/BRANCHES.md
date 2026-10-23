@@ -117,6 +117,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `3bc23f4`, `e819d6e` | not ported: `Piers`-only item | The Kodi repository's open item lived on `Piers` alone: its release names, then its closure. The changelog date is already in `64d0c41`. |
 | `91666c9` | not ported: `Piers`-only item | The Kodi 22 install from the published repository, added to the closed entry that exists on `Piers` alone. |
 | `873c98d` | `2617019` (by hand: `BUILDING.md` only) | "The GitHub repository" instead of "the public repository"; the other five spots are in that `Piers`-only closed entry. |
+| `c29030f` | `bbed9f0` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The 2026-10-23 bug-hunting sweep's 17 open items, checked against `Omega`'s code: every one holds there (the plugin, `build_kodi_repo.py` and the time and text helpers are the same files, and the addon code at each finding's site matches). |
 
 ## Dependencies that differ by Kodi release
 
