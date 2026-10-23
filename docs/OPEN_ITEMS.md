@@ -4,10 +4,10 @@
 
 ## Status at a glance
 
-**4 open, 351 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**3 open, 352 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
-work on `Piers`: what remains of Kodi 22 support; one tracks publishing the Kodi repository added on 2026-10-19. Nothing
+work on `Piers`: what remains of Kodi 22 support. Nothing
 is left from the 2026-10-18 read-only audit of the whole project (addon, both plugins, tools, CI and packaging; 28
 findings: seven fixed the same day, 14 on 2026-10-19, four on 2026-10-21, one on 2026-10-22 and the last two closed
 without a change on 2026-10-22, all in `CLOSED_ITEMS.md`).
@@ -18,11 +18,11 @@ without a change on 2026-10-22, all in `CLOSED_ITEMS.md`).
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
-| Open: Release, CI and manual testing | 2 |
+| Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 305 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 306 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 37 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -45,18 +45,6 @@ None open.
 None open.
 
 ### Release, CI and manual testing
-
-#### The Kodi repository is built but not published
-
-**Opened 2026-10-19, when the repository was added** (`tools/build_kodi_repo.py`, `kodi-repository/`; how it works and
-what was confirmed live: `docs/BUILDING.md`'s "Distribution: the Kodi repository"). Nothing is public yet, and
-README.md's "Installing" already describes it, so the site has to exist before README.md reaches the public repository.
-First publish: (1) create the `gh-pages` branch on the public repository holding only the site: `index` for Kodi 21
-from `0.13.1-Omega` and for Kodi 22 from `0.14.1-Piers` (the gated zips; whichever releases are newest at the time), then `repository`; gate the repository zip;
-(2) let the local pre-push hook allow `gh-pages` on the public remote; (3) turn on GitHub Pages for that branch and
-check the site URL and a range request (206); (4) install the repository on a real Kodi from the public URL and
-install the addon from it. Then (5) port the tool, the repository addon and README.md's "Installing" to `Omega`
-(GitHub's default branch, whose README Kodi 21 users read), and record it in `docs/BRANCHES.md`.
 
 #### Kodi 22 (`Piers`): the pinned Kodi commit, checks still missing, and the pre-release mark
 

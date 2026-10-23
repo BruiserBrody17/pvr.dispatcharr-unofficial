@@ -10,6 +10,13 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## `repository.dispatcharr-unofficial` [0.1.0] - 2026-10-23
+
+New: a Kodi repository for the addon (unofficial, like the addon). Install it once and Kodi installs the right build
+for your platform and Kodi version and keeps it up to date, including switching to the Kodi 22 build after an upgrade
+from Kodi 21. Steps in README.md's "Installing"; an addon installed from a zip needs to be installed once from the
+repository to start getting updates.
+
 ## [0.14.1] - 2026-10-22
 
 For Kodi 22 only, and still built against Kodi 22.0 RC1, so it is a pre-release like `0.14.0`; Kodi 21 users want
@@ -78,13 +85,6 @@ in `0.14.0`. It carries the same eight downloads as `0.14.0`.
 - **`timeshift_buffer` README**: the disk use per buffered channel is up to about twice the earlier estimate (about 9 GB
   for 60 minutes at 10 Mbit/s), and the port check now says that a `404` for the bare address means the server is
   reachable (the README and the troubleshooting guide said to expect `403`).
-
-## `repository.dispatcharr-unofficial` [0.1.0] - Unreleased
-
-New: a Kodi repository for the addon (unofficial, like the addon). Install it once and Kodi installs the right build
-for your platform and Kodi version and keeps it up to date, including switching to the Kodi 22 build after an upgrade
-from Kodi 21. Steps in README.md's "Installing"; an addon installed from a zip needs to be installed once from the
-repository to start getting updates.
 
 ## `timeshift_buffer` [0.8.15] - 2026-10-22
 

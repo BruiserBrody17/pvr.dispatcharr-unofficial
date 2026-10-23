@@ -6,6 +6,35 @@
 
 ### Fixed
 
+#### The Kodi repository is built but not published
+
+**Opened 2026-10-19, when the repository was added** (`tools/build_kodi_repo.py`, `kodi-repository/`; how it works and
+what was confirmed live: `docs/BUILDING.md`'s "Distribution: the Kodi repository"). Nothing is public yet, and
+README.md's "Installing" already describes it, so the site has to exist before README.md reaches the public repository.
+First publish: (1) create the `gh-pages` branch on the public repository holding only the site: `index` for Kodi 21
+from `0.13.1-Omega` and for Kodi 22 from `0.14.1-Piers` (the gated zips; whichever releases are newest at the time), then `repository`; gate the repository zip;
+(2) let the local pre-push hook allow `gh-pages` on the public remote; (3) turn on GitHub Pages for that branch and
+check the site URL and a range request (206); (4) install the repository on a real Kodi from the public URL and
+install the addon from it. Then (5) port the tool, the repository addon and README.md's "Installing" to `Omega`
+(GitHub's default branch, whose README Kodi 21 users read), and record it in `docs/BRANCHES.md`.
+
+**Published 2026-10-23: the site is live at `https://bruiserbrody17.github.io/pvr.dispatcharr-unofficial/` and the
+addon installs and updates from it.** (1) The site was built with `tools/build_kodi_repo.py` from the gated zips of the
+then newest releases, `0.13.1-Omega` (`kodi21/`) and `0.14.1-Piers` (`kodi22/`), plus `repository` (0.1.0), and committed
+as the only commit of an orphan `gh-pages` branch; the repository zip passed `check_release_zip.py --require-blocklist`.
+Both releases were published on the public repository first, since the indexes name their assets. (2) The local
+pre-push hook's public ref list now allows `gh-pages`, and the branch went through the full public gate. (3) Pages
+switched itself on when a branch named `gh-pages` was pushed (the token cannot call the Pages API, and nobody touched
+the settings). Every file served is byte-identical to the build, a `Range` request on the repository zip answers 206
+(`Content-Range: bytes 100-199/1854`), and all twelve `<path>` entries of the two indexes resolve to their release
+assets. (4) On a Linux Kodi 21.3 with the addon at 0.13.0 installed from a zip, the public URL added as a file source
+listed exactly the repository zip; "Install from zip file" installed the repository, which then fetched only `kodi21/`
+and `repo/`, offered 0.13.1 under PVR clients, and installing it downloaded `0.13.1-Omega`'s Linux zip from the release.
+Kodi asked to uninstall and replace the "manually installed" 0.13.0 (Yes) and whether to remove its data (No):
+0.13.1 loaded, its origin became `repository.dispatcharr-unofficial`, `settings.xml` was byte-identical and the
+channel list loaded. The Kodi profile was restored from a backup afterwards (every file identical). (5) Ported to
+`Omega` as `64d0c41` (`docs/BRANCHES.md`), so the default branch's README.md has the "Installing" steps.
+
 #### The glue harness's TSan build crashes at start about one run in four
 
 **Opened 2026-10-19, seen while checking the shutdown-task fix.** On unmodified `Piers`,
