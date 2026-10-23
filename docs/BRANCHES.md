@@ -53,7 +53,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`e7f409d`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`64d0c41`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -77,10 +77,12 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `955c4ae` | already on `Piers` as `b53484f` | A port from `Piers`; see the table below. |
 | `5174a8c` | not ported: `Omega`-only record | The Kodi 21.3 live check of the fatal-stream fix, noted under `Omega`'s copy of the entry; `Piers`'s has the Kodi 22 one. |
 | `aded040`, `c28882c`, `202f7d3`, `1e259a1`, `baec5ef`, `797bd83`, `f55a57c`, `ba08b01`, `0d113ae`, `cce3e4c`, `1bb7a2d`, `fe141f3`, `e7f409d` | already on `Piers` | Ports from `Piers`; see the table below. |
+| `fc1a677`, `b4eba68` | not ported: `Omega` release line | `0.13.1` and its CoreELEC checksum. The tag suffix it brought to `Omega` (`RELEASE_TAG_SUFFIX`, `PKG_VERSION`, the `BUILDING.md` note) is what `Piers` already had. |
+| `64d0c41` | already on `Piers` as `b1ab0ed` | A port from `Piers`; see the table below. |
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`7edeaa9`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`e819d6e`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -95,7 +97,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `1c7d817` | `d70d857` (`git cherry-pick -x`) | The troubleshooting entry for the Kodi 21 to 22 guide database upgrade failure: the people who hit it are Kodi 21 users, who read `Omega`'s docs. |
 | `d9a3e74` | `c52f392` (by hand) | The live check of four audit fixes ran on Kodi 22; `Omega`'s closed entries now say what it showed and that it was not repeated there. The open item it found was fixed on both (`3a0897b`, `7ae30bb`). |
 | `b26412c`, `48764de`, `ffe8c16`, `cf80c8e`, `9e6061b`, `59123ca`, `3a0897b`, `67ca439`, `f87f4cb`, `b342957`, `7abb9d9`, `ef2492c` | their counterparts in the table above | Made on `Piers` first and already logged there. |
-| `b1ab0ed` | not yet | The Kodi repository; ported after its first publish, step (5) of `OPEN_ITEMS.md`'s "The Kodi repository is built but not published". |
+| `b1ab0ed` | `64d0c41` (`git cherry-pick -x`; `CHANGELOG.md`, `OPEN_ITEMS.md` and `TEST_COVERAGE.md` by hand) | The Kodi repository; ported after its first publish, step (5) of `CLOSED_ITEMS.md`'s "The Kodi repository is built but not published". The repository addon's changelog entry is dated with that publish on both. |
 | `056ba0b` | `426ebd5` (`git cherry-pick -x`; one test and the running docs by hand) | The release-gate hardening. One test named `Piers`'s `coreelec-aarch64` zip; it now takes the CoreELEC name from the gate's own list on both branches. The hardened gate passes over the shipped 0.13.0 release. |
 | `7219c8e` | `5b148f6` (`git cherry-pick -x`; by hand where noted) | The manifest throttle and six audit quick wins. `Omega`'s single in-progress stream state took the attempt stamp by hand; `m_apiKeyOwnershipVerified` stays a plain `bool` there (Kodi 21 opens one recorded stream at a time); the glue harness took only the new scenarios, with an `nlohmann/json.hpp` include its stream driver lacked. The new scenarios give the same numbers on both. |
 | `5352d79` | already in `426ebd5` | Its one code change, the CoreELEC name in a release-contents test, was made the same way in the port; the rest is this file. |
@@ -110,6 +112,8 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `bc64873` | `1bb7a2d` (`git cherry-pick -x`; applied cleanly) | The tombstone named the way the orphan scrub looks for it, found by the second live pass, and that pass's record. The same plugin file on both. |
 | `5208c53` | `fe141f3` (`git cherry-pick -x`; the running counts and the entry's opened line by hand) | A recurring-rule edit diffed against the report Kodi's timer dialog was opened from, found by a token in the timer's series link. The same code on both (the series link is a `char` array in Kodi 21's `PVR_TIMER`, behind the same wrappers); reproduced and confirmed fixed live on Kodi 22.0 RC1 and Kodi 21.3, each with its own branch's builds. |
 | `28aae26`, `7edeaa9` | `e7f409d` (one commit, by hand: `OPEN_ITEMS.md` and the glue README differ by branch) | `run_tsan.sh` retrying TSan's own start-up segfault (the script is the same file on both), and the `curl_global_init` and `recording_edl` scan-root audit items closed without a change, with the constructor comment at the first request (the same constructor on both). The glue README's note that `Piers` needs Kodi 22's headers is `Piers`-only. |
+| `759dff9`, `41c4f31` | not ported: `Piers` release line | `0.14.1` and its CoreELEC checksum; `Omega` has its own `0.13.1` (`fc1a677`, `b4eba68`). |
+| `3bc23f4`, `e819d6e` | not ported: `Piers`-only item | The Kodi repository's open item lived on `Piers` alone: its release names, then its closure. The changelog date is already in `64d0c41`. |
 
 ## Dependencies that differ by Kodi release
 
