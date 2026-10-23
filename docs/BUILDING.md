@@ -960,7 +960,7 @@ plugin changed" sentence.
 
 *(Added 2026-10-19.)* Besides the zips on each release, the addon is offered through a Kodi repository, so Kodi picks
 the build itself and installs new releases automatically (README.md's "Installing"). It is a static site built by
-`tools/build_kodi_repo.py` and served by GitHub Pages from the public repository's `gh-pages` branch, at
+`tools/build_kodi_repo.py` and served by GitHub Pages from the GitHub repository's `gh-pages` branch, at
 `https://bruiserbrody17.github.io/pvr.dispatcharr-unofficial/`:
 
 | Path | What |
