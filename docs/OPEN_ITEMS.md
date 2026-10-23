@@ -52,7 +52,7 @@ None open.
 what was confirmed live: `docs/BUILDING.md`'s "Distribution: the Kodi repository"). Nothing is public yet, and
 README.md's "Installing" already describes it, so the site has to exist before README.md reaches the public repository.
 First publish: (1) create the `gh-pages` branch on the public repository holding only the site: `index` for Kodi 21
-from `0.13.0` and for Kodi 22 from `0.14.0-Piers` (the gated zips), then `repository`; gate the repository zip;
+from `0.13.1-Omega` and for Kodi 22 from `0.14.1-Piers` (the gated zips; whichever releases are newest at the time), then `repository`; gate the repository zip;
 (2) let the local pre-push hook allow `gh-pages` on the public remote; (3) turn on GitHub Pages for that branch and
 check the site URL and a range request (206); (4) install the repository on a real Kodi from the public URL and
 install the addon from it. Then (5) port the tool, the repository addon and README.md's "Installing" to `Omega`
