@@ -32,7 +32,7 @@ listed exactly the repository zip; "Install from zip file" installed the reposit
 and `repo/`, offered 0.13.1 under PVR clients, and installing it downloaded `0.13.1-Omega`'s Linux zip from the release.
 Kodi asked to uninstall and replace the "manually installed" 0.13.0 (Yes) and whether to remove its data (No):
 0.13.1 loaded, its origin became `repository.dispatcharr-unofficial`, `settings.xml` was byte-identical and the
-channel list loaded. The Kodi profile was restored from a backup afterwards (every file identical). (5) Ported to
+channel list loaded. The Kodi profile was restored from a backup afterwards (every file identical). The same steps on Kodi 22.0 RC1, started on that Kodi 21 profile (it disabled the addon's Kodi 21 build as incompatible at start, as an upgrading user sees it): the repository fetched only `kodi22/` and `repo/`, offered 0.14.1, and installing it downloaded `0.14.1-Piers`'s Linux zip after the same two prompts; 0.14.1 loaded with the repository as its origin, `settings.xml` was byte-identical and the channel list loaded. The whole Kodi data directory was restored afterwards (every file identical). (5) Ported to
 `Omega` as `64d0c41` (`docs/BRANCHES.md`), so the default branch's README.md has the "Installing" steps.
 
 #### The glue harness's TSan build crashes at start about one run in four
