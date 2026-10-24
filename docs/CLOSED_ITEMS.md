@@ -6,6 +6,61 @@
 
 ### Fixed
 
+#### Dispatcharr 0.33.0: live-proxy start-up and stream-switch changes, re-tested
+
+**Opened 2026-10-24 from the review of Dispatcharr 0.33.0 against the addon; checked live the same day on a 0.33.0
+server (Kodi 22.0-RC1 and 21.3 on the Linux test client) and closed with a troubleshooting change.** The entry as opened
+is kept below the results.
+
+- **The Kodi 22 warm-up is still needed.** The proxy in front of the server answered the warm-up's own request (the
+  only one without a `User-Agent`) with a 404, which makes the warm-up give up at once without attaching. Eight cold
+  first plays on two channels, each started only once the server listed the channel as stopped, all failed with Kodi's
+  error dialog; both controls with the warm-up attached played. The sequence is the one recorded for 0.32.0: Kodi's
+  `HEAD` (405), its `?mimetype=` GET (200 after about 2 s), then its real GET 28 ms later answered 503. Upstream #1811
+  shortened what a deliberate stop leaves behind afterwards; the "channel is stopping" answer during the stop is still
+  there.
+- **Slow starts with the FFmpeg profile: fixed upstream for one cause.** A synthetic source (a 720p test pattern and a
+  tone at a constant 2.4 Mb/s, plus a data track that never carries a packet) on a disposable channel. With the locked
+  FFmpeg profile as 0.33.0 ships it (`-max_interleave_delta 100K`, upstream #1825) the first byte came after 5.5 to
+  6.0 s in three cold runs; with a disposable copy of the profile that only drops that option, nothing came within
+  20 s in three runs and a 60 s run got its first byte at 22.3 s, the channel sitting in `connecting` until about 20 s.
+  In Kodi 21 (Off mode) the copy failed both cold opens at 21.5 s with `Timeout was reached(28)` and "failed to open",
+  the signature of the slow-start report in "A channel that is slow to start" below; the shipped profile played both
+  at 7 to 8 s. So a source with an empty data track explains a start past Kodi's 20 s on 0.32.0 and earlier, and
+  updating Dispatcharr fixes it; an HLS master with many variants (the cause measured for that report) is unchanged.
+  `docs/TROUBLESHOOTING.md`'s entry now says to update first.
+- **Stream switches.** A disposable channel whose first stream stops sending 20 s after it connects (holding the
+  connection open) and whose second is the same synthetic source: the server switched about 26 s after the stall
+  (0.32.0 took about 58 s for a silent stall, "A silent upstream stall ended playback about 48 s before Dispatcharr
+  healed it"), and playback froze for the stall and then ran on without a reset in Off, Local and Server-side mode (Kodi
+  21). With a real channel as the second stream, a 1080p HEVC stream replacing the 720p H.264 one, Off mode kept
+  playing but Kodi's player time reset every 5 to 9 s afterwards and the decoder still reported the old width: a
+  mid-stream codec change, which nothing here can compare with 0.32.0. The new Stream Startup Timeout was not reached
+  by itself (the slow source was the channel's only stream).
+
+**As opened:** **Opened 2026-10-24, from the review of Dispatcharr 0.33.0.** Several 0.33.0 proxy fixes touch things the addon worked around or
+documented:
+- **The Kodi 22 first-play failure** the warm-up exists for (`CLOSED_ITEMS.md`, "Kodi 22: the first attempt to play a
+  channel nobody is watching failed in Off mode (HTTP 503)") is the proxy's "Channel is stopping" 503
+  (`_channel_stopping_response()`, `apps/proxy/live_proxy/views.py`). 0.33.0 fixes a deliberate stop rewriting that
+  state for up to 60 s (upstream #1811), several clients opening a stopped channel at once (upstream #1699; the warm-up
+  and Kodi's own probes are such clients) and a new channel being stopped before its first viewer attached (upstream
+  #1826). Check on Kodi 22 whether a cold first play still fails with the warm-up turned off; keep the warm-up for
+  older servers either way.
+- **Slow starts.** The locked FFmpeg profiles now set `-max_interleave_delta 100K` (upstream #1825): with `-map 0` and a
+  stream that never sends a packet (an empty timed-ID3 track is the usual one), FFmpeg held about 10 s of media back at
+  the start. That may be part of the 20 to 24 s starts in `CLOSED_ITEMS.md`'s "A channel that is slow to start" (the
+  reporter linked theirs to the profile's stream mapping). Re-time a cold start with the default FFmpeg profile and, if
+  it drops, add "update Dispatcharr" to `docs/TROUBLESHOOTING.md`'s entry. The new **Stream Startup Timeout** (default
+  8 s) also asks for a switch to the channel's next stream when a new connection sends nothing for that long, so a slow
+  channel with a backup stream may now change source during its start rather than wait.
+- **Stream switches** now set the MPEG-TS `discontinuity_indicator` on the first packet of each PID from the new source.
+  Re-run a stream switch (a channel with a second stream, the first one stalled, as in `CLOSED_ITEMS.md`'s "A silent
+  upstream stall ended playback about 48 s before Dispatcharr healed it") in Off, Local and Server-side mode: Kodi's
+  demuxer and the plugin's ffmpeg should both handle it at least as well as before, but neither has seen it.
+
+### Fix known, not yet done
+
 #### The Kodi repository is built but not published
 
 **Opened 2026-10-19, when the repository was added** (`tools/build_kodi_repo.py`, `kodi-repository/`; how it works and
@@ -7693,6 +7748,27 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 **Fixed 2026-10-06 (the last known gap).** The scope the entry set when it was parked was followed: the real event sequence was captured first (a passive listener on the lab's realtime socket, then an EPG source and an M3U account refreshed on demand, the same thing their scheduler does every three hours), `docs/EPG.md`'s new section records both, `ClassifyRefreshEvent()` (`RefreshEvents.h`) is the pure decision, and the reactions reuse existing machinery. A finished EPG refresh (`parsing_programs`, progress 100, status success; the earlier `parsing_channels` success is a step, not the end) schedules one guide fetch 330 s later through `m_epgRefetchDueAt`, past Dispatcharr's own 300 s cache of the exported guide, with several sources coalesced into the pending fetch; a finished M3U refresh whose channel auto-sync created, updated or deleted a channel (the counts are in the same final event) ages the channel list to just-stale and wakes the background thread. A refresh that changed nothing, a failed one and every progress event cost nothing. The "cost to watch" in the entry (a guide fetch is large) is bounded by construction: at most one fetch per 330 s window. Unit tests use the real event shapes with the numbers replaced (every mutant of the classifier and the schedule fails one), and the glue harness gained a minimal WebSocket in its fake server and `refresh_events` (it fails when the wiring is removed). `docs/MANUAL_TESTING.md` has the check a person runs. **Confirmed live the same day** (a real Kodi on the Linux test VM, realtime updates on, through a plain TCP forwarder so the WebSocket passes): an EPG refresh of the lab's XMLTV source finished on the server, the addon logged it at once, and the guide was downloaded again 392 s after the event (the 330 s schedule plus the background thread's one-minute check while a fetch is pending), against the 4-hour window it replaces; an M3U refresh was logged and the channel list was fetched 11 s later, finding a lineup change and resyncing Kodi.
 
 ### Closed without a change (refuted, explained or harmless)
+
+#### Dispatcharr 0.33.0: catch-up seeks to a new start now reopen the provider
+
+**Opened 2026-10-24 from the review of Dispatcharr 0.33.0; closed without a change the same day, checked live on a
+0.33.0 server with Kodi 21.3: the addon never asks for a new start.** A seek in a catch-up programme is a byte-range
+bisection inside the one session the addon created (`POST /api/catchup/sessions/` once, then about 20 `Range` requests
+per seek on the same `session_id` URL), with `enable_catchup_ffmpegdirect_seek` on (`inputstream.ffmpegdirect`) and off
+(Kodi's own player) alike, so upstream #1540's new-start path is not reached. Precision is what 0.32.0 gave: on two
+30-minute programmes Kodi's player time after a 120 s forward seek read 22 to 23 s short and after 300 s 12 to 20 s
+short, the bytes fetched landing within about 10 s of the time the player aimed at. A 90 s backward seek made the
+player time read 0 and count up from there in both modes and on both programmes, while the bytes fetched were about
+where the seek aimed, so the reading is Kodi's display, not a restart from the beginning.
+
+**As opened:** **Opened 2026-10-24, from the review of Dispatcharr 0.33.0.** 0.33.0 (upstream #1540) changes catch-up seeking: a request for a
+different programme start now asks the provider for that time and drops the cached CDN URL, where 0.32.0 mapped the new
+start onto a byte offset in the file already open; the same start still reuses the cached file for Range reconnects.
+The addon's session URLs (`/proxy/catchup/<uuid>?session_id=`) are served by the same `_serve_catchup()`
+(`apps/timeshift/views.py`) as XC timeshift. With `enable_catchup_ffmpegdirect_seek` on, every seek builds a URL for a
+new start, so seeks may now land closer than the 20 to 25 s short measured on 0.32.0 (`API_NOTES.md`, the 0.32.0
+section), at the cost of a provider open per seek. Re-run that measurement after the upgrade, check that a seek with
+the setting off (Range within one start) did not regress, and record the result in `docs/CATCHUP.md`.
 
 #### The addon never calls `curl_global_init` itself
 

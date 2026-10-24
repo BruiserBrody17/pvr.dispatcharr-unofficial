@@ -1,6 +1,8 @@
 CHANGELOG.md|possessive|Sports events get extra recording padding automatically|docs/EPG.md
 CHANGELOG.md|possessive|`WebSocketClient::SendAll()` could hang this thread indefinitely|docs/API_NOTES.md
 CHANGELOG.md|setting|sports_extra_padding_minutes
+docs/API_NOTES.md|function|_dvr_capture_url
+docs/API_NOTES.md|function|_resolve_output_format
 docs/API_NOTES.md|setting|is_staff
 docs/API_NOTES.md|setting|is_superuser
 docs/API_NOTES.md|setting|partial_update
@@ -34,6 +36,7 @@ docs/CLOSED_ITEMS.md|function|SetFirstDayFromLocalTime
 docs/CLOSED_ITEMS.md|function|SwitchToChannel
 docs/CLOSED_ITEMS.md|function|_add_and_verify_timer
 docs/CLOSED_ITEMS.md|function|_authenticate
+docs/CLOSED_ITEMS.md|function|_channel_stopping_response
 docs/CLOSED_ITEMS.md|function|_compute_forward_seek_target
 docs/CLOSED_ITEMS.md|function|_find_in_progress_recording_id
 docs/CLOSED_ITEMS.md|function|_find_matching_recording
@@ -43,6 +46,7 @@ docs/CLOSED_ITEMS.md|function|_pick_conflict_free_broadcast
 docs/CLOSED_ITEMS.md|function|_play_recording_and_verify
 docs/CLOSED_ITEMS.md|function|_seek_within_recording_and_verify
 docs/CLOSED_ITEMS.md|function|_select_new_timers
+docs/CLOSED_ITEMS.md|function|_serve_catchup
 docs/CLOSED_ITEMS.md|function|add_internal
 docs/CLOSED_ITEMS.md|function|build_addon
 docs/CLOSED_ITEMS.md|function|check_realtime_update_push
@@ -70,8 +74,6 @@ docs/CLOSED_ITEMS.md|setting|user_edited
 docs/CLOSED_ITEMS.md|setting|validate_redirect_urls
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
-docs/OPEN_ITEMS.md|function|_channel_stopping_response
-docs/OPEN_ITEMS.md|function|_serve_catchup
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work

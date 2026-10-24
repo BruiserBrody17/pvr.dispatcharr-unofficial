@@ -70,6 +70,39 @@ current Dispatcharr for a non-admin account -- worth a live check
 against a real non-admin, profile-assigned account before relying on
 either claim as still fully accurate.
 
+## Dispatcharr 0.33.0 (2026-10-24)
+
+Checked by reading the 0.33.0 changelog and the `v0.33.0` source against every endpoint and field this addon and its two
+plugins use, then live against a 0.33.0 server with Kodi 21.3 and Kodi 22.0-RC1 on the Linux test client.
+
+- **Live output format.** `/proxy/ts/stream/<uuid>` answers in the format `_resolve_output_format()`
+  (`apps/proxy/live_proxy/views.py`) picks: the URL's `output_format` (or XC-style `output`), then the requesting
+  user's `custom_properties.output_format`, then `stream_settings.default_output_format`. Live: no query gave
+  `video/mp2t`; `output_format=hls` a 302 to `/proxy/hls/<token>/index.m3u8`, whose body streams `# dispatcharr: waiting
+  <n>` comment lines until segments are ready; `fmp4` `video/mp4` (`ftyp`, `moov`; a first request on a cold channel
+  once got a 500 after 5 s and the next a 200); `mpegts` `video/mp2t`. `GET /proxy/ts/status` lists each client's
+  `output_format`, `user_id` and `user_agent` (it also lists the provider's stream URL, credentials included: never log
+  it). The addon and `timeshift_buffer` now always ask for `mpegts` (`CLOSED_ITEMS.md`, "Pin the live proxy's output
+  format to MPEG-TS"). Dispatcharr's own DVR capture (`_dvr_capture_url()`) and its HDHR and M3U outputs send no
+  `output_format` either, so a server default of HLS or fMP4 reaches them too; not checked live.
+- **User `custom_properties` merge.** `PATCH /api/accounts/users/me/` merges the keys sent into the stored ones
+  (`UserSerializer.update()`) and removes a key sent as `null`, unlike `/api/core/settings/{id}/`, whose `value` is
+  replaced whole.
+- **Guide history.** Refreshes keep ended programmes up to the largest catch-up window of the channels on each source
+  (upstream #1707), so the addon's `prev_days` fetch grows after an upgrade; the day-0 measurement and the check still
+  to do are in `OPEN_ITEMS.md` ("Dispatcharr 0.33.0: guide history now builds up").
+- **Catch-up.** `POST /api/catchup/sessions/` is unchanged and a seek stays a run of `Range` requests in one session, so
+  the new-start change (upstream #1540) is not reached (`CLOSED_ITEMS.md`, "Dispatcharr 0.33.0: catch-up seeks to a new
+  start now reopen the provider").
+- **Start-up and stream switches.** The Kodi 22 first-play 503 is unchanged, the FFmpeg profile's
+  `-max_interleave_delta 100K` removes one cause of slow starts, and a silent stall switches streams about twice as fast
+  (`CLOSED_ITEMS.md`, "Dispatcharr 0.33.0: live-proxy start-up and stream-switch changes, re-tested").
+- **Permissions.** Every endpoint the addon uses answered as before for an admin account; the tightened Standard-user
+  rules were read from the source (the addon's calls stay within them) and not re-checked live.
+- **Plugins.** `timeshift_buffer` 0.8.15 and 0.8.16 run on 0.33.0 (server-side live timeshift played); importing a
+  plugin and reloading it in every worker work as on 0.32.0. `recording_edl` 0.2.3 is listed and enabled but was not
+  exercised.
+
 ## Dispatcharr 0.32.0 (2026-10-07)
 
 Checked by reading the upstream diff of `v0.31.0..v0.32.0` against every endpoint and field this addon and its two plugins

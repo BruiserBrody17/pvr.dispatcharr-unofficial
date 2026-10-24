@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**24 open, 352 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**22 open, 354 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
 work on `Piers`: what remains of Kodi 22 support. Nothing is left from the 2026-10-18 read-only audit of the whole
@@ -12,13 +12,13 @@ project (addon, both plugins, tools, CI and packaging; 28 findings: seven fixed 
 2026-10-21, one on 2026-10-22 and the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). The
 other 17 come from the 2026-10-23 bug-hunting sweep of the whole project (five read-only reviews by area, each finding
 checked against the code before it was filed): one MEDIUM, the rest LOW.
-Three (2026-10-24) are live checks from a review of Dispatcharr 0.33.0's changelog against the addon and both plugins,
-read against the v0.33.0 source while the lab was still on 0.32.0, and one (the same day) is a plugin heartbeat race the
-plugin integration run turned up while its fix was checked.
+One (2026-10-24) is the guide-history live check left from a review of Dispatcharr 0.33.0 against the addon and both
+plugins (the other two checks were done on a 0.33.0 server the same day and are in `CLOSED_ITEMS.md`), and one (the same
+day) is a plugin heartbeat race the plugin integration run turned up while the review's fix was checked.
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 4 |
+| Open: Needs a live check | 2 |
 | Open: Fix known, not yet done | 11 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 1 |
@@ -26,8 +26,8 @@ plugin integration run turned up while its fix was checked.
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 3 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 306 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 37 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 307 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 38 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
@@ -61,41 +61,11 @@ lab after upgrading: the `/output/epg` size and parse time with the addon's `pre
 guide only needs to reach as far back as catch-up can be browsed in Kodi) or make the depth a setting. The new maximum
 also means `kServerMaxPrevDays` (30) is no longer the server's fixed clamp; a server set lower simply returns less.
 
-#### Dispatcharr 0.33.0: catch-up seeks to a new start now reopen the provider
-
-**Opened 2026-10-24, from the same review.** 0.33.0 (upstream #1540) changes catch-up seeking: a request for a
-different programme start now asks the provider for that time and drops the cached CDN URL, where 0.32.0 mapped the new
-start onto a byte offset in the file already open; the same start still reuses the cached file for Range reconnects.
-The addon's session URLs (`/proxy/catchup/<uuid>?session_id=`) are served by the same `_serve_catchup()`
-(`apps/timeshift/views.py`) as XC timeshift. With `enable_catchup_ffmpegdirect_seek` on, every seek builds a URL for a
-new start, so seeks may now land closer than the 20 to 25 s short measured on 0.32.0 (`API_NOTES.md`, the 0.32.0
-section), at the cost of a provider open per seek. Re-run that measurement after the upgrade, check that a seek with
-the setting off (Range within one start) did not regress, and record the result in `docs/CATCHUP.md`.
-
-#### Dispatcharr 0.33.0: live-proxy start-up and stream-switch changes to re-test
-
-**Opened 2026-10-24, from the same review.** Several 0.33.0 proxy fixes touch things the addon worked around or
-documented:
-- **The Kodi 22 first-play failure** the warm-up exists for (`CLOSED_ITEMS.md`, "Kodi 22: the first attempt to play a
-  channel nobody is watching failed in Off mode (HTTP 503)") is the proxy's "Channel is stopping" 503
-  (`_channel_stopping_response()`, `apps/proxy/live_proxy/views.py`). 0.33.0 fixes a deliberate stop rewriting that
-  state for up to 60 s (upstream #1811), several clients opening a stopped channel at once (upstream #1699; the warm-up
-  and Kodi's own probes are such clients) and a new channel being stopped before its first viewer attached (upstream
-  #1826). Check on Kodi 22 whether a cold first play still fails with the warm-up turned off; keep the warm-up for
-  older servers either way.
-- **Slow starts.** The locked FFmpeg profiles now set `-max_interleave_delta 100K` (upstream #1825): with `-map 0` and a
-  stream that never sends a packet (an empty timed-ID3 track is the usual one), FFmpeg held about 10 s of media back at
-  the start. That may be part of the 20 to 24 s starts in `CLOSED_ITEMS.md`'s "A channel that is slow to start" (the
-  reporter linked theirs to the profile's stream mapping). Re-time a cold start with the default FFmpeg profile and, if
-  it drops, add "update Dispatcharr" to `docs/TROUBLESHOOTING.md`'s entry. The new **Stream Startup Timeout** (default
-  8 s) also asks for a switch to the channel's next stream when a new connection sends nothing for that long, so a slow
-  channel with a backup stream may now change source during its start rather than wait.
-- **Stream switches** now set the MPEG-TS `discontinuity_indicator` on the first packet of each PID from the new source.
-  Re-run a stream switch (a channel with a second stream, the first one stalled, as in `CLOSED_ITEMS.md`'s "A silent
-  upstream stall ended playback about 48 s before Dispatcharr healed it") in Off, Local and Server-side mode: Kodi's
-  demuxer and the plugin's ffmpeg should both handle it at least as well as before, but neither has seen it.
-
-### Fix known, not yet done
+**Day 0 on the lab, 2026-10-24 (0.33.0).** With the addon's `prev_days` the export was about a quarter larger than
+without, and 3, 7 and 30 days were still byte-identical: the guide held under two days of history, the same as on
+0.32.0, so nothing had built up yet. The lab's catch-up channels all report the same few-day window, so there the
+growth is bounded to about that; a server whose channels advertise a long window can grow much further. Measure again
+once the server has refreshed for longer than its longest catch-up window.
 
 #### timeshift_buffer: removals under the 30 s start lock let a second start run beside the first
 
