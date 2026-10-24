@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**20 open, 352 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**23 open, 352 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
 work on `Piers`: what remains of Kodi 22 support. Nothing is left from the 2026-10-18 read-only audit of the whole
@@ -12,10 +12,12 @@ project (addon, both plugins, tools, CI and packaging; 28 findings: seven fixed 
 2026-10-21, one on 2026-10-22 and the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). The
 other 17 come from the 2026-10-23 bug-hunting sweep of the whole project (five read-only reviews by area, each finding
 checked against the code before it was filed): one MEDIUM, the rest LOW.
+The last three (2026-10-24) are live checks from a review of Dispatcharr 0.33.0's changelog against the addon and both
+plugins, read against the v0.33.0 source; the lab was still on 0.32.0.
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
+| Open: Needs a live check | 4 |
 | Open: Fix known, not yet done | 11 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 1 |
@@ -42,6 +44,55 @@ Kodi buffering instead of ending"), so a server that stays unreachable may end p
 about 40 s) suggests Kodi read again after the first 0, and the file-server-unreachable notice may already cover this
 case. Check live with the server-down simulation; if it ends silently, mark the stream fatal and queue the notice when
 the budget runs out.
+
+#### Dispatcharr 0.33.0: guide history now builds up, and the guide fetch asks for all of it
+
+**Opened 2026-10-24, from the review of Dispatcharr 0.33.0 against the addon; read from its changelog and source, not
+yet seen live.** Up to 0.32.0 an EPG refresh replaced a channel's stored programmes with what the pull held, so the
+server kept about two days of history, and `ComputeGuidePrevDays()` could ask for the longest catch-up window (up to 30
+days) for free: 3, 7 and 30 days were measured byte-identical (`CLOSED_ITEMS.md`, "Guide fetch never includes
+already-aired programmes"). 0.33.0 (upstream #1707) keeps ended programmes for the largest `catchup_days` of the
+catch-up channels mapped to each EPG source (at least 1 day, at most 30), and Settings → EPG gains a minimum and
+maximum retention (defaults 1 and 30 days, the maximum settable from 0 to 365). So on a server with long catch-up
+windows the guide the addon downloads at every start grows for up to that many days after the upgrade. Check on the
+lab after upgrading: the `/output/epg` size and parse time with the addon's `prev_days` over the first week, against
+`kMaxXmlTvResponseBytes` (256 MB on a 32-bit build) and the slowest device. If it matters, ask for less history (the
+guide only needs to reach as far back as catch-up can be browsed in Kodi) or make the depth a setting. The new maximum
+also means `kServerMaxPrevDays` (30) is no longer the server's fixed clamp; a server set lower simply returns less.
+
+#### Dispatcharr 0.33.0: catch-up seeks to a new start now reopen the provider
+
+**Opened 2026-10-24, from the same review.** 0.33.0 (upstream #1540) changes catch-up seeking: a request for a
+different programme start now asks the provider for that time and drops the cached CDN URL, where 0.32.0 mapped the new
+start onto a byte offset in the file already open; the same start still reuses the cached file for Range reconnects.
+The addon's session URLs (`/proxy/catchup/<uuid>?session_id=`) are served by the same `_serve_catchup()`
+(`apps/timeshift/views.py`) as XC timeshift. With `enable_catchup_ffmpegdirect_seek` on, every seek builds a URL for a
+new start, so seeks may now land closer than the 20 to 25 s short measured on 0.32.0 (`API_NOTES.md`, the 0.32.0
+section), at the cost of a provider open per seek. Re-run that measurement after the upgrade, check that a seek with
+the setting off (Range within one start) did not regress, and record the result in `docs/CATCHUP.md`.
+
+#### Dispatcharr 0.33.0: live-proxy start-up and stream-switch changes to re-test
+
+**Opened 2026-10-24, from the same review.** Several 0.33.0 proxy fixes touch things the addon worked around or
+documented:
+- **The Kodi 22 first-play failure** the warm-up exists for (`CLOSED_ITEMS.md`, "Kodi 22: the first attempt to play a
+  channel nobody is watching failed in Off mode (HTTP 503)") is the proxy's "Channel is stopping" 503
+  (`_channel_stopping_response()`, `apps/proxy/live_proxy/views.py`). 0.33.0 fixes a deliberate stop rewriting that
+  state for up to 60 s (upstream #1811), several clients opening a stopped channel at once (upstream #1699; the warm-up
+  and Kodi's own probes are such clients) and a new channel being stopped before its first viewer attached (upstream
+  #1826). Check on Kodi 22 whether a cold first play still fails with the warm-up turned off; keep the warm-up for
+  older servers either way.
+- **Slow starts.** The locked FFmpeg profiles now set `-max_interleave_delta 100K` (upstream #1825): with `-map 0` and a
+  stream that never sends a packet (an empty timed-ID3 track is the usual one), FFmpeg held about 10 s of media back at
+  the start. That may be part of the 20 to 24 s starts in `CLOSED_ITEMS.md`'s "A channel that is slow to start" (the
+  reporter linked theirs to the profile's stream mapping). Re-time a cold start with the default FFmpeg profile and, if
+  it drops, add "update Dispatcharr" to `docs/TROUBLESHOOTING.md`'s entry. The new **Stream Startup Timeout** (default
+  8 s) also asks for a switch to the channel's next stream when a new connection sends nothing for that long, so a slow
+  channel with a backup stream may now change source during its start rather than wait.
+- **Stream switches** now set the MPEG-TS `discontinuity_indicator` on the first packet of each PID from the new source.
+  Re-run a stream switch (a channel with a second stream, the first one stalled, as in `CLOSED_ITEMS.md`'s "A silent
+  upstream stall ended playback about 48 s before Dispatcharr healed it") in Off, Local and Server-side mode: Kodi's
+  demuxer and the plugin's ffmpeg should both handle it at least as well as before, but neither has seen it.
 
 ### Fix known, not yet done
 
