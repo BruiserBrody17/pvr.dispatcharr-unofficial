@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**23 open, 352 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**24 open, 352 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
 work on `Piers`: what remains of Kodi 22 support. Nothing is left from the 2026-10-18 read-only audit of the whole
@@ -12,8 +12,9 @@ project (addon, both plugins, tools, CI and packaging; 28 findings: seven fixed 
 2026-10-21, one on 2026-10-22 and the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). The
 other 17 come from the 2026-10-23 bug-hunting sweep of the whole project (five read-only reviews by area, each finding
 checked against the code before it was filed): one MEDIUM, the rest LOW.
-The last three (2026-10-24) are live checks from a review of Dispatcharr 0.33.0's changelog against the addon and both
-plugins, read against the v0.33.0 source; the lab was still on 0.32.0.
+Three (2026-10-24) are live checks from a review of Dispatcharr 0.33.0's changelog against the addon and both plugins,
+read against the v0.33.0 source while the lab was still on 0.32.0, and one (the same day) is a plugin heartbeat race the
+plugin integration run turned up while its fix was checked.
 
 | Section | Entries |
 |---|---|
@@ -21,7 +22,7 @@ plugins, read against the v0.33.0 source; the lab was still on 0.32.0.
 | Open: Fix known, not yet done | 11 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 1 |
-| Open: Release, CI and manual testing | 1 |
+| Open: Release, CI and manual testing | 2 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 3 |
@@ -241,6 +242,20 @@ they refresh per-viewer stamps.
 #### Kodi 22 (`Piers`): the pinned Kodi commit, checks still missing, and the pre-release mark
 
 **Opened 2026-10-15, what is left of the Kodi 22 port once the addon was confirmed on Kodi 22.0-RC1** (the closed entry "Kodi 22 (Piers) refused the addon" in `CLOSED_ITEMS.md` has what was done and how it was checked, including the other platforms' builds, their device runs and the first release). (1) Raise the pinned Kodi commit (`KODI_COMMIT`) from the `22.0rc1-Piers` tag to 22.0 final when it ships, and repeat the smoke run. (2) Not checked on Kodi 22: audio passthrough, a long soak and HEVC. (3) When Kodi 22.0 final ships and (1) is done: cut the next `Piers` release from the final without the pre-release mark (`0.14.0-Piers` and `0.14.1-Piers` were cut from RC1 and both carry it) so the newest-release badge can follow Kodi 22, and decide whether the repository's default branch should move from `Omega` to `Piers` (it stays on `Omega` while most users are on Kodi 21: the badge and the front-page README should send a Kodi 21 user to a build that works).
+
+#### timeshift_buffer: a heartbeat that lands just after its viewer's stop re-adds the viewer (plugin integration `race` flakes)
+
+**Opened 2026-10-24, found while checking the output-format fix with the plugin integration run; LOW, reproduced with
+the harness, not yet live.** `python3 tests/glue/plugin_integration/driver.py` (the `race` scenario) fails about one run
+in four with "ffmpeg still running 3.5 s after the last viewer stopped", on the unchanged 0.8.15 plugin as often as on
+0.8.16 (3 of 13 runs against 2 of 7). Each round stops both viewers from the two workers while a heartbeat for viewer
+`v0` runs concurrently. `_heartbeat()` re-adds a viewer id the buffer does not list (`_apply_heartbeat()`, kept so a
+viewer the reaper pruned while still watching comes back), so a `v0` heartbeat landing after `v0`'s own stop puts it
+back: `v1`'s stop is then not the last one, and the buffer, with its provider connection, lives until the idle reaper
+ends it. The same can happen with the real addon when a heartbeat is in flight as Kodi stops the channel. Decide
+whether a stopped viewer id should be refused by a heartbeat for a short while (a tombstone beside the viewer list, as
+the 2026-10-21 teardown fix did for directories) or the harness should stop heartbeating a viewer before stopping it,
+and make the scenario deterministic either way.
 
 ### Upstream (Dispatcharr) or documentation accuracy
 
