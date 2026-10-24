@@ -119,6 +119,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `873c98d` | `2617019` (by hand: `BUILDING.md` only) | "The GitHub repository" instead of "the public repository"; the other five spots are in that `Piers`-only closed entry. |
 | `c29030f` | `bbed9f0` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The 2026-10-23 bug-hunting sweep's 17 open items, checked against `Omega`'s code: every one holds there (the plugin, `build_kodi_repo.py` and the time and text helpers are the same files, and the addon code at each finding's site matches). |
 | `97b53e9` | `956dd2a` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The Dispatcharr 0.33.0 review's three live checks. `Omega` has no Kodi 22 warm-up, so its copy of the start-up item leaves out the first-play bullet; the guide-history, catch-up seek, slow-start and stream-switch checks apply as written. |
+| `04f2e77` | `8889482` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The plugin heartbeat race the integration run turned up; `timeshift_buffer/plugin.py` and the harness are the same on both branches. |
 
 ## Dependencies that differ by Kodi release
 
