@@ -28,12 +28,15 @@ after 20 seconds without a byte. The second try works because the channel is alr
 
 **What to do:**
 
-1. **Check whether the channel's source is an HLS playlist with several quality levels** (its stream URL in Dispatcharr
+1. **Update Dispatcharr to 0.33.0 or later** if the channel uses Dispatcharr's **FFmpeg** stream profile. Before
+   0.33.0 that profile held back the start of a channel for ten seconds or more when its source carries a data track
+   that sends nothing, which is enough to pass Kodi's 20 seconds.
+2. **Check whether the channel's source is an HLS playlist with several quality levels** (its stream URL in Dispatcharr
    ends in `.m3u8`). Dispatcharr's default **FFmpeg** stream profile opens every quality level before it sends the first
    byte, so the delay grows with their number; the built-in **Streamlink** profile sends one quality (the highest)
    and starts much sooner (measurements in [TROUBLESHOOTING_DETAIL.md](TROUBLESHOOTING_DETAIL.md#stalls-or-slow-channel-starts-that-come-from-the-stream-itself)). To try it, change the channel's (or its stream's) stream profile from FFmpeg to Streamlink in
    Dispatcharr.
-2. **Otherwise, or as well, give Kodi more patience.** In Kodi's `userdata` folder create or edit `advancedsettings.xml`:
+3. **Otherwise, or as well, give Kodi more patience.** In Kodi's `userdata` folder create or edit `advancedsettings.xml`:
 
    ```xml
    <advancedsettings>
