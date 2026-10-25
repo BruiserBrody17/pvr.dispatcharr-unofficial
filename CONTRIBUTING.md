@@ -63,8 +63,10 @@ handled here.
 - **Format before you push.** `clang-format -i src/*.cpp src/*.h tests/*.cpp tests/glue/*.cpp`
   for C++, `ruff format dispatcharr-plugin/ tools/ tests/glue/` for Python. `ruff check
   dispatcharr-plugin/ tools/ tests/glue/` catches some real bugs too (unused variables,
-  etc.), not just style -- run it. CI's lint job checks the C++ of `src/`, `tests/` and `tests/glue/` and the Python folders (the two plugins,
-  `tools/` and the Python of the `tests/glue/` harness).
+  etc.), not just style -- run it. If you touch a shell script, run `shellcheck` on it. CI's lint job checks the C++ of
+  `src/`, `tests/` and `tests/glue/`, the Python folders (the two plugins, `tools/` and the Python of the `tests/glue/`
+  harness) and every tracked `*.sh`, with the versions pinned in `tools/requirements-lint.txt`
+  (`pip install -r tools/requirements-lint.txt` gets you the same ones).
 - **If you touch anything under `src/` other than `PVRDispatcharr`,
   `DispatcharrClient` and `addon.cpp` (the parts that need Kodi's SDK or a
   real server), or add new Kodi-independent C++ pure-logic code, run the C++

@@ -60,8 +60,8 @@ jobs:
 
   # Enforces CLAUDE.md's "run clang-format/ruff format before committing"
   # convention -- previously undocumented-as-checked anywhere, so drift
-  # could accumulate silently. Pinned tool versions (rather than
-  # ubuntu-latest's own apt/pip defaults) so a CI failure means a real
+  # could accumulate silently. Pinned tool versions (tools/requirements-lint.txt,
+  # rather than ubuntu-latest's own apt/pip defaults) so a CI failure means a real
   # formatting/lint violation, not just this job's toolchain moving out
   # from under an already-correct commit.
   lint:
@@ -80,8 +80,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install clang-format and ruff (pinned versions)
-        run: pip install --break-system-packages clang-format==18.1.8 ruff==0.6.9
+      - name: Install clang-format, ruff and shellcheck (pinned versions)
+        run: pip install --break-system-packages -r tools/requirements-lint.txt
 
       - name: clang-format check (src/, tests/, tests/glue/)
         run: clang-format --dry-run -Werror src/*.cpp src/*.h tests/*.cpp tests/glue/*.cpp
@@ -91,6 +91,10 @@ jobs:
 
       - name: ruff lint (dispatcharr-plugin/, tools/, tests/glue/)
         run: ruff check dispatcharr-plugin/ tools/ tests/glue/
+
+      # Every tracked script, not a fixed list, so a new one is checked without a workflow change.
+      - name: shellcheck (every tracked *.sh)
+        run: git ls-files -z '*.sh' | xargs -0 shellcheck
 
       - name: doc reference check (baselined -- fails only on new dangling refs)
         run: python3 tools/check_doc_refs.py

@@ -3026,6 +3026,11 @@ corpus) -- previously fixed with no test locking any of them in.
 `tools/tests/test_dependency_pins.py` (added 2026-10-02, closing three `docs/OPEN_ITEMS.md` entries on mutable pins): fails if any workflow `uses:` is
 not `@<commit SHA>` with a `# vX.Y.Z` comment (moved together by hand now; Dependabot is not used), any FetchContent `GIT_TAG` is not a commit SHA, or the Windows job's
 SHA256-pinned prebuilt archives (curl/OpenSSL/zlib, downloaded and hash-checked before being handed to Kodi's `add_internal()` as a local file) differ from `docs/BUILDING.md`'s copy.
+Since 2026-10-25 it also fails if a workflow's `pip install` names a version inline instead of reading a requirements
+file, if the files the workflows install are not exactly `tools/requirements-lint.txt` and
+`dispatcharr-plugin/requirements-dev.txt`, or if a line in either is not `name==version`. The lint tools' versions had
+been written into `build.yml` alone, and a dev workspace pinned its own copy by hand; the file is now the one place
+(checked by putting the old inline pin back: two of the three tests failed).
 
 `tools/check_doc_refs.py`'s heading match now accepts only a citation that is a substring of a real heading.
 

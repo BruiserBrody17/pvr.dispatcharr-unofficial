@@ -158,7 +158,8 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   `ruff format dispatcharr-plugin/ tools/ tests/glue/` before committing nontrivial C++
   or Python changes; `ruff check dispatcharr-plugin/ tools/ tests/glue/` catches some real bugs
   (unused variables, etc.), not just style. `.clang-format`'s `SortIncludes: false` is deliberate: a couple of files rely
-  on include order for `#if defined(_WIN32)` blocks.
+  on include order for `#if defined(_WIN32)` blocks. CI's lint job also runs `shellcheck` over every tracked `*.sh`; the
+  three tools' versions live in `tools/requirements-lint.txt` (`pip install -r` it), never inline in a workflow.
 - **Independent version numbers, decoupled since 1.0.1**: the addon, each plugin and the Kodi repository addon version separately. Bump only the
   piece whose files changed, and move all of that piece's version locations together:
   - Addon: `pvr.dispatcharr-unofficial/addon.xml.in` (`<addon version="...">`) and

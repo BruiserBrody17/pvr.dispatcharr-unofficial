@@ -78,4 +78,8 @@ run "PVR: view-only account, learned late" BIN=pvr_harness T=150 CTL="user_level
 run "PVR: connection report scheduled during destroy" BIN=pvr_harness T=60 CTL="me_status=500" -- dtor_late_report
 run "PVR: connection, lost mid-session" BIN=pvr_harness T=120 -- connection_loss
 run "PVR: connection, five-second blip" BIN=pvr_harness T=60 -- connection_blip
-[ "$failed" -eq 0 ] && echo "all glue scenarios passed" || { echo "$failed glue scenario(s) failed"; exit 1; }
+if [ "$failed" -ne 0 ]; then
+  echo "$failed glue scenario(s) failed"
+  exit 1
+fi
+echo "all glue scenarios passed"
