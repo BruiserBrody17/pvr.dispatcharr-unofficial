@@ -11,6 +11,7 @@ what was tried) are in [TROUBLESHOOTING_DETAIL.md](TROUBLESHOOTING_DETAIL.md).
 | A channel fails to start, then plays when you try again | [Slow channel starts](#a-channel-fails-to-start-then-plays-when-you-try-again) |
 | A spinner for about 30 seconds, then the channel closes (Server-side mode) | [Server-side spinner](#server-side-live-tv-a-spinner-for-about-30-seconds-then-the-channel-closes) |
 | Live TV freezes, then recovers or ends | [Stalls](#live-tv-freezes-for-a-while-then-recovers-or-ends) |
+| The picture freezes after a channel switches to another stream, while playback keeps running | [Stream format change](#the-picture-freezes-after-a-channel-switches-streams-while-playback-keeps-running) |
 | The guide is empty but channels play | [Empty guide](#the-guide-is-empty-but-channels-and-recordings-work) |
 | The guide is empty or errors after moving a Kodi 21 profile to Kodi 22 | [Guide after upgrading](#the-guide-is-empty-or-errors-after-moving-a-kodi-21-profile-to-kodi-22) |
 | A recording made on another device isn't listed, or recording playback fails with 401 | [More than one Kodi client](#known-limitations-with-more-than-one-kodi-client) |
@@ -63,8 +64,8 @@ sides) and make sure the Kodi device can reach it. To check by hand from the Kod
 ## Live TV freezes for a while, then recovers or ends
 
 - **Server-side mode:** if a channel's stream stops sending data without closing, Dispatcharr switches to the channel's
-  next stream after about a minute. The addon waits up to 70 seconds for that, so the picture freezes and then resumes by
-  itself. If the channel has no other stream, playback ends after about a minute. Stop works throughout.
+  next stream after about a minute (about 25 seconds since Dispatcharr 0.33.0). The addon waits up to 70 seconds for
+  that, so the picture freezes and then resumes by itself. If the channel has no other stream, playback ends after about a minute. Stop works throughout.
 - **Server-side mode, "This channel's timeshift buffer can't be read from Dispatcharr any more":** the server ended the
   channel's buffer, most often because it stopped hearing from Kodi for 30 seconds (the server was busy or unreachable
   while playback was paused). Playback ends with that message; play the channel again to start a new buffer.
@@ -74,6 +75,23 @@ sides) and make sure the Kodi device can reach it. To check by hand from the Kod
   has plugins aimed at this (Reservoarr, Profilarr and Segmentarr for gaps and timestamp breaks; Audio Buffer Tuner for
   the proxy's start-up prebuffer). They are named here from their descriptions only: none has been tried with this
   addon, so this is a pointer, not a recommendation.
+
+## The picture freezes after a channel switches streams, while playback keeps running
+
+**You see:** live TV was playing, the channel's source had a moment of trouble, and since then the picture stays on one
+frame while the time display keeps counting (in Server-side mode it may also jump back every few seconds).
+**Applies to:** channels that have more than one stream in Dispatcharr, when those streams use different video formats
+(for example one H.264 and one HEVC). Kodi 21 in every live mode; Kodi 22 in **Server-side** mode only.
+
+**Why:** when a channel's stream fails, Dispatcharr switches to the channel's next stream without stopping playback. If
+the next stream's video format is different, Kodi 21's player goes on decoding it as the old format, and in Server-side
+mode the timeshift buffer goes on recording the old format, so no new picture comes out.
+
+**What to do:**
+
+1. **In Dispatcharr, give a channel backup streams in the same video format as its main stream** where you have the
+   choice.
+2. **On Kodi 22, use Off or Local mode** for channels where this happens: Kodi 22's player switches formats there.
 
 ## The guide is empty, but channels and recordings work
 
