@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**28 open, 350 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**29 open, 350 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -20,11 +20,12 @@ format to MPEG-TS").
 
 Seven (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
 checked against the code before it was filed: two MEDIUM (the timeshift plugin's token reaching a Redirect-profile
-provider, and the release gate passing a stale plugin zip), five LOW.
+provider, and the release gate passing a stale plugin zip), five LOW. One more (the same day) is a live check the
+0.33.0 stream-switch re-test turned up.
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 2 |
+| Open: Needs a live check | 3 |
 | Open: Fix known, not yet done | 14 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 1 |
@@ -72,6 +73,22 @@ without, and 3, 7 and 30 days were still byte-identical: the guide held under tw
 0.32.0, so nothing had built up yet. The lab's catch-up channels all report the same few-day window, so there the
 growth is bounded to about that; a server whose channels advertise a long window can grow much further. Measure again
 once the server has refreshed for longer than its longest catch-up window.
+
+#### A stream switch that changes codec leaves Kodi's player time resetting (Off mode)
+
+**Opened 2026-10-24, from the Dispatcharr 0.33.0 stream-switch re-test (`CLOSED_ITEMS.md`, "Dispatcharr 0.33.0:
+live-proxy start-up and stream-switch changes, re-tested"); seen once, not yet understood.** On a disposable channel
+whose first stream (a synthetic 720p H.264 source) stalled and whose second was a real 1080p HEVC channel, the server
+switched streams about 26 s after the stall and Off-mode playback on Kodi 21.3 carried on, but from then on Kodi's
+player time went back to 0 every 5 to 9 s and the decoder still reported the first stream's 1280 width. With a second
+stream of the same codec and size, playback ran on without a reset in Off, Local and Server-side mode, so the trigger
+looks like the codec change itself, which a real fail-over to another provider's stream can bring. Not known: whether
+0.32.0, which did not mark a switch with `discontinuity_indicator`, behaved the same; what the viewer actually sees
+(only JSON-RPC readings were taken, no screenshot); and what Local and Server-side mode and Kodi 22 do. To check:
+repeat with a synthetic 1080p HEVC second stream, so no provider is involved, in all three modes on Kodi 21 and 22,
+with screenshots, and read Kodi's log around the switch for a demuxer or decoder re-open. If Kodi does not re-open the
+decoder on a mid-stream codec change, see whether the addon can help, and otherwise note it in
+`docs/TROUBLESHOOTING.md`.
 
 ### Fix known, not yet done
 

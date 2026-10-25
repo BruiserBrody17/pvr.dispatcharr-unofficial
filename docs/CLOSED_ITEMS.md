@@ -57,8 +57,8 @@ is kept below the results. The Kodi 22 warm-up part of this check (it is still n
   mid-stream codec change, which nothing here can compare with 0.32.0. The new Stream Startup Timeout was not reached
   by itself (the slow source was the channel's only stream).
 
-**As opened:** **Opened 2026-10-24, from the review of Dispatcharr 0.33.0.** Several 0.33.0 proxy fixes touch things the addon documented (its fixes
-for the Kodi 22 first-play failure matter only on `Piers`, which has the warm-up):
+**As opened:** **Opened 2026-10-24, from the review of Dispatcharr 0.33.0.** Several 0.33.0 proxy fixes touch things the
+addon documented (its fixes for the Kodi 22 first-play failure matter only on `Piers`, which has the warm-up):
 - **Slow starts.** The locked FFmpeg profiles now set `-max_interleave_delta 100K` (upstream #1825): with `-map 0` and a
   stream that never sends a packet (an empty timed-ID3 track is the usual one), FFmpeg held about 10 s of media back at
   the start. That may be part of the 20 to 24 s starts in `CLOSED_ITEMS.md`'s "A channel that is slow to start" (the
@@ -7707,14 +7707,14 @@ short, the bytes fetched landing within about 10 s of the time the player aimed 
 player time read 0 and count up from there in both modes and on both programmes, while the bytes fetched were about
 where the seek aimed, so the reading is Kodi's display, not a restart from the beginning.
 
-**As opened:** **Opened 2026-10-24, from the review of Dispatcharr 0.33.0.** 0.33.0 (upstream #1540) changes catch-up seeking: a request for a
-different programme start now asks the provider for that time and drops the cached CDN URL, where 0.32.0 mapped the new
-start onto a byte offset in the file already open; the same start still reuses the cached file for Range reconnects.
-The addon's session URLs (`/proxy/catchup/<uuid>?session_id=`) are served by the same `_serve_catchup()`
-(`apps/timeshift/views.py`) as XC timeshift. With `enable_catchup_ffmpegdirect_seek` on, every seek builds a URL for a
-new start, so seeks may now land closer than the 20 to 25 s short measured on 0.32.0 (`API_NOTES.md`, the 0.32.0
-section), at the cost of a provider open per seek. Re-run that measurement after the upgrade, check that a seek with
-the setting off (Range within one start) did not regress, and record the result in `docs/CATCHUP.md`.
+**As opened:** **Opened 2026-10-24, from the review of Dispatcharr 0.33.0.** 0.33.0 (upstream #1540) changes catch-up
+seeking: a request for a different programme start now asks the provider for that time and drops the cached CDN URL,
+where 0.32.0 mapped the new start onto a byte offset in the file already open; the same start still reuses the cached
+file for Range reconnects. The addon's session URLs (`/proxy/catchup/<uuid>?session_id=`) are served by the same
+`_serve_catchup()` (`apps/timeshift/views.py`) as XC timeshift. With `enable_catchup_ffmpegdirect_seek` on, every seek
+builds a URL for a new start, so seeks may now land closer than the 20 to 25 s short measured on 0.32.0 (`API_NOTES.md`,
+the 0.32.0 section), at the cost of a provider open per seek. Re-run that measurement after the upgrade, check that a
+seek with the setting off (Range within one start) did not regress, and record the result in `docs/CATCHUP.md`.
 
 
 #### The addon never calls `curl_global_init` itself
