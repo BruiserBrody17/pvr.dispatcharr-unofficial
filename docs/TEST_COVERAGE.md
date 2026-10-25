@@ -1888,6 +1888,11 @@ full account), so a test pinning down exactly what this returns (and,
 just as importantly, what it deliberately never sets) guards against a
 future change silently reintroducing one of those dead ends.
 
+2026-10-24: `BuildLiveStreamUrl()`, the live proxy URL `GetLiveStreamUrl()` returns, joined it. Its test pins
+`?output_format=mpegts` ahead of Kodi's `|Connection=close`: without it Dispatcharr's Default Output Format (HLS since
+0.33.0, or fMP4) decides what Kodi receives (`docs/CLOSED_ITEMS.md`, "Pin the live proxy's output format to MPEG-TS").
+The plugin's `_proxy_url()` tests pin the same query for the buffer's own connection.
+
 ### `StreamSeek`
 
 `StreamSeek` is `ResolveSeekPosition()`, the `SEEK_SET`/`SEEK_CUR`/

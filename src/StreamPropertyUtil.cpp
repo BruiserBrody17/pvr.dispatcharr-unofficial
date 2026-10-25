@@ -3,6 +3,11 @@
 namespace dispatcharr
 {
 
+std::string BuildLiveStreamUrl(const std::string& baseUrl, const std::string& channelUuid)
+{
+  return baseUrl + "/proxy/ts/stream/" + channelUuid + "?output_format=mpegts|Connection=close";
+}
+
 std::vector<StreamPropertyPair> BuildLiveChannelStreamProperties(int liveTimeshiftMode, const std::string& streamUrl)
 {
   std::vector<StreamPropertyPair> properties;

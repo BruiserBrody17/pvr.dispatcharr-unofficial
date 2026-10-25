@@ -2,7 +2,6 @@ CHANGELOG.md|possessive|Sports events get extra recording padding automatically|
 CHANGELOG.md|possessive|`WebSocketClient::SendAll()` could hang this thread indefinitely|docs/API_NOTES.md
 CHANGELOG.md|setting|sports_extra_padding_minutes
 docs/API_NOTES.md|function|_dvr_capture_url
-docs/API_NOTES.md|function|_resolve_output_format
 docs/API_NOTES.md|setting|is_staff
 docs/API_NOTES.md|setting|is_superuser
 docs/API_NOTES.md|setting|partial_update

@@ -6,6 +6,32 @@
 
 ### Fixed
 
+#### Pin the live proxy's output format to MPEG-TS
+
+**Opened and fixed 2026-10-24, ported from `Piers` (the review of Dispatcharr 0.33.0 against the addon); confirmed live
+the same day on a 0.33.0 server with Kodi 21.3.** Dispatcharr's live proxy answers `/proxy/ts/stream/<uuid>` in the
+format `_resolve_output_format()` (`apps/proxy/live_proxy/views.py`) picks: the URL's `output_format` (or XC-style
+`output`), then the requesting user's Output Format Override (`custom_properties.output_format`), then Settings →
+Stream Settings → Default Output Format. 0.33.0 adds `hls` to the choices, which answers with a redirect to an
+`/proxy/hls/<token>/index.m3u8` playlist; `fmp4`, offered since an earlier release, sends MP4 fragments. The addon's
+Off and Local URL carries no credentials, so the server default applied, and Kodi was told `video/mp2t` whatever came
+back. **Fix:** `BuildLiveStreamUrl()` (`StreamPropertyUtil`, called by `GetLiveStreamUrl()`) adds
+`?output_format=mpegts`, which wins over both settings, as Dispatcharr's own in-app preview buttons do; Kodi's
+`|Connection=close` option stays after the query. The plugin's `_proxy_url()` (0.8.16) asks for the same.
+**Tests:** `tests/test_stream_property_util.cpp` (the URL) and the plugin's `_proxy_url` tests.
+
+**Confirmed live.** The test client's addon pointed at a proxy that added `output_format=hls` (or `fmp4`) to any
+`/proxy/ts/stream/` request naming no format, which for the addon's anonymous request is exactly what a server Default
+Output Format of that value does (the server's own setting was left alone: Dispatcharr's DVR and every other client
+follow it too). With 0.13.0 on Kodi 21.3, in Off mode HLS ended within about 2 s and fell back to Home without a
+message (Kodi followed the redirect, was told `video/mp2t`, and its demuxer read the playlist text to the end), and
+fMP4 never showed a picture, sitting behind the busy dialog until a second stop (Kodi's MPEG-TS demuxer forced onto MP4
+data); in Local mode `inputstream.ffmpegdirect` opened no decoder for either. With this change every combination of
+mode and format played 1080p within 3 s, every request carrying `output_format=mpegts`. Server-side mode did not need
+it: the 0.8.15 plugin's buffer played with the account's override set to HLS and to fMP4 (its ffmpeg probes its input),
+and 0.8.16 asking for `mpegts` only spares the server a segmenter or conversion per buffer (`Piers`'s entry has the
+measurement).
+
 #### Dispatcharr 0.33.0: live-proxy start-up and stream-switch changes, re-tested
 
 **Opened 2026-10-24 from the review of Dispatcharr 0.33.0 against the addon; checked live the same day on a 0.33.0

@@ -10,6 +10,25 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased] -- addon
+
+### Fixed
+
+- **Live TV keeps playing when Dispatcharr's default output format is not MPEG-TS** (Off and Local live mode): if
+  Dispatcharr's Settings → Stream Settings → Default Output Format was set to HLS (new in Dispatcharr 0.33.0) or fMP4,
+  live channels did not play in Kodi. The addon now always asks for MPEG-TS, whatever that setting says.
+
+## `timeshift_buffer` [0.8.16] - Unreleased
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Changed
+
+- **The buffer always asks Dispatcharr for MPEG-TS**, whatever Default Output Format or Output Format Override applies
+  to the addon's account. With HLS (new in Dispatcharr 0.33.0) or fMP4 there, playback already worked, but Dispatcharr
+  ran an extra HLS segmenter or fMP4 conversion for every buffer; it no longer needs to.
+
 ## `repository.dispatcharr-unofficial` [0.1.0] - 2026-10-23
 
 New: a Kodi repository for the addon (unofficial, like the addon). Install it once and Kodi installs the right build

@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**28 open, 349 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**28 open, 350 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -15,7 +15,8 @@ bug-hunting sweep of the whole project, made on `Piers` and checked against `Ome
 here): one MEDIUM, the rest LOW. One (2026-10-24) is the guide-history live check left from a review of Dispatcharr
 0.33.0 against the addon and both plugins (the other two checks were done on a 0.33.0 server the same day and are in
 `CLOSED_ITEMS.md`), and one (the same day) is a plugin heartbeat race the plugin integration run turned up on `Piers`;
-the plugin is the same here.
+the plugin is the same here. The review's one code change is in `CLOSED_ITEMS.md` ("Pin the live proxy's output
+format to MPEG-TS").
 
 Seven (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
 checked against the code before it was filed: two MEDIUM (the timeshift plugin's token reaching a Redirect-profile
@@ -31,7 +32,7 @@ provider, and the release gate passing a stale plugin zip), five LOW.
 | Open: Upstream (Dispatcharr) or documentation accuracy | 1 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 6 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 302 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 303 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 38 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
