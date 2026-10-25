@@ -65,7 +65,8 @@ sides) and make sure the Kodi device can reach it. To check by hand from the Kod
 
 - **Server-side mode:** if a channel's stream stops sending data without closing, Dispatcharr switches to the channel's
   next stream after about a minute (about 25 seconds since Dispatcharr 0.33.0). The addon waits up to 70 seconds for
-  that, so the picture freezes and then resumes by itself. If the channel has no other stream, playback ends after about a minute. Stop works throughout.
+  that, so the picture freezes and then resumes by itself. If the channel has no other stream, playback ends after about
+  a minute. Stop works throughout.
 - **Server-side mode, "This channel's timeshift buffer can't be read from Dispatcharr any more":** the server ended the
   channel's buffer, most often because it stopped hearing from Kodi for 30 seconds (the server was busy or unreachable
   while playback was paused). Playback ends with that message; play the channel again to start a new buffer.
