@@ -128,6 +128,8 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `c26c06b` | `3c406af` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The codec-changing stream switch checked live (Kodi 21 freezes in every mode; Kodi 22 only in Server-side mode; now a design question) and the Kodi 21 Server-side HEVC stall item. Both hold on `Omega`, whose plugin and live-read path are the same. |
 | `539993f`, `09c4bd6` | `27e4bf5`, `03b3307` | The troubleshooting entry for a stream switch that changes video format, the 0.33.0 switch time in the stalls entry, then that bullet rewrapped; the same text on both. |
 | `0a8cb0e` | `8ea5aa1` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The Server-side HEVC stall root-caused (an HEVC channel's opening seek probe answered with 0 leaves Kodi at end of file) and moved to "Fix known"; `Omega`'s live read path has the same give-up and the same `return 0`. |
+| `67d7d24` | `842e346` (`git cherry-pick -x`; `OPEN_ITEMS.md` and the closed entry by hand) | A heartbeat that arrives after its viewer's own stop is ignored (`timeshift_buffer` 0.8.16). The plugin is identical on both branches before and after; `Omega`'s closed entry keeps its own as-opened text, and its "Release, CI and manual testing" section is left empty. |
+| `adeec73` | `bfc16ba` (`git cherry-pick -x`; `OPEN_ITEMS.md` and the closed entry's first line by hand) | A live seek probe that finds nothing answers -1, not 0. The bug was Kodi 21's: confirmed live with a Kodi 21.3 build of the port, and with the `Piers` build on Kodi 22.0-RC1, which never seeks on opening HEVC. |
 
 ## Dependencies that differ by Kodi release
 
