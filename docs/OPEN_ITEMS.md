@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**21 open, 349 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**28 open, 349 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -17,16 +17,20 @@ here): one MEDIUM, the rest LOW. One (2026-10-24) is the guide-history live chec
 `CLOSED_ITEMS.md`), and one (the same day) is a plugin heartbeat race the plugin integration run turned up on `Piers`;
 the plugin is the same here.
 
+Seven (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
+checked against the code before it was filed: two MEDIUM (the timeshift plugin's token reaching a Redirect-profile
+provider, and the release gate passing a stale plugin zip), five LOW.
+
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 2 |
-| Open: Fix known, not yet done | 11 |
+| Open: Fix known, not yet done | 14 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 0 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 1 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 3 |
+| Open: Tooling (tools/) | 6 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 302 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 38 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
@@ -187,6 +191,45 @@ showing the client unreachable and never re-reading `GetCapabilities()`; playbac
 so far sends the field. Fix: treat a parse failure (as opposed to a network failure) as checked and fail open, or
 deliver `CONNECTED` after a few failed reads; testable in `ConnectionReport`.
 
+#### timeshift_buffer: on a Redirect-profile channel the buffer's ffmpeg sends the account's token to the provider
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); MEDIUM, reproduced for the ffmpeg half.** `_stream_attribution_headers()` puts a freshly minted access
+token for the addon's account (an admin: the plugin's `run` endpoint requires one) and the viewer's `X-Real-IP` on
+ffmpeg's `-headers`. For a channel whose stream profile is Redirect, Dispatcharr's `stream_ts()` answers that request
+with a 302 to the provider's own URL before it looks at `output_format` or the caller (`apps/proxy/live_proxy/views.py`,
+`stream_profile.is_redirect()` then `_handle_redirect_stream()`, read in the 0.33.0 source), and ffmpeg re-sends its
+custom headers to the redirect target: with two loopback servers, the second received `Authorization: Bearer ...` and
+`X-Real-IP` verbatim (system ffmpeg 6.1, the plugin's header shape). So starting a server-side buffer on such a channel
+hands a bearer token valid for 120 s (`_STREAM_TOKEN_LIFETIME_SECONDS`) and a LAN address to a third party. Attribution
+means nothing there anyway (the proxy releases its slot before the client follows). Fix: look the channel's stream
+profile up before spawning and leave both headers out for a Redirect profile, or make the first request from the plugin
+without following redirects and hand ffmpeg the bare `Location`; a unit test that the header builder returns `None` for
+a Redirect-profile channel.
+
+#### timeshift_buffer: string settings are not stripped, so a pasted space breaks storage_path or internal_base_url
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); LOW, reproduced with pytest against the real file.** `_str_setting()` rejects a blank value but returns
+the value unstripped, and Dispatcharr stores plugin settings as typed. A `storage_path` of " /data/timeshift" becomes a
+relative path, so buffers land under the worker's working directory inside the container and nothing flags it; an
+`internal_base_url` with a trailing space puts the space into ffmpeg's input URL, so every start fails with the message
+about a provider-side stream limit, pointing away from the cause. The plugin already strips `test_channel_uuid` for this
+reason. Fix: return `value.strip()`; tests for both settings.
+
+#### A connection state Kodi ignores while its PVR manager is stopped is marked delivered and never re-sent
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); LOW, confirmed by reading the addon and Kodi 22's source, not reproduced.**
+`ConnectionReportLatch::TakePending()` records the state as delivered before `ReportConnectionToKodi()` calls
+`ConnectionStateChange()`, which returns nothing. Kodi drops the callback while the client's calls are blocked
+(`CPVRClient::HandleAddonCallback()`, "Ignoring callback from PVR client", when `m_bBlockAddonCalls` is set by
+`CPVRClient::Stop()` during a PVR manager restart: a PVR addon enabled, disabled or updated, a database reset). If the
+addon's report thread delivers in that window (for example the held-back CONNECTED after a start with the server down),
+Kodi keeps the old state and skips the `GetCapabilities()` re-read, and the latch never tries again until the state
+really changes. Fix: allow re-delivering the current observation now and then (Kodi ignores a state equal to the one it
+has), or keep "delivered" apart from "observed".
+
 ### Architectural / concurrency
 
 #### Nothing stops an exception crossing from a PVR callback into Kodi
@@ -228,7 +271,16 @@ and make the scenario deterministic either way.
 
 ### Upstream (Dispatcharr) or documentation accuracy
 
-None open.
+#### timeshift_buffer: the Streams network allowlist applies to the viewer's address, not localhost as the plugin says
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); LOW, confirmed by reading the plugin and Dispatcharr's source, not run.** The module docstring says a
+loopback request needs only localhost in Settings → Network Access → Streams. But the buffer's request carries
+`X-Real-IP: <viewer's address>`, and Dispatcharr trusts that header from 127.0.0.1 (`get_client_ip()`), so
+`network_access_allowed(request, "STREAMS")` is judged against the Kodi device. A device outside a narrowed Streams list
+gets a 403, ffmpeg exits, and the addon reports a provider-side stream limit. (Direct playback from that device would be
+refused the same way, so the outcome is right; the explanation and the message are not.) Fix: correct the docstring and
+the plugin README, and show the proxy's HTTP status from ffmpeg's log in the start failure.
 
 ### Known gaps, deliberately deferred
 
@@ -279,3 +331,38 @@ entries (zipfile, Kodi and unzip all accept prepended data). A blocklisted strin
 Every current pipeline runs `normalize_zip.py` first, which drops all three, but the gate's premise is that it holds
 whoever built the zip. Fix: fail on any entry comment and any directory entry with a payload, and also scan the raw file
 bytes (check the real 0.14.1 zips for false positives). Tests: the three crafted cases in `test_check_release_zip.py`.
+
+#### The release gate passes a stale plugin zip under --expect-release
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); MEDIUM, reproduced with a synthetic release set.** The two plugin zips are the only release assets whose
+names carry no version, yet `check_release_contents()` only checks that each zip's `plugin.json` and `Plugin` class
+versions agree with each other, which they do in every zip ever shipped, and the shared-timestamp rule looks at addon
+zips only. A directory that still holds the previous release's `timeshift_buffer.zip` passes ("8 zip(s) clean"), so the
+old plugin is published under the new tag, the release notes' bundled-version line is wrong, and a plugin-only fix does
+not ship. The module docstring says `--expect-release` exists so a stale zip does not pass. Fix: compare each plugin
+zip's version with the `plugin.json` of the same tag, or at least require its timestamp to be no older than the addon
+zips'; tests for both cases.
+
+#### The release gate does not check which addon, plugin or platform binary a zip holds
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); LOW, reproduced with a synthetic release set.** `--expect-release` reads only the version from
+`<dir>/addon.xml` (never `id`) and never looks at the library: an armv7 `.so` under the aarch64 Android name and the
+reverse, an x86_64 ELF under the Windows or macOS name, another addon's id, and each plugin zip holding the other
+plugin's folder all passed as "8 zip(s) clean". The hand-built and hand-renamed zips (macOS, both Android ABIs,
+CoreELEC) are where such a mix-up can happen; for the Android pair `build_kodi_repo.py`'s platform check catches it, but
+only after the release is public. Fix: per asset suffix require the expected library (a PE `.dll` for Windows; an ELF
+with the matching `e_machine` for Linux, CoreELEC and Android: x86_64 62, AArch64 183, ARM 40; a Mach-O `.dylib` for
+macOS), `id` and the top directory equal to `pvr.dispatcharr-unofficial`, and each plugin zip's top directory equal to
+its name.
+
+#### build_kodi_repo.py indexes an incomplete asset set and a Linux zip under the CoreELEC name
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); LOW, reproduced with synthetic zips.** `build_index()` refuses only an empty set, so five or seven addon
+zips write an index that silently drops the missing platforms, and the publish step pushes whatever it wrote.
+`check_platform()` accepts the family name, so the x86_64 Linux zip's own `<platform>linux</platform>` passes under the
+`-coreelec-armv7` name; today only the release gate's CoreELEC version rule (the `.N` revision) stops that file, and the
+tool is meant to be usable on its own for re-indexing. Fix: require exactly the line's six addon assets (share the list
+with `check_release_zip.py`), and for a CoreELEC name require the `.N` revision or an empty own platform.
