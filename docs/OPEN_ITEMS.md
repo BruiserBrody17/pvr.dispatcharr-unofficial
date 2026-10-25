@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**30 open, 350 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**31 open, 350 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -20,16 +20,16 @@ format to MPEG-TS").
 
 Seven (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
 checked against the code before it was filed: two MEDIUM (the timeshift plugin's token reaching a Redirect-profile
-provider, and the release gate passing a stale plugin zip), five LOW. One more (the same day) is a live check the
-0.33.0 stream-switch re-test turned up, and one (2026-10-25) is an upstream note from the 0.33.0
-review.
+provider, and the release gate passing a stale plugin zip), five LOW. One more (the same day) came out of the
+0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
+2026-10-25 an upstream note from the 0.33.0 review and a Server-side stall that check turned up.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 3 |
 | Open: Fix known, not yet done | 14 |
 | Open: Architectural / concurrency | 1 |
-| Open: Design decision needed | 1 |
+| Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
@@ -75,21 +75,18 @@ without, and 3, 7 and 30 days were still byte-identical: the guide held under tw
 growth is bounded to about that; a server whose channels advertise a long window can grow much further. Measure again
 once the server has refreshed for longer than its longest catch-up window.
 
-#### A stream switch that changes codec leaves Kodi's player time resetting (Off mode)
+#### Server-side mode on Kodi 21: a stall on a 1080p HEVC stream ends playback after a few seconds
 
-**Opened 2026-10-24, from the Dispatcharr 0.33.0 stream-switch re-test (`CLOSED_ITEMS.md`, "Dispatcharr 0.33.0:
-live-proxy start-up and stream-switch changes, re-tested"); seen once, not yet understood.** On a disposable channel
-whose first stream (a synthetic 720p H.264 source) stalled and whose second was a real 1080p HEVC channel, the server
-switched streams about 26 s after the stall and Off-mode playback on Kodi 21.3 carried on, but from then on Kodi's
-player time went back to 0 every 5 to 9 s and the decoder still reported the first stream's 1280 width. With a second
-stream of the same codec and size, playback ran on without a reset in Off, Local and Server-side mode, so the trigger
-looks like the codec change itself, which a real fail-over to another provider's stream can bring. Not known: whether
-0.32.0, which did not mark a switch with `discontinuity_indicator`, behaved the same; what the viewer actually sees
-(only JSON-RPC readings were taken, no screenshot); and what Local and Server-side mode and Kodi 22 do. To check:
-repeat with a synthetic 1080p HEVC second stream, so no provider is involved, in all three modes on Kodi 21 and 22,
-with screenshots, and read Kodi's log around the switch for a demuxer or decoder re-open. If Kodi does not re-open the
-decoder on a mid-stream codec change, see whether the addon can help, and otherwise note it in
-`docs/TROUBLESHOOTING.md`.
+**Opened 2026-10-25 from the codec-switch check above; reproduced twice, not yet understood.** With the HEVC stream
+first, a stall 20 s in ended Server-side playback on Kodi 21.3 about 4 s after the reader reached the live tail: the
+addon handed Kodi its usual `-1` slices ("waited ... at the live tail, handing the read back (-1) so a stop can land",
+`ReadLiveTimeshiftStream()`), and Kodi logged "VideoPlayer: next stream, wait for old streams to be finished", then end
+of file, and went back to Home, so Dispatcharr's switch at about 45 s came too late. The same stall on the 720p H.264
+stream was ridden out on Kodi 21 (frozen, then playing again after the switch), as was a 1080p HEVC stall on Kodi 22,
+and the 2026-10-13 fix ("A silent upstream stall ended playback about 48 s before Dispatcharr healed it") relied on Kodi
+retrying those `-1` reads. To check: whether it is HEVC, 1080p or the bitrate that matters (a 1080p H.264 stream and a
+720p HEVC one), what Kodi 21's player does differently after a `-1` read from an HEVC stream, and whether answering the
+read differently while the buffer is still alive keeps Kodi waiting.
 
 ### Fix known, not yet done
 
@@ -271,6 +268,25 @@ for 30 s or more while its segment reads work, the reaper drops A from the list,
 the buffer down under A (`abort_if=viewers` only). Choices: let the empty-list case defer to the reaper's buffer-wide
 idle check (costing up to the idle timeout plus a tick of provider slot), or have segment fetches carry the viewer id so
 they refresh per-viewer stamps.
+
+#### Server-side mode freezes the picture after a stream switch that changes codec (and Kodi 21 does in every mode)
+
+**Opened 2026-10-24 from the Dispatcharr 0.33.0 stream-switch re-test; checked live 2026-10-25 and turned into a design
+question.** Three disposable channels on the lab, each with a synthetic first stream that stops sending 20 s after it
+connects and a synthetic second stream (no provider involved): 720p H.264 then 1080p HEVC, the reverse, and H.264 both
+times as the control. Dispatcharr switched at about 45 s every time. The control played on in every mode. With a codec
+change, watched for 120 s with screenshots compared at 50, 80 and 110 s: on Kodi 22.0-RC1, Off and Local mode switched
+decoder (H.264 1280 ↔ HEVC 1920) and played on in both directions; on Kodi 21.3, Off and Local mode froze the picture on
+the old stream's last frame while sound and the player time went on (Kodi kept feeding the new stream to the old
+decoder, logging `[h264] no frame!` over and over), which is Kodi's demuxer not acting on the PMT's new stream type for
+the same PID; and in Server-side mode both Kodi versions froze in both directions, the decoder never changed and the
+player time reset to 0 every few seconds from then on (the symptom first seen on 2026-10-24 with a real channel). So
+Server-side is the case on the addon's own path: the buffer's ffmpeg (`-c copy -f hls`) keeps writing segments for the
+codec it opened with. Options: watch the buffer's ffmpeg for a codec or stream-layout change on its input and restart it
+(a fresh segmenter; the addon then has to treat the new segments like a buffer restart), or re-mux each segment's codec
+parameters some other way; or accept it and document it (on Kodi 21 nothing on the addon side helps in Off or Local
+mode). Real channels change codec on a switch only when their streams come from different sources, so how often this
+bites is unknown.
 
 ### Release, CI and manual testing
 
