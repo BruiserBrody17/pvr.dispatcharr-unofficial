@@ -454,6 +454,19 @@ called out inline so a future rebuild doesn't have to rediscover them.
    ```bash
    sed -i 's/\r$//' CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharr-unofficial/package.mk
    ```
+   **Install the host packages up front.** The build first runs CoreELEC's own `scripts/checkdeps`, which stops on any
+   missing host tool. It can `apt-get install` them itself, but only interactively and through `sudo`, so an unattended
+   or sudo-less build simply stops there. On Debian/Ubuntu:
+   ```bash
+   sudo apt-get install bash bc bzip2 curl default-jre diffutils file g++ gawk gcc git gperf gzip libc6-dev \
+     libjson-perl libncurses-dev libparse-yapp-perl libxml-parser-perl lzop make patch patchutils perl python3 \
+     rdfind rsync sed tar unzip wget xfonts-utils xsltproc xz-utils zip zstd
+   ```
+   That is the Debian/Ubuntu list in `coreelec-21`'s `checkdeps`, plus `git` for the clone and the `curl` and `rsync`
+   that the Kodi 22 tree's (`22.0-Piers_rc1`) adds, so the one set covers both; `libncurses-dev` stands in for the
+   `libncurses5-dev` that `checkdeps` names (only a transitional package on Ubuntu 24.04; `checkdeps` itself only checks
+   for `/usr/include/ncurses.h`). Everything else, the cross toolchain included, the build compiles itself (read from
+   both trees' `checkdeps`, which pass with this set installed, 2026-10-25).
 4. Build it. Both the device name *and* the arch value have changed across
    CoreELEC branches -- don't assume either is stable across branches, and
    don't assume the SoC being 64-bit means the build's `ARCH` is
