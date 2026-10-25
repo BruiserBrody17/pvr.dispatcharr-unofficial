@@ -45,9 +45,6 @@ for the Kodi 22 first-play failure matter only on `Piers`, which has the warm-up
   upstream stall ended playback about 48 s before Dispatcharr healed it") in Off, Local and Server-side mode: Kodi's
   demuxer and the plugin's ffmpeg should both handle it at least as well as before, but neither has seen it.
 
-### Fix known, not yet done
-
-
 #### The glue harness's TSan build crashes at start about one run in four
 
 **Opened 2026-10-19, seen while checking the shutdown-task fix.** On unmodified `Piers`,
