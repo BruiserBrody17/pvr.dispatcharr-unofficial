@@ -6,6 +6,49 @@
 
 ### Fixed
 
+#### Server-side mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its first stall ends playback
+
+**Opened 2026-10-25 from the codec-switch check; root cause found the same day on Kodi 21.3, MEDIUM: on such a channel
+the 70 s stall wait does not happen at all.** Four disposable single-stream channels whose synthetic source stops
+sending 20 s after it connects, two runs each in Server-side mode: HEVC 1080p (4.8 Mb/s) and HEVC 720p (2.4 Mb/s) ended
+playback about 8 s into the stall every time; H.264 1080p (4.8 Mb/s) and H.264 720p (2.4 Mb/s) were still playing,
+frozen, at 110 s. So it is the codec, not the resolution or the bitrate. The addon's log shows why: opening an HEVC
+stream, Kodi's demuxer seeks twice (to near the end of what is buffered, then back to 0) and its next reads reach the
+live tail within 800 ms of the seek, so `ReadLiveTimeshiftStream()` treats them as a seek probe (`IsLikelySeekProbe()`),
+gives up at once (`DecideTailWaitOutcome()`) and returns 0 (`return 0; // genuinely nothing new yet`). In Kodi a 0 sets
+the PVR stream's end-of-file flag (`CInputStreamPVRBase::Read()`), only a seek clears it again
+(`CInputStreamPVRBase::Seek()`), and successful reads leave it set; playback goes on, but at the first stall the demuxer
+has no packet, Kodi asks `NextStream()`, which answers "open the next stream" because the flag is set, and ends playback
+("VideoPlayer: next stream, wait for old streams to be finished"). An H.264 stream opens without seeks, gets no 0, and
+its stalls get the full `kLiveStallWaitBudgetMs`. Kodi 22 has the same `Read()` and `NextStream()` code but rode out an
+HEVC stall on 2026-10-25; whether its demuxer seeks on open was not checked. Fix to try: answer a seek-probe give-up
+(and any other "nothing new yet" while the buffer is alive) with -1, which Kodi passes to ffmpeg as an error without
+setting the flag, and keep 0 for a buffer that really ended (`fatal`, `IsAtEndedTail()`). The 0 exists so a probe after
+a user's seek finishes fast; whether -1 serves that probe as well, and whether opening and seeking near live still
+behave, has to be measured live on Kodi 21 and 22 with H.264 and HEVC channels before it ships.
+
+**Fixed 2026-10-25, ported from `Piers` (its `live-probe-no-eof` branch); confirmed live the same day on Kodi 21.3 with
+a build of this port, and on Kodi 22.0-RC1 with the `Piers` build, in Server-side mode.** A live read that gives up at
+the tail because it took the read for a seek probe now answers -1 (`LiveTailGiveUpResult()`, `CatchUpUtil.h`, called
+from `ReadLiveTimeshiftStreamOnce()`); the probe still gives up at once, so a seek still finishes fast. Narrower than
+the fix first proposed: a wait that used its whole stall budget still answers 0, since that stall is meant to end
+playback, and so do a buffer that ended and a fatal stream. **Test:** a case in `tests/test_catch_up_util.cpp` (fails if
+a probe's give-up answers 0).
+
+**Confirmed live.** The same battery on each build, with two disposable single-stream channels whose synthetic source
+stops 20 s after it connects (HEVC 1080p, H.264 720p) and one real 1080p channel: the stall watched for 110 s, three
+opens of each channel timed to an advancing player, and two seek runs on the real channel (open, pause 20 s, resume,
+jump to live, back 30 s). On Kodi 21.3 the HEVC stall ended playback at 30 s with the previous build (0.13.0: two
+opening seeks, one probe give-up, then "next stream") and was still playing at 110 s with this one (the same two seeks
+and give-up, no "next stream"); H.264 played on with both. Opens took the same with both builds (real channel 3.6 to
+4.1 s with one 7.7 s, H.264 8.7 s, HEVC 6.6 to 7.2 s), and the seek steps took 1.5 to 3.6 s with both, within the
+spread of two runs. Kodi 22.0-RC1 played both stalls through with the previous build (0.14.1) as well: its demuxer does
+not seek on opening HEVC, so no probe gave up and the flag was never set. With this change its opens (3.5 to 4.1 s,
+7.2 to 7.7 s, 7.1 to 7.2 s) and seek steps (2.5 to 2.6 s) matched the previous build's, and its log of the whole
+battery shows no probe give-up at all, so the new answer ran only where it was needed, on Kodi 21's HEVC opens. A
+probe after a user's own seek near live would have left the flag set the same way on either version; no seek in these
+runs gave up on one, so that case is fixed by the same line but was not reproduced.
+
 #### Pin the live proxy's output format to MPEG-TS
 
 **Opened and fixed 2026-10-24, ported from `Piers` (the review of Dispatcharr 0.33.0 against the addon); confirmed live

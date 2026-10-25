@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**31 open, 350 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**30 open, 351 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -22,20 +22,20 @@ Seven (2026-10-24) come from a second bug-hunting sweep, one reviewer over the w
 checked against the code before it was filed: two MEDIUM (the timeshift plugin's token reaching a Redirect-profile
 provider, and the release gate passing a stale plugin zip), five LOW. One more (the same day) came out of the
 0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
-2026-10-25 an upstream note from the 0.33.0 review and a Server-side stall that check turned up (root-caused the same
-day: an HEVC channel's opening seek probe).
+2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
+and is in `CLOSED_ITEMS.md`).
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 2 |
-| Open: Fix known, not yet done | 15 |
+| Open: Fix known, not yet done | 14 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 6 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 303 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 304 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 38 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -233,27 +233,6 @@ addon's report thread delivers in that window (for example the held-back CONNECT
 Kodi keeps the old state and skips the `GetCapabilities()` re-read, and the latch never tries again until the state
 really changes. Fix: allow re-delivering the current observation now and then (Kodi ignores a state equal to the one it
 has), or keep "delivered" apart from "observed".
-
-#### Server-side mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its first stall ends playback
-
-**Opened 2026-10-25 from the codec-switch check; root cause found the same day on Kodi 21.3, MEDIUM: on such a channel
-the 70 s stall wait does not happen at all.** Four disposable single-stream channels whose synthetic source stops
-sending 20 s after it connects, two runs each in Server-side mode: HEVC 1080p (4.8 Mb/s) and HEVC 720p (2.4 Mb/s) ended
-playback about 8 s into the stall every time; H.264 1080p (4.8 Mb/s) and H.264 720p (2.4 Mb/s) were still playing,
-frozen, at 110 s. So it is the codec, not the resolution or the bitrate. The addon's log shows why: opening an HEVC
-stream, Kodi's demuxer seeks twice (to near the end of what is buffered, then back to 0) and its next reads reach the
-live tail within 800 ms of the seek, so `ReadLiveTimeshiftStream()` treats them as a seek probe (`IsLikelySeekProbe()`),
-gives up at once (`DecideTailWaitOutcome()`) and returns 0 (`return 0; // genuinely nothing new yet`). In Kodi a 0 sets
-the PVR stream's end-of-file flag (`CInputStreamPVRBase::Read()`), only a seek clears it again
-(`CInputStreamPVRBase::Seek()`), and successful reads leave it set; playback goes on, but at the first stall the demuxer
-has no packet, Kodi asks `NextStream()`, which answers "open the next stream" because the flag is set, and ends playback
-("VideoPlayer: next stream, wait for old streams to be finished"). An H.264 stream opens without seeks, gets no 0, and
-its stalls get the full `kLiveStallWaitBudgetMs`. Kodi 22 has the same `Read()` and `NextStream()` code but rode out an
-HEVC stall on 2026-10-25; whether its demuxer seeks on open was not checked. Fix to try: answer a seek-probe give-up
-(and any other "nothing new yet" while the buffer is alive) with -1, which Kodi passes to ffmpeg as an error without
-setting the flag, and keep 0 for a buffer that really ended (`fatal`, `IsAtEndedTail()`). The 0 exists so a probe after
-a user's seek finishes fast; whether -1 serves that probe as well, and whether opening and seeking near live still
-behave, has to be measured live on Kodi 21 and 22 with H.264 and HEVC channels before it ships.
 
 ### Architectural / concurrency
 

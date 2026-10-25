@@ -335,6 +335,13 @@ and 0.28 to 1.37 s after (`docs/CLOSED_ITEMS.md`).
 
 2026-10-13: the live tail wait on a stalled buffer (`ComputeLiveTailWaitBudgetMs()`, `ComputeTailWaitSleepMs()`, `kLiveStallWaitBudgetMs`, `CatchUpUtil.h`, `tests/test_catch_up_util.cpp`): the 70 s budget only while the plugin answers, the ordinary budget when a refresh failed or for a seek probe or when it is already longer, and the refresh pause slowing to one per slice past the ordinary budget. The wiring is the glue harness's live tail scenarios: `live_tail_bound` (20 s of frozen buffer, no 0, slices under 1.8 s, a clean resume), `live_tail_ended` (the wait stops within four seconds of the plugin reporting the ffmpeg ended, in CI) and `live_tail_giveup` (the first 0 between 60 and 90 s, by hand, about 70 s). With the budget collapsed to the ordinary one a unit case and two glue checks fail. What no test reaches is Kodi's own tolerance of a minute of `-1` slices and the failover itself, measured live (`docs/TIMESHIFT.md`, "Upstream failover on a buffered channel: measured").
 
+2026-10-25: what a live read answers once it gives up at the tail (`LiveTailGiveUpResult()`, `CatchUpUtil.h`,
+`tests/test_catch_up_util.cpp`): -1 for a seek probe's give-up, 0 only for a wait that used its budget. A 0 leaves
+Kodi's PVR stream at end of file until the next seek, so Kodi 21's two opening seeks on an HEVC channel ended playback
+at its first stall; the case fails with the old 0. Kodi's end-of-file flag and `NextStream()` are not reachable from a
+test; the stall and the seek timings were measured live on Kodi 21.3 and 22.0-RC1 (`docs/CLOSED_ITEMS.md`, "Server-side
+mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its first stall ends playback").
+
 ### `ChannelGroupFilter`
 
 `ChannelGroupFilter` is `FilterChannelGroupsWithChannels()`, dropping a

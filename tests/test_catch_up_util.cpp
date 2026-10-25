@@ -299,6 +299,21 @@ TEST_CASE("DecideTailWaitOutcome gives up only with the whole budget used, or fo
   CHECK(DecideTailWaitOutcome(true, 0, 250) == TailWaitOutcome::kGiveUp);
 }
 
+TEST_CASE("LiveTailGiveUpResult answers -1 for a seek probe and 0 only for a wait that used its budget",
+          "[CatchUpUtil]")
+{
+  // A 0 leaves Kodi's PVR stream at end of file until a seek, so the next stall ends playback: a probe while the buffer
+  // is alive must not answer it (the HEVC opening probes, docs/CLOSED_ITEMS.md).
+  CHECK(LiveTailGiveUpResult(true) == -1);
+  CHECK(LiveTailGiveUpResult(false) == 0);
+  // The two decisions together: a probe always gives up at once, and still answers -1; a long wait gives up only once
+  // its budget is spent, and then ends playback.
+  CHECK(DecideTailWaitOutcome(true, 0, 70000) == TailWaitOutcome::kGiveUp);
+  CHECK(LiveTailGiveUpResult(true) != 0);
+  CHECK(DecideTailWaitOutcome(false, 70000, 70000) == TailWaitOutcome::kGiveUp);
+  CHECK(LiveTailGiveUpResult(false) == 0);
+}
+
 TEST_CASE("A live tail wait on an answering plugin may run to the stall budget", "[CatchUpUtil]")
 {
   // Dispatcharr heals a silent stall by switching streams at about 58 s (measured 2026-10-13); the wait outlasts it.
