@@ -306,8 +306,8 @@ the plugin README, and show the proxy's HTTP status from ffmpeg's log in the sta
 
 #### Dispatcharr's own DVR, HDHR and M3U output follow a non-MPEG-TS Default Output Format
 
-**Opened 2026-10-25, from the review of Dispatcharr 0.33.0; read in the `v0.33.0` source, not run.** For a request
-that names no `output_format` and has no per-user override, `_resolve_output_format()` (`apps/proxy/live_proxy/views.py`)
+**Opened 2026-10-25, from the review of Dispatcharr 0.33.0; read in the `v0.33.0` source, not run.** For a request that
+names no `output_format` and has no per-user override, `_resolve_output_format()` (`apps/proxy/live_proxy/views.py`)
 falls back to Settings → Stream Settings → Default Output Format. Dispatcharr's own DVR builds its capture URL without
 one (`_dvr_capture_url()`, `apps/channels/tasks.py`: `/proxy/ts/stream/<uuid>`, plus `?output_profile=` when set), the
 HDHR lineup does the same (`apps/hdhr/api_views.py`), and the M3U output adds `output_format` to its stream URLs only
@@ -315,8 +315,8 @@ when the playlist request itself carried one (`apps/output/views.py`). So a serv
 redirect to an HLS playlist and set to fMP4 hands it MP4 fragments; what ffmpeg then records, and what an HDHR client
 makes of either, was not checked. Not this addon's bug: the addon and `timeshift_buffer` ask for `mpegts` since
 `CLOSED_ITEMS.md`'s "Pin the live proxy's output format to MPEG-TS". Worth reporting to Dispatcharr once seen: on a
-server nobody else uses (the lab's setting is shared with its other clients), set Default Output Format to HLS, record
-a short programme, and check the file.
+server nobody else uses (the lab's setting is shared with its other clients), set Default Output Format to HLS, record a
+short programme, and check the file.
 
 ### Known gaps, deliberately deferred
 
