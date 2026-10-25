@@ -19,5 +19,5 @@ something end to end, say so.
 - [ ] Formatted: `clang-format` for C++, `ruff format` and `ruff check` for Python.
 - [ ] A bug fix or new logic on the tested side comes with a test in this PR.
 - [ ] Docs updated where behaviour changed (`README.md` for users, `docs/` for the why).
-- [ ] No real hostname, IP address, account name, time zone or channel name anywhere in the change, its commits or this
-      description.
+- [ ] No real hostname, IP address, account name or channel name anywhere in the change, its commits or this
+      description. (Your own time zone is up to you; see CONTRIBUTING.md.)

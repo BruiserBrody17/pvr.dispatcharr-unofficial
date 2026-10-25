@@ -88,8 +88,7 @@ handled here.
   test, the actual result. Dispatcharr's own API has changed shape
   across releases, so "I checked the real behavior" is much more
   useful here than "this should work per the docs."
-- **Never include a real hostname, IP address, account username, time
-  zone (a zone name, a UTC offset, or a local time shown beside UTC), or
+- **Never include a real hostname, IP address, account username, or
   similar identifying detail** in code, comments, docs, commit
   messages, or the PR description itself -- including your own, and
   including anything from your own test instance's logs or output you
@@ -98,6 +97,15 @@ handled here.
   project's own docs already do elsewhere (e.g. "Channel A"). This
   isn't a formality: getting this wrong after the fact means a git
   history rewrite, not just an edit.
+- **Your own time zone is your call.** Nothing here asks you to hide it
+  (a zone name, a UTC offset, a local time beside UTC in a log you
+  paste). If you would rather keep it private, keep it out of what you
+  write, and know that every git commit also records its author's and
+  committer's UTC offset, whatever the commit says. `export TZ=UTC0` in
+  the shell you commit from records `+0000` instead, including for an
+  amend, rebase or cherry-pick, which re-stamp the committer date. Your
+  PR branch's commits stay visible on the PR itself; the squash commit
+  that lands is the maintainer's.
 - **Explain what you changed and why in the PR description**, including
   how you tested it (or that you couldn't, and why). The PR template asks for both. This project's own
   commit history favors a real explanation over a one-line summary --
