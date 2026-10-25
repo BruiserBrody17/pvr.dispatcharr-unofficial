@@ -74,6 +74,7 @@ docs/CLOSED_ITEMS.md|setting|validate_redirect_urls
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
 docs/OPEN_ITEMS.md|function|HandleAddonCallback
+docs/OPEN_ITEMS.md|function|_dvr_capture_url
 docs/OPEN_ITEMS.md|function|_handle_redirect_stream
 docs/OPEN_ITEMS.md|function|build_index
 docs/OPEN_ITEMS.md|function|check_platform
