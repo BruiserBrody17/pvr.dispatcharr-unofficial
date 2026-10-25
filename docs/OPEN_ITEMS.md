@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**30 open, 352 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**31 open, 352 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -22,12 +22,13 @@ provider, and the release gate passing a stale plugin zip), five LOW. One more (
 0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
 2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
 and is in `CLOSED_ITEMS.md`). The last (2026-10-25) is the live check of `timeshift_buffer` 0.8.16's
-heartbeat fix, which so far has run only in the plugin integration harness.
+heartbeat fix, which so far has run only in the plugin integration harness. And one (2026-10-25, MEDIUM and
+time-critical) is tzdata 2026e's Manitoba change, which the offset table does not have yet.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 3 |
-| Open: Fix known, not yet done | 14 |
+| Open: Fix known, not yet done | 15 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
@@ -89,6 +90,27 @@ from the same device (a reattach clears the mark) and confirm it buffers and pla
 version the release ships.
 
 ### Fix known, not yet done
+
+#### Manitoba stays on UTC-5 from 2026-11-01, but the offset table still falls it back
+
+**Opened 2026-10-25; MEDIUM and time-critical (it takes effect on 2026-11-01), found by
+`tools/tests/test_timezone_table_vs_zoneinfo.py` on a machine whose tz database had moved to tzdata 2026e.** tzdata 2026e
+keeps Manitoba on daylight time for good from 2026-10-31, so `America/Winnipeg` (and its aliases `America/Rainy_River`
+and `Canada/Central`) stays at UTC-5 instead of falling back to UTC-6 on 2026-11-01, and Dispatcharr's scheduler follows
+the server's tz data. `TimeZoneUtil.cpp` still has Winnipeg as a plain `kUsCanada` zone, which is the bug the
+Vancouver/Edmonton fix closed for those two zones (`CLOSED_ITEMS.md`, "Recurring timers for Vancouver and Edmonton would
+have been an hour off from 2026-11-01"): a recurring rule created while the server timezone is Winnipeg would be stored
+an hour off. On 2026e the check fails twice (`America/Winnipeg`: table -360, tz database -300 from 2026-11-01T07:00Z;
+and the `America/Rainy_River` alias); on 2026c/2026d it passes, and the check reads the machine's own tz database, so CI stays green until its runners
+reach 2026e. The same release's
+Northwest Territories change needs nothing: `America/Yellowknife` is already an alias of `America/Edmonton`, permanent
+UTC-6 since the 2026c fix. Fix: give the Winnipeg entry `kPermanentDaylightFromNov2026Utc` (2026-11-01T00:00Z is still
+daylight time in Manitoba, so the switch is continuous) and widen the comment above that constant, which names only
+British Columbia and Alberta. A server on pre-2026e data should then read as legacy zone data
+(`applyZoneRuleChanges=false`) as a pre-2026c one does for those two; worth a `ServerOffsetCrossCheck` test. The
+check's own skip for an out-of-date tz database recognises only pre-2026c data, so once the table is
+fixed a 2026c/2026d machine would fail on Winnipeg instead: it needs a Manitoba counterpart (skip, or leave out just that
+zone, saying why). Tests: Catch2 transition vectors for Winnipeg either side of 2026-11-01.
 
 #### timeshift_buffer: removals under the 30 s start lock let a second start run beside the first
 
