@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**29 open, 350 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**30 open, 350 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -21,7 +21,8 @@ format to MPEG-TS").
 Seven (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
 checked against the code before it was filed: two MEDIUM (the timeshift plugin's token reaching a Redirect-profile
 provider, and the release gate passing a stale plugin zip), five LOW. One more (the same day) is a live check the
-0.33.0 stream-switch re-test turned up.
+0.33.0 stream-switch re-test turned up, and one (2026-10-25) is an upstream note from the 0.33.0
+review.
 
 | Section | Entries |
 |---|---|
@@ -30,7 +31,7 @@ provider, and the release gate passing a stale plugin zip), five LOW. One more (
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 1 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 6 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 303 |
@@ -299,6 +300,20 @@ loopback request needs only localhost in Settings → Network Access → Streams
 gets a 403, ffmpeg exits, and the addon reports a provider-side stream limit. (Direct playback from that device would be
 refused the same way, so the outcome is right; the explanation and the message are not.) Fix: correct the docstring and
 the plugin README, and show the proxy's HTTP status from ffmpeg's log in the start failure.
+
+#### Dispatcharr's own DVR, HDHR and M3U output follow a non-MPEG-TS Default Output Format
+
+**Opened 2026-10-25, from the review of Dispatcharr 0.33.0; read in the `v0.33.0` source, not run.** For a request
+that names no `output_format` and has no per-user override, `_resolve_output_format()` (`apps/proxy/live_proxy/views.py`)
+falls back to Settings → Stream Settings → Default Output Format. Dispatcharr's own DVR builds its capture URL without
+one (`_dvr_capture_url()`, `apps/channels/tasks.py`: `/proxy/ts/stream/<uuid>`, plus `?output_profile=` when set), the
+HDHR lineup does the same (`apps/hdhr/api_views.py`), and the M3U output adds `output_format` to its stream URLs only
+when the playlist request itself carried one (`apps/output/views.py`). So a server set to HLS hands its own recorder a
+redirect to an HLS playlist and set to fMP4 hands it MP4 fragments; what ffmpeg then records, and what an HDHR client
+makes of either, was not checked. Not this addon's bug: the addon and `timeshift_buffer` ask for `mpegts` since
+`CLOSED_ITEMS.md`'s "Pin the live proxy's output format to MPEG-TS". Worth reporting to Dispatcharr once seen: on a
+server nobody else uses (the lab's setting is shared with its other clients), set Default Output Format to HLS, record
+a short programme, and check the file.
 
 ### Known gaps, deliberately deferred
 
