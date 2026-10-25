@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`873c98d`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`2ad65f7`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -131,6 +131,10 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `67d7d24` | `842e346` (`git cherry-pick -x`; `OPEN_ITEMS.md` and the closed entry by hand) | A heartbeat that arrives after its viewer's own stop is ignored (`timeshift_buffer` 0.8.16). The plugin is identical on both branches before and after; `Omega`'s closed entry keeps its own as-opened text, and `Omega`'s `OPEN_ITEMS.md` has no release or CI item left. |
 | `adeec73` | `bfc16ba` (`git cherry-pick -x`; `OPEN_ITEMS.md` and the closed entry's first line by hand) | A live seek probe that finds nothing answers -1, not 0. The bug was Kodi 21's: confirmed live with a Kodi 21.3 build of the port, and with the `Piers` build on Kodi 22.0-RC1, which never seeks on opening HEVC. |
 | `e3b0492` | `9d01709` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The live check of `timeshift_buffer` 0.8.16's late-heartbeat fix, tracked as a live check; the plugin is the same on both branches. |
+| `933e5b1` | `3451c4c` | The upstream output-format note in `OPEN_ITEMS.md` rewrapped; the same text on both. |
+| `e9bee5b` | `552d704` | The tzdata 2026e Manitoba change tracked in `OPEN_ITEMS.md`; `TimeZoneUtil`'s table and its checks are the same on both branches. |
+| `56f72a3` | `d2c3c6b` (by hand: `Omega`'s step 3 has no Kodi 22 paragraph) | The CoreELEC build host's packages listed up front in `BUILDING.md`. |
+| `2ad65f7` | `40dd79f` (`git cherry-pick -x`) | A contributor's own time zone left to them in `CONTRIBUTING.md` and the PR template. |
 
 ## Dependencies that differ by Kodi release
 
