@@ -5015,6 +5015,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
     }
     return 0; // EOF: -1 is retried near-immediately by Kodi and never ends playback
   }
+  bool gaveUpOnSeekProbe = false;
   if (m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes)
   {
     constexpr int kCatchUpSleepMs = 250;
@@ -5149,6 +5150,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
     m_liveTimeshiftStream.tailWait.Reset();
     m_liveTimeshiftStream.lastShortGiveUpPosition =
         ComputeShortGiveUpPosition(likelySeekProbe, caughtUp, m_liveTimeshiftStream.position);
+    gaveUpOnSeekProbe = likelySeekProbe && !caughtUp;
 
     double elapsedSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
     kodi::Log(ADDON_LOG_DEBUG,
@@ -5160,7 +5162,7 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
               static_cast<long long>(m_liveTimeshiftStream.totalBytes), caughtUp ? "caught up" : "gave up");
   }
   if (m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes)
-    return 0; // genuinely nothing new yet
+    return dispatcharr::LiveTailGiveUpResult(gaveUpOnSeekProbe); // nothing new yet: see that function for 0 vs -1
 
   const LiveTimeshiftSegmentInfo* seg =
       FindSegmentContainingPosition(m_liveTimeshiftStream.position, m_liveTimeshiftStream.segments);

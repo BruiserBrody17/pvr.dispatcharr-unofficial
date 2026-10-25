@@ -209,12 +209,25 @@ private:
 enum class TailWaitOutcome
 {
   kRetry,  // nothing yet and the budget is not used up: return -1, Kodi retries
-  kGiveUp, // the budget is used up (or this was a seek probe, which never waits): return 0 as before
+  kGiveUp, // the budget is used up (or this was a seek probe, which never waits): see LiveTailGiveUpResult()
 };
 
 inline TailWaitOutcome DecideTailWaitOutcome(bool likelySeekProbe, int64_t waitedMs, int64_t budgetMs)
 {
   return (likelySeekProbe || waitedMs >= budgetMs) ? TailWaitOutcome::kGiveUp : TailWaitOutcome::kRetry;
+}
+
+// What a live read answers once it has given up at the tail with nothing new. Kodi marks a PVR stream as at end of file
+// when a read returns 0 (CInputStreamPVRBase::Read()), and only a seek clears the mark; reads that succeed later leave
+// it set. The next time the demuxer runs dry, at the first stall, Kodi asks NextStream(), which answers "open the next
+// stream" because of the mark, and playback ends. A seek probe gives up at once while the buffer is alive, so it
+// answers -1, which Kodi hands to ffmpeg as a read error without the mark. Opening an HEVC stream, Kodi 21 seeks twice
+// and its next reads are such probes: with 0 here every HEVC channel lost its stall wait and ended about 8 s into the
+// first stall, measured 2026-10-25 (docs/CLOSED_ITEMS.md, "Server-side mode: an HEVC channel's opening seek probe
+// leaves Kodi at end of file"). A wait that used its whole budget still answers 0: that stall is meant to end playback.
+inline int LiveTailGiveUpResult(bool gaveUpOnSeekProbe)
+{
+  return gaveUpOnSeekProbe ? -1 : 0;
 }
 
 // ---- How long a live read waits at the tail while the plugin answers and nothing arrives (a silent stall) ----

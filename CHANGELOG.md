@@ -17,6 +17,9 @@ compare against.
 - **Live TV keeps playing when Dispatcharr's default output format is not MPEG-TS** (Off and Local live mode): if
   Dispatcharr's Settings → Stream Settings → Default Output Format was set to HLS (new in Dispatcharr 0.33.0) or fMP4,
   live channels did not play in Kodi. The addon now always asks for MPEG-TS, whatever that setting says.
+- **An HEVC channel no longer stops at its first stall** (Server-side live mode, Kodi 21): when an HEVC channel's
+  stream stalled, playback ended after a few seconds instead of waiting for Dispatcharr to switch to another stream. It
+  now waits as long as an H.264 channel does.
 
 ## `timeshift_buffer` [0.8.16] - Unreleased
 
