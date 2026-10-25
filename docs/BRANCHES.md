@@ -130,6 +130,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `0a8cb0e` | `8ea5aa1` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The Server-side HEVC stall root-caused (an HEVC channel's opening seek probe answered with 0 leaves Kodi at end of file) and moved to "Fix known"; `Omega`'s live read path has the same give-up and the same `return 0`. |
 | `67d7d24` | `842e346` (`git cherry-pick -x`; `OPEN_ITEMS.md` and the closed entry by hand) | A heartbeat that arrives after its viewer's own stop is ignored (`timeshift_buffer` 0.8.16). The plugin is identical on both branches before and after; `Omega`'s closed entry keeps its own as-opened text, and `Omega`'s `OPEN_ITEMS.md` has no release or CI item left. |
 | `adeec73` | `bfc16ba` (`git cherry-pick -x`; `OPEN_ITEMS.md` and the closed entry's first line by hand) | A live seek probe that finds nothing answers -1, not 0. The bug was Kodi 21's: confirmed live with a Kodi 21.3 build of the port, and with the `Piers` build on Kodi 22.0-RC1, which never seeks on opening HEVC. |
+| `e3b0492` | `9d01709` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The live check of `timeshift_buffer` 0.8.16's late-heartbeat fix, tracked as a live check; the plugin is the same on both branches. |
 
 ## Dependencies that differ by Kodi release
 
