@@ -59,8 +59,6 @@ documented:
   upstream stall ended playback about 48 s before Dispatcharr healed it") in Off, Local and Server-side mode: Kodi's
   demuxer and the plugin's ffmpeg should both handle it at least as well as before, but neither has seen it.
 
-### Fix known, not yet done
-
 #### The Kodi repository is built but not published
 
 **Opened 2026-10-19, when the repository was added** (`tools/build_kodi_repo.py`, `kodi-repository/`; how it works and

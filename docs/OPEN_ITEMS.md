@@ -67,6 +67,8 @@ without, and 3, 7 and 30 days were still byte-identical: the guide held under tw
 growth is bounded to about that; a server whose channels advertise a long window can grow much further. Measure again
 once the server has refreshed for longer than its longest catch-up window.
 
+### Fix known, not yet done
+
 #### timeshift_buffer: removals under the 30 s start lock let a second start run beside the first
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; MEDIUM, reproduced with real filesystem operations and a
