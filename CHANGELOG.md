@@ -29,6 +29,13 @@ Dispatcharr restart for every worker to pick it up.
   to the addon's account. With HLS (new in Dispatcharr 0.33.0) or fMP4 there, playback already worked, but Dispatcharr
   ran an extra HLS segmenter or fMP4 conversion for every buffer; it no longer needs to.
 
+### Fixed
+
+- **Stopping a channel no longer sometimes keeps its server-side buffer running for a while**: if one of the addon's
+  check-ins was still on its way when the channel was stopped, the plugin could count that viewer back in, so the
+  buffer and its provider connection stayed up until the idle timeout ended it. A check-in that arrives after its
+  viewer stopped is now ignored.
+
 ## `repository.dispatcharr-unofficial` [0.1.0] - 2026-10-23
 
 New: a Kodi repository for the addon (unofficial, like the addon). Install it once and Kodi installs the right build

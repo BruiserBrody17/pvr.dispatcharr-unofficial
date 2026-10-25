@@ -3010,6 +3010,45 @@ def _is_stale_access_token(state: dict, supplied) -> bool:
     return not secrets.compare_digest(supplied.encode(), expected.encode())
 
 
+# How long a viewer's own stop_buffer keeps that viewer's late heartbeats from re-adding it (_apply_heartbeat()). A
+# heartbeat already in flight when Kodi stops the channel lands within a second or two; the rest is margin for retries.
+# A viewer that comes back calls start_buffer, which clears the mark at once.
+_STOPPED_VIEWER_TTL_SECONDS = 120
+
+
+def _was_stopped_recently(state: dict, viewer_id, now: float) -> bool:
+    """Whether stop_buffer recorded `viewer_id` as stopped less than _STOPPED_VIEWER_TTL_SECONDS ago. A stamp in the
+    future (the shared clock stepped back) counts as recent: refusing a re-add for longer only matters to a viewer
+    that both stopped and kept heartbeating without a new start_buffer, which the addon never does."""
+    stopped = state.get("stopped_viewers")
+    stamp = stopped.get(viewer_id) if isinstance(stopped, dict) else None
+    return isinstance(stamp, (int, float)) and now - stamp < _STOPPED_VIEWER_TTL_SECONDS
+
+
+def _record_stopped_viewer(state: dict, viewer_id, now: float) -> dict:
+    """Marks `viewer_id` as stopped at `now` (see _apply_heartbeat()), dropping marks that have run out so the map
+    stays as small as the set of viewers that stopped in the last two minutes. Returns `state`, mutated in place."""
+    stopped = state.get("stopped_viewers")
+    kept = {}
+    if isinstance(stopped, dict):
+        kept = {
+            v: t for v, t in stopped.items() if isinstance(t, (int, float)) and now - t < _STOPPED_VIEWER_TTL_SECONDS
+        }
+    kept[viewer_id] = now
+    state["stopped_viewers"] = kept
+    return state
+
+
+def _clear_stopped_viewer(state: dict, viewer_id) -> dict:
+    """Forgets a stop mark when `viewer_id` starts watching this buffer again. Returns `state`, mutated in place."""
+    stopped = state.get("stopped_viewers")
+    if isinstance(stopped, dict) and viewer_id in stopped:
+        del stopped[viewer_id]
+        if not stopped:
+            del state["stopped_viewers"]
+    return state
+
+
 def _apply_heartbeat(state: dict, now: float, viewer_id=None) -> dict:
     """Pure state-mutation core of every heartbeat-only write-back path
     (_touch_heartbeat/_heartbeat/_get_live_manifest_action's own
@@ -3025,10 +3064,15 @@ def _apply_heartbeat(state: dict, now: float, viewer_id=None) -> dict:
     network stall), its later heartbeat/get_live_manifest calls used to be
     ignored forever, so it stayed uncounted -- and the buffer got torn
     down under it as soon as every other viewer stopped. Cost of the
-    fix: a straggler heartbeat arriving after that viewer's own
-    stop_buffer resurrects it, bounded by the same idle_timeout prune
-    (and moot when it was the last viewer, since the buffer's state is
-    gone by then).
+    fix, until 0.8.16: a straggler heartbeat arriving after that viewer's
+    own stop_buffer resurrected it, so the stop was not the last one and the
+    buffer, with its provider connection, lived until the idle reaper ended it
+    (the plugin integration run's `race` scenario failed about one run in
+    four on it). stop_buffer now records the viewer as stopped
+    (_record_stopped_viewer()), and a heartbeat for a viewer stopped less
+    than _STOPPED_VIEWER_TTL_SECONDS ago is ignored, buffer-wide
+    last_heartbeat included; a later start_buffer for that viewer clears it.
+    A viewer the reaper pruned was never stopped, so it is still re-added.
     Pulled out specifically so it's unit-testable standalone; see
     tests/test_timeshift_buffer.py.
 
@@ -3043,6 +3087,8 @@ def _apply_heartbeat(state: dict, now: float, viewer_id=None) -> dict:
     "Concurrent viewers" bug (docs/TIMESHIFT.md) coming back through a
     race between two ordinary requests, not the already-fixed
     stop/reopen case that doc's own section covers."""
+    if viewer_id and viewer_id not in state.get("viewers", []) and _was_stopped_recently(state, viewer_id, now):
+        return state
     state["last_heartbeat"] = now
     if viewer_id:
         viewers = state.setdefault("viewers", [])
@@ -3867,6 +3913,7 @@ class Plugin:
                     if viewer_id not in viewers:
                         viewers.append(viewer_id)
                     current.setdefault("viewer_heartbeats", {})[viewer_id] = _shared_now()
+                    _clear_stopped_viewer(current, viewer_id)
                 # Retrofits a token onto state left behind by a plugin version
                 # older than the access-token requirement (see
                 # _check_access_token) -- makes this self-healing across an
@@ -3998,6 +4045,9 @@ class Plugin:
                 if viewer_id in current_viewers:
                     current_viewers.remove(viewer_id)
                     current.get("viewer_heartbeats", {}).pop(viewer_id, None)
+                # Recorded even when the viewer was not listed (its start_buffer may have been the one refused while
+                # another start held the lock): either way a heartbeat it still has in flight must not add it back.
+                _record_stopped_viewer(current, viewer_id, _shared_now())
                 return current
 
             outcome, state = _update_buffer_state(channel_uuid, drop_viewer)

@@ -2896,6 +2896,15 @@ tests, the stale-token unit cases, and a `Plugin.run()`-level
 no-teardown test; the addon-side param stays on the untested
 `DispatcharrClient` side of the boundary.
 
+`timeshift_buffer` 0.8.16 (2026-10-25): the re-add has one exception. `stop_buffer` records the viewer as stopped
+(`_record_stopped_viewer()`) and `_apply_heartbeat()` ignores a heartbeat from a stopped, unlisted viewer for
+`_STOPPED_VIEWER_TTL_SECONDS` (`_was_stopped_recently()`); a reattach clears the mark (`_clear_stopped_viewer()`).
+Eleven tests: the three helpers, the heartbeat rule (a mark that ran out, one from the future, a malformed map, a
+listed viewer with a stale mark), and `Plugin.run()`-level stop-then-heartbeat, the stop of a never-listed viewer, and a
+reattach that clears the mark; eight fail on 0.8.15. The plugin integration run's `race` scenario is the end-to-end
+check (`docs/CLOSED_ITEMS.md`, "timeshift_buffer: a heartbeat that lands just after its viewer's stop re-adds the
+viewer").
+
 `timeshift_buffer` 0.6.6 and `recording_edl` 0.2.1 (2026-10-01; unit-tested, live confirmation tracked in
 `docs/OPEN_ITEMS.md`): `_clear_channel_dir()` empties a leftover channel directory on every fresh start
 (a stale `live.m3u8` with high sequence numbers used to stall a new viewer, and an old directory mtime

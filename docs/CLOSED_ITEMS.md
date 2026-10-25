@@ -6,6 +6,31 @@
 
 ### Fixed
 
+#### timeshift_buffer: a heartbeat that lands just after its viewer's stop re-adds the viewer (plugin integration `race` flakes)
+
+**Fixed 2026-10-25 in `timeshift_buffer` 0.8.16, confirmed with the plugin's unit tests and the integration run.**
+`stop_buffer` now records the viewer as stopped (`_record_stopped_viewer()`, a `stopped_viewers` map in the buffer
+state, entries kept for `_STOPPED_VIEWER_TTL_SECONDS`, 120 s), and `_apply_heartbeat()` ignores a heartbeat from a
+viewer that is not listed and was stopped within that time, buffer-wide `last_heartbeat` included, so a stopped viewer
+neither comes back nor keeps the buffer alive. The mark is written even for a viewer that was never listed (its
+`start_buffer` was the one refused while another start held the lock: the `race` scenario's case), and a later
+`start_buffer` reattach for that viewer clears it (`_clear_stopped_viewer()`). A viewer the reaper pruned was never
+stopped, so its heartbeat still re-adds it, which is what the 0.6.5 re-add was for ("Pruned viewer can never be re-added
+to a buffer", whose "accepted cost" this removes). Eleven new tests; eight of them fail on 0.8.15. The integration
+`race` scenario passed 12 runs of 12 with the fix, against 5 failures in 20 runs without it.
+
+**Opened 2026-10-24, found while checking the output-format fix with the plugin integration run; LOW, reproduced with
+the harness, not yet live.** `python3 tests/glue/plugin_integration/driver.py` (the `race` scenario) fails about one run
+in four with "ffmpeg still running 3.5 s after the last viewer stopped", on the unchanged 0.8.15 plugin as often as on
+0.8.16 (3 of 13 runs against 2 of 7). Each round stops both viewers from the two workers while a heartbeat for viewer
+`v0` runs concurrently. `_heartbeat()` re-adds a viewer id the buffer does not list (`_apply_heartbeat()`, kept so a
+viewer the reaper pruned while still watching comes back), so a `v0` heartbeat landing after `v0`'s own stop puts it
+back: `v1`'s stop is then not the last one, and the buffer, with its provider connection, lives until the idle reaper
+ends it. The same can happen with the real addon when a heartbeat is in flight as Kodi stops the channel. Decide
+whether a stopped viewer id should be refused by a heartbeat for a short while (a tombstone beside the viewer list, as
+the 2026-10-21 teardown fix did for directories) or the harness should stop heartbeating a viewer before stopping it,
+and make the scenario deterministic either way.
+
 #### Pin the live proxy's output format to MPEG-TS
 
 **Opened and fixed 2026-10-24 on the `pin-mpegts-output-format` branch, from the review of Dispatcharr 0.33.0 against
