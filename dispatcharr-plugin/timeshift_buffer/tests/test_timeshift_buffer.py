@@ -29,6 +29,7 @@ a real HTTP server/reaper thread has no place in a unit test).
 
 import importlib.util
 import contextlib
+import copy
 import json
 import os
 import shutil
@@ -1005,6 +1006,64 @@ def test_apply_heartbeat_re_adds_a_viewer_no_longer_in_the_list():
     timeshift_buffer_plugin._apply_heartbeat(state, now=1000, viewer_id="pruned")
     assert state["viewers"] == ["a", "pruned"]
     assert state["viewer_heartbeats"] == {"a": 0, "pruned": 1000}
+
+
+def test_apply_heartbeat_ignores_a_viewer_stopped_moments_ago():
+    # Regression test: a heartbeat already in flight when the viewer's own stop_buffer landed re-added the viewer, so
+    # a later stop from the other viewer was not the last one and the buffer ran until the idle reaper (the plugin
+    # integration run's `race` scenario, docs/CLOSED_ITEMS.md).
+    state = {"viewers": ["b"], "viewer_heartbeats": {"b": 900}, "last_heartbeat": 900, "stopped_viewers": {"a": 990}}
+    timeshift_buffer_plugin._apply_heartbeat(state, now=1000, viewer_id="a")
+    assert state["viewers"] == ["b"]
+    assert "a" not in state["viewer_heartbeats"]
+    assert state["last_heartbeat"] == 900  # a stopped viewer does not keep the buffer alive either
+
+
+def test_apply_heartbeat_re_adds_a_stopped_viewer_once_its_mark_runs_out():
+    ttl = timeshift_buffer_plugin._STOPPED_VIEWER_TTL_SECONDS
+    state = {"viewers": [], "stopped_viewers": {"a": 1000}}
+    timeshift_buffer_plugin._apply_heartbeat(state, now=1000 + ttl, viewer_id="a")
+    assert state["viewers"] == ["a"]
+
+
+def test_apply_heartbeat_treats_a_mark_from_the_future_as_recent():
+    # The shared clock stepped back: refusing the re-add for longer is harmless (a returning viewer calls
+    # start_buffer, which clears the mark).
+    state = {"viewers": [], "stopped_viewers": {"a": 5000}}
+    timeshift_buffer_plugin._apply_heartbeat(state, now=1000, viewer_id="a")
+    assert state["viewers"] == []
+
+
+def test_apply_heartbeat_still_refreshes_a_listed_viewer_with_a_stale_mark():
+    state = {"viewers": ["a"], "viewer_heartbeats": {"a": 0}, "stopped_viewers": {"a": 990}}
+    timeshift_buffer_plugin._apply_heartbeat(state, now=1000, viewer_id="a")
+    assert state["viewer_heartbeats"]["a"] == 1000
+    assert state["last_heartbeat"] == 1000
+
+
+def test_apply_heartbeat_ignores_a_malformed_stop_map():
+    for stopped in (["a"], "a", {"a": "soon"}, None):
+        state = {"viewers": [], "stopped_viewers": stopped}
+        timeshift_buffer_plugin._apply_heartbeat(state, now=1000, viewer_id="a")
+        assert state["viewers"] == ["a"], stopped
+
+
+def test_record_stopped_viewer_marks_and_drops_expired_marks():
+    ttl = timeshift_buffer_plugin._STOPPED_VIEWER_TTL_SECONDS
+    state = {"stopped_viewers": {"old": 1000 - ttl, "recent": 999, "junk": "x"}}
+    timeshift_buffer_plugin._record_stopped_viewer(state, "a", 1000)
+    assert state["stopped_viewers"] == {"recent": 999, "a": 1000}
+    fresh = timeshift_buffer_plugin._record_stopped_viewer({"stopped_viewers": ["not", "a", "dict"]}, "a", 7)
+    assert fresh["stopped_viewers"] == {"a": 7}
+
+
+def test_clear_stopped_viewer_forgets_the_mark_and_the_empty_map():
+    state = {"stopped_viewers": {"a": 1, "b": 2}}
+    timeshift_buffer_plugin._clear_stopped_viewer(state, "a")
+    assert state["stopped_viewers"] == {"b": 2}
+    timeshift_buffer_plugin._clear_stopped_viewer(state, "b")
+    assert "stopped_viewers" not in state
+    assert timeshift_buffer_plugin._clear_stopped_viewer({}, "a") == {}
 
 
 def test_apply_heartbeat_re_adds_into_a_state_with_no_viewer_fields_at_all():
@@ -2755,6 +2814,64 @@ def test_run_heartbeat_re_adds_an_unregistered_viewer_id(monkeypatch, tmp_path):
     assert result["status"] == "ok"
     assert saved["viewers"] == ["v1", "unknown"]
     assert "unknown" in saved["viewer_heartbeats"]
+
+
+def _shared_state(monkeypatch, state):
+    """One in-memory buffer state that _get_buffer_state and _set_buffer_state both see, like Redis between requests."""
+    store = {"s": copy.deepcopy(state)}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: copy.deepcopy(store["s"]))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: store.update(s=copy.deepcopy(s)))
+    return store
+
+
+def test_run_heartbeat_after_the_viewers_own_stop_does_not_re_add_it(monkeypatch, tmp_path):
+    store = _shared_state(
+        monkeypatch, {"channel_uuid": _UUID, "viewers": ["v1", "v2"], "viewer_heartbeats": {"v1": 1, "v2": 1}}
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1000.0)
+
+    _run(monkeypatch, "stop_buffer", {"channel_uuid": _UUID, "viewer_id": "v1"}, {}, tmp_path)
+    result, _logger = _run(monkeypatch, "heartbeat", {"channel_uuid": _UUID, "viewer_id": "v1"}, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert store["s"]["viewers"] == ["v2"]
+    assert store["s"]["stopped_viewers"] == {"v1": 1000.0}
+
+
+def test_run_stop_of_an_unlisted_viewer_still_blocks_its_late_heartbeat(monkeypatch, tmp_path):
+    # The integration run's `race` case: this viewer's start_buffer was refused while another start held the lock, so
+    # it was never listed; its stop and its heartbeat still race.
+    store = _shared_state(monkeypatch, {"channel_uuid": _UUID, "viewers": ["v1"], "viewer_heartbeats": {"v1": 1}})
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1000.0)
+
+    result, _logger = _run(monkeypatch, "stop_buffer", {"channel_uuid": _UUID, "viewer_id": "v0"}, {}, tmp_path)
+    assert result["remaining_viewers"] == 1
+    _run(monkeypatch, "heartbeat", {"channel_uuid": _UUID, "viewer_id": "v0"}, {}, tmp_path)
+
+    assert store["s"]["viewers"] == ["v1"]
+
+
+def test_run_start_buffer_reattach_clears_the_viewers_stop_mark(monkeypatch, tmp_path):
+    store = _shared_state(
+        monkeypatch,
+        {
+            "channel_uuid": _UUID,
+            "pid": 12345,
+            "http_port": 9192,
+            "playlist_route": f"/{_UUID}/live.m3u8",
+            "access_token": "tok123",
+            "viewers": ["v2"],
+            "stopped_viewers": {"v1": 990.0},
+        },
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, *_a: True)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1000.0)
+
+    result, _logger = _run(monkeypatch, "start_buffer", {"channel_uuid": _UUID, "viewer_id": "v1"}, {}, tmp_path)
+
+    assert result["already_running"] is True
+    assert store["s"]["viewers"] == ["v2", "v1"]
+    assert "stopped_viewers" not in store["s"]
 
 
 # -- get_live_manifest -------------------------------------------------
