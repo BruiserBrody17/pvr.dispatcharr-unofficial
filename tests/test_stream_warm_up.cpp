@@ -20,6 +20,9 @@ TEST_CASE("StreamUrlWithoutKodiOptions drops the pipe options only", "[StreamWar
   CHECK(StreamUrlWithoutKodiOptions("http://h:9191/proxy/ts/stream/u|Connection=close") ==
         "http://h:9191/proxy/ts/stream/u");
   CHECK(StreamUrlWithoutKodiOptions("http://h:9191/proxy/ts/stream/u") == "http://h:9191/proxy/ts/stream/u");
+  // The warm-up asks for the same output format Kodi does.
+  CHECK(StreamUrlWithoutKodiOptions(BuildLiveStreamUrl("http://h:9191", "u")) ==
+        "http://h:9191/proxy/ts/stream/u?output_format=mpegts");
   CHECK(StreamUrlWithoutKodiOptions("http://h/x|a=b&c=d") == "http://h/x");
   CHECK(StreamUrlWithoutKodiOptions("").empty());
 }

@@ -6,6 +6,45 @@
 
 ### Fixed
 
+#### Pin the live proxy's output format to MPEG-TS
+
+**Opened and fixed 2026-10-24 on the `pin-mpegts-output-format` branch, from the review of Dispatcharr 0.33.0 against
+the addon (`OPEN_ITEMS.md` has that review's live checks); confirmed against the v0.33.0 source and by unit and glue
+tests, not yet reproduced live.** Dispatcharr's live proxy answers `/proxy/ts/stream/<uuid>` in the format
+`_resolve_output_format()` (`apps/proxy/live_proxy/views.py`) picks: the URL's `output_format` (or XC-style `output`),
+then the requesting user's Output Format Override (`custom_properties.output_format`), then Settings → Stream Settings
+→ Default Output Format. 0.33.0 adds `hls` to the choices, which answers with a redirect to an
+`/proxy/hls/<token>/index.m3u8` playlist; `fmp4`, offered since an earlier release, sends MP4 fragments. Neither the
+addon's URL nor the plugin's asked for a format. In Off and Local mode the addon's URL carries no credentials, so the
+server default applied: Kodi was told `video/mp2t` whatever came back, and the Kodi 22 warm-up would take the redirect
+as a final answer and never attach. In Server-side mode the `timeshift_buffer` plugin's ffmpeg sends a JWT for the
+addon's account (`_stream_attribution_headers()`), so that account's override applied as well. **Fix:**
+`BuildLiveStreamUrl()` (`StreamPropertyUtil`, called by `GetLiveStreamUrl()`) and the plugin's `_proxy_url()` (0.8.16)
+add `?output_format=mpegts`, which wins over both settings, as Dispatcharr's own in-app preview buttons do; Kodi's
+`|Connection=close` option stays after the query. **Tests:** `tests/test_stream_property_util.cpp` (the URL),
+`tests/test_stream_warm_up.cpp` (the warm-up asks for the same URL), the glue harness's `warm_up` scenario (the URL
+handed to Kodi carries it) and the plugin's `_proxy_url` tests.
+
+**Confirmed live.** The test client's addon pointed at a proxy that added `output_format=hls` (or `fmp4`) to any
+`/proxy/ts/stream/` request naming no format, which for the addon's anonymous request is exactly what a server Default
+Output Format of that value does; the server's own setting was left alone, since Dispatcharr's DVR and every other
+client follow it too. With the previous builds (0.13.0 on Kodi 21.3, 0.14.1 on Kodi 22.0-RC1) both formats broke live
+TV. In Off mode HLS ended within about 2 s and fell back to Home without a message (Kodi followed the redirect, was told
+`video/mp2t`, and its demuxer read the playlist text to the end), and fMP4 never showed a picture, sitting behind the
+busy dialog until a second stop (Kodi's MPEG-TS demuxer forced onto MP4 data, logging "changing packet size" over and
+over). In Local mode `inputstream.ffmpegdirect` opened no decoder for either, and on Kodi 22 the warm-up took the
+redirect as a final answer. With this change (a Kodi 21 build of the `Omega` port and the PR's CI build for Kodi 22)
+every combination of mode and format played 1080p within 3 to 6 s, and the proxy log showed every request carrying
+`output_format=mpegts`, Kodi 22's `HEAD` and `?mimetype=` probes included
+(`?mimetype=video%2fmp2t&output_format=mpegts`: Kodi merges its own query correctly).
+**Server-side mode turned out not to need the change:** with the account's Output
+Format Override set to HLS and then fMP4, the 0.8.15 plugin's buffer played, `/proxy/ts/status` listing its connection
+under that format, because the buffer's ffmpeg probes its input, followed the redirect and read HLS or demuxed the MP4,
+and copied either into its MPEG-TS segments. 0.8.16 asked for `mpegts` in three fresh buffers with the HLS override
+still set, which spares the server an HLS segmenter or an fMP4 conversion per buffer; its CHANGELOG entry says that
+rather than calling it a fix. Afterwards the override was removed (sent as `null`) and the lab's plugin set back to
+0.8.15.
+
 #### Dispatcharr 0.33.0: live-proxy start-up and stream-switch changes, re-tested
 
 **Opened 2026-10-24 from the review of Dispatcharr 0.33.0 against the addon; checked live the same day on a 0.33.0
@@ -38,7 +77,8 @@ is kept below the results.
   mid-stream codec change, which nothing here can compare with 0.32.0. The new Stream Startup Timeout was not reached
   by itself (the slow source was the channel's only stream).
 
-**As opened:** **Opened 2026-10-24, from the review of Dispatcharr 0.33.0.** Several 0.33.0 proxy fixes touch things the addon worked around or
+**As opened:** **Opened 2026-10-24, from the review of Dispatcharr 0.33.0.** Several 0.33.0 proxy fixes touch things
+the addon worked around or
 documented:
 - **The Kodi 22 first-play failure** the warm-up exists for (`CLOSED_ITEMS.md`, "Kodi 22: the first attempt to play a
   channel nobody is watching failed in Off mode (HTTP 503)") is the proxy's "Channel is stopping" 503

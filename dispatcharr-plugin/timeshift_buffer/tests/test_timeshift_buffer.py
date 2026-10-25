@@ -477,14 +477,14 @@ def test_check_access_token_rejects_a_non_ascii_token_instead_of_raising(monkeyp
 def test_proxy_url_strips_trailing_slash():
     assert (
         timeshift_buffer_plugin._proxy_url(_UUID, "http://127.0.0.1:9191/")
-        == f"http://127.0.0.1:9191/proxy/ts/stream/{_UUID}"
+        == f"http://127.0.0.1:9191/proxy/ts/stream/{_UUID}?output_format=mpegts"
     )
 
 
 def test_proxy_url_no_trailing_slash():
     assert (
         timeshift_buffer_plugin._proxy_url(_UUID, "http://127.0.0.1:9191")
-        == f"http://127.0.0.1:9191/proxy/ts/stream/{_UUID}"
+        == f"http://127.0.0.1:9191/proxy/ts/stream/{_UUID}?output_format=mpegts"
     )
 
 

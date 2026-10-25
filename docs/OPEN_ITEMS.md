@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**29 open, 354 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**29 open, 355 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
 work on `Piers`: what remains of Kodi 22 support. Nothing is left from the 2026-10-18 read-only audit of the whole
@@ -14,7 +14,8 @@ other 17 come from the 2026-10-23 bug-hunting sweep of the whole project (five r
 checked against the code before it was filed): one MEDIUM, the rest LOW.
 One (2026-10-24) is the guide-history live check left from a review of Dispatcharr 0.33.0 against the addon and both
 plugins (the other two checks were done on a 0.33.0 server the same day and are in `CLOSED_ITEMS.md`), and one (the same
-day) is a plugin heartbeat race the plugin integration run turned up while the review's fix was checked.
+day) is a plugin heartbeat race the plugin integration run turned up while the review's fix was checked. The review's one
+code change is in `CLOSED_ITEMS.md` ("Pin the live proxy's output format to MPEG-TS").
 
 Seven (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
 checked against the code before it was filed: two MEDIUM (the timeshift plugin's token reaching a Redirect-profile
@@ -30,7 +31,7 @@ provider, and the release gate passing a stale plugin zip), five LOW.
 | Open: Upstream (Dispatcharr) or documentation accuracy | 1 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 6 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 307 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 308 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 38 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 

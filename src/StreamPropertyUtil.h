@@ -14,6 +14,17 @@ constexpr int kLiveTimeshiftOff = 0;
 constexpr int kLiveTimeshiftLocal = 1;
 constexpr int kLiveTimeshiftServer = 2;
 
+// The live proxy URL for a channel, as Kodi is handed it in Off and Local mode. `output_format=mpegts` is sent because
+// the proxy does not always answer MPEG-TS: `_resolve_output_format()` (apps/proxy/live_proxy/views.py) takes the URL's
+// `output_format`, then the requesting user's Output Format Override, then Settings -> Stream Settings -> Default
+// Output Format, and since Dispatcharr 0.33.0 that can be HLS, which redirects to a playlist (fMP4, available since an
+// earlier release, sends MP4 fragments). The addon tells Kodi `video/mp2t` and reads the warm-up as a byte stream, so
+// either breaks playback (confirmed live on 0.33.0 with Kodi 21 and 22: HLS ends at once, fMP4 never shows a picture).
+// Dispatcharr's own preview buttons pin `mpegts` the same way.
+//
+// `|Connection=close` is a Kodi CCurlFile URL option, not part of the URL: see GetLiveStreamUrl()'s comment.
+std::string BuildLiveStreamUrl(const std::string& baseUrl, const std::string& channelUuid);
+
 // A single (name, value) stream property pair -- mirrors what
 // kodi::addon::PVRStreamProperty holds, without depending on the Kodi
 // SDK type itself, so this stays Kodi-SDK-independent and testable

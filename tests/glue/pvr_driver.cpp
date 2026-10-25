@@ -1491,7 +1491,8 @@ int main(int argc, char** argv)
       INFO("warm_up: call took %ld ms, url %s", took, url.c_str());
       if (took > 300)
         FAIL("the call took %ld ms: it must not wait for the channel (it runs on Kodi's main thread)", took);
-      if (url.find("/proxy/ts/stream/") == std::string::npos || url.find("|Connection=close") == std::string::npos)
+      if (url.find("/proxy/ts/stream/") == std::string::npos ||
+          url.find("?output_format=mpegts|Connection=close") == std::string::npos)
         FAIL("the stream URL was '%s'", url.c_str());
       // ...and the channel does get started, and the connection stays attached once it is up.
       if (settle(proxyOpenNow, 1, 4000) != 1)

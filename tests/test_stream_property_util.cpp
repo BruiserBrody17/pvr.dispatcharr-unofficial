@@ -118,3 +118,12 @@ TEST_CASE("BuildCatchupStreamProperties never sets stream_mode or open_mode -- t
   CHECK_FALSE(HasName(properties, "inputstream.ffmpegdirect.stream_mode"));
   CHECK_FALSE(HasName(properties, "inputstream.ffmpegdirect.open_mode"));
 }
+
+TEST_CASE("BuildLiveStreamUrl pins MPEG-TS and keeps Kodi's option after it", "[StreamPropertyUtil]")
+{
+  // Without output_format the proxy may answer with an HLS redirect or fMP4 (Dispatcharr 0.33.0's Default Output Format
+  // and per-user override), while Kodi is told video/mp2t.
+  CHECK(BuildLiveStreamUrl("http://h:9191", "0f1e2d3c-aaaa-bbbb-cccc-000000000001") ==
+        "http://h:9191/proxy/ts/stream/0f1e2d3c-aaaa-bbbb-cccc-000000000001?output_format=mpegts|Connection=close");
+  CHECK(BuildLiveStreamUrl("https://h", "u") == "https://h/proxy/ts/stream/u?output_format=mpegts|Connection=close");
+}

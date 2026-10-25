@@ -1272,7 +1272,14 @@ def _proxy_url(channel_uuid: str, base_url: str) -> str:
     # exposing a plain TCP port on its own, so this default may still need
     # adjusting on a differently-shaped deployment -- see the
     # internal_base_url setting's own help text.
-    return f"{base_url.rstrip('/')}/proxy/ts/stream/{channel_uuid}"
+    #
+    # output_format=mpegts because the proxy answers this request (which carries the caller's JWT, see
+    # _stream_attribution_headers()) in the format _resolve_output_format() (apps/proxy/live_proxy/views.py) picks: the
+    # URL's output_format, then that user's Output Format Override, then the server's Default Output Format. Since
+    # Dispatcharr 0.33.0 that can be HLS, a redirect to a playlist, and fMP4 before it. ffmpeg probes its input and
+    # copes with either (measured live on 0.33.0), but each costs the server an HLS segmenter or an fMP4 conversion per
+    # buffer that asking for MPEG-TS avoids.
+    return f"{base_url.rstrip('/')}/proxy/ts/stream/{channel_uuid}?output_format=mpegts"
 
 
 # How long the access token put on ffmpeg's command line stays valid -- see _stream_attribution_headers().
@@ -3325,7 +3332,7 @@ def _ensure_reaper_running(settings_dict, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "0.8.15"
+    version = "0.8.16"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."

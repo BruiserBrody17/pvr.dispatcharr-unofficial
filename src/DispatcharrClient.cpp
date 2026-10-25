@@ -29,6 +29,7 @@
 #include "SegmentFetchFailure.h"
 #include "SegmentLookup.h"
 #include "Staleness.h"
+#include "StreamPropertyUtil.h"
 #include "StreamSeek.h"
 #include "StreamWarmUp.h"
 #include "StringUtil.h"
@@ -938,7 +939,7 @@ std::string DispatcharrClient::GetLiveStreamUrl(const Channel& channel) const
   // didn't fix that (the real cause turned out to be an unreachable IPv6
   // route to the host in that environment), but it's harmless to leave
   // in place and does prevent connection reuse in general.
-  return BaseUrl() + "/proxy/ts/stream/" + channel.uuid + "|Connection=close";
+  return dispatcharr::BuildLiveStreamUrl(BaseUrl(), channel.uuid);
 }
 
 namespace
