@@ -7799,14 +7799,14 @@ short, the bytes fetched landing within about 10 s of the time the player aimed 
 player time read 0 and count up from there in both modes and on both programmes, while the bytes fetched were about
 where the seek aimed, so the reading is Kodi's display, not a restart from the beginning.
 
-**As opened:** **Opened 2026-10-24, from the review of Dispatcharr 0.33.0.** 0.33.0 (upstream #1540) changes catch-up seeking: a request for a
-different programme start now asks the provider for that time and drops the cached CDN URL, where 0.32.0 mapped the new
-start onto a byte offset in the file already open; the same start still reuses the cached file for Range reconnects.
-The addon's session URLs (`/proxy/catchup/<uuid>?session_id=`) are served by the same `_serve_catchup()`
-(`apps/timeshift/views.py`) as XC timeshift. With `enable_catchup_ffmpegdirect_seek` on, every seek builds a URL for a
-new start, so seeks may now land closer than the 20 to 25 s short measured on 0.32.0 (`API_NOTES.md`, the 0.32.0
-section), at the cost of a provider open per seek. Re-run that measurement after the upgrade, check that a seek with
-the setting off (Range within one start) did not regress, and record the result in `docs/CATCHUP.md`.
+**As opened:** **Opened 2026-10-24, from the review of Dispatcharr 0.33.0.** 0.33.0 (upstream #1540) changes catch-up
+seeking: a request for a different programme start now asks the provider for that time and drops the cached CDN URL,
+where 0.32.0 mapped the new start onto a byte offset in the file already open; the same start still reuses the cached
+file for Range reconnects. The addon's session URLs (`/proxy/catchup/<uuid>?session_id=`) are served by the same
+`_serve_catchup()` (`apps/timeshift/views.py`) as XC timeshift. With `enable_catchup_ffmpegdirect_seek` on, every seek
+builds a URL for a new start, so seeks may now land closer than the 20 to 25 s short measured on 0.32.0 (`API_NOTES.md`,
+the 0.32.0 section), at the cost of a provider open per seek. Re-run that measurement after the upgrade, check that a
+seek with the setting off (Range within one start) did not regress, and record the result in `docs/CATCHUP.md`.
 
 #### The addon never calls `curl_global_init` itself
 
