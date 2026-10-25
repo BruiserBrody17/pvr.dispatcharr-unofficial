@@ -122,6 +122,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `04f2e77` | `8889482` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The plugin heartbeat race the integration run turned up; `timeshift_buffer/plugin.py` and the harness are the same on both branches. |
 | `338fde4` | `83ea1a7` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The Dispatcharr 0.33.0 live checks. `Omega`'s start-up entry leaves out the Kodi 22 warm-up result (no warm-up there); the API notes section, the troubleshooting step and the catch-up and guide records are the same. The output-format fix itself is waiting to merge on both branches. |
 | `0501917`, `f60e6ee` | `1f17183`, `34bc486` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The "Fix known, not yet done" heading put back (moving the 0.33.0 start-up item had carried it into `CLOSED_ITEMS.md`), then the second 2026-10-24 sweep's seven findings: all hold on `Omega` (the plugin, `build_kodi_repo.py` and `ConnectionReport` are the same files; the gate differs only in the CoreELEC asset name). |
+| `ebb2b40` | `58b4b7a` (by hand) | Pin the live proxy's output format to MPEG-TS, confirmed live on Kodi 22.0-RC1 and, for the port, Kodi 21.3. `Omega` has no Kodi 22 warm-up, so `tests/test_stream_warm_up.cpp`'s case and the glue `warm_up` URL check are not ported; the plugin, `StreamPropertyUtil` and the CHANGELOG entries are the same. |
 
 ## Dependencies that differ by Kodi release
 
