@@ -126,6 +126,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `e06d801` | `3d8f7c8` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The codec-changing stream switch filed as a live check, and the over-long "As opened" paragraphs in `CLOSED_ITEMS.md` reflowed (one on `Piers`, two on `Omega`, whose start-up entry has its own as-opened text). |
 | `c3be196` and the next commit | `eed9bd1`, `3451c4c` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The upstream note that Dispatcharr's own DVR, HDHR and M3U output follow a non-MPEG-TS Default Output Format, then its paragraph rewrapped. |
 | `c26c06b` | `3c406af` (by hand: `OPEN_ITEMS.md` keeps `Omega`'s own counts) | The codec-changing stream switch checked live (Kodi 21 freezes in every mode; Kodi 22 only in Server-side mode; now a design question) and the Kodi 21 Server-side HEVC stall item. Both hold on `Omega`, whose plugin and live-read path are the same. |
+| `539993f`, `09c4bd6` | `27e4bf5`, `03b3307` | The troubleshooting entry for a stream switch that changes video format, the 0.33.0 switch time in the stalls entry, then that bullet rewrapped; the same text on both. |
 
 ## Dependencies that differ by Kodi release
 
