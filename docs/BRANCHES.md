@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`7bbeebd`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`e71d531`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -137,6 +137,9 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `2ad65f7` | `40dd79f` (`git cherry-pick -x`) | A contributor's own time zone left to them in `CONTRIBUTING.md` and the PR template. |
 | `10678f5` | `7a9c511` (`git cherry-pick -x`, applied cleanly) | shellcheck in CI's lint job and the lint tools' versions in `tools/requirements-lint.txt`; the glue scripts it cleans up are the same on both, and the glue harness passed on Kodi 21 too. |
 | `7bbeebd` | `2783b59` (`git cherry-pick -x`; the `Releasing` bullet by hand) | The shorter release and CoreELEC bullets in `CLAUDE.md`. `Omega`'s copy also says its tags and `PKG_VERSION` carry the `-Omega` suffix, which it had not said since `0.13.1`. |
+| `0277051` | `30edae9` (`git cherry-pick -x`) | `TIMESHIFT.md`'s stall table says a seek probe's give-up answers -1 (`LiveTailGiveUpResult()`), and its lead-in that one 0 sets Kodi's end of file until a seek. |
+| `0c6fc56` | `eda478c` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | The two other live-read paths that answer 0 while the buffer is alive, filed under "Needs a live check"; `Omega`'s `ReadLiveTimeshiftStreamOnce()` has the same two. |
+| `e71d531` | `a7ec36a` (`git cherry-pick -x`, applied cleanly) | The glue harness's `live_seek_probe` scenario, which fails with the call site put back to `return 0`; it passed against Kodi 21's headers too. |
 
 ## Dependencies that differ by Kodi release
 
