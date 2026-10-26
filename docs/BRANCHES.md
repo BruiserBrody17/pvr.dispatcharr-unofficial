@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`e71d531`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`f46e452`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -140,6 +140,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `0277051` | `30edae9` (`git cherry-pick -x`) | `TIMESHIFT.md`'s stall table says a seek probe's give-up answers -1 (`LiveTailGiveUpResult()`), and its lead-in that one 0 sets Kodi's end of file until a seek. |
 | `0c6fc56` | `eda478c` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | The two other live-read paths that answer 0 while the buffer is alive, filed under "Needs a live check"; `Omega`'s `ReadLiveTimeshiftStreamOnce()` has the same two. |
 | `e71d531` | `a7ec36a` (`git cherry-pick -x`, applied cleanly) | The glue harness's `live_seek_probe` scenario, which fails with the call site put back to `return 0`; it passed against Kodi 21's headers too. |
+| `f46e452` | `34e0c75` (`git cherry-pick -x`, applied cleanly; `TEST_COVERAGE.md`'s count by hand) | `check_doc_refs.py` looks cited function names up in a set; the checker was the same on both branches, and `Omega`'s docs give 161 identical findings to `Piers`'s 168. |
 
 ## Dependencies that differ by Kodi release
 
