@@ -163,7 +163,8 @@ everything); lint and every unit-test job run on every push, since the cross-fil
 - **Independent version numbers, decoupled since 1.0.1**: the addon, each plugin and the Kodi repository addon version separately. Bump only the
   piece whose files changed, and move all of that piece's version locations together:
   - Addon: `pvr.dispatcharr-unofficial/addon.xml.in` (`<addon version="...">`) and
-    `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk` (`PKG_VERSION`, with `PKG_SHA256` reset to the all-zeros
+    `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk` (`PKG_VERSION`, which is the tag name: the version plus
+    `-Omega`; with `PKG_SHA256` reset to the all-zeros
     placeholder until the tag exists and the real checksum can be computed). CoreELEC packages the addon only, so this
     pair moves only with the addon's version.
   - Each plugin: `plugin.json` **and** the `Plugin` class `version` attribute in its `plugin.py`. `plugin.json` is only the
@@ -175,21 +176,14 @@ everything); lint and every unit-test job run on every push, since the cross-fil
 
   A tag/release is addon-version-scoped (it triggers CI, which builds everything and publishes nothing) and carries both plugin zips whether or not their version moved.
   `CHANGELOG.md` says which piece(s) moved in an entry.
-- **Releasing (every platform, one gate).** A tag is the moment history becomes something a stranger can clone, so before
-  tagging run a data-hardening audit (an Opus subagent sweep over code, docs, full history and every hosting-side surface:
-  release assets, issues/PRs) and resolve any real finding with a `git-filter-repo` rewrite, never a plain commit. The
-  local pre-push and commit hooks are a backstop, not a substitute, and they do not see release assets. Batch fixes into
-  releases; do not tag per fix. **Every release ships all eight zips** (Windows, Linux, macOS, both Android ABIs,
-  CoreELEC, the two plugins), built from the tag's own source, and none is published until
-  `python3 tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>` passes over the lot.
-  A failing gate is fixed at its cause and the zip rebuilt, never by editing the gate. Steps, the release-notes rules and
-  when a plugin-only fix replaces a shipped zip: `docs/BUILDING.md`'s "Release assets".
-- **The CoreELEC package isn't part of CI** and won't be (see
-  `docs/BUILDING.md`'s "GitHub Actions job ... rejected" note --
-  CoreELEC's build harness assumes persistent, self-hosted infrastructure
-  and a large pre-built toolchain cache, not a one-shot cloud runner). A
-  release's CoreELEC zip is built by hand (that file's CoreELEC section) and published with the other seven through the
-  gate in its "Release assets".
+- **Releasing.** The tag is `<version>-<Branch>` (`0.13.1-Omega`), everything else uses the plain version. Batch fixes
+  into releases; do not tag per fix. Before tagging, run a data-hardening audit (an Opus subagent sweep over code, docs,
+  full history, release assets and issues/PRs) and resolve a real finding with a `git-filter-repo` rewrite, never a plain
+  commit; the local hooks are a backstop and do not see release assets. All eight zips are published only after
+  `python3 tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>` passes; fix a
+  failure at its cause, never the gate. Everything else: `docs/BUILDING.md`'s "Release assets".
+- **The CoreELEC package isn't part of CI** and won't be (`docs/BUILDING.md`'s CoreELEC section says why); its zip is
+  built by hand.
 - **Commit messages**: short imperative summary line, no conventional-
   commit type prefixes (no `fix:`/`feat:`) -- match the existing git log.
 
