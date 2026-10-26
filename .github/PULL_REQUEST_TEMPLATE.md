@@ -16,7 +16,7 @@ something end to end, say so.
 ## Checklist
 
 - [ ] Opened against the branch for its Kodi version: `Omega` for Kodi 21, `Piers` for Kodi 22.
-- [ ] Formatted: `clang-format` for C++, `ruff format` and `ruff check` for Python.
+- [ ] Formatted: `clang-format` for C++, `ruff format` and `ruff check` for Python, `shellcheck` for shell scripts.
 - [ ] A bug fix or new logic on the tested side comes with a test in this PR.
 - [ ] Docs updated where behaviour changed (`README.md` for users, `docs/` for the why).
 - [ ] No real hostname, IP address, account name or channel name anywhere in the change, its commits or this

@@ -17,25 +17,30 @@ DEPS=$ROOT/build-tests/_deps
 [ -f "$KI/kodi/addon-instance/PVR.h" ] || { echo "Kodi dev-kit headers not found in $KI (set KODI_INCLUDE)"; exit 1; }
 [ -d "$DEPS/json-src" ] || { echo "run: cmake -S tests -B build-tests   (fetches nlohmann-json and pugixml)"; exit 1; }
 case $V in
-  asan) FLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" ;;
-  tsan) FLAGS="-O1 -g -fsanitize=thread -fno-pie -no-pie -fno-omit-frame-pointer" ;;
-  plain) FLAGS="-O1 -g" ;;
+  asan) FLAGS=(-O1 -g "-fsanitize=address,undefined" -fno-omit-frame-pointer) ;;
+  tsan) FLAGS=(-O1 -g -fsanitize=thread -fno-pie -no-pie -fno-omit-frame-pointer) ;;
+  plain) FLAGS=(-O1 -g) ;;
   *) echo "variant must be asan, tsan or plain"; exit 1 ;;
 esac
 O=$ROOT/build-glue/$V; mkdir -p "$O/obj"
 # A stale object left by an earlier build would be linked in if its source failed to compile this time.
 rm -f "$O"/obj/*.o
-INC="-I$KI -I$DEPS/json-src/single_include -I$DEPS/pugixml-src/src -I$ROOT/src"
-CXX="g++ -std=c++17 $FLAGS $INC"
+INC=(-I"$KI" -I"$DEPS/json-src/single_include" -I"$DEPS/pugixml-src/src" -I"$ROOT/src")
+CXX=(g++ -std=c++17 "${FLAGS[@]}" "${INC[@]}")
 # addon.cpp registers the real addon entry point, which the drivers replace.
-ls "$ROOT"/src/*.cpp | grep -v '/addon\.cpp$' | xargs -P"$(nproc)" -I{} sh -c \
-  "n=\$(basename {} .cpp); $CXX -c {} -o $O/obj/\$n.o || { echo FAILED \$n; exit 255; }"
-g++ -std=c++17 $FLAGS -c "$DEPS/pugixml-src/src/pugixml.cpp" -o "$O/obj/pugixml.o"
-OBJS=$(ls "$O"/obj/*.o | grep -v '/PVRDispatcharr\.o$')
-$CXX -c "$HERE/stream_driver.cpp" -o "$O/stream_driver.o"
-$CXX -c "$HERE/kodi_stub.cpp" -o "$O/kodi_stub.o"
-g++ $FLAGS -o "$O/stream_harness" "$O/stream_driver.o" "$O/kodi_stub.o" $OBJS -lcurl -lpthread
-$CXX -c "$HERE/pvr_driver.cpp" -o "$O/pvr_driver.o"
-$CXX -c "$HERE/pvr_stub.cpp" -o "$O/pvr_stub.o"
-g++ $FLAGS -o "$O/pvr_harness" "$O/pvr_driver.o" "$O/pvr_stub.o" $(ls "$O"/obj/*.o) -lcurl -lpthread
+SRCS=()
+for f in "$ROOT"/src/*.cpp; do [ "${f##*/}" = addon.cpp ] || SRCS+=("$f"); done
+# shellcheck disable=SC2016 # the inner bash expands them, once per source file
+printf '%s\0' "${SRCS[@]}" | xargs -0 -P"$(nproc)" -I{} bash -c \
+  'src=$1 o=$2; shift 2; n=$(basename "$src" .cpp); "$@" -c "$src" -o "$o/obj/$n.o" || { echo "FAILED $n"; exit 255; }' \
+  _ {} "$O" "${CXX[@]}"
+g++ -std=c++17 "${FLAGS[@]}" -c "$DEPS/pugixml-src/src/pugixml.cpp" -o "$O/obj/pugixml.o"
+OBJS=()
+for f in "$O"/obj/*.o; do [ "${f##*/}" = PVRDispatcharr.o ] || OBJS+=("$f"); done
+"${CXX[@]}" -c "$HERE/stream_driver.cpp" -o "$O/stream_driver.o"
+"${CXX[@]}" -c "$HERE/kodi_stub.cpp" -o "$O/kodi_stub.o"
+g++ "${FLAGS[@]}" -o "$O/stream_harness" "$O/stream_driver.o" "$O/kodi_stub.o" "${OBJS[@]}" -lcurl -lpthread
+"${CXX[@]}" -c "$HERE/pvr_driver.cpp" -o "$O/pvr_driver.o"
+"${CXX[@]}" -c "$HERE/pvr_stub.cpp" -o "$O/pvr_stub.o"
+g++ "${FLAGS[@]}" -o "$O/pvr_harness" "$O/pvr_driver.o" "$O/pvr_stub.o" "$O"/obj/*.o -lcurl -lpthread
 echo "built $O/stream_harness and $O/pvr_harness"

@@ -11,7 +11,9 @@ check", all closed 2026-10-02):
   (docs/OPEN_ITEMS.md, "Kodi is cloned from a moving branch in the release builds", closed 2026-10-06);
 - the Windows prebuilt archives are fetched with a SHA256 pinned next to each
   name, and docs/BUILDING.md's copy of that step pins the same values (the two
-  drifting apart is the usual way such a copy goes stale).
+  drifting apart is the usual way such a copy goes stale);
+- every `pip install` in a workflow reads a requirements file, and every line of those files is `name==version`
+  (2026-10-25: the lint tools were pinned inline in build.yml, and a dev workspace kept its own copy by hand).
 
 Reads this repo's real files, deliberately -- the real files are what is checked.
 """
@@ -99,3 +101,38 @@ def test_kodi_is_built_from_a_pinned_commit_not_a_moving_branch():
     # the Unix and Windows build jobs, and the glue-harness job (headers only)
     assert len(fetches) == 3, f"expected three jobs to fetch KODI_COMMIT, found {len(fetches)}"
     assert all("KODI_COMMIT" in line for line in fetches), fetches
+
+
+REQUIREMENT_FILES = [
+    REPO_ROOT / "tools" / "requirements-lint.txt",
+    REPO_ROOT / "dispatcharr-plugin" / "requirements-dev.txt",
+]
+
+
+def test_every_pip_install_in_a_workflow_reads_a_requirements_file():
+    # A version written inline in a workflow is a second copy of the requirements file's pin, and the copies drift: a
+    # dev workspace installs the file (tools/requirements-lint.txt says so), CI would run the inline one.
+    inline = []
+    for workflow in WORKFLOWS:
+        for lineno, line in enumerate(workflow.read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(r"\bpip3?\s+install\b", line) and not re.search(r"\s-r\s+\S+\.txt\b", line):
+                inline.append(f"{workflow.name}:{lineno}: {line.strip()}")
+    assert not inline, "pip install without -r <requirements file>:\n" + "\n".join(inline)
+
+
+def test_every_requirements_file_a_workflow_installs_exists_and_is_listed_here():
+    installed = set()
+    for workflow in WORKFLOWS:
+        installed.update(re.findall(r"\bpip3?\s+install\b.*?\s-r\s+(\S+\.txt)\b", workflow.read_text(encoding="utf-8")))
+    assert installed, "no workflow installs a requirements file -- the pin checks below would pass vacuously"
+    assert installed == {str(path.relative_to(REPO_ROOT)) for path in REQUIREMENT_FILES}
+
+
+def test_every_requirement_is_pinned_to_an_exact_version():
+    loose = []
+    for path in REQUIREMENT_FILES:
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            line = line.split("#", 1)[0].strip()
+            if line and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*==[0-9][0-9A-Za-z.]*", line):
+                loose.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line}")
+    assert not loose, "requirements not pinned with ==:\n" + "\n".join(loose)
