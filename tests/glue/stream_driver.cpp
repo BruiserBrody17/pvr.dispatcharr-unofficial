@@ -557,6 +557,79 @@ static void live_tail_ended(DispatcharrClient& cl)
     FAIL("the wait ran %ld ms past the buffer being marked ended; it must stop at once", zeroAt - endedSetAt);
 }
 
+// Kodi probes a live stream by seeking to its end and reading at once (twice when it opens an HEVC channel on Kodi 21).
+// The probe gets one try instead of the tail wait, and when it finds nothing it must answer -1: a 0 sets Kodi's end of
+// file until the next seek, so the channel's first later stall ended playback (docs/CLOSED_ITEMS.md, "Server-side mode:
+// an HEVC channel's opening seek probe leaves Kodi at end of file, so its first stall ends playback"). The unit test
+// covers LiveTailGiveUpResult() alone; this drives the real read. The buffer is frozen, the reader parks at the tail,
+// seeks to the end and reads at once (the probe), reads again at the same position (no longer a probe: the ordinary
+// tail wait, -1 per slice), then the buffer grows again and the stream must deliver.
+static void live_seek_probe(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  ctl("live_freeze=1");
+  std::vector<uint8_t> buf(1 << 20);
+  bool atTail = false;
+  const long phaseStart = ms();
+  while (ms() - phaseStart < 20000 && !atTail)
+  {
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n == 0)
+    {
+      FAIL("the stream ended (0) on the way to a frozen tail");
+      ctl("live_freeze=0");
+      return;
+    }
+    atTail = n < 0;
+  }
+  if (!atTail)
+  {
+    FAIL("the reader never reached the live tail");
+    ctl("live_freeze=0");
+    return;
+  }
+
+  const int64_t end = cl.SeekLiveTimeshiftStream(0, SEEK_END);
+  long t0 = ms();
+  const int probe = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+  const long probeMs = ms() - t0;
+  t0 = ms();
+  const int again = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+  const long againMs = ms() - t0;
+  INFO("seek probe: SEEK_END -> %lld, probe read %d in %ld ms, read again %d in %ld ms", (long long)end, probe, probeMs,
+       again, againMs);
+  if (end < 0)
+    FAIL("SeekLiveTimeshiftStream(0, SEEK_END) failed (%lld)", (long long)end);
+  if (probe == 0)
+    FAIL("a seek probe that found nothing answered 0, which leaves Kodi at end of file until the next seek");
+  else if (probe > 0)
+    FAIL("the probe read %d bytes from a frozen buffer", probe);
+  if (again == 0)
+    FAIL("the read after the probe answered 0; at the same position it is the ordinary tail wait (-1 per slice)");
+  if (!cl.IsLiveTimeshiftStreamOpen())
+    FAIL("the stream closed itself after the probe");
+
+  ctl("live_freeze=0");
+  long resumed = 0;
+  const long phase2 = ms();
+  while (ms() - phase2 < 20000 && resumed == 0)
+  {
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n == 0)
+      break;
+    if (n > 0)
+      resumed += n;
+  }
+  INFO("seek probe: after the buffer grew again %ld bytes arrived within %ld ms", resumed, ms() - phase2);
+  if (resumed == 0)
+    FAIL("the stream did not resume once new segments arrived");
+}
+
 extern std::atomic<long> g_notifyCount;
 extern std::mutex g_notifyMutex;
 extern std::string g_lastNotify;
@@ -1913,6 +1986,8 @@ int main(int argc, char** argv)
       live_fatal_ends(*cl, arg ? arg : "tail");
     else if (what == "live_tail_ended")
       live_tail_ended(*cl);
+    else if (what == "live_seek_probe")
+      live_seek_probe(*cl);
     else if (what == "live_tail_giveup")
       live_tail_giveup(*cl);
     else if (what == "live_blackhole_close")

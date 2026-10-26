@@ -341,6 +341,11 @@ Kodi's PVR stream at end of file until the next seek, so Kodi 21's two opening s
 at its first stall; the case fails with the old 0. Kodi's end-of-file flag and `NextStream()` are not reachable from a
 test; the stall and the seek timings were measured live on Kodi 21.3 and 22.0-RC1 (`docs/CLOSED_ITEMS.md`, "Server-side
 mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its first stall ends playback").
+2026-10-26: the glue harness gained `live_seek_probe`, which drives the real read: at a frozen live tail it seeks to the
+end and reads at once, and the probe must answer -1 (measured: at once), the next read at the same position -1 after
+one slice, and the stream must resume. The unit test covers only `LiveTailGiveUpResult()`; with the call site in
+`ReadLiveTimeshiftStreamOnce()` put back to `return 0` every unit test still passed and this scenario fails, which a
+review of the fix found.
 
 ### `ChannelGroupFilter`
 
