@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**31 open, 352 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**32 open, 352 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -22,12 +22,13 @@ provider, and the release gate passing a stale plugin zip), five LOW. One more (
 0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
 2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
 and is in `CLOSED_ITEMS.md`). The last (2026-10-25) is the live check of `timeshift_buffer` 0.8.16's
-heartbeat fix, which so far has run only in the plugin integration harness. And one (2026-10-25, MEDIUM and
+heartbeat fix, which so far has run only in the plugin integration harness. One (2026-10-26) came out of a read-only review of the
+HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is alive. And one (2026-10-25, MEDIUM and
 time-critical) is tzdata 2026e's Manitoba change, which the offset table does not have yet.
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 3 |
+| Open: Needs a live check | 4 |
 | Open: Fix known, not yet done | 15 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 2 |
@@ -54,6 +55,20 @@ Kodi buffering instead of ending"), so a server that stays unreachable may end p
 about 40 s) suggests Kodi read again after the first 0, and the file-server-unreachable notice may already cover this
 case. Check live with the server-down simulation; if it ends silently, mark the stream fatal and queue the notice when
 the budget runs out.
+
+#### Two more live-read paths answer 0 while the buffer is alive, which sets Kodi's end of file
+
+**Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix; LOW, plausible from reading.**
+`ReadLiveTimeshiftStreamOnce()` still answers 0 when the read position falls in a gap no segment covers (its "is a gap"
+debug line) and when the plugin reports that a segment was recycled between the manifest fetch and the read
+(`LiveSegmentOutcome::kSegmentGone`). Both happen while the buffer is alive, but a 0 sets Kodi's end of file until the
+next seek (`CLOSED_ITEMS.md`'s "Server-side mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its
+first stall ends playback"), so playback can carry on and then end at the next stall instead of waiting out
+`kLiveStallWaitBudgetMs`. A likely trigger: pause for longer than the plugin's buffer, resume (the read moves to the
+oldest segment) and lose that segment to recycling before it is fetched. Check live: pause past the buffer length,
+resume, force a stall, and see whether playback ends at once or after about 70 s. If it ends at once, a recycled segment
+could answer -1 instead (check that the next read refreshes the manifest and moves on); a gap needs a bound first,
+since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
 
 #### Dispatcharr 0.33.0: guide history now builds up, and the guide fetch asks for all of it
 
