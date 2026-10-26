@@ -3037,6 +3037,13 @@ contradicting platform, unknown asset, duplicate platform, bad tag), that a fail
 line's rewrite leaves the other alone, art copying, and that the repository zip is reproducible and passes
 `check_release_zip.py`. The behaviour in Kodi itself was confirmed live (that section of `docs/BUILDING.md`).
 
+2026-10-26: `tools/check_doc_refs.py`'s function check looks each cited name up in a set of the source's `\w+` runs instead
+of a word-boundary regex search over all of `src/` and both plugins per citation; that took about 30 s of the script's 32 s,
+the new lookup about 0.2 s, with the same 161 findings in the same order on that day's docs.
+`test_check_functions_flags_exactly_what_the_old_word_boundary_search_missed` pins that the two agree where a boundary is
+easy to get wrong (underscores and digits run on; `::`, `.`, `->` and the ends of the text do not), and fails on a plain
+substring lookup.
+
 ### `kodi_smoke_test.py`
 
 `tools/kodi_smoke_test.py` (added 2026-09-29, fixing several real,

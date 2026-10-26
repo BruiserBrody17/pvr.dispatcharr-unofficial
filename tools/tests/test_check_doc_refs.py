@@ -22,6 +22,7 @@ guarding against a recurrence.
 """
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -418,6 +419,48 @@ def test_check_functions_searches_plugin_py_files_too(tmp_path, monkeypatch):
     monkeypatch.setattr(check_doc_refs, "DOC_FILES", [citing])
 
     assert check_doc_refs.check_functions() == []
+
+
+def test_check_functions_flags_exactly_what_the_old_word_boundary_search_missed(tmp_path, monkeypatch):
+    """check_functions() looks each name up in a set of the corpus's \\w+ runs instead of running
+    re.search(\\bname\\b) over the whole corpus per citation (about 30 s on the real docs). Pins that the
+    two agree where a word boundary is easy to get wrong: underscores and digits run on, while "::",
+    ".", "->" and the start and end of the text do not."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    src = "Start(); a::Scoped(); obj.Dotted(); p->Arrow(); _Prefixed(); Suffixed_(); Numbered2(); x=Middle+1; End"
+    (src_dir / "Foo.cpp").write_text(src)
+    names = [
+        "Start",
+        "Scoped",
+        "Dotted",
+        "Arrow",
+        "Middle",
+        "End",
+        "_Prefixed",
+        "Prefixed",
+        "Suffixed",
+        "Suffixed_",
+        "Numbered",
+        "Numbered2",
+        "Mid",
+        "a",
+        "x",
+    ]
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    citing = docs_dir / "CITING.md"
+    citing.write_text("".join(f"`Ns::{name}()`\n" for name in names))
+
+    monkeypatch.setattr(check_doc_refs, "SRC_DIR", src_dir)
+    monkeypatch.setattr(check_doc_refs, "PLUGIN_FILES", [])
+    monkeypatch.setattr(check_doc_refs, "DOC_FILES", [citing])
+
+    flagged = [key.split("|")[-1] for key, _ in check_doc_refs.check_functions()]
+
+    expected = [name for name in names if not re.search(rf"\b{re.escape(name)}\b", src)]
+    assert flagged == expected
+    assert expected == ["Prefixed", "Suffixed", "Numbered", "Mid"]
 
 
 # ---------------------------------------------------------------------

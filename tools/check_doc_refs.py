@@ -255,12 +255,16 @@ def check_functions() -> list[tuple[str, str]]:
     errors = []
     code_files = list(SRC_DIR.glob("*.cpp")) + list(SRC_DIR.glob("*.h")) + PLUGIN_FILES
     src_text = "\n".join(p.read_text(encoding="utf-8") for p in code_files)
+    # A name made of word characters matches \bname\b exactly when it is one whole \w+ run in the text, so
+    # one pass collecting those runs answers every citation. A regex search per citation instead (about
+    # 3,700 of them, over the whole corpus each time) took about 30 s, nearly all of this script's run.
+    identifiers = set(re.findall(r"\w+", src_text))
     for doc in DOC_FILES:
         doc_rel = rel(doc)
         for lineno, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), start=1):
             for m in FUNCTION_REF_RE.finditer(line):
                 name = m.group(1).split("::")[-1]
-                if not re.search(rf"\b{re.escape(name)}\b", src_text):
+                if name not in identifiers:
                     key = f"{doc_rel}|function|{name}"
                     message = (
                         f"{doc_rel}:{lineno}: references `{name}()`, not found in src/ or either "
