@@ -41,6 +41,7 @@ A run prints `RESULT fails=N` and `rc=0` when it passed.
 | `live_fault <ms> "<at_ms>:<knob>=<v>[\|<knob>=<v>]"` | the same with a fault injected mid-playback (outage, hung API, dropped Range, bad size, ended, fatal) |
 | `rec "<at_ms>:<knob>=<v>"` | a completed recording: random seeks, outages, a file that shrinks, a 404 |
 | `ip [ms] "<at_ms>:<knob>=<v>"`, `ip_chaos` | an in-progress recording: cold open (`IP_AGE` segments of backlog), natural finish, user stop, deleted mid-play, an unsizeable segment, 403 segments, key rotation, foreign host |
+| `live_seek_probe` | Kodi's seek probe at a frozen live tail: a read right after `SEEK_END` that finds nothing must answer -1 at once (a 0 leaves Kodi at end of file), the next read at the same position is the ordinary tail wait, and the stream resumes when the buffer grows |
 | `live_blackhole_close`, `live_blackhole_read` | a hung API with the token hint lapsed: Close and a tail-wait read must stay bounded (run with `TMO=30`) |
 | `ip_tail_bound` | an in-progress recording whose tail stops growing: the longest read at the tail (about a second, not the whole budget), the `-1` retries before the first `0`, and the stream resuming when segments arrive |
 | `ip_blackhole_close` | Stop while a reader waits at the tail of an in-progress recording and the API hangs: the longest blocked `Read()` is how long Stop waits |
