@@ -3074,6 +3074,13 @@ UTF-16 refusal, non-ASCII terms against UTF-8 content, a missing explicit path a
 `check_release_contents` over a synthetic eight-zip release (a stale addon zip, CoreELEC's revision suffix, a plugin
 whose two versions disagree). 33 of the new cases fail on the old gate. The gate passes over the shipped 0.14.0 release.
 
+2026-10-26: `tools/check_doc_refs.py`'s function check looks each cited name up in a set of the source's `\w+` runs instead
+of a word-boundary regex search over all of `src/` and both plugins per citation; that took about 30 s of the script's 32 s,
+the new lookup about 0.2 s, with the same 168 findings in the same order on that day's docs.
+`test_check_functions_flags_exactly_what_the_old_word_boundary_search_missed` pins that the two agree where a boundary is
+easy to get wrong (underscores and digits run on; `::`, `.`, `->` and the ends of the text do not), and fails on a plain
+substring lookup.
+
 ### `kodi_smoke_test.py`
 
 `tools/kodi_smoke_test.py` (added 2026-09-29, fixing several real,
