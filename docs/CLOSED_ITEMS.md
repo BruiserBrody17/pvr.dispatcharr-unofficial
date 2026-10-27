@@ -6,6 +6,37 @@
 
 ### Fixed
 
+#### timeshift_buffer 0.8.16: the late-heartbeat fix has not run on a real Dispatcharr
+
+**Confirmed live 2026-10-27 on a real Dispatcharr 0.33.0 with `timeshift_buffer` 0.8.16 deployed,
+against Kodi 21.3 in Server-side mode; the lab stays on 0.8.16, the version the next release ships.** The plugin zip was
+built with CI's own `zip` command and imported, then parallel `reload/` and `run()` bursts put 0.8.16 in every worker
+(a throwaway probe plugin read each worker's reaper thread's `Plugin.version`: 0.8.16 in every worker, and the reaper lease
+was held by one of them). Kodi played Channel A, and a scripted second viewer (`ZZZ_TEST_B`) attached to the same
+buffer through `start_buffer`, so Kodi's stop would not be the last one. After Kodi stopped, the buffer's Redis state
+(read through the probe) listed only the scripted viewer, with Kodi's viewer id under `stopped_viewers`; a `heartbeat`
+for that id 6 s after the stop answered ok but left it out of both `viewers` and `viewer_heartbeats`, where 0.8.15
+re-adds it. A scripted `start_buffer` under the stopped id then reattached it and cleared the mark. Kodi played the
+channel again (a fresh viewer id per open; the picture advanced within 12 s). For the end-to-end case, the scripted
+viewer was stopped, sent a late heartbeat, and Kodi stopped last: the buffer state and its `/proxy/ts/status` entry were
+gone 3.8 s after Kodi's stop (that time includes the polling), not after `idle_timeout_seconds`. Along the way the
+reaper pruned `ZZZ_TEST_B`, which sends no heartbeats of its own, as it should. The probe was deleted and flushed
+from every worker afterwards (its `run()` answers 404). A first try on another channel failed earlier and for an
+unrelated reason: that channel's source never produced a segment in 30 s, and Kodi gave up as designed.
+
+**As opened (2026-10-25):**
+
+**Opened 2026-10-25, when the fix merged; LOW, a check to make before the next release.** The fix (`CLOSED_ITEMS.md`,
+"timeshift_buffer: a heartbeat that lands just after its viewer's stop re-adds the viewer (plugin integration `race`
+flakes)") was confirmed by the plugin's unit tests and `tests/glue/plugin_integration/driver.py` (two simulated workers
+running the real plugin against a fake Redis and a real ffmpeg), not on a real Dispatcharr: the lab still runs 0.8.15,
+since 0.8.16's other change, the output format, was checked there and the plugin then set back. Check on the lab with
+0.8.16 deployed and Server-side mode: play a channel, stop it in Kodi, then send a `heartbeat` for that viewer through
+the plugin's action within `_STOPPED_VIEWER_TTL_SECONDS` (120 s) of the stop, and confirm the buffer and its proxy
+connection end within seconds (`/proxy/ts/status`), not after `idle_timeout_seconds`; then play the same channel again
+from the same device (a reattach clears the mark) and confirm it buffers and plays. Leave the lab on whichever plugin
+version the release ships.
+
 #### Manitoba stays on UTC-5 from 2026-11-01, but the offset table still falls it back
 
 **Opened 2026-10-25, fixed 2026-10-27; MEDIUM and time-critical. Checked against the installed tzdata 2026e and, for
@@ -31,6 +62,13 @@ The trade-off, as for British Columbia and Alberta: before this change the cross
 (a constant +60 where the table gave -360), and now it covers a pre-2026e one instead, but only once the six soonest
 not-started occurrences all fall after 2026-11-01. A rule made or edited for a later date before then, on a pre-2026e
 server, is converted with -300 and scheduled at -360, an hour late (found by the review of this change).
+**That older-data case is the one a real Dispatcharr 0.33.0 image is in (checked live 2026-10-27 through a throwaway
+probe plugin):** `sync_recurring_rule_impl()` makes each occurrence with `timezone.make_aware(..., tz)`, where
+`_system_timezone()` is `ZoneInfo(CoreSettings.get_system_time_zone())`, and `ZoneInfo` reads the image's system tz data
+(`/usr/share/zoneinfo`, `tzdata.zi` says 2026c) ahead of the pip `tzdata` package (2026e) the same image carries;
+`pytz` (2026.5) is current too but is not what the scheduler uses. So on that image `America/Winnipeg` is UTC-6 in
+January 2027 and the cross-check's legacy-zone path is what keeps a Winnipeg server right after 2026-11-01, until the
+image is rebuilt on newer system tz data.
 
 #### Server-side mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its first stall ends playback
 

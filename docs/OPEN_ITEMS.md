@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**31 open, 353 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**30 open, 354 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -21,13 +21,12 @@ checked against the code before it was filed: two MEDIUM (the timeshift plugin's
 provider, and the release gate passing a stale plugin zip), five LOW. One more (the same day) came out of the
 0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
 2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
-and is in `CLOSED_ITEMS.md`). The last (2026-10-25) is the live check of `timeshift_buffer` 0.8.16's
-heartbeat fix, which so far has run only in the plugin integration harness. One (2026-10-26) came out of a read-only review of the
+and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of the
 HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is alive.
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 4 |
+| Open: Needs a live check | 3 |
 | Open: Fix known, not yet done | 14 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 2 |
@@ -35,7 +34,7 @@ HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is 
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 6 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 306 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 307 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 38 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -89,19 +88,6 @@ without, and 3, 7 and 30 days were still byte-identical: the guide held under tw
 0.32.0, so nothing had built up yet. The lab's catch-up channels all report the same few-day window, so there the
 growth is bounded to about that; a server whose channels advertise a long window can grow much further. Measure again
 once the server has refreshed for longer than its longest catch-up window.
-
-#### timeshift_buffer 0.8.16: the late-heartbeat fix has not run on a real Dispatcharr
-
-**Opened 2026-10-25, when the fix merged; LOW, a check to make before the next release.** The fix (`CLOSED_ITEMS.md`,
-"timeshift_buffer: a heartbeat that lands just after its viewer's stop re-adds the viewer (plugin integration `race`
-flakes)") was confirmed by the plugin's unit tests and `tests/glue/plugin_integration/driver.py` (two simulated workers
-running the real plugin against a fake Redis and a real ffmpeg), not on a real Dispatcharr: the lab still runs 0.8.15,
-since 0.8.16's other change, the output format, was checked there and the plugin then set back. Check on the lab with
-0.8.16 deployed and Server-side mode: play a channel, stop it in Kodi, then send a `heartbeat` for that viewer through
-the plugin's action within `_STOPPED_VIEWER_TTL_SECONDS` (120 s) of the stop, and confirm the buffer and its proxy
-connection end within seconds (`/proxy/ts/status`), not after `idle_timeout_seconds`; then play the same channel again
-from the same device (a reattach clears the mark) and confirm it buffers and plays. Leave the lab on whichever plugin
-version the release ships.
 
 ### Fix known, not yet done
 
