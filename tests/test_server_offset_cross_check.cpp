@@ -1,6 +1,9 @@
 #include "ServerOffsetCrossCheck.h"
+#include "TimeZoneUtil.h"
 
 #include <catch2/catch_test_macros.hpp>
+
+#include <utility>
 
 using namespace dispatcharr;
 
@@ -457,6 +460,39 @@ TEST_CASE("JudgeServerOffset reports what the legacy table and the agreeing samp
   const auto updated = JudgeServerOffset(Always(-420), Always(-480), {{hm(17, 30), kMidYear}});
   CHECK(updated.kind == Kind::kAgrees);
   CHECK(updated.legacyKind == Kind::kDisagrees);
+}
+
+TEST_CASE("JudgeServerOffset reads a Winnipeg server on tz data older than 2026e as legacy zone data",
+          "[ServerOffsetCrossCheck]")
+{
+  using Kind = ServerOffsetVerdict::Kind;
+  using Mode = ServerOffsetOverride::Mode;
+  // The real table, not a made-up one: Manitoba's permanent daylight time (tzdata 2026e) has to be one of the changes
+  // applyZoneRuleChanges=false leaves out, or an older server would read as an unexplained constant difference.
+  auto table = [](time_t at, int& out) { return ComputeKnownZoneOffsetMinutes("America/Winnipeg", at, out); };
+  auto legacy = [](time_t at, int& out)
+  { return ComputeKnownZoneOffsetMinutes("America/Winnipeg", at, out, /*applyZoneRuleChanges=*/false); };
+  // A 19:00 rule in December: 01:00 UTC on older tz data (UTC-6), 00:00 UTC on 2026e (UTC-5).
+  const time_t olderServer = kDecember - hours(2) - 1800;
+  const time_t updatedServer = kDecember - hours(3) - 1800;
+  auto judged = JudgeServerOffset(table, legacy, {{hm(19, 0), olderServer}});
+  CHECK(judged.kind == Kind::kDisagrees);
+  CHECK(judged.proposed.mode == Mode::kLegacyZoneData);
+  judged = JudgeServerOffset(table, legacy, {{hm(19, 0), updatedServer}});
+  CHECK(judged.kind == Kind::kAgrees);
+  CHECK(judged.proposed.mode == Mode::kNone);
+
+  // With the override in force, January 2027 is UTC-6 and July 2027 UTC-5, as the older server has it.
+  const time_t kJan2027 = 1800014400;
+  const time_t kJul2027 = 1815652800;
+  for (const auto& [at, expected] : {std::pair<time_t, int>{kJan2027, -360}, std::pair<time_t, int>{kJul2027, -300}})
+  {
+    int current = 0;
+    int old = 0;
+    REQUIRE(table(at, current));
+    REQUIRE(legacy(at, old));
+    CHECK(ApplyServerOffsetOverride({Mode::kLegacyZoneData, 0, 0}, current, old) == expected);
+  }
 }
 
 TEST_CASE("ImpliedOffsetMinutes rounds exactly half a minute up", "[ServerOffsetCrossCheck]")

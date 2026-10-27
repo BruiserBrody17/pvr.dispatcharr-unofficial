@@ -16,9 +16,10 @@ namespace dispatcharr
 // instant it computed from it, so the pair says which UTC offset the server used for that day: a rule at 19:30 whose
 // occurrence starts at 10:30 UTC was scheduled under UTC+9. The table can be wrong where the server's tz data is
 // older or newer than the table's (British Columbia and Alberta stop changing their clocks on 2026-11-01; a server
-// image with tz data from before 2026c still changes them -- docs/OPEN_ITEMS.md, closed 2026-10-06), and a rule made
-// from a wrong offset records an hour off. An occurrence is not padded: Dispatcharr creates it straight from the
-// rule's own start and end (confirmed against its recurring-rule scheduler, docs/RECORDINGS.md).
+// image with tz data from before 2026c still changes them -- docs/OPEN_ITEMS.md, closed 2026-10-06; Manitoba likewise
+// before 2026e), and a rule made from a wrong offset records an hour off. An occurrence is not padded: Dispatcharr
+// creates it straight from the rule's own start and end (confirmed against its recurring-rule scheduler,
+// docs/RECORDINGS.md).
 struct OffsetSample
 {
   int ruleStartTimeOfDaySeconds = 0; // Dispatcharr-local, as the rule stores it
@@ -85,7 +86,7 @@ struct ServerOffsetOverride
   {
     kNone,
     // The server applies the zone's rules as they were before the table's permanent-daylight change (an image with
-    // tz data from before 2026c): resolved per instant by the table with that change left out.
+    // tz data from before 2026c, or 2026e for Manitoba): resolved per instant by the table with that change left out.
     kLegacyZoneData,
     // Anything else: a fixed difference from the table, valid where the table gives `tableOffsetMinutes` again.
     kConstantDelta,

@@ -280,9 +280,11 @@ TEST_CASE("Every table zone has the right January and July offset", "[TimeZoneUt
   }
 }
 
-TEST_CASE("Vancouver and Edmonton stay on their summer offset from 2026-11-01 (tzdata 2026c)", "[TimeZoneUtil]")
+TEST_CASE("Vancouver, Edmonton and Winnipeg stay on their summer offset from 2026-11-01 (tzdata 2026c and 2026e)",
+          "[TimeZoneUtil]")
 {
-  // tzdata 2026c: no fall-back on 2026-11-01 for British Columbia or Alberta. Before it, DST works as usual.
+  // tzdata 2026c: no fall-back on 2026-11-01 for British Columbia or Alberta; 2026e: nor for Manitoba. Before it, DST
+  // works as usual.
   const time_t kJuly2026 = 1784116800;       // 2026-07-15T12:00Z
   const time_t kOct31 = 1793448000;          // 2026-10-31T12:00Z, still daylight time
   const time_t kNov2 = 1793620800;           // 2026-11-02T12:00Z, would have been standard time
@@ -300,7 +302,8 @@ TEST_CASE("Vancouver and Edmonton stay on their summer offset from 2026-11-01 (t
   };
   for (const Expected& e : {Expected{"America/Vancouver", -420, -480}, Expected{"America/Edmonton", -360, -420},
                             Expected{"Canada/Pacific", -420, -480}, Expected{"Canada/Mountain", -360, -420},
-                            Expected{"America/Yellowknife", -360, -420}})
+                            Expected{"America/Yellowknife", -360, -420}, Expected{"America/Winnipeg", -300, -360},
+                            Expected{"Canada/Central", -300, -360}, Expected{"America/Rainy_River", -300, -360}})
   {
     INFO(e.zone);
     int offset = 0;
@@ -329,8 +332,8 @@ TEST_CASE("Other Canadian and US zones still fall back on 2026-11-01", "[TimeZon
   int offset = 0;
   REQUIRE(ComputeKnownZoneOffsetMinutes("America/Toronto", kNov2, offset));
   CHECK(offset == -300);
-  REQUIRE(ComputeKnownZoneOffsetMinutes("America/Winnipeg", kNov2, offset));
-  CHECK(offset == -360);
+  REQUIRE(ComputeKnownZoneOffsetMinutes("America/Chicago", kNov2, offset));
+  CHECK(offset == -360); // Winnipeg's old rules, still Chicago's
   REQUIRE(ComputeKnownZoneOffsetMinutes("America/Halifax", kNov2, offset));
   CHECK(offset == -240);
   REQUIRE(ComputeKnownZoneOffsetMinutes("America/Denver", kNov2, offset));
@@ -398,6 +401,19 @@ TEST_CASE("Leaving out a zone's recent rule change gives what an older server st
     // Before the change the two agree.
     REQUIRE(ComputeKnownZoneOffsetMinutes(zone, kJul2026, offset, false));
     CHECK(offset == -420);
+  }
+  // Manitoba (tzdata 2026e) the same way, an hour east.
+  for (const char* zone : {"America/Winnipeg", "Canada/Central", "America/Rainy_River"})
+  {
+    INFO(zone);
+    REQUIRE(ComputeKnownZoneOffsetMinutes(zone, kJan2027, offset));
+    CHECK(offset == -300);
+    REQUIRE(ComputeKnownZoneOffsetMinutes(zone, kJan2027, offset, /*applyZoneRuleChanges=*/false));
+    CHECK(offset == -360);
+    REQUIRE(ComputeKnownZoneOffsetMinutes(zone, kJul2027, offset, false));
+    CHECK(offset == -300);
+    REQUIRE(ComputeKnownZoneOffsetMinutes(zone, kJul2026, offset, false));
+    CHECK(offset == -300);
   }
   // A zone with no recent change is unaffected.
   REQUIRE(ComputeKnownZoneOffsetMinutes("America/New_York", kJan2027, offset, false));

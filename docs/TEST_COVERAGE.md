@@ -2174,6 +2174,16 @@ offset. `ComputeKnownZoneOffsetMinutes()` accepts any alias (those three plus
 IANA's `backward` links: `US/*`, `Canada/*`, country-name ids) and
 `SyncTimezoneFromDispatcharr()` selects the canonical name in the dropdown.
 
+2026-10-27: `America/Winnipeg` gained `kPermanentDaylightFromNov2026Utc` (tzdata 2026e keeps Manitoba at UTC-5 from
+2026-11-01; `docs/CLOSED_ITEMS.md`, "Manitoba stays on UTC-5 from 2026-11-01, but the offset table still falls it
+back"), found by `tools/tests/test_timezone_table_vs_zoneinfo.py` failing on a 2026e machine. Winnipeg and its aliases
+`Canada/Central` and `America/Rainy_River` joined the permanent-daylight transition vectors and the legacy
+`applyZoneRuleChanges=false` case, `test_server_offset_cross_check.cpp` runs `JudgeServerOffset()` against the real
+Winnipeg table (a pre-2026e server reads as legacy zone data, not as a constant difference), and the pytest leaves out
+just Winnipeg and its aliases on a 2026c/2026d database (recognised by Winnipeg's January 2027 offset, checked against
+PyPI's `tzdata` 2026.4) instead of failing there. With the table row reverted, three Catch2 cases and three pytest
+checks fail.
+
 ### `UnprobeableSegment`
 
 `UnprobeableSegment` is `ShouldProbeOnlyLeadingSegment()`, `UpdateUnprobeableSegmentTracker()` and

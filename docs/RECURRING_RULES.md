@@ -764,8 +764,9 @@ East of UTC Kodi's own start conversion is already an hour off for these times, 
 
 The built-in zone table (`TimeZoneUtil.cpp`) is the addon's own copy of when each zone changes its clocks, so it is
 wrong wherever the server's tz data differs from it: a Dispatcharr image with tz data from before 2026c still changes
-the clocks of British Columbia and Alberta on 2026-11-01, which the table (updated for the permanent daylight time those
-two moved to) no longer does, and a rule made from the wrong offset records an hour off. The server's real offset does
+the clocks of British Columbia and Alberta on 2026-11-01 (and one from before 2026e those of Manitoba), which the table
+(updated for the permanent daylight time those three moved to) no longer does, and a rule made from the wrong offset
+records an hour off. The server's real offset does
 not need a database to be found. A rule is stored as a local time of day, and every occurrence Dispatcharr materializes
 from it carries the UTC instant the server computed, so the pair gives the offset the server applied that day
 (`ServerOffsetCrossCheck.h`): a 19:30 rule whose occurrence starts at 10:30 UTC was scheduled under UTC+9. An
@@ -790,8 +791,8 @@ end, confirmed against Dispatcharr's source, see the first section of `docs/RECO
 - Any sample that agrees with the table wins; disagreement needs every usable sample to name the same other offset against
   the same table offset. Mixed evidence leaves the table in charge.
 - **What a disagreement means** (`JudgeServerOffset()`): when the zone's table with its recent rule change left out
-  (`ComputeKnownZoneOffsetMinutes(..., applyZoneRuleChanges=false)`, today British Columbia and Alberta staying on daylight
-  time) explains the samples, the server is applying the older rules and the addon follows that table instant by instant, so a
+  (`ComputeKnownZoneOffsetMinutes(..., applyZoneRuleChanges=false)`, today British Columbia, Alberta and Manitoba staying on
+  daylight time) explains the samples, the server is applying the older rules and the addon follows that table instant by instant, so a
   rule for a date after the server's next clock change (March 2027) is converted correctly too. Any other difference is a
   constant delta, applied only where the table gives the offset the delta was measured against: one constant for every date
   would put a summer-dated rule an hour off.
