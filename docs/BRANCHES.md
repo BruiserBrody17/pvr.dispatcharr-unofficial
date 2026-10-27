@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`4611863`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`c8076c5`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -142,6 +142,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `e71d531` | `a7ec36a` (`git cherry-pick -x`, applied cleanly) | The glue harness's `live_seek_probe` scenario, which fails with the call site put back to `return 0`; it passed against Kodi 21's headers too. |
 | `f46e452` | `34e0c75` (`git cherry-pick -x`, applied cleanly; `TEST_COVERAGE.md`'s count by hand) | `check_doc_refs.py` looks cited function names up in a set; the checker was the same on both branches, and `Omega`'s docs give 161 identical findings to `Piers`'s 168. |
 | `4611863` | `a2988aa` (`git cherry-pick -x`) | Two repeated `LiveTailGiveUpResult()` checks dropped from its unit test case; the test was the same on both branches. |
+| `c8076c5` | `1877892` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand) | Manitoba kept on UTC-5 from 2026-11-01 in `TimeZoneUtil`'s table (tzdata 2026e), with the tests and the tzdata pytest's 2026c/2026d leave-out; the table and its checks were the same on both branches. |
 
 ## Dependencies that differ by Kodi release
 
