@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**31 open, 359 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**30 open, 360 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
 work on `Piers`: what remains of Kodi 22 support. Nothing is left from the 2026-10-18 read-only audit of the whole
@@ -12,9 +12,6 @@ project (addon, both plugins, tools, CI and packaging; 28 findings: seven fixed 
 2026-10-21, one on 2026-10-22 and the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). The
 other 17 come from the 2026-10-23 bug-hunting sweep of the whole project (five read-only reviews by area, each finding
 checked against the code before it was filed): one MEDIUM, the rest LOW.
-One (2026-10-24) is the guide-history live check left from a review of Dispatcharr 0.33.0 against the addon and both
-plugins (the other two checks were done on a 0.33.0 server the same day and are in `CLOSED_ITEMS.md`, as is the review's
-one code change, "Pin the live proxy's output format to MPEG-TS").
 
 Seven (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
 checked against the code before it was filed: two MEDIUM (the timeshift plugin's token reaching a Redirect-profile
@@ -26,7 +23,7 @@ HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is 
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 3 |
+| Open: Needs a live check | 2 |
 | Open: Fix known, not yet done | 14 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 2 |
@@ -35,7 +32,7 @@ HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is 
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 6 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 312 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 38 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 39 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
@@ -67,27 +64,6 @@ oldest segment) and lose that segment to recycling before it is fetched. Check l
 resume, force a stall, and see whether playback ends at once or after about 70 s. If it ends at once, a recycled segment
 could answer -1 instead (check that the next read refreshes the manifest and moves on); a gap needs a bound first,
 since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
-
-#### Dispatcharr 0.33.0: guide history now builds up, and the guide fetch asks for all of it
-
-**Opened 2026-10-24, from the review of Dispatcharr 0.33.0 against the addon; read from its changelog and source, not
-yet seen live.** Up to 0.32.0 an EPG refresh replaced a channel's stored programmes with what the pull held, so the
-server kept about two days of history, and `ComputeGuidePrevDays()` could ask for the longest catch-up window (up to 30
-days) for free: 3, 7 and 30 days were measured byte-identical (`CLOSED_ITEMS.md`, "Guide fetch never includes
-already-aired programmes"). 0.33.0 (upstream #1707) keeps ended programmes for the largest `catchup_days` of the
-catch-up channels mapped to each EPG source (at least 1 day, at most 30), and Settings → EPG gains a minimum and
-maximum retention (defaults 1 and 30 days, the maximum settable from 0 to 365). So on a server with long catch-up
-windows the guide the addon downloads at every start grows for up to that many days after the upgrade. Check on the
-lab after upgrading: the `/output/epg` size and parse time with the addon's `prev_days` over the first week, against
-`kMaxXmlTvResponseBytes` (256 MB on a 32-bit build) and the slowest device. If it matters, ask for less history (the
-guide only needs to reach as far back as catch-up can be browsed in Kodi) or make the depth a setting. The new maximum
-also means `kServerMaxPrevDays` (30) is no longer the server's fixed clamp; a server set lower simply returns less.
-
-**Day 0 on the lab, 2026-10-24 (0.33.0).** With the addon's `prev_days` the export was about a quarter larger than
-without, and 3, 7 and 30 days were still byte-identical: the guide held under two days of history, the same as on
-0.32.0, so nothing had built up yet. The lab's catch-up channels all report the same few-day window, so there the
-growth is bounded to about that; a server whose channels advertise a long window can grow much further. Measure again
-once the server has refreshed for longer than its longest catch-up window.
 
 ### Fix known, not yet done
 
