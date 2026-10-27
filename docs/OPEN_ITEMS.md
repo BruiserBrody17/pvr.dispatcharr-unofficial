@@ -4,20 +4,21 @@
 
 ## Status at a glance
 
-**26 open, 358 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**23 open, 361 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
 the TSan start-up crash, fixed on 2026-10-22) or from the 2026-10-18 read-only audit, made on `Piers` and checked
 against `Omega`'s code the same day (all 21 held here; 14 fixed on 2026-10-19, four on 2026-10-21, one on 2026-10-22 and
-the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). 16 more come from the 2026-10-23
+the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). 14 more come from the 2026-10-23
 bug-hunting sweep of the whole project, made on `Piers` and checked against `Omega`'s code the same day (all 17 held
-here): one MEDIUM, the rest LOW; its 17th, the release gate's unscanned bytes, was fixed on 2026-10-27.
+here): one MEDIUM, the rest LOW; three more of its 17 (the release gate's unscanned bytes and two in
+`tools/build_kodi_repo.py`) were fixed on 2026-10-27.
 
-Five (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
+Four (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
 checked against the code before it was filed: one MEDIUM (the timeshift plugin's token reaching a Redirect-profile
-provider), four LOW; its two release-gate findings (a stale plugin zip, MEDIUM, and the unchecked binaries) were fixed
-on 2026-10-27. One more (the same day) came out of the
+provider), three LOW; three more of its seven (two release-gate findings, a stale plugin zip, MEDIUM, and the unchecked
+binaries, and one in `tools/build_kodi_repo.py`) were fixed on 2026-10-27. One more (the same day) came out of the
 0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
 2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
 and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of the
@@ -32,8 +33,8 @@ HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is 
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 3 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 310 |
+| Open: Tooling (tools/) | 0 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 313 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 39 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -320,30 +321,4 @@ handling in `OnAddonSettingChanged()` are the work. Not started.
 
 ### Tooling (tools/)
 
-#### build_kodi_repo.py index does not tie the tag's branch suffix to the Kodi line
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, reproduced on the published 0.14.1 zips.**
-`tag_version` checks only `\d+\.\d+\.\d+(-[A-Za-z]+)?` and drops the suffix, and nothing checks the tag exists, so
-`--kodi 22` with `0.14.1`, `0.14.1-Omega` or a typo such as `0.14.1-Pires` all succeed and write `<path>` under that
-tag. The documented publish step pushes the result, so one typo publishes an index whose every download 404s for that
-Kodi line. Fix: put the branch name in `KODI_LINES` and require the suffix to match (the plain form only exists for tags
-that are never republished), and optionally `git rev-parse --verify refs/tags/<tag>`. Tests: mismatched and missing
-suffixes raise `RepoError`.
-
-#### build_kodi_repo.py repository stamps a zip of uncommitted source with the last commit's time
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading.** `source_time` uses `git log
--1 --format=%ct -- kodi-repository/...` while the content comes from the working tree, so a build before committing an
-`addon.xml.in` change gets the previous commit's time, may publish content that was never committed, and differs from
-the post-commit build under the same file name. Fix: without `--time`, refuse when `git status --porcelain --
-kodi-repository/` is not empty; test with a temporary repository or a patched `subprocess.run`.
-
-#### build_kodi_repo.py indexes an incomplete asset set and a Linux zip under the CoreELEC name
-
-**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
-it was filed); LOW, reproduced with synthetic zips.** `build_index()` refuses only an empty set, so five or seven addon
-zips write an index that silently drops the missing platforms, and the publish step pushes whatever it wrote.
-`check_platform()` accepts the family name, so the x86_64 Linux zip's own `<platform>linux</platform>` passes under the
-`-coreelec-armv7` name; today only the release gate's CoreELEC version rule (the `.N` revision) stops that file, and the
-tool is meant to be usable on its own for re-indexing. Fix: require exactly the line's six addon assets (share the list
-with `check_release_zip.py`), and for a CoreELEC name require the `.N` revision or an empty own platform.
+None open.

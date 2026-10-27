@@ -3067,6 +3067,15 @@ crashed the gate). 30 cases fail on the old gate (some only because `check_relea
 now). The gate passes the shipped 0.13.1 set (and `Piers`'s 0.14.0 and 0.14.1) when run with the tag's own plugin
 sources.
 
+2026-10-27: `tools/tests/test_build_kodi_repo.py` covers the repository tool's three fixes from the 2026-10-23 and
+2026-10-24 sweeps (`docs/CLOSED_ITEMS.md`'s `build_kodi_repo.py` entries of that date): a tag not naming the line's
+branch (plain, the other line's, a typo, lower case), a release short of each of the six addon zips in turn, the other
+line's CoreELEC build, the Linux zip renamed to the CoreELEC name and a revision on a non-CoreELEC build, and
+`source_time()` against a temporary repository (a modified, an untracked and an ignored file refused, a file outside the
+source ignored, `--time` still accepted). `test_each_lines_assets_are_a_release_gates_addon_assets` ties `KODI_LINES` to
+this branch's gate. The tests that indexed a single zip now index a whole release, `_release()` taking the CoreELEC
+suffix for Kodi 21's line. 14 cases fail on the old tool; both published indexes rebuild byte for byte.
+
 ### `kodi_smoke_test.py`
 
 `tools/kodi_smoke_test.py` (added 2026-09-29, fixing several real,
