@@ -3054,6 +3054,19 @@ the new lookup about 0.2 s, with the same 161 findings in the same order on that
 easy to get wrong (underscores and digits run on; `::`, `.`, `->` and the ends of the text do not), and fails on a plain
 substring lookup.
 
+2026-10-27: `tools/tests/test_check_release_zip.py` covers the gate's three fixes from the 2026-10-23 and 2026-10-24
+sweeps (`docs/CLOSED_ITEMS.md`'s release-gate entries of that date). A stale plugin zip: one left over from the previous
+release (both of its versions agreeing, as in every zip shipped) fails on its version against the tree's
+`dispatcharr-plugin/` and on its date against the addon zips, each half alone too, and a gate with no plugin sources
+beside it fails rather than skipping; `_release()` now writes those sources next to its zips. Mixed-up zips: a library of
+the wrong platform per asset (minimal ELF, PE and Mach-O headers built in the test), another addon's id, a library
+`addon.xml` names but the zip lacks, a member outside the zip's own folder, and the library found through a symlink as
+the Linux and macOS zips carry it. Unscanned bytes: data before, between and after the entries (in zips `unzip -t`
+accepts), an entry comment, a directory entry with data, and a local header naming its entry differently (which had
+crashed the gate). 30 cases fail on the old gate (some only because `check_release_contents` takes the plugin sources
+now). The gate passes the shipped 0.13.1 set (and `Piers`'s 0.14.0 and 0.14.1) when run with the tag's own plugin
+sources.
+
 ### `kodi_smoke_test.py`
 
 `tools/kodi_smoke_test.py` (added 2026-09-29, fixing several real,

@@ -205,6 +205,59 @@ def test_an_extra_field_only_in_the_local_header_fails(tmp_path):
     assert gate.check_zip(_raw_zip(tmp_path / "ok.zip", "addon/x.txt", b"x", b""), []) == []
 
 
+def _two_entry_zip(path, before=b"", between=b"", after=b""):
+    """A zip whose file carries `before` ahead of its first local header, `between` its two entries and `after` its
+    last entry and the central directory: bytes zipfile, Kodi and unzip all read past."""
+    with open(path, "wb") as handle:
+        handle.write(before)
+        with zipfile.ZipFile(handle, "w") as z:
+            z.writestr(zipfile.ZipInfo("addon/a.txt", date_time=_STAMP), b"a")
+            # zipfile seeks back to where it thinks the next record goes before each write
+            handle.write(between)
+            z.start_dir = handle.tell()
+            z.writestr(zipfile.ZipInfo("addon/b.txt", date_time=_STAMP), b"b")
+            handle.write(after)
+            z.start_dir = handle.tell()
+    return str(path)
+
+
+@pytest.mark.parametrize("where", ["before", "between", "after"])
+def test_bytes_outside_every_entry_fail(tmp_path, where):
+    # the 2026-10-23 sweep's finding: a blocklist term hidden here passed as clean, since only entries were read
+    path = _two_entry_zip(tmp_path / "a.zip", **{where: b"hidden-term"})
+    with zipfile.ZipFile(path) as z:
+        assert z.read("addon/b.txt") == b"b"  # still a zip every unzipper accepts
+    problems = gate.check_zip(path, ["hidden-term"])
+    assert any("11 byte(s)" in p and "belong to no entry" in p for p in problems), problems
+    assert gate.check_zip(_two_entry_zip(tmp_path / "ok.zip"), ["hidden-term"]) == []
+
+
+def test_an_entry_comment_fails(tmp_path):
+    path = tmp_path / "a.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        info = zipfile.ZipInfo("addon/a.txt", date_time=_STAMP)
+        info.comment = b"built by someone"
+        z.writestr(info, b"a")
+    assert any("entry addon/a.txt has a comment" in p for p in gate.check_zip(str(path), []))
+
+
+def test_a_directory_entry_carrying_data_fails(tmp_path):
+    # check_zip skipped directory entries before reading them, so their data was never scanned
+    path = _zip(tmp_path / "a.zip", {"addon/": b"hidden-term"})
+    assert any("directory entry addon/ carries data" in p for p in gate.check_zip(path, ["hidden-term"]))
+    assert gate.check_zip(_zip(tmp_path / "ok.zip", {"addon/": b"", "addon/a.txt": b"a"}), []) == []
+
+
+def test_a_local_header_naming_its_entry_differently_fails_rather_than_crashing(tmp_path):
+    path = tmp_path / "a.zip"
+    _zip(path, {"addon/aaaa.txt": b"a"})
+    data = path.read_bytes()
+    path.write_bytes(data.replace(b"addon/aaaa.txt", b"addon/bbbb.txt", 1))  # the local header comes first
+    problems = gate.check_zip(str(path), [])
+    assert any("different name in its local header" in p for p in problems)
+    assert any("cannot be read" in p for p in problems)
+
+
 def test_entries_with_different_timestamps_fail(tmp_path):
     # what a zip made without tools/normalize_zip.py looks like: each entry at the build machine's local clock
     path = tmp_path / "a.zip"
@@ -390,68 +443,229 @@ def test_a_blocklist_that_blocks_nothing_or_does_not_exist_fails_the_release_run
     assert gate.main(["prog", "--blocklist", str(utf16), clean]) == 2
 
 
-def _release(tmp_path, version, addon_versions=None, plugin_versions=None, stamps=None):
-    """A full release set of small zips: each addon zip with its addon.xml, each plugin zip with its two versions."""
+def _elf_header(elf_class, machine):
+    header = bytearray(64)
+    header[:4], header[4], header[5] = b"\x7fELF", elf_class, 1
+    struct.pack_into("<H", header, 18, machine)
+    return bytes(header)
+
+
+def _pe(machine):
+    image = bytearray(0x80)
+    image[:2] = b"MZ"
+    struct.pack_into("<I", image, 0x3C, 0x40)
+    image[0x40:0x44] = b"PE\x00\x00"
+    struct.pack_into("<H", image, 0x44, machine)
+    return bytes(image)
+
+
+def _macho(cpu):
+    return b"\xcf\xfa\xed\xfe" + struct.pack("<I", cpu) + bytes(24)
+
+
+# Each addon asset's library attribute, file name and a minimal image of the right kind, as the real 0.14.1 zips have
+# them (Linux and macOS through their symlink chain: library_linux names the versioned file).
+_LIBRARIES = {
+    "-windows-x86_64.zip": ("library_windows", "pvr.dispatcharr-unofficial.dll", _pe(0x8664)),
+    "-linux.zip": ("library_linux", "pvr.dispatcharr-unofficial.so.9.9.9", _elf_header(2, 62)),
+    "-osx-arm64.zip": ("library_osx", "pvr.dispatcharr-unofficial.9.9.9.dylib", _macho(0x0100000C)),
+    "-android-aarch64.zip": ("library_android", "libpvr.dispatcharr-unofficial.so", _elf_header(2, 183)),
+    "-android-armv7.zip": ("library_android", "libpvr.dispatcharr-unofficial.so", _elf_header(1, 40)),
+    "-coreelec-armv7.zip": ("library_linux", "pvr.dispatcharr-unofficial.so.9.9.9", _elf_header(1, 40)),
+}
+
+
+def _release(
+    tmp_path,
+    version,
+    addon_versions=None,
+    plugin_versions=None,
+    stamps=None,
+    libraries=None,
+    members=None,
+    source_versions=None,
+):
+    """A full release set of small zips, each addon zip with its addon.xml and library, each plugin zip with its two
+    versions, plus the plugin sources the gate compares them with (`tmp_path/dispatcharr-plugin`). `libraries` swaps
+    an addon zip's library image, `members` adds or replaces members of any zip ({zip: {member: bytes}})."""
     paths = []
     for name in _concrete(version):
-        members, stamp = {}, (stamps or {}).get(name, _STAMP)
+        contents, stamp = {}, (stamps or {}).get(name, _STAMP)
         if name.startswith(gate.PREFIX):
             default = version + ".1" if "-coreelec-" in name else version
             found = (addon_versions or {}).get(name, default)
-            members["pvr.dispatcharr-unofficial/addon.xml"] = (
-                '<?xml version="1.0"?>\n<addon id="pvr.dispatcharr-unofficial" version="%s" name="x">' % found
+            attribute, library, image = next(v for s, v in _LIBRARIES.items() if name.endswith(s))
+            contents["pvr.dispatcharr-unofficial/addon.xml"] = (
+                '<?xml version="1.0"?>\n<addon id="pvr.dispatcharr-unofficial" version="%s" name="x">\n'
+                '<extension point="kodi.pvrclient" %s="%s"/>\n</addon>' % (found, attribute, library)
             ).encode()
+            contents["pvr.dispatcharr-unofficial/" + library] = (libraries or {}).get(name, image)
         else:
             plugin = name[: -len(".zip")]
             declared, running = (plugin_versions or {}).get(name, ("1.2.3", "1.2.3"))
-            members[plugin + "/plugin.json"] = json.dumps({"name": plugin, "version": declared}).encode()
-            members[plugin + "/plugin.py"] = (
+            contents[plugin + "/plugin.json"] = json.dumps({"name": plugin, "version": declared}).encode()
+            contents[plugin + "/plugin.py"] = (
                 'class Handler:\n    server_version = "x/9"\n\n\nclass Plugin:\n    name = "P"\n    version = "%s"\n'
                 % running
             ).encode()
+            source = tmp_path / "dispatcharr-plugin" / plugin
+            source.mkdir(parents=True, exist_ok=True)
+            (source / "plugin.json").write_text(
+                json.dumps({"version": (source_versions or {}).get(name, "1.2.3")}), encoding="utf-8"
+            )
+        contents.update((members or {}).get(name, {}))
         path = tmp_path / name
         with zipfile.ZipFile(path, "w") as z:
-            for member, data in members.items():
+            for member, data in contents.items():
                 z.writestr(zipfile.ZipInfo(member, date_time=stamp), data)
         paths.append(str(path))
     return paths
 
 
+def _contents(tmp_path, paths, version):
+    return gate.check_release_contents(paths, version, str(tmp_path / "dispatcharr-plugin"))
+
+
 def test_a_release_whose_zips_say_the_right_versions_passes(tmp_path):
-    assert gate.check_release_contents(_release(tmp_path, "9.9.9"), "9.9.9") == []
+    assert _contents(tmp_path, _release(tmp_path, "9.9.9"), "9.9.9") == []
 
 
 def test_a_stale_zip_renamed_to_the_new_version_fails(tmp_path):
     linux = gate.PREFIX + "9.9.9-linux.zip"
-    problems = gate.check_release_contents(_release(tmp_path, "9.9.9", {linux: "9.9.8"}), "9.9.9")
+    problems = _contents(tmp_path, _release(tmp_path, "9.9.9", {linux: "9.9.8"}), "9.9.9")
     assert any("9.9.8" in p and "linux" in p for p in problems)
 
 
 @pytest.mark.parametrize("found", ["9.9.9", "9.9.8.1", "9.9.9.x"])
 def test_the_coreelec_zip_must_carry_the_version_plus_its_revision(tmp_path, found):
     coreelec = next(n for n in _concrete("9.9.9") if "-coreelec-" in n)
-    problems = gate.check_release_contents(_release(tmp_path, "9.9.9", {coreelec: found}), "9.9.9")
+    problems = _contents(tmp_path, _release(tmp_path, "9.9.9", {coreelec: found}), "9.9.9")
     assert any("coreelec" in p for p in problems)
 
 
 def test_a_plugin_zip_whose_two_versions_disagree_fails(tmp_path):
     paths = _release(tmp_path, "9.9.9", plugin_versions={"timeshift_buffer.zip": ("1.2.4", "1.2.3")})
-    problems = gate.check_release_contents(paths, "9.9.9")
+    problems = _contents(tmp_path, paths, "9.9.9")
     assert any("timeshift_buffer.zip" in p and "Plugin class" in p for p in problems)
 
 
 def test_addon_zips_from_different_builds_fail(tmp_path):
     windows = gate.PREFIX + "9.9.9-windows-x86_64.zip"
     paths = _release(tmp_path, "9.9.9", stamps={windows: (2026, 10, 7, 9, 0, 0)})
-    assert any("different timestamps" in p for p in gate.check_release_contents(paths, "9.9.9"))
+    assert any("different timestamps" in p for p in _contents(tmp_path, paths, "9.9.9"))
     # the plugin zips may be newer (a plugin-only fix replaces its zip in a shipped release)
     later = _release(tmp_path, "9.9.9", stamps={"recording_edl.zip": (2026, 10, 8, 0, 0, 0)})
-    assert gate.check_release_contents(later, "9.9.9") == []
+    assert _contents(tmp_path, later, "9.9.9") == []
+
+
+def test_a_plugin_zip_left_over_from_the_previous_release_fails(tmp_path):
+    # the 2026-10-24 sweep's finding: both of the old zip's versions agree with each other, as in every zip ever
+    # shipped, so only the release's own plugin sources and the addon zips' date can tell it is stale
+    stale = _release(
+        tmp_path,
+        "9.9.9",
+        plugin_versions={"timeshift_buffer.zip": ("1.2.2", "1.2.2")},
+        stamps={"timeshift_buffer.zip": (2026, 9, 30, 0, 0, 0)},
+    )
+    problems = _contents(tmp_path, stale, "9.9.9")
+    assert any("timeshift_buffer.zip" in p and "1.2.2" in p and "plugin.json says 1.2.3" in p for p in problems)
+    assert any("timeshift_buffer.zip" in p and "before the addon zips'" in p for p in problems)
+    # each half alone: renormalised to the new tag's time, and a zip of the right version built earlier
+    renormalised = _release(tmp_path, "9.9.9", plugin_versions={"recording_edl.zip": ("1.2.2", "1.2.2")})
+    assert [p for p in _contents(tmp_path, renormalised, "9.9.9") if "recording_edl.zip" in p]
+    older = _release(tmp_path, "9.9.9", stamps={"recording_edl.zip": (2026, 10, 6, 0, 0, 0)})
+    assert [p for p in _contents(tmp_path, older, "9.9.9") if "before the addon zips'" in p]
+
+
+def test_a_gate_without_the_plugin_sources_beside_it_fails_rather_than_passes(tmp_path):
+    paths = _release(tmp_path, "9.9.9")
+    problems = gate.check_release_contents(paths, "9.9.9", str(tmp_path / "nowhere"))
+    assert sorted(p.split(":")[0] for p in problems) == ["recording_edl.zip", "timeshift_buffer.zip"]
+    assert all("release's own tree" in p for p in problems)
+
+
+def test_the_gate_compares_with_the_plugin_sources_of_its_own_tree():
+    for name in gate.RELEASE_ASSETS:
+        if not name.startswith(gate.PREFIX):
+            plugin = Path(gate.PLUGIN_SOURCE) / name[: -len(".zip")]
+            assert (plugin / "plugin.json").is_file(), plugin
+    assert Path(gate.PLUGIN_SOURCE) == _PATH.parent.parent / "dispatcharr-plugin"
+
+
+def test_every_addon_asset_has_its_library_kind():
+    for name in gate.RELEASE_ASSETS:
+        if name.startswith(gate.PREFIX):
+            assert sum(name.endswith(suffix) for suffix in gate.ADDON_LIBRARIES) == 1, name
+    assert sorted(gate.ADDON_LIBRARIES) == sorted(_LIBRARIES)
+
+
+def test_library_kind_reads_the_three_formats():
+    for suffix, (_, _, image) in _LIBRARIES.items():
+        assert gate.library_kind(image) == gate.ADDON_LIBRARIES[suffix][1], suffix
+    assert gate.library_kind(_elf_header(2, 99)) == "ELF64 machine 99"
+    assert gate.library_kind(b"MZ" + bytes(10)) == gate.library_kind(b"text") != gate.ADDON_LIBRARIES["-linux.zip"][1]
+
+
+@pytest.mark.parametrize(
+    "asset,image",
+    [
+        # the two Android ABIs swapped, the hand-built zips' likeliest mix-up
+        ("-android-aarch64.zip", _elf_header(1, 40)),
+        ("-android-armv7.zip", _elf_header(2, 183)),
+        ("-windows-x86_64.zip", _elf_header(2, 62)),
+        ("-osx-arm64.zip", _elf_header(2, 62)),
+        ("-osx-arm64.zip", _macho(0x01000007)),  # an Intel build
+        ("-linux.zip", _elf_header(2, 183)),
+        ("-coreelec-armv7.zip", _elf_header(2, 183)),  # Kodi 22's 64-bit CoreELEC build
+        ("-windows-x86_64.zip", _pe(0x14C)),
+    ],
+    ids=["aarch64-armv7", "armv7-aarch64", "windows-elf", "osx-elf", "osx-intel", "linux-arm", "coreelec-64", "win32"],
+)
+def test_a_library_of_the_wrong_platform_fails(tmp_path, asset, image):
+    name = gate.PREFIX + "9.9.9" + asset
+    problems = _contents(tmp_path, _release(tmp_path, "9.9.9", libraries={name: image}), "9.9.9")
+    assert [p for p in problems if p.startswith(name) and "its name promises" in p], problems
+
+
+def test_a_missing_library_or_another_addon_fails(tmp_path):
+    linux = gate.PREFIX + "9.9.9-linux.zip"
+    other = '<addon id="pvr.someone-else" version="9.9.9"><extension library_linux="x.so"/></addon>'
+    paths = _release(tmp_path, "9.9.9", members={linux: {"pvr.dispatcharr-unofficial/addon.xml": other.encode()}})
+    problems = [p for p in _contents(tmp_path, paths, "9.9.9") if p.startswith(linux)]
+    assert any("pvr.someone-else" in p for p in problems)
+    assert any("x.so" in p and "not in the zip" in p for p in problems)
+
+
+def test_a_zip_holding_another_folder_fails(tmp_path):
+    windows = gate.PREFIX + "9.9.9-windows-x86_64.zip"
+    swapped = {
+        windows: {"pvr.other/addon.xml": b"<addon/>"},
+        # each plugin zip holding the other plugin's folder too
+        "timeshift_buffer.zip": {"recording_edl/plugin.py": b"x"},
+    }
+    problems = _contents(tmp_path, _release(tmp_path, "9.9.9", members=swapped), "9.9.9")
+    assert any(p.startswith(windows) and "pvr.other/addon.xml" in p for p in problems)
+    assert any(p.startswith("timeshift_buffer.zip") and "outside its timeshift_buffer/ folder" in p for p in problems)
+
+
+def test_the_library_is_found_through_its_symlink_chain(tmp_path):
+    # the real Linux zip's library_linux names the versioned file, which is real; a build naming the bare `.so`
+    # (a symlink to it) must pass too
+    linux = gate.PREFIX + "9.9.9-linux.zip"
+    xml = '<addon id="pvr.dispatcharr-unofficial" version="9.9.9"><extension library_linux="lib.so"/></addon>'
+    paths = _release(tmp_path, "9.9.9", members={linux: {"pvr.dispatcharr-unofficial/addon.xml": xml.encode()}})
+    with zipfile.ZipFile(paths[[Path(p).name for p in paths].index(linux)], "a") as z:
+        info = zipfile.ZipInfo("pvr.dispatcharr-unofficial/lib.so", date_time=_STAMP)
+        info.create_system, info.external_attr = 3, 0o120777 << 16
+        z.writestr(info, b"pvr.dispatcharr-unofficial.so.9.9.9")
+    assert _contents(tmp_path, paths, "9.9.9") == []
 
 
 def test_main_checks_the_contents_with_expect_release(tmp_path, monkeypatch):
     monkeypatch.delenv("PRIVACY_BLOCKLIST", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(gate, "PLUGIN_SOURCE", str(tmp_path / "dispatcharr-plugin"))
+    assert gate.main(["prog", "--expect-release", "9.9.9", *_release(tmp_path, "9.9.9")]) == 0
     paths = _release(tmp_path, "9.9.9", {gate.PREFIX + "9.9.9-osx-arm64.zip": "9.9.8"})
     assert gate.main(["prog", "--expect-release", "9.9.9", *paths]) == 1
     assert gate.main(["prog", *paths]) == 0  # without --expect-release only the privacy checks run

@@ -180,7 +180,8 @@ everything); lint and every unit-test job run on every push, since the cross-fil
   into releases; do not tag per fix. Before tagging, run a data-hardening audit (an Opus subagent sweep over code, docs,
   full history, release assets and issues/PRs) and resolve a real finding with a `git-filter-repo` rewrite, never a plain
   commit; the local hooks are a backstop and do not see release assets. All eight zips are published only after
-  `python3 tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>` passes; fix a
+  `python3 tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>` passes, run from
+  the tag's own `tools/` and `dispatcharr-plugin/` (it checks the plugin zips against the latter); fix a
   failure at its cause, never the gate. Everything else: `docs/BUILDING.md`'s "Release assets".
 - **The CoreELEC package isn't part of CI** and won't be (`docs/BUILDING.md`'s CoreELEC section says why); its zip is
   built by hand.
