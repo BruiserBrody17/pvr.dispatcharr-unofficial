@@ -45,11 +45,25 @@ PLUGIN_ZIPS = ("timeshift_buffer.zip", "recording_edl.zip")
 SITE_URL = "https://bruiserbrody17.github.io/pvr.dispatcharr-unofficial/"
 DOWNLOAD_URL = "https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/releases/download/"
 
-# Kodi line -> (site directory, the kodi.binary.instance.pvr major its builds import). The PVR API major is how a zip
-# says which Kodi it was built for: 8.x for Kodi 21, 9.x for Kodi 22 (docs/BRANCHES.md).
+# Kodi line -> (site directory, the kodi.binary.instance.pvr major its builds import, the branch its release tags name,
+# the asset suffixes of its six addon zips). The PVR API major is how a zip says which Kodi it was built for: 8.x for
+# Kodi 21, 9.x for Kodi 22 (docs/BRANCHES.md). The suffixes are each branch's own release gate's RELEASE_ASSETS
+# (tools/check_release_zip.py, which differs between the two branches only in the CoreELEC one), and an index is
+# written only from all six: the publish step pushes whatever was written, and a platform left out would silently stop
+# getting updates.
 KODI_LINES = {
-    "21": ("kodi21", 8),
-    "22": ("kodi22", 9),
+    "21": (
+        "kodi21",
+        8,
+        "Omega",
+        ("windows-x86_64", "linux", "osx-arm64", "android-aarch64", "android-armv7", "coreelec-armv7"),
+    ),
+    "22": (
+        "kodi22",
+        9,
+        "Piers",
+        ("windows-x86_64", "linux", "osx-arm64", "android-aarch64", "android-armv7", "coreelec-aarch64"),
+    ),
 }
 
 # Asset-name suffix -> the <platform> the index gives it. The CI Linux build runs on x86_64; the CoreELEC package is
@@ -79,8 +93,19 @@ def tag_version(tag):
     return tag.split("-", 1)[0]
 
 
-def asset_platform(name, version):
-    """The index <platform> for a release asset name, or None for a plugin zip."""
+def line_version(tag, kodi):
+    """The addon version of a release tag of one Kodi line, which must name that line's branch (`0.14.1-Piers` for
+    Kodi 22): every <path> is under the tag, so the other line's tag or a typo publishes an index whose every download
+    404s. A plain `<version>` tag is from before the branches were named in tags, and is never republished."""
+    version = tag_version(tag)
+    branch = KODI_LINES[kodi][2]
+    if tag != version + "-" + branch:
+        raise RepoError("%s is not a Kodi %s release tag (expected %s-%s)" % (tag, kodi, version, branch))
+    return version
+
+
+def asset_suffix(name, version):
+    """The platform suffix of a release asset name (`linux`, `coreelec-aarch64`), or None for a plugin zip."""
     if name in PLUGIN_ZIPS:
         return None
     stem = ASSET_PREFIX + version + "-"
@@ -89,7 +114,13 @@ def asset_platform(name, version):
     suffix = name[len(stem) : -len(".zip")]
     if suffix not in PLATFORMS:
         raise RepoError("%s: unknown platform %r (known: %s)" % (name, suffix, ", ".join(PLATFORMS)))
-    return PLATFORMS[suffix]
+    return suffix
+
+
+def asset_platform(name, version):
+    """The index <platform> for a release asset name, or None for a plugin zip."""
+    suffix = asset_suffix(name, version)
+    return PLATFORMS[suffix] if suffix else None
 
 
 def read_addon_xml(zip_path, addon_id):
@@ -131,12 +162,19 @@ def check_platform(name, own_text, index_platform):
 def index_entry(zip_path, tag, kodi):
     """The addons.xml entry for one addon zip, and the asset paths (in the zip) its metadata declares."""
     name = os.path.basename(zip_path)
-    version = tag_version(tag)
-    platform = asset_platform(name, version)
+    version = line_version(tag, kodi)
+    suffix = asset_suffix(name, version)
+    platform = PLATFORMS[suffix]
     root = read_addon_xml(zip_path, ADDON_ID)
-    # CoreELEC appends its package revision (0.14.0.1); every other build carries the plain version.
-    if not re.fullmatch(re.escape(version) + r"(\.\d+)?", root.get("version", "")):
-        raise RepoError("%s holds version %s, not release %s" % (name, root.get("version"), version))
+    # CoreELEC appends its package revision (0.14.0.1); every other build carries the plain version. Holding each to
+    # its own form is also what tells the x86_64 Linux zip renamed to the CoreELEC name apart: its own <platform> is
+    # `linux`, which check_platform() accepts for linux-aarch64 too.
+    coreelec = suffix.startswith("coreelec-")
+    if not re.fullmatch(re.escape(version) + (r"\.\d+" if coreelec else ""), root.get("version", "")):
+        raise RepoError(
+            "%s holds version %s, not release %s%s"
+            % (name, root.get("version"), version, " plus CoreELEC's package revision" if coreelec else "")
+        )
     major = pvr_api_major(root)
     if major != KODI_LINES[kodi][1]:
         raise RepoError("%s is built against PVR API %d, not Kodi %s's %d" % (name, major, kodi, KODI_LINES[kodi][1]))
@@ -184,19 +222,26 @@ def replace_dir(final, build):
 
 def build_index(site, kodi, tag, zips):
     site = Path(site)
+    version = line_version(tag, kodi)
     entries, seen, skipped = {}, {}, []
     for zip_path in zips:
         name = os.path.basename(zip_path)
-        if asset_platform(name, tag_version(tag)) is None:
+        suffix = asset_suffix(name, version)
+        if suffix is None:
             skipped.append(name)
             continue
+        if suffix not in KODI_LINES[kodi][3]:
+            raise RepoError("%s is not one of Kodi %s's release assets" % (name, kodi))
         platform, root, assets = index_entry(zip_path, tag, kodi)
         if platform in seen:
             raise RepoError("%s and %s are both %s builds" % (seen[platform], name, platform))
         seen[platform] = name
         entries[platform] = (zip_path, root, assets)
-    if not entries:
-        raise RepoError("no addon zip given")
+    missing = [s for s in KODI_LINES[kodi][3] if PLATFORMS[s] not in entries]
+    if missing:
+        raise RepoError(
+            "release %s lacks its %s zip(s); an index is written only from all six" % (tag, ", ".join(missing))
+        )
     site.mkdir(parents=True, exist_ok=True)
     build = Path(tempfile.mkdtemp(prefix=".build-", dir=site))
     build.chmod(0o755)  # mkdtemp's 0700 would be what a local web server serves from
@@ -246,7 +291,20 @@ def deterministic_zip(path, members, stamp):
 
 
 def source_time():
-    """The last commit that touched the repository addon's source, so a rebuild gives the same zip."""
+    """The last commit that touched the repository addon's source, so a rebuild gives the same zip. Refused while that
+    source has uncommitted, untracked or ignored files (build_repository() packs every file there): the zip would hold
+    content no commit has, under the previous commit's time and the same file name as the real one."""
+    status = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "status", "--porcelain", "--ignored", "--", str(REPOSITORY_SOURCE)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    if status:
+        raise RepoError(
+            "the repository addon's source is not what its last commit holds (%s%s); commit it or pass --time"
+            % (status[0].strip(), ", ..." if len(status) > 1 else "")
+        )
     out = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "log", "-1", "--format=%ct", "--", str(REPOSITORY_SOURCE)],
         check=True,

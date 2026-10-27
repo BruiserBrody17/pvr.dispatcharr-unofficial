@@ -1064,14 +1064,17 @@ python3 tools/build_kodi_repo.py index --kodi 22 --tag 0.14.1-Piers --site site 
 git -C site add -A && git -C site commit -m "Kodi 22: 0.14.1" && git -C site push
 ```
 
-The tool refuses a zip whose version is not the tag's (CoreELEC's `.1` revision allowed), whose PVR API is the other
-Kodi's (`kodi.binary.instance.pvr` 8.x is Kodi 21, 9.x Kodi 22), whose own `<platform>` contradicts its file name, an
-unknown asset name, or two builds of one platform; a failed run leaves the old index in place.
+The tool refuses a tag that does not name the line's branch (`-Omega` for Kodi 21, `-Piers` for Kodi 22), a set
+without all six of the line's addon zips, a zip whose version is not the tag's (CoreELEC's must carry its `.1` revision,
+every other build must not), whose PVR API is the other Kodi's (`kodi.binary.instance.pvr` 8.x is Kodi 21, 9.x Kodi
+22), whose own `<platform>` contradicts its file name, an unknown asset name or the other line's CoreELEC build, or two
+builds of one platform; a failed run leaves the old index in place.
 
 **Changing the repository addon itself:** edit `addon.xml.in` and raise its `version` (the fourth version number,
 next to the addon's and the two plugins'; it moves only when this file changes), then
-`python3 tools/build_kodi_repo.py repository --site site` (entry times come from the file's last commit, so the zip
-is reproducible), run `python3 tools/check_release_zip.py --require-blocklist site/repository.dispatcharr-unofficial-*.zip`
+commit it, then `python3 tools/build_kodi_repo.py repository --site site` (entry times come from the source's last
+commit, so the zip is reproducible; without `--time` it refuses while `kodi-repository/repository.dispatcharr-unofficial/`
+holds anything that commit does not), run `python3 tools/check_release_zip.py --require-blocklist site/repository.dispatcharr-unofficial-*.zip`
 (without `--expect-release`: it is not one of a release's eight assets), and commit to `gh-pages`. Installed copies
 update themselves from `repo/addons.xml`.
 

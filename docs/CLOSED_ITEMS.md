@@ -6,6 +6,54 @@
 
 ### Fixed
 
+#### build_kodi_repo.py indexes an incomplete asset set and a Linux zip under the CoreELEC name
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); LOW, reproduced with synthetic zips.** `build_index()` refuses only an empty set, so five or seven addon
+zips write an index that silently drops the missing platforms, and the publish step pushes whatever it wrote.
+`check_platform()` accepts the family name, so the x86_64 Linux zip's own `<platform>linux</platform>` passes under the
+`-coreelec-aarch64` name; today only the release gate's CoreELEC version rule (the `.N` revision) stops that file, and
+the tool is meant to be usable on its own for re-indexing. Fix: require exactly the line's six addon assets (share the
+list with `check_release_zip.py`), and for a CoreELEC name require the `.N` revision or an empty own platform.
+
+**Fixed 2026-10-27, confirmed with tests that fail on the old tool.** `KODI_LINES` now carries each line's six addon
+asset suffixes (each branch's gate's `RELEASE_ASSETS`, which differ only in the CoreELEC one), and `build_index()`
+refuses a set without all six, before anything is written, and a zip that is not one of the line's (the other line's
+CoreELEC build). A CoreELEC asset must carry the package revision (`0.14.1.1`) and every other asset must not, which
+refuses the x86_64 Linux zip under the CoreELEC name. Sharing the gate's list directly was not possible: the tool
+writes both lines from one checkout, and each branch's gate knows only its own line;
+`test_each_lines_assets_are_a_release_gates_addon_assets` ties the two together instead. Both published indexes
+(Kodi 21 from the 0.13.1 zips, Kodi 22 from the 0.14.1 zips) rebuild byte for byte.
+
+#### build_kodi_repo.py repository stamps a zip of uncommitted source with the last commit's time
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading.** `source_time` uses `git log
+-1 --format=%ct -- kodi-repository/...` while the content comes from the working tree, so a build before committing an
+`addon.xml.in` change gets the previous commit's time, may publish content that was never committed, and differs from
+the post-commit build under the same file name. Fix: without `--time`, refuse when `git status --porcelain --
+kodi-repository/` is not empty; test with a temporary repository or a patched `subprocess.run`.
+
+**Fixed 2026-10-27, confirmed with tests that fail on the old tool.** Without `--time`, `source_time()` refuses
+while `git status --porcelain --ignored` lists anything under the repository addon's source: a change, an untracked
+file or an ignored one, since `build_repository()` packs every file there.
+`test_the_repository_zip_is_not_stamped_from_uncommitted_source` drives it against a temporary repository.
+
+#### build_kodi_repo.py index does not tie the tag's branch suffix to the Kodi line
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, reproduced on the published 0.14.1 zips.**
+`tag_version` checks only `\d+\.\d+\.\d+(-[A-Za-z]+)?` and drops the suffix, and nothing checks the tag exists, so
+`--kodi 22` with `0.14.1`, `0.14.1-Omega` or a typo such as `0.14.1-Pires` all succeed and write `<path>` under that
+tag. The documented publish step pushes the result, so one typo publishes an index whose every download 404s for that
+Kodi line. Fix: put the branch name in `KODI_LINES` and require the suffix to match (the plain form only exists for tags
+that are never republished), and optionally `git rev-parse --verify refs/tags/<tag>`. Tests: mismatched and missing
+suffixes raise `RepoError`.
+
+**Fixed 2026-10-27, confirmed with tests that fail on the old tool.** `line_version()` requires the tag to be
+`<version>-<Branch>` with the line's own branch (`KODI_LINES`: `Omega` for 21, `Piers` for 22); a plain version, the
+other line's suffix, a typo and a lower-case branch are refused before anything is written. Both published indexes
+already point at suffixed tags. The optional check that the tag exists was left out: a well-formed tag whose version
+is wrong already fails, since each zip's `addon.xml` must carry the tag's version.
+
 #### The release gate passes a stale plugin zip under --expect-release
 
 **Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before

@@ -50,6 +50,9 @@ docs/CLOSED_ITEMS.md|function|_serve_catchup
 docs/CLOSED_ITEMS.md|function|_system_timezone
 docs/CLOSED_ITEMS.md|function|add_internal
 docs/CLOSED_ITEMS.md|function|build_addon
+docs/CLOSED_ITEMS.md|function|build_index
+docs/CLOSED_ITEMS.md|function|build_repository
+docs/CLOSED_ITEMS.md|function|check_platform
 docs/CLOSED_ITEMS.md|function|check_realtime_update_push
 docs/CLOSED_ITEMS.md|function|check_release_contents
 docs/CLOSED_ITEMS.md|function|check_section_titles
@@ -57,8 +60,10 @@ docs/CLOSED_ITEMS.md|function|check_settings
 docs/CLOSED_ITEMS.md|function|discover_plugins
 docs/CLOSED_ITEMS.md|function|get_id
 docs/CLOSED_ITEMS.md|function|library_kind
+docs/CLOSED_ITEMS.md|function|line_version
 docs/CLOSED_ITEMS.md|function|log_system_event
 docs/CLOSED_ITEMS.md|function|run_action
+docs/CLOSED_ITEMS.md|function|source_time
 docs/CLOSED_ITEMS.md|possessive|Not expected to risk killing a real, actively-watched session, including a paused one|docs/TIMESHIFT.md
 docs/CLOSED_ITEMS.md|possessive|Scoped to times only|docs/RECORDINGS.md
 docs/CLOSED_ITEMS.md|possessive|wrong EPG copy|docs/RECORDINGS.md
@@ -80,8 +85,6 @@ docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
 docs/OPEN_ITEMS.md|function|HandleAddonCallback
 docs/OPEN_ITEMS.md|function|_dvr_capture_url
 docs/OPEN_ITEMS.md|function|_handle_redirect_stream
-docs/OPEN_ITEMS.md|function|build_index
-docs/OPEN_ITEMS.md|function|check_platform
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work
@@ -134,6 +137,7 @@ docs/TEST_COVERAGE.md|function|ShouldReseedInProgressSegmentCache
 docs/TEST_COVERAGE.md|function|_release
 docs/TEST_COVERAGE.md|function|_time_to_seconds
 docs/TEST_COVERAGE.md|function|add_internal
+docs/TEST_COVERAGE.md|function|source_time
 docs/TEST_COVERAGE.md|setting|dvr_settings
 docs/TIMESHIFT.md|function|CallChannelMenuHook
 docs/TIMESHIFT.md|function|CheckDependencies
