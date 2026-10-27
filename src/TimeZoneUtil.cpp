@@ -117,8 +117,10 @@ enum class DstFamily
 // America/Vancouver stays at UTC-7 and America/Edmonton at UTC-6 instead of falling back, and
 // Dispatcharr's scheduler (current tzdata or pytz) follows. The table's US/Canada rule would fall back
 // on that date, putting every recurring rule in those zones an hour off (found by the 2026-10-04 eighth
-// hardening sweep, by comparing the whole table against zoneinfo). 2026-11-01T00:00:00Z is a moment both
-// zones are still on daylight time, so switching to the fixed summer offset there is continuous.
+// hardening sweep, by comparing the whole table against zoneinfo). tzdata 2026e does the same for Manitoba
+// (America/Winnipeg stays at UTC-5), found when test_timezone_table_vs_zoneinfo.py failed on a 2026e
+// machine. 2026-11-01T00:00:00Z is a moment all three zones are still on daylight time, so switching to
+// the fixed summer offset there is continuous.
 constexpr time_t kPermanentDaylightFromNov2026Utc = 1793491200; // 2026-11-01T00:00:00Z
 
 struct KnownTimeZone
@@ -164,7 +166,7 @@ constexpr KnownTimeZone kKnownTimeZones[] = {
     {"America/Boise", -420, DstFamily::kUsCanada},
     // Canada
     {"America/Toronto", -300, DstFamily::kUsCanada},
-    {"America/Winnipeg", -360, DstFamily::kUsCanada},
+    {"America/Winnipeg", -360, DstFamily::kUsCanada, kPermanentDaylightFromNov2026Utc},
     {"America/Edmonton", -420, DstFamily::kUsCanada, kPermanentDaylightFromNov2026Utc},
     {"America/Vancouver", -480, DstFamily::kUsCanada, kPermanentDaylightFromNov2026Utc},
     {"America/Halifax", -240, DstFamily::kUsCanada},

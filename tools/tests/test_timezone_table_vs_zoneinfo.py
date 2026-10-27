@@ -15,6 +15,9 @@ shifting users' recordings.
 It checks the TABLE (and the rules' assumptions) rather than running the C++, which the Catch2
 suite covers with its own transition-instant tests; a compiler is not assumed here. Skipped, loudly,
 when the machine has no tz database.
+
+tzdata 2026e did the same for Manitoba (America/Winnipeg), which this test caught on a 2026e machine
+before the table had it.
 """
 
 import datetime as dt
@@ -117,6 +120,23 @@ def _database_predates_2026_bc_alberta_change():
     return january == dt.timedelta(hours=-8)
 
 
+def _database_predates_2026_manitoba_change():
+    """True when the machine's tz database still has Manitoba changing its clocks in 2027.
+
+    tzdata 2026e keeps Manitoba on daylight time from 2026-11-01 as 2026c did BC and Alberta. A
+    2026c or 2026d database is otherwise current, so instead of skipping the module it leaves out
+    just America/Winnipeg and the aliases that resolve to it."""
+    try:
+        zone = zoneinfo.ZoneInfo("America/Winnipeg")
+    except zoneinfo.ZoneInfoNotFoundError:
+        return False
+    january = dt.datetime(2027, 1, 15, 12, tzinfo=UTC).astimezone(zone).utcoffset()
+    return january == dt.timedelta(hours=-6)
+
+
+_MANITOBA = "America/Winnipeg"
+
+
 def _require_database(name):
     try:
         zoneinfo.ZoneInfo(name)
@@ -136,9 +156,12 @@ def test_the_table_was_parsed(table):
 def test_every_table_zone_matches_the_tz_database_through_2030(table):
     zones, _ = table
     _require_database("America/New_York")
+    old_manitoba = _database_predates_2026_manitoba_change()
     problems = []
     for name, (standard, family, permanent) in sorted(zones.items()):
         _require_database(name)
+        if old_manitoba and name == _MANITOBA:
+            continue
         bad = [
             at
             for at in _instants()
@@ -156,8 +179,11 @@ def test_every_table_zone_matches_the_tz_database_through_2030(table):
 def test_every_alias_resolves_to_a_zone_with_the_same_rules(table):
     zones, aliases = table
     _require_database("America/New_York")
+    old_manitoba = _database_predates_2026_manitoba_change()
     for alias, canonical in sorted(aliases.items()):
         assert canonical in zones, f"{alias} -> {canonical}: not a table zone"
+        if old_manitoba and canonical == _MANITOBA:
+            continue
         try:
             zoneinfo.ZoneInfo(alias)
         except zoneinfo.ZoneInfoNotFoundError:
@@ -193,3 +219,26 @@ def test_an_old_tz_database_is_recognised_so_the_module_skips_instead_of_failing
 
     monkeypatch.setattr(zoneinfo, "ZoneInfo", _missing)
     assert _database_predates_2026_bc_alberta_change() is False  # no database: the other skip handles it
+    assert _database_predates_2026_manitoba_change() is False
+
+
+def test_a_tz_database_older_than_2026e_is_recognised_so_only_manitoba_is_left_out(monkeypatch):
+    def _fixed(hours):
+        class _Zone(dt.tzinfo):
+            def utcoffset(self, _):
+                return dt.timedelta(hours=hours)
+
+            def dst(self, _):
+                return dt.timedelta(0)
+
+        return _Zone()
+
+    monkeypatch.setattr(zoneinfo, "ZoneInfo", lambda name: _fixed(-6))  # Winnipeg in January, before 2026e
+    assert _database_predates_2026_manitoba_change() is True
+    monkeypatch.setattr(zoneinfo, "ZoneInfo", lambda name: _fixed(-5))
+    assert _database_predates_2026_manitoba_change() is False
+
+
+def test_the_manitoba_leave_out_names_a_permanent_daylight_table_zone(table):
+    zones, _ = table
+    assert zones[_MANITOBA][2] > 0

@@ -6,6 +6,32 @@
 
 ### Fixed
 
+#### Manitoba stays on UTC-5 from 2026-11-01, but the offset table still falls it back
+
+**Opened 2026-10-25, fixed 2026-10-27; MEDIUM and time-critical. Checked against the installed tzdata 2026e and, for
+the leave-out below, PyPI's `tzdata` 2026.4 (IANA 2026d); unit-tested, not exercised live.** tzdata 2026e keeps Manitoba
+on daylight time for good, so `America/Winnipeg` (and its aliases `America/Rainy_River` and `Canada/Central`) stays at
+UTC-5 instead of falling back to UTC-6 on 2026-11-01 (`zdump` on 2026e: UTC-5 throughout, CDT and then EST from
+2026-11-01T07:00Z, as tzdata models Vancouver's change too), and Dispatcharr's scheduler follows the server's tz data. `TimeZoneUtil.cpp` had Winnipeg as a plain
+`kUsCanada` zone, the bug the Vancouver/Edmonton fix below closed for those two, so a recurring rule created while
+the server timezone was Winnipeg would have been stored an hour off. Found by `tools/tests/test_timezone_table_vs_zoneinfo.py`
+on a machine whose tz database had moved to 2026e (two failures: `America/Winnipeg`, table -360 against -300 from
+2026-11-01T07:00Z, and the `America/Rainy_River` alias). The Winnipeg entry now carries
+`kPermanentDaylightFromNov2026Utc` (2026-11-01T00:00Z is still daylight time in Manitoba, so the switch is continuous),
+with the comment above the constant widened. A server on pre-2026e data then reads as legacy zone data
+(`applyZoneRuleChanges=false`) as a pre-2026c one does for British Columbia and Alberta; nothing in
+`ServerOffsetCrossCheck` is zone-specific, and a new test runs `JudgeServerOffset()` against the real Winnipeg table to pin
+it. The pytest's old-database skip recognised only pre-2026c data, so a 2026c/2026d machine (most CI runners for now)
+would have failed on Winnipeg once the table was fixed: it now recognises pre-2026e data too and leaves out just
+Winnipeg and the aliases that resolve to it there, and the rest of the table is still checked (6 passed on 2026d, 6 on
+2026e). Northwest Territories, in the same tzdata release, needs nothing: `America/Yellowknife` is already an alias of
+`America/Edmonton`. Tests: Winnipeg and both aliases join the Catch2 permanent-daylight transition vectors and the legacy
+`applyZoneRuleChanges=false` case; with the table row reverted, three Catch2 cases and three pytest checks fail.
+The trade-off, as for British Columbia and Alberta: before this change the cross-check already covered a 2026e server
+(a constant +60 where the table gave -360), and now it covers a pre-2026e one instead, but only once the six soonest
+not-started occurrences all fall after 2026-11-01. A rule made or edited for a later date before then, on a pre-2026e
+server, is converted with -300 and scheduled at -360, an hour late (found by the review of this change).
+
 #### Server-side mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its first stall ends playback
 
 **Opened 2026-10-25 from the codec-switch check; root cause found the same day on Kodi 21.3, MEDIUM: on such a channel

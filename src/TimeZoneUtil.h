@@ -20,9 +20,9 @@ namespace dispatcharr
 // always pass the actual current time.
 // Also accepts the older names of those zones (Asia/Calcutta for Asia/Kolkata,
 // US/Central for America/Chicago, ...) -- see CanonicalKnownZoneName().
-// `applyZoneRuleChanges` false leaves out a zone's rule change that took effect recently (British Columbia and
-// Alberta staying on daylight time from 2026-11-01): what a server whose tz data predates the change still applies
-// (ServerOffsetCrossCheck.h).
+// `applyZoneRuleChanges` false leaves out a zone's rule change that took effect recently (British Columbia, Alberta
+// and Manitoba staying on daylight time from 2026-11-01): what a server whose tz data predates the change still
+// applies (ServerOffsetCrossCheck.h).
 bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc, int& offsetMinutesOut,
                                    bool applyZoneRuleChanges = true);
 
