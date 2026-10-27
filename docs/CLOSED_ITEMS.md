@@ -7829,6 +7829,36 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 ### Closed without a change (refuted, explained or harmless)
 
+#### Dispatcharr 0.33.0: guide history now builds up, and the guide fetch asks for all of it
+
+**Opened 2026-10-24; closed without a change 2026-10-27, measured on a 0.33.0 server three days after day 0: the history
+built up to the catch-up window and stopped there.** The same anonymous `/output/epg?tvg_id_source=channel_number` fetch
+the addon makes, at five `prev_days` values. Compared with no `prev_days`, `prev_days=1` was 27% larger, `prev_days=3`
+(what the addon sends here, since every catch-up channel on the server reports 3 days) 33% larger, and `7` and `30` 34%
+larger and byte-identical to each other. The earliest programme was about 3.5 days back, against under two at day 0, so
+the guide gained about 5% over day 0 and nothing more: the 3-day window plus the time between cleanups. The fetch took
+32 s with history and 28 s without, the size well inside `kMaxXmlTvResponseBytes`'s 32-bit cap.
+Beyond the first day, history added few programmes (the first day added about 43% more programmes; the next two about
+4% more). That is consistent with sources that have no catch-up channel keeping only the 1-day minimum, so the extra the
+addon downloads is history its catch-up channels can actually play. Parse time on a device was not measured.
+
+**What is left, not acted on:** the cost scales with the catch-up window. A server whose catch-up sources
+keep 30 days would download a much larger guide, and on a 32-bit build one past the cap makes the fetch fail
+with its "exceeded" error and Kodi keeps the guide it had. Lowering `prev_days` would trade away catch-up browsing that
+the window promises, so nothing changes unless a 32-bit user reports that error; then the options are a lower cap on
+`ComputeGuidePrevDays()` for 32-bit builds or a setting.
+
+**As opened (2026-10-24):** read from the 0.33.0 changelog and source, not yet seen live. Up to 0.32.0 an EPG refresh
+replaced a channel's stored programmes with what the pull held, so the server kept about two days of history, and
+`ComputeGuidePrevDays()` could ask for the longest catch-up window (up to 30 days) for free: 3, 7 and 30 days were
+measured byte-identical ("Guide fetch never includes already-aired programmes"). 0.33.0 (upstream #1707) keeps ended
+programmes for the largest `catchup_days` of the catch-up channels mapped to each EPG source (at least 1 day, at most
+30), and Settings → EPG gains a minimum and maximum retention (defaults 1 and 30 days, the maximum settable from 0 to
+365). So on a server with long catch-up windows the guide the addon downloads at every start grows for up to that many
+days after the upgrade. The new maximum also means `kServerMaxPrevDays` (30) is no longer the server's fixed clamp; a
+server set lower simply returns less. Day 0 (2026-10-24): with the addon's `prev_days` the export was about a quarter
+larger than without, and 3, 7 and 30 days were still byte-identical, under two days of history.
+
 #### Dispatcharr 0.33.0: catch-up seeks to a new start now reopen the provider
 
 **Opened 2026-10-24 from the review of Dispatcharr 0.33.0; closed without a change the same day, checked live on a

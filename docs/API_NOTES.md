@@ -89,8 +89,8 @@ plugins use, then live against a 0.33.0 server with Kodi 21.3 and Kodi 22.0-RC1 
   (`UserSerializer.update()`) and removes a key sent as `null`, unlike `/api/core/settings/{id}/`, whose `value` is
   replaced whole.
 - **Guide history.** Refreshes keep ended programmes up to the largest catch-up window of the channels on each source
-  (upstream #1707), so the addon's `prev_days` fetch grows after an upgrade; the day-0 measurement and the check still
-  to do are in `OPEN_ITEMS.md` ("Dispatcharr 0.33.0: guide history now builds up").
+  (upstream #1707), so the addon's `prev_days` fetch grows after an upgrade, then levels off at that window (measured
+  over three days; `CLOSED_ITEMS.md`, "Dispatcharr 0.33.0: guide history now builds up").
 - **Catch-up.** `POST /api/catchup/sessions/` is unchanged and a seek stays a run of `Range` requests in one session, so
   the new-start change (upstream #1540) is not reached (`CLOSED_ITEMS.md`, "Dispatcharr 0.33.0: catch-up seeks to a new
   start now reopen the provider").
