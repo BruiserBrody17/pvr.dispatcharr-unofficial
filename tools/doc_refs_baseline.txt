@@ -46,6 +46,7 @@ docs/CLOSED_ITEMS.md|function|_play_recording_and_verify
 docs/CLOSED_ITEMS.md|function|_seek_within_recording_and_verify
 docs/CLOSED_ITEMS.md|function|_select_new_timers
 docs/CLOSED_ITEMS.md|function|_serve_catchup
+docs/CLOSED_ITEMS.md|function|_system_timezone
 docs/CLOSED_ITEMS.md|function|add_internal
 docs/CLOSED_ITEMS.md|function|build_addon
 docs/CLOSED_ITEMS.md|function|check_realtime_update_push

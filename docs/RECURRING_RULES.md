@@ -766,7 +766,11 @@ The built-in zone table (`TimeZoneUtil.cpp`) is the addon's own copy of when eac
 wrong wherever the server's tz data differs from it: a Dispatcharr image with tz data from before 2026c still changes
 the clocks of British Columbia and Alberta on 2026-11-01 (and one from before 2026e those of Manitoba), which the table
 (updated for the permanent daylight time those three moved to) no longer does, and a rule made from the wrong offset
-records an hour off. The server's real offset does
+records an hour off. Which tz data counts is the image's system copy: `sync_recurring_rule_impl()` resolves the zone
+with `ZoneInfo(CoreSettings.get_system_time_zone())`, and `ZoneInfo` reads `/usr/share/zoneinfo` before the pip `tzdata`
+package (checked live 2026-10-27 on a real 0.33.0 image: system 2026c, pip `tzdata` 2026e and `pytz` 2026.5, so Winnipeg
+there still falls back; `CLOSED_ITEMS.md`, "Manitoba stays on UTC-5 from 2026-11-01, but the offset table still falls it
+back"). The server's real offset does
 not need a database to be found. A rule is stored as a local time of day, and every occurrence Dispatcharr materializes
 from it carries the UTC instant the server computed, so the pair gives the offset the server applied that day
 (`ServerOffsetCrossCheck.h`): a 19:30 rule whose occurrence starts at 10:30 UTC was scheduled under UTC+9. An
