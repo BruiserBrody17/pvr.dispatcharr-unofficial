@@ -306,12 +306,10 @@ TEST_CASE("LiveTailGiveUpResult answers -1 for a seek probe and 0 only for a wai
   // is alive must not answer it (the HEVC opening probes, docs/CLOSED_ITEMS.md).
   CHECK(LiveTailGiveUpResult(true) == -1);
   CHECK(LiveTailGiveUpResult(false) == 0);
-  // The two decisions together: a probe always gives up at once, and still answers -1; a long wait gives up only once
-  // its budget is spent, and then ends playback.
+  // The give-up decisions that lead to those answers: a probe gives up at once, a long wait only once its budget is
+  // spent.
   CHECK(DecideTailWaitOutcome(true, 0, 70000) == TailWaitOutcome::kGiveUp);
-  CHECK(LiveTailGiveUpResult(true) != 0);
   CHECK(DecideTailWaitOutcome(false, 70000, 70000) == TailWaitOutcome::kGiveUp);
-  CHECK(LiveTailGiveUpResult(false) == 0);
 }
 
 TEST_CASE("A live tail wait on an answering plugin may run to the stall budget", "[CatchUpUtil]")
