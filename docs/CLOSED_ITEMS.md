@@ -6,6 +6,68 @@
 
 ### Fixed
 
+#### The release gate passes a stale plugin zip under --expect-release
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); MEDIUM, reproduced with a synthetic release set.** The two plugin zips are the only release assets whose
+names carry no version, yet `check_release_contents()` only checks that each zip's `plugin.json` and `Plugin` class
+versions agree with each other, which they do in every zip ever shipped, and the shared-timestamp rule looks at addon
+zips only. A directory that still holds the previous release's `timeshift_buffer.zip` passes ("8 zip(s) clean"), so the
+old plugin is published under the new tag, the release notes' bundled-version line is wrong, and a plugin-only fix does
+not ship. The module docstring says `--expect-release` exists so a stale zip does not pass. Fix: compare each plugin
+zip's version with the `plugin.json` of the same tag, or at least require its timestamp to be no older than the addon
+zips'; tests for both cases.
+
+**Fixed 2026-10-27, confirmed with tests that fail on the old gate and against the real release zips.** With
+`--expect-release` each plugin zip's version must now equal the `plugin.json` of the gate's own tree
+(`dispatcharr-plugin/` beside its `tools/`, so the gate runs from the release's tree: `docs/BUILDING.md`'s "Release
+assets", step 4), and its timestamp may be no older than the addon zips' (newer stays allowed for a plugin-only refresh).
+A gate with no plugin sources beside it fails rather than skipping the check. Run from that day's `Piers` tree, the new
+gate fails the real 0.14.1 set on its `timeshift_buffer.zip` (0.8.15, with `Piers` at 0.8.16), which is the check doing
+its job; run with each tag's own `dispatcharr-plugin/` it passes the real 0.14.0 and 0.14.1 sets.
+`test_a_plugin_zip_left_over_from_the_previous_release_fails` covers each half alone and both together.
+
+#### The release gate does not check which addon, plugin or platform binary a zip holds
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); LOW, reproduced with a synthetic release set.** `--expect-release` reads only the version from
+`<dir>/addon.xml` (never `id`) and never looks at the library: an armv7 `.so` under the aarch64 Android name and the
+reverse, an x86_64 ELF under the Windows or macOS name, another addon's id, and each plugin zip holding the other
+plugin's folder all passed as "8 zip(s) clean". The hand-built and hand-renamed zips (macOS, both Android ABIs,
+CoreELEC) are where such a mix-up can happen; for the Android pair `build_kodi_repo.py`'s platform check catches it, but
+only after the release is public. Fix: per asset suffix require the expected library (a PE `.dll` for Windows; an ELF
+with the matching `e_machine` for Linux, CoreELEC and Android: x86_64 62, AArch64 183, ARM 40; a Mach-O `.dylib` for
+macOS), `id` and the top directory equal to `pvr.dispatcharr-unofficial`, and each plugin zip's top directory equal to
+its name.
+
+**Fixed 2026-10-27, confirmed with tests that fail on the old gate.** `--expect-release` now requires each addon
+zip to hold only `pvr.dispatcharr-unofficial/`, with that `id` in its `addon.xml`, and the library its `library_*`
+attribute names (followed through the in-zip symlink chain) to be the binary `ADDON_LIBRARIES` lists for its asset name
+(`library_kind()` reads the PE machine, the ELF class and `e_machine`, and the Mach-O CPU type); each plugin zip must hold
+only its own folder. `test_a_library_of_the_wrong_platform_fails` covers the Android pair both ways, an ELF under the
+Windows and macOS names, an Intel Mach-O, Kodi 21's 32-bit CoreELEC build and a 32-bit Windows one. The real 0.14.0 and
+0.14.1 sets pass.
+
+#### The release gate does not scan bytes outside a member's decompressed data
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, reproduced with three crafted zips.** `check_zip`
+checks the archive comment but not per-entry comments (`info.comment`), skips an entry whose name ends in `/` before
+reading it (a directory entry can carry a payload), and never looks at bytes before the first local header or between
+entries (zipfile, Kodi and unzip all accept prepended data). A blocklisted string in any of the three passed as clean.
+Every current pipeline runs `normalize_zip.py` first, which drops all three, but the gate's premise is that it holds
+whoever built the zip. Fix: fail on any entry comment and any directory entry with a payload, and also scan the raw file
+bytes (check the real 0.14.1 zips for false positives). Tests: the three crafted cases in `test_check_release_zip.py`.
+
+**Fixed 2026-10-27, confirmed with tests that fail on the old gate.** `check_zip` fails an entry comment and a
+directory entry carrying data, and `_layout_problems()` accounts for every byte of the file: each entry's local header,
+name, extra field and data (and a data descriptor), the central directory (which must be exactly its entries' records
+long) and the end record. A byte outside those fails wherever it is, instead of being scanned: the raw file is mostly
+compressed data, where the path patterns would match by chance. It also fails a local header naming its entry
+differently from the central directory; `zipfile` refuses to read such an entry, which had crashed the gate instead of
+failing it, and an unreadable entry is now reported as a problem. zip64 is refused, since no release zip comes near its
+size. `unzip -t` accepts all three crafted zips the tests build. No false positive over the real 0.14.0 and 0.14.1 sets,
+0.14.1's CI artifacts, the 0.13.1 and 0.12.0 zips and the published repository addon zip.
+
 #### timeshift_buffer 0.8.16: the late-heartbeat fix has not run on a real Dispatcharr
 
 **Confirmed live 2026-10-27 on a real Dispatcharr 0.33.0 with `timeshift_buffer` 0.8.16 deployed,

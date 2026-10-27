@@ -4,18 +4,20 @@
 
 ## Status at a glance
 
-**30 open, 360 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**27 open, 363 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
 work on `Piers`: what remains of Kodi 22 support. Nothing is left from the 2026-10-18 read-only audit of the whole
 project (addon, both plugins, tools, CI and packaging; 28 findings: seven fixed the same day, 14 on 2026-10-19, four on
-2026-10-21, one on 2026-10-22 and the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). The
-other 17 come from the 2026-10-23 bug-hunting sweep of the whole project (five read-only reviews by area, each finding
-checked against the code before it was filed): one MEDIUM, the rest LOW.
+2026-10-21, one on 2026-10-22 and the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). 16
+more come from the 2026-10-23 bug-hunting sweep of the whole project (five read-only reviews by area, each finding
+checked against the code before it was filed): one MEDIUM, the rest LOW; its 17th, the release gate's unscanned bytes,
+was fixed on 2026-10-27.
 
-Seven (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
-checked against the code before it was filed: two MEDIUM (the timeshift plugin's token reaching a Redirect-profile
-provider, and the release gate passing a stale plugin zip), five LOW. One more (the same day) came out of the
+Five (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
+checked against the code before it was filed: one MEDIUM (the timeshift plugin's token reaching a Redirect-profile
+provider), four LOW; its two release-gate findings (a stale plugin zip, MEDIUM, and the unchecked binaries) were fixed
+on 2026-10-27. One more (the same day) came out of the
 0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
 2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
 and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of the
@@ -30,8 +32,8 @@ HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is 
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 6 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 312 |
+| Open: Tooling (tools/) | 3 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 315 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 39 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -337,41 +339,6 @@ suffixes raise `RepoError`.
 `addon.xml.in` change gets the previous commit's time, may publish content that was never committed, and differs from
 the post-commit build under the same file name. Fix: without `--time`, refuse when `git status --porcelain --
 kodi-repository/` is not empty; test with a temporary repository or a patched `subprocess.run`.
-
-#### The release gate does not scan bytes outside a member's decompressed data
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, reproduced with three crafted zips.** `check_zip`
-checks the archive comment but not per-entry comments (`info.comment`), skips an entry whose name ends in `/` before
-reading it (a directory entry can carry a payload), and never looks at bytes before the first local header or between
-entries (zipfile, Kodi and unzip all accept prepended data). A blocklisted string in any of the three passed as clean.
-Every current pipeline runs `normalize_zip.py` first, which drops all three, but the gate's premise is that it holds
-whoever built the zip. Fix: fail on any entry comment and any directory entry with a payload, and also scan the raw file
-bytes (check the real 0.14.1 zips for false positives). Tests: the three crafted cases in `test_check_release_zip.py`.
-
-#### The release gate passes a stale plugin zip under --expect-release
-
-**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
-it was filed); MEDIUM, reproduced with a synthetic release set.** The two plugin zips are the only release assets whose
-names carry no version, yet `check_release_contents()` only checks that each zip's `plugin.json` and `Plugin` class
-versions agree with each other, which they do in every zip ever shipped, and the shared-timestamp rule looks at addon
-zips only. A directory that still holds the previous release's `timeshift_buffer.zip` passes ("8 zip(s) clean"), so the
-old plugin is published under the new tag, the release notes' bundled-version line is wrong, and a plugin-only fix does
-not ship. The module docstring says `--expect-release` exists so a stale zip does not pass. Fix: compare each plugin
-zip's version with the `plugin.json` of the same tag, or at least require its timestamp to be no older than the addon
-zips'; tests for both cases.
-
-#### The release gate does not check which addon, plugin or platform binary a zip holds
-
-**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
-it was filed); LOW, reproduced with a synthetic release set.** `--expect-release` reads only the version from
-`<dir>/addon.xml` (never `id`) and never looks at the library: an armv7 `.so` under the aarch64 Android name and the
-reverse, an x86_64 ELF under the Windows or macOS name, another addon's id, and each plugin zip holding the other
-plugin's folder all passed as "8 zip(s) clean". The hand-built and hand-renamed zips (macOS, both Android ABIs,
-CoreELEC) are where such a mix-up can happen; for the Android pair `build_kodi_repo.py`'s platform check catches it, but
-only after the release is public. Fix: per asset suffix require the expected library (a PE `.dll` for Windows; an ELF
-with the matching `e_machine` for Linux, CoreELEC and Android: x86_64 62, AArch64 183, ARM 40; a Mach-O `.dylib` for
-macOS), `id` and the top directory equal to `pvr.dispatcharr-unofficial`, and each plugin zip's top directory equal to
-its name.
 
 #### build_kodi_repo.py indexes an incomplete asset set and a Linux zip under the CoreELEC name
 

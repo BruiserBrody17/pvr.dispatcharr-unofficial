@@ -39,6 +39,7 @@ docs/CLOSED_ITEMS.md|function|_channel_stopping_response
 docs/CLOSED_ITEMS.md|function|_compute_forward_seek_target
 docs/CLOSED_ITEMS.md|function|_find_in_progress_recording_id
 docs/CLOSED_ITEMS.md|function|_find_matching_recording
+docs/CLOSED_ITEMS.md|function|_layout_problems
 docs/CLOSED_ITEMS.md|function|_match_recording_by_title
 docs/CLOSED_ITEMS.md|function|_matches
 docs/CLOSED_ITEMS.md|function|_pick_conflict_free_broadcast
@@ -50,10 +51,12 @@ docs/CLOSED_ITEMS.md|function|_system_timezone
 docs/CLOSED_ITEMS.md|function|add_internal
 docs/CLOSED_ITEMS.md|function|build_addon
 docs/CLOSED_ITEMS.md|function|check_realtime_update_push
+docs/CLOSED_ITEMS.md|function|check_release_contents
 docs/CLOSED_ITEMS.md|function|check_section_titles
 docs/CLOSED_ITEMS.md|function|check_settings
 docs/CLOSED_ITEMS.md|function|discover_plugins
 docs/CLOSED_ITEMS.md|function|get_id
+docs/CLOSED_ITEMS.md|function|library_kind
 docs/CLOSED_ITEMS.md|function|log_system_event
 docs/CLOSED_ITEMS.md|function|run_action
 docs/CLOSED_ITEMS.md|possessive|Not expected to risk killing a real, actively-watched session, including a paused one|docs/TIMESHIFT.md
@@ -79,7 +82,6 @@ docs/OPEN_ITEMS.md|function|_dvr_capture_url
 docs/OPEN_ITEMS.md|function|_handle_redirect_stream
 docs/OPEN_ITEMS.md|function|build_index
 docs/OPEN_ITEMS.md|function|check_platform
-docs/OPEN_ITEMS.md|function|check_release_contents
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work
@@ -129,6 +131,7 @@ docs/TEST_COVERAGE.md|function|FindLatestPendingTitleForChannel
 docs/TEST_COVERAGE.md|function|GetTimezoneBias
 docs/TEST_COVERAGE.md|function|IsApiKeyValidFor
 docs/TEST_COVERAGE.md|function|ShouldReseedInProgressSegmentCache
+docs/TEST_COVERAGE.md|function|_release
 docs/TEST_COVERAGE.md|function|_time_to_seconds
 docs/TEST_COVERAGE.md|function|add_internal
 docs/TEST_COVERAGE.md|setting|dvr_settings

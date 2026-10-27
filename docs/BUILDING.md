@@ -971,20 +971,27 @@ Cutting a release, in order:
 3. Scrub the Android zips (`tools/scrub_zip_paths.py`, "Android" above), then normalize every hand-built zip,
    which removes the build machine's timezone from its entry timestamps:
    `python3 tools/normalize_zip.py "$(git log -1 --format=%ct <tag>)" <zip>...`.
-4. Run the gate once over all of them, with the private blocklist (not in this repository; the script looks for
-   `--blocklist FILE`, then `$PRIVACY_BLOCKLIST`, then `~/.privacy-blocklist.txt`):
+4. Run the tag's own gate once over all of them, with the private blocklist (not in this repository; the script looks
+   for `--blocklist FILE`, then `$PRIVACY_BLOCKLIST`, then `~/.privacy-blocklist.txt`). The gate checks each plugin zip
+   against the `dispatcharr-plugin/` beside its own `tools/`, so export both from the tag rather than running a working
+   tree's copy, whose plugins may have moved on:
    ```bash
-   python3 tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>
+   mkdir <gate-dir> && git archive <tag> tools dispatcharr-plugin | tar -x -C <gate-dir>
+   python3 <gate-dir>/tools/check_release_zip.py --require-blocklist --expect-release <version> <all eight zips>
    ```
    It fails on a build-machine path (`/home/`, `/Users/`, `/media/`, `/Volumes/`, `C:\` or `C:/`, a UNC path, a CI
    runner's work directory) or a blocklist term anywhere in a member (as text, as UTF-8 for a non-ASCII term, and as
    UTF-16), any extra field in the zip (timezone, uid/gid; in the central directory or in a local header), entries
-   with more than one timestamp, a zip comment, an unsafe entry name, a symlink out of the zip, an archive inside
-   it, a debug or log file (also anything in a `.dSYM` bundle), an ELF library that is not stripped (`.debug_*`,
-   `.zdebug_*`, `.symtab`), and a release that is missing an asset or carries an unexpected one. With
-   `--expect-release` it also opens the zips: each addon zip's `addon.xml` must carry the version (CoreELEC's, the
-   version plus its package revision), the six addon zips must share one timestamp, and each plugin zip's
-   `plugin.json` version must equal its `Plugin` class version. A `--blocklist` path that does not exist, a list with
+   with more than one timestamp, a zip or entry comment, any byte of the file outside its entries and directory
+   (prepended data, a gap between entries), a directory entry carrying data, an unsafe entry name, a symlink out of
+   the zip, an archive inside it, a debug or log file (also anything in a `.dSYM` bundle), an ELF library that is not
+   stripped (`.debug_*`, `.zdebug_*`, `.symtab`), and a release that is missing an asset or carries an unexpected one.
+   With `--expect-release` it also opens the zips: each addon zip must hold only `pvr.dispatcharr-unofficial/`, its
+   `addon.xml` must carry that id and the version (CoreELEC's, the version plus its package revision), and its library
+   must be the binary its name promises (a PE x86-64 DLL, a Mach-O arm64 dylib, an ELF of the right class and machine);
+   the six addon zips must share one timestamp; each plugin zip must hold only its own folder, its `plugin.json`
+   version must equal its `Plugin` class version and the tag's `plugin.json`, and it must be no older than the addon
+   zips. A `--blocklist` path that does not exist, a list with
    no terms (with `--require-blocklist`) and a UTF-16 list are errors. The handful of upstream strings it has to allow (the Windows
    zip's two prebuilt DLLs carry Kodi's own dependency-build path) are listed in the script with the reason each
    is safe. CI runs the pattern half of the same gate on every zip it builds; only a local run has the

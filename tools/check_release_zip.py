@@ -8,9 +8,12 @@ CoreELEC), so no platform gets a weaker gate than another. Per zip it checks:
 - zip metadata: no extra field on any entry, in the central directory or in an entry's own local header (the
   extended-timestamp field is the build machine's timezone, the Info-ZIP Unix field is its uid/gid), one timestamp
   shared by every entry (what tools/normalize_zip.py writes: a zip made without it carries the build machine's local
-  clock, whose difference from the commit or upload time is its timezone), no zip comment, no absolute, `..` or
-  drive-letter entry names, no symlink pointing outside the zip, no archive inside the zip (its contents would go
-  unchecked), no debug-symbol or log members (`.pdb`, anything in a `.dSYM` bundle, `.debug`, `.map`, `.log`);
+  clock, whose difference from the commit or upload time is its timezone), no zip comment and no entry comment, no
+  byte of the file outside its entries, central directory and end record (prepended data or a gap between entries,
+  which every unzipper skips and an entry-by-entry scan never reads), no directory entry carrying data, no local
+  header naming its entry differently from the central directory, no absolute, `..` or drive-letter entry names, no
+  symlink pointing outside the zip, no archive inside the zip (its contents would go unchecked), no debug-symbol or
+  log members (`.pdb`, anything in a `.dSYM` bundle, `.debug`, `.map`, `.log`);
 - every member's bytes, as plain text and as UTF-16 (Windows binaries keep wide strings), for build-machine paths
   (`/home/`, `/Users/`, `/root/`, `/var/folders/`, `/media/`, `/run/media/`, `/Volumes/`, a CI runner's work
   directory, a `C:\\` or `C:/` path, a UNC path) except the few known-benign upstream strings in ALLOWED_PATH_STRINGS,
@@ -24,10 +27,16 @@ CoreELEC), so no platform gets a weaker gate than another. Per zip it checks:
   source paths, which is how the hand-built Android libraries once shipped them).
 
 `--expect-release VERSION` additionally fails unless the given zips are exactly the release's asset set, so a
-platform cannot be left out of a release by forgetting a step, and checks what is inside them: each addon zip's
-`addon.xml` must carry VERSION (CoreELEC's, VERSION plus its package revision), the six addon zips must share one
-timestamp (one tag, one normalisation), and each plugin zip's `plugin.json` version must equal its `Plugin` class
-version, so a stale zip renamed to the new release's name does not pass.
+platform cannot be left out of a release by forgetting a step, and checks what is inside them, so a stale or
+mixed-up zip renamed to the new release's name does not pass:
+
+- each addon zip holds only `pvr.dispatcharr-unofficial/`, its `addon.xml` carries that id and VERSION (CoreELEC's,
+  VERSION plus its package revision), and the library it names is the binary its asset name promises (a PE x86-64
+  DLL for Windows, a Mach-O arm64 one for macOS, an ELF of the right class and machine for the rest);
+- the six addon zips share one timestamp (one tag, one normalisation);
+- each plugin zip holds only its own folder, its `plugin.json` version equals its `Plugin` class version and the
+  `plugin.json` of the gate's own tree (`dispatcharr-plugin/` beside this `tools/`, so the gate is run from the
+  release's tree), and its timestamp is no older than the addon zips' (a plugin-only fix may replace it later).
 
 usage: check_release_zip.py [--blocklist FILE] [--require-blocklist] [--expect-release VERSION] <zip> [<zip> ...]
 """
@@ -35,13 +44,20 @@ usage: check_release_zip.py [--blocklist FILE] [--require-blocklist] [--expect-r
 import fnmatch
 import json
 import os
+import posixpath
 import re
 import stat
 import struct
 import sys
 import zipfile
+import zlib
 
-PREFIX = "addon-pvr.dispatcharr-unofficial-"
+ADDON_ID = "pvr.dispatcharr-unofficial"
+PREFIX = "addon-" + ADDON_ID + "-"
+
+# The plugin sources a stale plugin zip is caught against: the plugin zips are the only assets whose names carry no
+# version, so only their contents can say which release they came from.
+PLUGIN_SOURCE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dispatcharr-plugin")
 
 # What a release must carry (`{v}` is the version; a name may be a glob), as the names the build harnesses and the CI
 # workflow produce. CoreELEC's own packaging names its zip `pvr.dispatcharr-unofficial-<v>.<revision>.zip` (`0.12.0.1`,
@@ -57,6 +73,22 @@ RELEASE_ASSETS = (
     "timeshift_buffer.zip",
     "recording_edl.zip",
 )
+
+# Per addon asset: the addon.xml attribute naming its library, and what that library must be (library_kind()). The
+# hand-built and hand-renamed zips (macOS, both Android ABIs, CoreELEC) are where an armv7 library ends up under the
+# aarch64 name, and nothing else looks before the release is public.
+ADDON_LIBRARIES = {
+    "-windows-x86_64.zip": ("library_windows", "PE x86-64"),
+    "-linux.zip": ("library_linux", "ELF64 x86-64"),
+    "-osx-arm64.zip": ("library_osx", "Mach-O arm64"),
+    "-android-aarch64.zip": ("library_android", "ELF64 AArch64"),
+    "-android-armv7.zip": ("library_android", "ELF32 ARM"),
+    "-coreelec-aarch64.zip": ("library_linux", "ELF64 AArch64"),
+}
+
+ELF_MACHINES = {3: "x86", 40: "ARM", 62: "x86-64", 183: "AArch64"}
+PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "ARM64"}
+MACHO_CPUS = {0x01000007: "x86-64", 0x0100000C: "arm64"}
 
 # Patterns that say a path of the build machine reached the zip. Matched against the bytes decoded as latin-1 (one
 # character per byte) and as UTF-16LE at both alignments. The drive-path pattern wants a non-alphanumeric before the
@@ -110,6 +142,7 @@ ARCHIVE_SUFFIXES = (".zip", ".jar", ".apk", ".whl", ".tar", ".gz", ".tgz", ".bz2
 ARCHIVE_MAGIC = (b"PK\x03\x04", b"\x1f\x8b", b"BZh", b"\xfd7zXZ\x00", b"7z\xbc\xaf\x27\x1c", b"\x28\xb5\x2f\xfd")
 
 ADDON_XML_VERSION = re.compile(rb"<addon\b[^>]*?\sversion=\"([^\"]+)\"")
+ADDON_XML_ID = re.compile(rb"<addon\b[^>]*?\sid=\"([^\"]+)\"")
 # The Plugin class attribute, not the HTTP handler's server_version string (read as tools/tests/test_version_sync.py
 # reads it).
 PLUGIN_CLASS_VERSION = re.compile(r"^class Plugin:\n(?:.*\n)*?\s+version = \"([^\"]+)\"", re.MULTILINE)
@@ -248,6 +281,44 @@ def _local_header_extra_length(handle, info):
     return struct.unpack_from("<H", header, 28)[0]
 
 
+def _layout_problems(base, data, archive):
+    """Bytes of the file that belong to no entry, the central directory or its end record (prepended data, a gap
+    between entries or before the directory, all of which zipfile, Kodi and unzip skip over, so a scan of the entries
+    alone never reads them), and local headers that name their entry differently from the central directory."""
+    end_record = len(data) - 22 - len(archive.comment)
+    if data[end_record : end_record + 4] != b"PK\x05\x06" or data[end_record - 20 : end_record - 16] == b"PK\x06\x07":
+        # zip64 only appears past 65535 entries or 2 GiB, which no release zip comes near
+        return ["%s: has no plain end-of-directory record at its end (zip64, trailing data or damaged)" % base]
+    (directory_size,) = struct.unpack_from("<I", data, end_record + 12)
+    spans = [(archive.start_dir, archive.start_dir + directory_size), (end_record, len(data))]
+    problems, listed = [], 0
+    for info in archive.infolist():
+        name = info.orig_filename.encode("utf-8" if info.flag_bits & 0x800 else "cp437")
+        listed += 46 + len(name) + len(info.extra) + len(info.comment)
+        start = info.header_offset
+        header = data[start : start + 30]
+        if len(header) < 30 or header[:4] != b"PK\x03\x04":
+            continue  # check_zip reports it
+        (flags,) = struct.unpack_from("<H", header, 6)
+        name_length, extra_length = struct.unpack_from("<HH", header, 26)
+        if data[start + 30 : start + 30 + name_length] != name:
+            problems.append("%s: entry %s has a different name in its local header" % (base, info.filename))
+        end = start + 30 + name_length + extra_length + info.compress_size
+        if flags & 0x08:  # a data descriptor follows, with or without its optional signature
+            end += 16 if data[end : end + 4] == b"PK\x07\x08" else 12
+        spans.append((start, end))
+    if listed != directory_size:
+        problems.append(
+            "%s: its central directory is %d byte(s) longer than its entries" % (base, directory_size - listed)
+        )
+    position = 0
+    for start, end in sorted(spans):
+        if start > position:
+            problems.append("%s: %d byte(s) at offset %d belong to no entry" % (base, start - position, position))
+        position = max(position, end)
+    return problems
+
+
 def _is_symlink(info):
     return info.create_system == 3 and stat.S_ISLNK(info.external_attr >> 16)
 
@@ -273,6 +344,7 @@ def check_zip(path, blocklist_terms):
     with archive, open(path, "rb") as raw:
         if archive.comment:
             problems.append("%s: has a zip comment" % base)
+        problems += _layout_problems(base, raw.read(), archive)
         stamps = {info.date_time for info in archive.infolist()}
         if len(stamps) > 1:
             problems.append(
@@ -299,9 +371,17 @@ def check_zip(path, blocklist_terms):
                 if term.lower() in lowered:
                     problems.append("%s: entry name %s contains a blocklist term" % (base, name))
                     break
+            if info.comment:
+                problems.append("%s: entry %s has a comment" % (base, name))
             if info.is_dir():
+                if info.file_size or info.compress_size:
+                    problems.append("%s: directory entry %s carries data" % (base, name))
                 continue
-            data = archive.read(info)
+            try:
+                data = archive.read(info)
+            except (zipfile.BadZipFile, zlib.error, NotImplementedError, OSError) as error:
+                problems.append("%s: entry %s cannot be read (%s)" % (base, name, error))
+                continue
             if _is_symlink(info) and _escapes(data.decode("utf-8", errors="replace")):
                 problems.append("%s: entry %s is a symlink out of the zip (to %r)" % (base, name, data[:80]))
             if _is_archive(name, data):
@@ -331,17 +411,128 @@ def check_release_set(paths, version):
     return problems
 
 
-def _member(archive, suffix):
-    """The bytes of the one member whose name ends with `suffix` one directory down (`<dir>/addon.xml`), or None."""
-    names = [n for n in archive.namelist() if n.endswith("/" + suffix) and n.count("/") == 1]
-    return archive.read(names[0]) if len(names) == 1 else None
+def library_kind(data):
+    """What binary `data` is, as ADDON_LIBRARIES spells it ("ELF64 AArch64", "PE x86-64", "Mach-O arm64")."""
+    if data[:4] == b"\x7fELF" and len(data) >= 20:
+        (machine,) = struct.unpack_from(">H" if data[5] == 2 else "<H", data, 18)
+        return "ELF%d %s" % (64 if data[4] == 2 else 32, ELF_MACHINES.get(machine, "machine %d" % machine))
+    if data[:2] == b"MZ" and len(data) >= 0x40:
+        (offset,) = struct.unpack_from("<I", data, 0x3C)
+        if data[offset : offset + 4] == b"PE\x00\x00" and len(data) >= offset + 6:
+            (machine,) = struct.unpack_from("<H", data, offset + 4)
+            return "PE %s" % PE_MACHINES.get(machine, "machine 0x%x" % machine)
+    if data[:4] == b"\xcf\xfa\xed\xfe" and len(data) >= 8:
+        (cpu,) = struct.unpack_from("<I", data, 4)
+        return "Mach-O %s" % MACHO_CPUS.get(cpu, "cpu 0x%x" % cpu)
+    return "neither an ELF, a PE nor a 64-bit Mach-O library"
 
 
-def check_release_contents(paths, version):
-    """Problems with what the release's zips say about themselves: the addon version inside each addon zip, one
-    timestamp across the addon zips, and each plugin's two version strings agreeing."""
+def _read(archive, name):
+    """A member's bytes, following symlinks within the zip (the Linux and macOS zips carry a version chain of them),
+    or None when it is missing or unreadable."""
+    for _ in range(8):
+        try:
+            info = archive.getinfo(name)
+            data = archive.read(info)
+        except (KeyError, zipfile.BadZipFile, zlib.error, NotImplementedError, OSError):
+            return None
+        if not _is_symlink(info):
+            return data
+        name = posixpath.normpath(posixpath.join(posixpath.dirname(name), data.decode("utf-8", errors="replace")))
+    return None
+
+
+def _outside(base, archive, folder):
+    strays = [n for n in archive.namelist() if not n.startswith(folder + "/")]
+    if not strays:
+        return []
+    return [
+        "%s: holds %s outside its %s/ folder" % (base, ", ".join(strays[:3]) + (" ..." if strays[3:] else ""), folder)
+    ]
+
+
+def _xml_attribute(xml, regex):
+    match = regex.search(xml)
+    return match.group(1).decode("utf-8", errors="replace") if match else None
+
+
+def _addon_contents(base, archive, version):
+    problems = _outside(base, archive, ADDON_ID)
+    xml = _read(archive, ADDON_ID + "/addon.xml")
+    if xml is None:
+        return problems + ["%s: no %s/addon.xml" % (base, ADDON_ID)]
+    found_id, found = _xml_attribute(xml, ADDON_XML_ID), _xml_attribute(xml, ADDON_XML_VERSION)
+    if found_id != ADDON_ID:
+        problems.append("%s: addon.xml is addon %s, not %s" % (base, found_id, ADDON_ID))
+    # CoreELEC's package appends its revision to the addon version (0.14.0.1 in 0.14.0's zip)
+    wanted = re.escape(version) + (r"\.\d+" if "-coreelec-" in base else "")
+    if found is None:
+        problems.append("%s: no addon.xml with a version in it" % base)
+    elif not re.fullmatch(wanted, found):
+        problems.append("%s: addon.xml says version %s, not %s" % (base, found, version))
+    suffix = next((s for s in ADDON_LIBRARIES if base.endswith(s)), None)
+    if suffix is None:
+        return problems  # check_release_set reports an asset it does not know
+    attribute, wanted_kind = ADDON_LIBRARIES[suffix]
+    library = _xml_attribute(xml, re.compile(rb"\s" + attribute.encode() + rb"=\"([^\"]+)\""))
+    data = _read(archive, ADDON_ID + "/" + library) if library else None
+    if library is None:
+        problems.append("%s: addon.xml names no %s" % (base, attribute))
+    elif data is None:
+        problems.append("%s: the library its addon.xml names (%s) is not in the zip" % (base, library))
+    elif library_kind(data) != wanted_kind:
+        problems.append("%s: %s is %s, not the %s its name promises" % (base, library, library_kind(data), wanted_kind))
+    return problems
+
+
+def _manifest_version(manifest):
+    try:
+        return json.loads(manifest)["version"] if manifest else None
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _plugin_contents(base, archive, plugin_source):
+    plugin = base[: -len(".zip")]
+    problems = _outside(base, archive, plugin)
+    manifest, code = _read(archive, plugin + "/plugin.json"), _read(archive, plugin + "/plugin.py")
+    declared = _manifest_version(manifest)
+    match = PLUGIN_CLASS_VERSION.search(code.decode("utf-8", errors="replace")) if code else None
+    running = match.group(1) if match else None
+    if declared is None or running is None:
+        return problems + ["%s: no plugin.json version or Plugin class version found" % base]
+    if declared != running:
+        problems.append(
+            "%s: plugin.json says %s but the Plugin class says %s (the class is what Dispatcharr runs)"
+            % (base, declared, running)
+        )
+    source = os.path.join(plugin_source, plugin, "plugin.json")
+    try:
+        with open(source, "rb") as handle:
+            expected = _manifest_version(handle.read())
+    except OSError:
+        expected = None
+    if expected is None:
+        problems.append(
+            "%s: no version in %s to compare it with (run the gate from the release's own tree, with "
+            "dispatcharr-plugin/ beside tools/)" % (base, source)
+        )
+    elif declared != expected:
+        problems.append(
+            "%s: is version %s, but this tree's dispatcharr-plugin/%s/plugin.json says %s (a zip left over from "
+            "another release?)" % (base, declared, plugin, expected)
+        )
+    return problems
+
+
+def _stamp(date_time):
+    return "%04d-%02d-%02d %02d:%02d:%02d" % date_time
+
+
+def check_release_contents(paths, version, plugin_source=None):
+    """Problems with what the release's zips say about themselves (the module docstring lists them)."""
     problems = []
-    addon_stamps = {}
+    addon_stamps, plugin_stamps = {}, {}
     for path in paths:
         base = os.path.basename(path)
         try:
@@ -349,38 +540,27 @@ def check_release_contents(paths, version):
         except (zipfile.BadZipFile, OSError):
             continue  # check_zip reports it
         with archive:
+            stamps = {info.date_time for info in archive.infolist()}
             if base.startswith(PREFIX):
-                addon_stamps[base] = {info.date_time for info in archive.infolist()}
-                xml = _member(archive, "addon.xml")
-                match = ADDON_XML_VERSION.search(xml) if xml else None
-                found = match.group(1).decode("utf-8", errors="replace") if match else None
-                # CoreELEC's package appends its revision to the addon version (0.14.0.1 in 0.14.0's zip)
-                wanted = re.escape(version) + (r"\.\d+" if "-coreelec-" in base else "")
-                if found is None:
-                    problems.append("%s: no addon.xml with a version in it" % base)
-                elif not re.fullmatch(wanted, found):
-                    problems.append("%s: addon.xml says version %s, not %s" % (base, found, version))
+                addon_stamps[base] = stamps
+                problems += _addon_contents(base, archive, version)
             elif base.endswith(".zip"):
-                manifest, source = _member(archive, "plugin.json"), _member(archive, "plugin.py")
-                try:
-                    declared = json.loads(manifest)["version"] if manifest else None
-                except (ValueError, KeyError, TypeError):
-                    declared = None
-                match = PLUGIN_CLASS_VERSION.search(source.decode("utf-8", errors="replace")) if source else None
-                running = match.group(1) if match else None
-                if declared is None or running is None:
-                    problems.append("%s: no plugin.json version or Plugin class version found" % base)
-                elif declared != running:
-                    problems.append(
-                        "%s: plugin.json says %s but the Plugin class says %s (the class is what Dispatcharr runs)"
-                        % (base, declared, running)
-                    )
+                plugin_stamps[base] = stamps
+                problems += _plugin_contents(base, archive, plugin_source or PLUGIN_SOURCE)
     shared = set().union(*addon_stamps.values()) if addon_stamps else set()
     if len(shared) > 1:
         problems.append(
             "the addon zips carry %d different timestamps; they are built from one tag and normalised to its time"
             % len(shared)
         )
+    elif shared:
+        (built,) = shared
+        for base, stamps in sorted(plugin_stamps.items()):
+            if stamps and min(stamps) < built:
+                problems.append(
+                    "%s: dated %s, before the addon zips' %s (a zip left over from an earlier release?)"
+                    % (base, _stamp(min(stamps)), _stamp(built))
+                )
     return problems
 
 
