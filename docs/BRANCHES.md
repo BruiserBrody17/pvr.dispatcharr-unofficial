@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`7f07461`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`8bc634a`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -145,6 +145,8 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `c8076c5` | `1877892` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand) | Manitoba kept on UTC-5 from 2026-11-01 in `TimeZoneUtil`'s table (tzdata 2026e), with the tests and the tzdata pytest's 2026c/2026d leave-out; the table and its checks were the same on both branches. |
 | `42c899f` | `0ca28db` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | The live check of `timeshift_buffer` 0.8.16's late-heartbeat fix closed, and the tz data Dispatcharr's scheduler reads (`ZoneInfo`, the image's system copy) recorded; the plugin and the docs' text are the same on both. |
 | `7f07461` | `10d7bd7` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | The guide-history re-measure on Dispatcharr 0.33.0 closed without a change; the guide fetch is the same code on both. |
+| `0fad167` | `42556c6` (`git cherry-pick -x`, without `[skip ci]`; the CoreELEC library kind, one test case and the running docs by hand) | The release gate's three fixes from the 2026-10-23 and 2026-10-24 sweeps. `Omega`'s CoreELEC asset is `-coreelec-armv7`, an ELF32 ARM library, and its wrong-platform test feeds that name Kodi 22's 64-bit build. The ported gate passes the shipped 0.13.1 set beside that tag's own plugin sources. |
+| `8bc634a` | `6fc5360` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and one entry's CoreELEC name by hand) | The repository tool's three fixes from the same sweeps. The tool and its tests are the same on both branches: it knows both Kodi lines. |
 
 ## Dependencies that differ by Kodi release
 
