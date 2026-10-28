@@ -3007,6 +3007,20 @@ made, `.<uuid>.<hex>`, was not a name `_is_tombstone_name()` accepts (`.<uuid>.r
 its tombstones by hand. `test_a_removal_cut_short_leaves_a_tombstone_the_scrub_recognises_and_removes` takes the name
 from `_remove_channel_files()` itself and fails on the code before the fix.
 
+2026-10-28 (`timeshift_buffer` 0.8.16, `docs/CLOSED_ITEMS.md`'s "removals under the 30 s start lock let a second start
+run beside the first"): under a start lock a directory is only moved aside, and removed after the release
+(`_move_aside_and_remove()`, `_deferred_removals()`). The reproducer,
+`test_a_start_during_a_dead_buffers_removal_reattaches_instead_of_starting_a_second_ffmpeg`, runs a real `start_buffer`
+over a real directory, the fake state Redis and a fake `Popen`, expires the locks inside the removal and starts again
+there: the second start must reattach, with one ffmpeg spawned. `test_every_removal_a_start_makes_runs_after_it_releases_its_locks`
+(dead, stale-config and leftover-directory cases) records the locks held at each `rmtree`, as do the untracked-teardown
+and orphan-scrub tests; `test_a_dead_buffer_replaced_while_starting_is_left_to_its_new_owner` covers the dead branch's
+instance-checked delete; two more cover a nested deferral and a directory that cannot be renamed (removed in place at
+once), and `test_an_orphan_moved_aside_but_not_removed_is_left_to_the_tombstone_scrub` the scrub's report when the
+deferred removal fails (`test_the_scrub_releases_the_lock_when_removing_fails` now fails the rename too).
+`test_an_orphan_whose_ffmpeg_cannot_be_stopped_is_skipped_and_the_scrub_goes_on` pins the per-entry `OSError` handling a
+first version of the change dropped (found by the review). The eleven new cases fail on the previous plugin code. Not covered here: a real slow removal racing a real second start, which was checked live with a slowed `rmtree` (see that entry), not on network storage.
+
 ## Tools
 
 ### `tools/tests/`

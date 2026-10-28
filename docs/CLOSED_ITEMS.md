@@ -6,6 +6,64 @@
 
 ### Fixed
 
+#### timeshift_buffer: removals under the 30 s start lock let a second start run beside the first
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; MEDIUM, reproduced with real filesystem operations and a
+fake Redis/Popen.** `_START_BUFFER_LOCK_TTL` is 30 s and never renewed, but the "dead" branch of `start_buffer`
+(`_remove_channel_files()` then an unconditional `_delete_buffer_state()`), the stale_config teardown,
+`_clear_channel_dir()`'s in-place `rmtree` (under the slot lock too) and `_scrub_orphaned_dirs()` all remove directories
+while holding it. The 2026-10-21 tombstone and compare-and-delete fix covered only teardowns outside the lock. A removal
+that outlives the TTL (network storage, or a long buffer at the new 1440-minute cap) lets a second `start_buffer` for
+the channel take both locks: in the clear-dir case both calls spawn ffmpeg into one directory, the second write wins
+Redis and the owner file, and the other ffmpeg is tracked nowhere (a second provider connection, colliding `seg_%05d.ts`
+names, the cap bypassed); in the dead case the first call's unconditional delete removes the second caller's state and
+its token stops working. Fix: under the lock only rename to a tombstone (`_TOMBSTONE_RE`) and `rmtree` after release;
+use `_delete_buffer_state_if_instance()` in the dead branch; optionally re-check the lock token before `Popen` and the
+state write. Tests: a monkeypatched `rmtree` that expires the locks and runs a second start inside the removal.
+
+**Fixed 2026-10-28 (`timeshift_buffer` 0.8.16), confirmed with tests that fail on the old plugin and live on a real
+Dispatcharr 0.33.0 the same day (below).** Every removal that runs under a start lock now only renames the directory to a tombstone there
+(`_move_aside_and_remove()`), and the tombstones are removed once the lock is released: `_deferred_removals()` is
+entered outside the lock's `try`/`finally` in `_start_buffer()` (covering the dead branch, the stale-config teardown and
+`_clear_channel_dir()` inside `_start_ffmpeg()`), `_teardown_untracked_buffer()` and `_scrub_orphaned_dirs()`. A
+directory that cannot be renamed is still removed in place at once, since a removal deferred under its own name would
+take whatever the next start put there. The dead branch now deletes the state first, through
+`_delete_buffer_state_if_instance()`, and answers retryable without touching the directory when the state is no longer
+the dead instance. The optional lock-token re-check before `Popen` was not added: the start's own work under the lock
+is now the classification, a rename, at most one ffmpeg stop (about 2 s) and the spawn, but on Dispatcharr's
+gevent-patched workers another greenlet's blocking `rmtree` can still hold a start past the TTL; that older, separate
+path is its own open item ("a start parked by another greenlet's blocking work can outlive its start lock"). The
+reproducer,
+`test_a_start_during_a_dead_buffers_removal_reattaches_instead_of_starting_a_second_ffmpeg`, expires the locks inside
+the removal and runs a second `start_buffer` there: on the old plugin it spawned a second ffmpeg, now it reattaches to
+the first. Nine new tests, eleven cases, all failing on the old plugin (`docs/TEST_COVERAGE.md`).
+
+**Live check (2026-10-28, Dispatcharr 0.33.0, its four workers).** The branch's plugin zip (CI's own `zip` command) was
+imported and spread to every worker with parallel `reload/` and `run()` bursts. A throwaway probe plugin confirmed each
+worker's module and reaper thread were the new code, replaced the module's `shutil` with a shim that recorded, for every
+`rmtree`, whether the channel's start lock and the slot lock existed in Redis at that moment (and could sleep once on
+request), and overrode `storage_path`/`http_port` in memory, so the lab's saved settings were never changed. The buffers
+were started and stopped through `start_buffer`/`stop_buffer` on Channel A, and "plays" means its playlist on the file
+server grew new segments under the returned token.
+- **Dead buffer** (its ffmpeg killed with SIGKILL, then a new start): new ffmpeg, segments advancing, the old token 403.
+  The one removal was a tombstone, with neither lock held.
+- **Stale config:** a `storage_path` change stopped the old ffmpeg, left the old path empty and played under the new
+  one; an `http_port` change played on the new port. Each time the one removal was a tombstone with neither lock held.
+- **Leftover directory** (the Redis state deleted under a running buffer): the start stopped the untracked ffmpeg,
+  cleared the directory and played from sequence 0, with one ffmpeg.
+- **Orphan scrub** (a backdated directory under a made-up uuid): "Removed 1 orphaned directory", nothing left, the
+  running buffer untouched, the removal outside the lock.
+- **Slow removal** (the case the fix is for): with the next `rmtree` slowed to 35 s, a dead-buffer start returned after
+  35.4 s, but its new ffmpeg and state were up at once. A second start 4.7 s in and a third at 32.4 s (past the
+  30 s TTL) both reattached; one ffmpeg throughout, the tombstone visible beside the live directory until the removal
+  ended. The same run against the `Piers` plugin reproduced the bug: the second start was refused ("already in
+  progress") while the removal held the lock, the third (after the TTL) started its own buffer and ffmpeg, and the first,
+  waking up, removed that buffer's directory in place under the slot lock, stopped its ffmpeg as untracked, and
+  started its own ffmpeg over that buffer's state.
+
+Afterwards the lab went back to the `Piers` 0.8.16 plugin in every worker, the probe was deleted (its `run()` answers
+404 from every worker), the test storage path was removed and no buffer was left running.
+
 #### build_kodi_repo.py indexes an incomplete asset set and a Linux zip under the CoreELEC name
 
 **Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
