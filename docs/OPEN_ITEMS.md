@@ -4,16 +4,16 @@
 
 ## Status at a glance
 
-**23 open, 361 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**23 open, 362 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
 the TSan start-up crash, fixed on 2026-10-22) or from the 2026-10-18 read-only audit, made on `Piers` and checked
 against `Omega`'s code the same day (all 21 held here; 14 fixed on 2026-10-19, four on 2026-10-21, one on 2026-10-22 and
-the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). 14 more come from the 2026-10-23
+the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). 13 more come from the 2026-10-23
 bug-hunting sweep of the whole project, made on `Piers` and checked against `Omega`'s code the same day (all 17 held
-here): one MEDIUM, the rest LOW; three more of its 17 (the release gate's unscanned bytes and two in
-`tools/build_kodi_repo.py`) were fixed on 2026-10-27.
+here), all LOW; three more of its 17 (the release gate's unscanned bytes and two in `tools/build_kodi_repo.py`) were
+fixed on 2026-10-27, and its one MEDIUM (the timeshift start lock) on 2026-10-28.
 
 Four (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
 checked against the code before it was filed: one MEDIUM (the timeshift plugin's token reaching a Redirect-profile
@@ -22,19 +22,20 @@ binaries, and one in `tools/build_kodi_repo.py`) were fixed on 2026-10-27. One m
 0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
 2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
 and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of the
-HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is alive.
+HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is alive. One (2026-10-28) came out of the review of the
+start-lock removal fix: a start parked on a gevent worker can still outlive its lock.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 2 |
-| Open: Fix known, not yet done | 14 |
-| Open: Architectural / concurrency | 1 |
+| Open: Fix known, not yet done | 13 |
+| Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 313 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 314 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 39 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -69,21 +70,6 @@ could answer -1 instead (check that the next read refreshes the manifest and mov
 since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
 
 ### Fix known, not yet done
-
-#### timeshift_buffer: removals under the 30 s start lock let a second start run beside the first
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; MEDIUM, reproduced with real filesystem operations and a
-fake Redis/Popen.** `_START_BUFFER_LOCK_TTL` is 30 s and never renewed, but the "dead" branch of `start_buffer`
-(`_remove_channel_files()` then an unconditional `_delete_buffer_state()`), the stale_config teardown,
-`_clear_channel_dir()`'s in-place `rmtree` (under the slot lock too) and `_scrub_orphaned_dirs()` all remove directories
-while holding it. The 2026-10-21 tombstone and compare-and-delete fix covered only teardowns outside the lock. A removal
-that outlives the TTL (network storage, or a long buffer at the new 1440-minute cap) lets a second `start_buffer` for
-the channel take both locks: in the clear-dir case both calls spawn ffmpeg into one directory, the second write wins
-Redis and the owner file, and the other ffmpeg is tracked nowhere (a second provider connection, colliding `seg_%05d.ts`
-names, the cap bypassed); in the dead case the first call's unconditional delete removes the second caller's state and
-its token stops working. Fix: under the lock only rename to a tombstone (`_TOMBSTONE_RE`) and `rmtree` after release;
-use `_delete_buffer_state_if_instance()` in the dead branch; optionally re-check the lock token before `Popen` and the
-state write. Tests: a monkeypatched `rmtree` that expires the locks and runs a second start inside the removal.
 
 #### The live heartbeat carries no access token, so a resumed viewer can stick to a replacement buffer
 
@@ -237,6 +223,20 @@ calls on its own threads (`GetTimers`, `GetChannels`, `UpdateTimer` and the rest
 A `std::bad_alloc` copying the recordings or rules vectors on a 32-bit or low-memory box ends the Kodi process (and
 crosses a CRT boundary on Windows). Fix: a small guard that catches `std::exception` and `...`, logs, and returns
 `PVR_ERROR_FAILED`/`false`/`-1`, around each override, and around `new PVRDispatcharr` returning `ADDON_STATUS_UNKNOWN`.
+
+#### timeshift_buffer: a start parked by another greenlet's blocking work can outlive its start lock
+
+**Opened 2026-10-28, from the review of the start-lock removal fix (`CLOSED_ITEMS.md`, "removals under the 30 s start
+lock let a second start run beside the first"); LOW, plausible from reading, older than that fix.** Dispatcharr's
+workers are gevent-patched (`CLOSED_ITEMS.md`'s gevent note), so a `start_buffer` that yields while holding the channel
+and slot locks (the `_list_buffer_keys()` SCAN, a Redis call) cannot resume while another greenlet on the same worker
+runs a blocking `shutil.rmtree`: a `stop_buffer` or reaper teardown of a large buffer, or another start's deferred
+removal. Past `_START_BUFFER_LOCK_TTL` a start on another worker can take the lock, spawn and write its state; the parked
+start then resumes, `_reap_untracked_ffmpeg()` stops the other's ffmpeg as untracked, and its own state write replaces
+the other's, whose viewer gets 403s. Fix candidates: re-check `GET lock == token` before `_start_ffmpeg()` and before
+`_set_buffer_state()` and answer retryable (a loss after the spawn then has to stop its own ffmpeg), or move the
+blocking removals off the request greenlet (`gevent.threadpool`, or `rmtree` in a subprocess). Reproducing it needs a
+slow removal and a start on the same worker.
 
 ### Design decision needed
 
