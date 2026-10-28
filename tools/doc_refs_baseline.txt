@@ -85,7 +85,6 @@ docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
 docs/OPEN_ITEMS.md|function|HandleAddonCallback
 docs/OPEN_ITEMS.md|function|_dvr_capture_url
-docs/OPEN_ITEMS.md|function|_handle_redirect_stream
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work

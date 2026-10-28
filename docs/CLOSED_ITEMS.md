@@ -6,6 +6,50 @@
 
 ### Fixed
 
+#### timeshift_buffer: on a Redirect-profile channel the buffer's ffmpeg sends the account's token to the provider
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); MEDIUM, reproduced for the ffmpeg half.** `_stream_attribution_headers()` puts a freshly minted access
+token for the addon's account (an admin: the plugin's `run` endpoint requires one) and the viewer's `X-Real-IP` on
+ffmpeg's `-headers`. For a channel whose stream profile is Redirect, Dispatcharr's `stream_ts()` answers that request
+with a 302 to the provider's own URL before it looks at `output_format` or the caller (`apps/proxy/live_proxy/views.py`,
+`stream_profile.is_redirect()` then `_handle_redirect_stream()`, read in the 0.33.0 source), and ffmpeg re-sends its
+custom headers to the redirect target: with two loopback servers, the second received `Authorization: Bearer ...` and
+`X-Real-IP` verbatim (system ffmpeg 6.1, the plugin's header shape). So starting a server-side buffer on such a channel
+hands a bearer token valid for 120 s (`_STREAM_TOKEN_LIFETIME_SECONDS`) and a LAN address to a third party. Attribution
+means nothing there anyway (the proxy releases its slot before the client follows). Fix: look the channel's stream
+profile up before spawning and leave both headers out for a Redirect profile, or make the first request from the plugin
+without following redirects and hand ffmpeg the bare `Location`; a unit test that the header builder returns `None` for
+a Redirect-profile channel.
+
+**Fixed 2026-10-28 (`timeshift_buffer` 0.8.16), confirmed with tests that fail on the old plugin and live on a real
+Dispatcharr 0.33.0.** `_ffmpeg_input_headers()` looks the channel's profile up with the same calls `stream_ts()` makes
+(`Channel.objects.get(uuid=...)`, then `get_stream_profile().is_redirect()`, so a profile that comes from the channel's
+override or the server default counts too) and gives ffmpeg no `-headers` for a Redirect channel; no token is minted.
+A failed lookup is treated as a redirect: losing the Stats attribution is harmless, leaking the token is not. The other
+way out the entry named (the plugin making the request itself and handing ffmpeg the bare `Location`) was not taken: it
+would put the provider's URL, often with the provider's own credentials in it, on ffmpeg's command line, which every
+local user can read. What being anonymous costs a Redirect channel's buffer (the account's stream limit and M3U profile
+allowlist no longer apply; Network Access's STREAMS rule judges the plugin's own address) is in `TIMESHIFT.md`.
+
+**Live check (2026-10-28, Dispatcharr 0.33.0, its four workers, the container's own ffmpeg, Lavf 62).** A throwaway
+probe plugin listened on the container's loopback and recorded, for each request, whether an `Authorization` header
+came and the `X-Real-IP` value, never the token itself; a disposable stream pointed at it and a disposable channel used
+the Redirect profile. `start_buffer` was called through the plugin API with the lab account as `username` and a
+documentation address (192.0.2.10) as `client_ip`.
+
+- With the previous plugin in every worker: Dispatcharr's own redirect-validation HEAD arrived with neither header,
+  then ffmpeg's GET, after the 302, arrived with `Authorization: Bearer ...` and `X-Real-IP: 192.0.2.10`. Reproduced.
+- With the branch's plugin in every worker (confirmed per worker by the probe): three starts, each followed by ffmpeg's
+  GET with neither header (only `Accept`, `Connection`, `Host`, `Icy-MetaData`, `Range` and `User-Agent`).
+- A proxied channel (the server default, Proxy) still carries both: its buffer's connection showed in
+  `/proxy/ts/status` with the lab account's user id and `ip_address` 192.0.2.10, not 127.0.0.1 or Anonymous.
+- Not checked live: a Redirect profile reached through the server default or a channel override (the lab's default
+  was left alone; the plugin calls the same `get_stream_profile()`), and a STREAMS list without loopback.
+
+Lab restored: the previous plugin back in every worker, the disposable stream and channel deleted (404 on re-GET), the
+probe deleted (404 from every worker), no buffers or proxy streams left.
+
 #### timeshift_buffer: removals under the 30 s start lock let a second start run beside the first
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; MEDIUM, reproduced with real filesystem operations and a
