@@ -952,6 +952,116 @@ def test_stream_attribution_headers_rejects_ipv6_scope_id_injection_bypass():
 
 
 # ---------------------------------------------------------------------
+# _ffmpeg_input_headers -- a Redirect-profile channel's proxy answers with a 302 to the
+# provider, and ffmpeg re-sends its -headers there, so neither the account's token nor
+# the viewer's address may go on them (docs/CLOSED_ITEMS.md). apps.channels.models is
+# faked in sys.modules like the JWT modules above.
+# ---------------------------------------------------------------------
+
+
+def _install_fake_channel_model(monkeypatch, *, redirect=None):
+    """Fake the channel lookup. `redirect` maps a channel uuid to whether its profile is
+    Redirect; an unknown uuid raises like Channel.DoesNotExist. Returns the uuids looked up."""
+    import sys
+    import types
+
+    looked_up = []
+
+    class _Profile:
+        def __init__(self, is_redirect):
+            self._is_redirect = is_redirect
+
+        def is_redirect(self):
+            return self._is_redirect
+
+    class _Channel:
+        def __init__(self, is_redirect):
+            self._profile = _Profile(is_redirect)
+
+        def get_stream_profile(self):
+            return self._profile
+
+        class objects:  # noqa: N801 -- mimics the Django manager attribute
+            @staticmethod
+            def get(uuid):
+                looked_up.append(uuid)
+                if uuid not in (redirect or {}):
+                    raise LookupError(uuid)
+                return _Channel(redirect[uuid])
+
+    models = types.ModuleType("apps.channels.models")
+    models.Channel = _Channel
+    for name, mod in (
+        ("apps", types.ModuleType("apps")),
+        ("apps.channels", types.ModuleType("apps.channels")),
+        ("apps.channels.models", models),
+    ):
+        monkeypatch.setitem(sys.modules, name, mod)
+    return looked_up
+
+
+_ATTRIBUTED = {"username": "alice", "client_ip": "192.168.1.42"}
+
+
+def test_a_redirect_channels_buffer_gets_no_token_and_no_viewer_address(monkeypatch):
+    lifetimes = _install_fake_jwt(monkeypatch)
+    looked_up = _install_fake_channel_model(monkeypatch, redirect={_UUID: True})
+
+    assert timeshift_buffer_plugin._ffmpeg_input_headers(_UUID, dict(_ATTRIBUTED), _FakeLogger()) is None
+    assert looked_up == [_UUID]
+    assert lifetimes == []  # no token is even minted
+
+
+def test_a_proxied_channels_buffer_keeps_both_attribution_headers(monkeypatch):
+    _install_fake_jwt(monkeypatch)
+    _install_fake_channel_model(monkeypatch, redirect={_UUID: False})
+
+    result = timeshift_buffer_plugin._ffmpeg_input_headers(_UUID, dict(_ATTRIBUTED), _FakeLogger())
+
+    assert result == timeshift_buffer_plugin._stream_attribution_headers(dict(_ATTRIBUTED), _FakeLogger())
+    assert "Authorization: Bearer jwt-for-alice" in result
+    assert "X-Real-IP: 192.168.1.42\r\n" in result
+
+
+def test_a_channel_whose_profile_cannot_be_looked_up_gets_no_headers(monkeypatch):
+    lifetimes = _install_fake_jwt(monkeypatch)
+    _install_fake_channel_model(monkeypatch, redirect={})
+    logger = _FakeLogger()
+
+    assert timeshift_buffer_plugin._ffmpeg_input_headers(_UUID, dict(_ATTRIBUTED), logger) is None
+    assert lifetimes == []
+    assert any(level == "exception" and _UUID in msg for level, msg in logger.calls)
+
+
+def test_a_redirect_channels_ffmpeg_command_carries_no_headers(tmp_path, monkeypatch):
+    _install_fake_jwt(monkeypatch)
+    _install_fake_channel_model(monkeypatch, redirect={_UUID: True})
+    seen = {}
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: seen.setdefault("cmd", cmd) and _FakeProc()
+    )
+
+    timeshift_buffer_plugin._start_ffmpeg(_UUID, dict(_ATTRIBUTED), {"storage_path": str(tmp_path)}, _FakeLogger())
+
+    assert "-headers" not in seen["cmd"]
+    assert not any("Bearer" in arg or "192.168.1.42" in arg for arg in seen["cmd"])
+
+
+def test_a_proxied_channels_ffmpeg_command_still_carries_the_headers(tmp_path, monkeypatch):
+    _install_fake_jwt(monkeypatch)
+    _install_fake_channel_model(monkeypatch, redirect={_UUID: False})
+    seen = {}
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: seen.setdefault("cmd", cmd) and _FakeProc()
+    )
+
+    timeshift_buffer_plugin._start_ffmpeg(_UUID, dict(_ATTRIBUTED), {"storage_path": str(tmp_path)}, _FakeLogger())
+
+    headers = seen["cmd"][seen["cmd"].index("-headers") + 1]
+    assert "Authorization: Bearer jwt-for-alice" in headers
+
+
+# ---------------------------------------------------------------------
 # _apply_heartbeat
 # ---------------------------------------------------------------------
 

@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**23 open, 362 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**22 open, 363 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -15,10 +15,10 @@ bug-hunting sweep of the whole project, made on `Piers` and checked against `Ome
 here), all LOW; three more of its 17 (the release gate's unscanned bytes and two in `tools/build_kodi_repo.py`) were
 fixed on 2026-10-27, and its one MEDIUM (the timeshift start lock) on 2026-10-28.
 
-Four (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
-checked against the code before it was filed: one MEDIUM (the timeshift plugin's token reaching a Redirect-profile
-provider), three LOW; three more of its seven (two release-gate findings, a stale plugin zip, MEDIUM, and the unchecked
-binaries, and one in `tools/build_kodi_repo.py`) were fixed on 2026-10-27. One more (the same day) came out of the
+Three (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
+checked against the code before it was filed, all LOW; three more of its seven (two release-gate findings, a stale
+plugin zip, MEDIUM, and the unchecked binaries, and one in `tools/build_kodi_repo.py`) were fixed on 2026-10-27, and its
+other MEDIUM (the timeshift plugin's token reaching a Redirect-profile provider) on 2026-10-28. One more (the same day) came out of the
 0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
 2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
 and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of the
@@ -28,14 +28,14 @@ start-lock removal fix: a start parked on a gevent worker can still outlive its 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 2 |
-| Open: Fix known, not yet done | 13 |
+| Open: Fix known, not yet done | 12 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 314 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 315 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 39 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -172,22 +172,6 @@ delivers `CONNECTED` only once `SyncDvrAccessFromDispatcharr()` has succeeded, w
 showing the client unreachable and never re-reading `GetCapabilities()`; playback is unaffected. Every Dispatcharr seen
 so far sends the field. Fix: treat a parse failure (as opposed to a network failure) as checked and fail open, or
 deliver `CONNECTED` after a few failed reads; testable in `ConnectionReport`.
-
-#### timeshift_buffer: on a Redirect-profile channel the buffer's ffmpeg sends the account's token to the provider
-
-**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
-it was filed); MEDIUM, reproduced for the ffmpeg half.** `_stream_attribution_headers()` puts a freshly minted access
-token for the addon's account (an admin: the plugin's `run` endpoint requires one) and the viewer's `X-Real-IP` on
-ffmpeg's `-headers`. For a channel whose stream profile is Redirect, Dispatcharr's `stream_ts()` answers that request
-with a 302 to the provider's own URL before it looks at `output_format` or the caller (`apps/proxy/live_proxy/views.py`,
-`stream_profile.is_redirect()` then `_handle_redirect_stream()`, read in the 0.33.0 source), and ffmpeg re-sends its
-custom headers to the redirect target: with two loopback servers, the second received `Authorization: Bearer ...` and
-`X-Real-IP` verbatim (system ffmpeg 6.1, the plugin's header shape). So starting a server-side buffer on such a channel
-hands a bearer token valid for 120 s (`_STREAM_TOKEN_LIFETIME_SECONDS`) and a LAN address to a third party. Attribution
-means nothing there anyway (the proxy releases its slot before the client follows). Fix: look the channel's stream
-profile up before spawning and leave both headers out for a Redirect profile, or make the first request from the plugin
-without following redirects and hand ffmpeg the bare `Location`; a unit test that the header builder returns `None` for
-a Redirect-profile channel.
 
 #### timeshift_buffer: string settings are not stripped, so a pasted space breaks storage_path or internal_base_url
 

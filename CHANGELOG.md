@@ -47,6 +47,10 @@ Dispatcharr restart for every worker to pick it up.
   were held off, but only for 30 seconds. On slow (for example network) storage, or with a long buffer, that removal
   could take longer, and a second start then ran beside the first: a second provider connection, and a buffer the
   plugin lost track of. The old files are now moved out of the way at once and deleted afterwards.
+- **A channel set to the Redirect stream profile no longer hands the provider a Dispatcharr login token**: the buffer's
+  connection carried a short-lived token for the addon's account and the viewer's local IP address, and when
+  Dispatcharr redirected it to the provider, both went along to the provider's server. For those channels the buffer
+  now connects without them.
 
 ## `repository.dispatcharr-unofficial` [0.1.0] - 2026-10-23
 
