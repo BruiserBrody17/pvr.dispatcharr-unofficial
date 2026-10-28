@@ -3021,6 +3021,15 @@ deferred removal fails (`test_the_scrub_releases_the_lock_when_removing_fails` n
 `test_an_orphan_whose_ffmpeg_cannot_be_stopped_is_skipped_and_the_scrub_goes_on` pins the per-entry `OSError` handling a
 first version of the change dropped (found by the review). The eleven new cases fail on the previous plugin code. Not covered here: a real slow removal racing a real second start, which was checked live with a slowed `rmtree` (see that entry), not on network storage.
 
+2026-10-28 (`timeshift_buffer` 0.8.16, `docs/CLOSED_ITEMS.md`'s "on a Redirect-profile channel the buffer's ffmpeg sends
+the account's token to the provider"): `_ffmpeg_input_headers()` gives ffmpeg no `-headers` for a channel whose stream
+profile is Redirect. A fake `apps.channels.models` in `sys.modules` (beside the fake JWT modules) answers the profile
+lookup: a Redirect channel gets `None` and no token is minted, a proxied one gets exactly
+`_stream_attribution_headers()`'s string, a failed lookup gets `None` and an exception log, and two `_start_ffmpeg()`
+cases check the spawned command line itself. Four of the five fail on the previous plugin code (the proxied command
+line is the old behaviour). Not covered here: Dispatcharr's real 302 and what ffmpeg sends after it, checked live (see
+that entry).
+
 ## Tools
 
 ### `tools/tests/`

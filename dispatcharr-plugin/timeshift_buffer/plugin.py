@@ -1273,17 +1273,53 @@ def _proxy_url(channel_uuid: str, base_url: str) -> str:
     # adjusting on a differently-shaped deployment -- see the
     # internal_base_url setting's own help text.
     #
-    # output_format=mpegts because the proxy answers this request (which carries the caller's JWT, see
-    # _stream_attribution_headers()) in the format _resolve_output_format() (apps/proxy/live_proxy/views.py) picks: the
-    # URL's output_format, then that user's Output Format Override, then the server's Default Output Format. Since
-    # Dispatcharr 0.33.0 that can be HLS, a redirect to a playlist, and fMP4 before it. ffmpeg probes its input and
-    # copes with either (measured live on 0.33.0), but each costs the server an HLS segmenter or an fMP4 conversion per
-    # buffer that asking for MPEG-TS avoids.
+    # output_format=mpegts because the proxy answers this request (which carries the caller's JWT unless the channel
+    # redirects, see _ffmpeg_input_headers()) in the format _resolve_output_format() (apps/proxy/live_proxy/views.py)
+    # picks: the URL's output_format, then that user's Output Format Override, then the server's Default Output Format.
+    # Since Dispatcharr 0.33.0 that can be HLS, a redirect to a playlist, and fMP4 before it. ffmpeg probes its input
+    # and copes with either (measured live on 0.33.0), but each costs the server an HLS segmenter or an fMP4 conversion
+    # per buffer that asking for MPEG-TS avoids.
     return f"{base_url.rstrip('/')}/proxy/ts/stream/{channel_uuid}?output_format=mpegts"
 
 
 # How long the access token put on ffmpeg's command line stays valid -- see _stream_attribution_headers().
 _STREAM_TOKEN_LIFETIME_SECONDS = 120
+
+
+def _channel_redirects_to_provider(channel_uuid: str, logger) -> bool:
+    """True when the proxy answers this channel with a 302 to the provider's own URL instead of streaming it.
+
+    stream_ts() (apps/proxy/live_proxy/views.py, Dispatcharr 0.33.0) checks channel.get_stream_profile().is_redirect()
+    before it looks at output_format or the caller and hands the request to _handle_redirect_stream(), and ffmpeg
+    re-sends its custom -headers to the redirect target (checked live on 0.33.0's own ffmpeg): the account's bearer
+    token and the viewer's LAN address went to a third party (docs/CLOSED_ITEMS.md). The same calls Dispatcharr makes,
+    so a profile that comes from the channel's override or the server default counts too. A failed lookup answers
+    True: losing the Stats attribution is harmless, leaking the token is not."""
+    try:
+        from apps.channels.models import Channel
+
+        return bool(Channel.objects.get(uuid=channel_uuid).get_stream_profile().is_redirect())
+    except Exception:
+        logger.exception(
+            "timeshift_buffer: couldn't look up the stream profile of channel %s -- starting its buffer without the "
+            "account's token or the viewer's address, in case the proxy redirects it to the provider",
+            channel_uuid,
+        )
+        return True
+
+
+def _ffmpeg_input_headers(channel_uuid: str, params: dict, logger):
+    """The -headers string for the buffer's ffmpeg, or None: none at all for a channel that redirects to its
+    provider, where they would reach the provider and attribute nothing (the proxy releases its slot before the
+    client follows)."""
+    if _channel_redirects_to_provider(channel_uuid, logger):
+        logger.info(
+            "timeshift_buffer: channel %s streams through a redirect (or its profile is unknown) -- its buffer "
+            "connects without the account's token or the viewer's address",
+            channel_uuid,
+        )
+        return None
+    return _stream_attribution_headers(params, logger)
 
 
 def _stream_attribution_headers(params: dict, logger):
@@ -1694,7 +1730,7 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
     # The actual argv assembly lives in _build_ffmpeg_command() above so
     # it's unit-testable standalone -- see that function's own docstring
     # for why -reset_timestamps 1 is deliberately not included.
-    attribution_headers = _stream_attribution_headers(params, logger)
+    attribution_headers = _ffmpeg_input_headers(channel_uuid, params, logger)
     cmd = _build_ffmpeg_command(
         _proxy_url(channel_uuid, base_url),
         attribution_headers,
