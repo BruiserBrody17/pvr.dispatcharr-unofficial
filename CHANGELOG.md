@@ -42,6 +42,11 @@ Dispatcharr restart for every worker to pick it up.
   check-ins was still on its way when the channel was stopped, the plugin could count that viewer back in, so the
   buffer and its provider connection stayed up until the idle timeout ended it. A check-in that arrives after its
   viewer stopped is now ignored.
+- **A slow cleanup can no longer leave two buffers running for one channel**: when a channel was restarted after its
+  buffer had died, or after a settings change, the old buffer's files were removed while other starts for that channel
+  were held off, but only for 30 seconds. On slow (for example network) storage, or with a long buffer, that removal
+  could take longer, and a second start then ran beside the first: a second provider connection, and a buffer the
+  plugin lost track of. The old files are now moved out of the way at once and deleted afterwards.
 
 ## `repository.dispatcharr-unofficial` [0.1.0] - 2026-10-23
 

@@ -5178,12 +5178,30 @@ def test_the_scrub_releases_the_lock_when_removing_fails(tmp_path, monkeypatch, 
     monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, ticks=None: True)
     monkeypatch.setattr(timeshift_buffer_plugin, "_stop_ffmpeg", lambda state, logger: None)
 
+    def failing(*_a):
+        raise OSError("busy")
+
+    # Neither moved aside nor removed in place: not reported, and the lock is still released.
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "rename", failing)
+    monkeypatch.setattr(timeshift_buffer_plugin.shutil, "rmtree", failing)
+    assert timeshift_buffer_plugin._scrub_orphaned_dirs(str(tmp_path), 300, _FakeLogger()) == []
+    assert start_locks.held == set()
+    assert (tmp_path / _ORPHAN_UUID).is_dir()
+
+
+def test_an_orphan_moved_aside_but_not_removed_is_left_to_the_tombstone_scrub(tmp_path, monkeypatch, start_locks):
+    _write_owner(tmp_path / _ORPHAN_UUID, pid=5000, ticks=1, started_at=time.time() - 3600)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, ticks=None: True)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_ffmpeg", lambda state, logger: None)
+
     def failing_rmtree(path):
         raise OSError("busy")
 
     monkeypatch.setattr(timeshift_buffer_plugin.shutil, "rmtree", failing_rmtree)
-    assert timeshift_buffer_plugin._scrub_orphaned_dirs(str(tmp_path), 300, _FakeLogger()) == []
+    assert timeshift_buffer_plugin._scrub_orphaned_dirs(str(tmp_path), 300, _FakeLogger()) == [_ORPHAN_UUID]
     assert start_locks.held == set()
+    assert [p.name for p in tmp_path.iterdir() if timeshift_buffer_plugin._is_tombstone_name(p.name)]
 
 
 def test_a_start_that_finishes_while_the_scrub_stops_an_earlier_orphan_is_left_alone(
@@ -6804,3 +6822,231 @@ def test_run_stop_buffer_with_the_current_token_still_stops(monkeypatch, tmp_pat
 
     assert result == {"status": "ok", "message": "Buffer stopped"}
     assert len(torn_down) == 1
+
+
+# ---------------------------------------------------------------------
+# Removals under the start lock (2026-10-23 sweep): only moved aside under
+# it, removed after its release
+# ---------------------------------------------------------------------
+
+
+def _record_removals(monkeypatch, start_locks, during=None):
+    """Wraps shutil.rmtree to record (name, locks held) per call; `during()` runs inside the first removal."""
+    real_rmtree = shutil.rmtree
+    calls = []
+
+    def rmtree(path, *a, **k):
+        calls.append((Path(path).name, set(start_locks.held)))
+        if during is not None and len(calls) == 1:
+            during()
+        real_rmtree(path, *a, **k)
+
+    monkeypatch.setattr(timeshift_buffer_plugin.shutil, "rmtree", rmtree)
+    return calls
+
+
+def _start(tmp_path, settings=None):
+    return timeshift_buffer_plugin.Plugin().run(
+        "start_buffer",
+        {"channel_uuid": _UUID},
+        {"logger": _FakeLogger(), "settings": {"storage_path": str(tmp_path), **(settings or {})}},
+    )
+
+
+def test_a_start_during_a_dead_buffers_removal_reattaches_instead_of_starting_a_second_ffmpeg(
+    tmp_path, monkeypatch, state_redis, start_locks
+):
+    """The reproducer: the 30 s start lock is never renewed, and the dead-buffer cleanup removed its directory while
+    holding it. A removal that outlived the TTL let a second start take the lock, classify the same dead buffer, and
+    spawn its own ffmpeg; the first then deleted the second's state and spawned another beside it. Here the locks
+    expire inside the removal and a second start runs there."""
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    (channel_dir / "seg_00001.ts").write_bytes(b"old")
+    dead = {"channel_uuid": _UUID, "pid": 999, "started_at": 1.0, "http_port": 9192, "storage_path": str(tmp_path)}
+    _seed(state_redis, dead)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, *_a: pid == _FakeProc.pid)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [])
+    spawned = []
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: spawned.append(1) or _FakeProc())
+    second = []
+
+    def expire_the_locks_and_start_again():
+        start_locks.held.clear()
+        second.append(_start(tmp_path))
+
+    removals = _record_removals(monkeypatch, start_locks, during=expire_the_locks_and_start_again)
+
+    first, _logger = _run(
+        monkeypatch,
+        "start_buffer",
+        {"channel_uuid": _UUID},
+        {},
+        tmp_path,
+        acquire_lock=start_locks.acquire,
+        release_lock=start_locks.release,
+    )
+
+    assert first["status"] == "ok" and first["already_running"] is False
+    assert second[0]["status"] == "ok" and second[0]["already_running"] is True
+    assert spawned == [1]
+    assert _stored(state_redis)["pid"] == _FakeProc.pid
+    assert [timeshift_buffer_plugin._is_tombstone_name(name) for name, _held in removals] == [True]
+    assert channel_dir.is_dir()
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["dead", "stale_config", "leftover"],
+)
+def test_every_removal_a_start_makes_runs_after_it_releases_its_locks(
+    case, tmp_path, monkeypatch, state_redis, start_locks
+):
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    (channel_dir / "seg_00001.ts").write_bytes(b"old")
+    old = {"channel_uuid": _UUID, "pid": 999, "started_at": 1.0, "http_port": 9192, "storage_path": str(tmp_path)}
+    if case == "stale_config":
+        old["http_port"] = 1111
+    if case != "leftover":
+        _seed(state_redis, old)
+    alive = {_FakeProc.pid} | ({999} if case == "stale_config" else set())
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, *_a: pid in alive)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_ffmpeg", lambda state, logger: alive.discard(state["pid"]))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [])
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+    removals = _record_removals(monkeypatch, start_locks)
+
+    result, _logger = _run(
+        monkeypatch,
+        "start_buffer",
+        {"channel_uuid": _UUID},
+        {},
+        tmp_path,
+        acquire_lock=start_locks.acquire,
+        release_lock=start_locks.release,
+    )
+
+    assert result["status"] == "ok" and result["already_running"] is False
+    assert len(removals) == 1
+    name, held = removals[0]
+    assert timeshift_buffer_plugin._is_tombstone_name(name)
+    assert held == set()
+    assert not (channel_dir / "seg_00001.ts").exists()
+    assert [p.name for p in tmp_path.iterdir()] == [_UUID]  # the tombstone is gone too
+
+
+def test_a_dead_buffer_replaced_while_starting_is_left_to_its_new_owner(tmp_path, monkeypatch, start_locks):
+    """Should a start outlive its lock anyway, the dead-buffer cleanup deletes the state only while it is still the
+    dead instance (it used to delete whatever was there), and leaves the directory alone when it is not."""
+    dead = {"channel_uuid": _UUID, "pid": 999, "started_at": 1.0, "http_port": 9192, "storage_path": str(tmp_path)}
+    replacement = {"channel_uuid": _UUID, "pid": 5555, "started_at": 60.0, "http_port": 9192}
+    reads = iter([dead])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(next(reads, replacement)))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, *_a: False)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_delete_buffer_state", lambda uuid: pytest.fail("must not delete"))
+    removed = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_remove_channel_files", lambda s, logger: removed.append(s))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_start_ffmpeg", lambda *a, **k: pytest.fail("must not start"))
+
+    result, _logger = _run(
+        monkeypatch,
+        "start_buffer",
+        {"channel_uuid": _UUID},
+        {},
+        tmp_path,
+        acquire_lock=start_locks.acquire,
+        release_lock=start_locks.release,
+    )
+
+    assert result["status"] == "error" and result["retryable"] is True
+    assert removed == []
+    assert start_locks.held == set()
+
+
+def test_an_untracked_teardown_removes_the_files_after_releasing_the_lock(tmp_path, monkeypatch, start_locks):
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    (channel_dir / "seg_00001.ts").write_bytes(b"old")
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_ffmpeg", lambda state, logger: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_delete_buffer_state", lambda uuid: None)
+    removals = _record_removals(monkeypatch, start_locks)
+
+    state = {"channel_uuid": _UUID, "pid": 100, "storage_path": str(tmp_path)}
+    assert timeshift_buffer_plugin._teardown_untracked_buffer(state, _FakeLogger()) is True
+
+    assert [held for _name, held in removals] == [set()]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_orphan_scrub_removes_after_releasing_each_lock(tmp_path, monkeypatch, start_locks):
+    orphan = tmp_path / _ORPHAN_UUID
+    orphan.mkdir()
+    old_mtime = time.time() - 3600
+    os.utime(orphan, (old_mtime, old_mtime))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    removals = _record_removals(monkeypatch, start_locks)
+
+    assert timeshift_buffer_plugin._scrub_orphaned_dirs(str(tmp_path), 60, _FakeLogger()) == [_ORPHAN_UUID]
+
+    assert [held for _name, held in removals] == [set()]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_nested_deferral_leaves_the_removal_to_the_outermost(tmp_path):
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    logger = _FakeLogger()
+
+    with timeshift_buffer_plugin._deferred_removals(logger):
+        with timeshift_buffer_plugin._deferred_removals(logger):
+            assert timeshift_buffer_plugin._move_aside_and_remove(channel_dir, logger) is True
+        tombstones = list(tmp_path.iterdir())
+        assert len(tombstones) == 1 and timeshift_buffer_plugin._is_tombstone_name(tombstones[0].name)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_directory_that_cannot_be_moved_aside_is_removed_at_once_even_when_deferring(tmp_path, monkeypatch):
+    """Deferred under its original name, the removal would take whatever the next start put there."""
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    logger = _FakeLogger()
+
+    def refuse(*_a):
+        raise OSError("cross-device")
+
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "rename", refuse)
+    with timeshift_buffer_plugin._deferred_removals(logger):
+        assert timeshift_buffer_plugin._move_aside_and_remove(channel_dir, logger) is True
+        assert not channel_dir.exists()
+
+
+def test_an_orphan_whose_ffmpeg_cannot_be_stopped_is_skipped_and_the_scrub_goes_on(tmp_path, monkeypatch, start_locks):
+    """_stop_ffmpeg()'s final SIGKILL suppresses only ProcessLookupError: an EPERM from it must cost one entry, not
+    the rest of the pass and the tombstone scrub after it."""
+    stuck = tmp_path / _ORPHAN_UUID
+    other = tmp_path / _ORPHAN_UUID_B
+    _write_owner(stuck, pid=5000, ticks=1, started_at=time.time() - 3600)
+    other.mkdir()
+    tombstone = tmp_path / f".{_UUID}.removing-0123abcd"
+    tombstone.mkdir()
+    old_mtime = time.time() - 3600
+    for d in (other, tombstone):
+        os.utime(d, (old_mtime, old_mtime))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, ticks=None: True)
+
+    def refuse(state, logger):
+        raise PermissionError("not ours")
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_ffmpeg", refuse)
+    logger = _FakeLogger()
+
+    removed = timeshift_buffer_plugin._scrub_orphaned_dirs(str(tmp_path), 300, logger)
+
+    assert removed == [_ORPHAN_UUID_B, tombstone.name]
+    assert stuck.is_dir()
+    assert start_locks.held == set()
+    assert any(level == "exception" for level, _ in logger.calls)

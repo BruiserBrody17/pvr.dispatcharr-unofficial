@@ -1658,18 +1658,12 @@ def _clear_channel_dir(channel_dir: Path, logger):
     so a reaper tick could rmtree it as a 300s-old orphan out from under a
     buffer that was just starting, and the missing cwd then surfaced from
     Popen as a misleading "ffmpeg not found". Recreating the directory gives
-    it a fresh mtime too."""
-    if not channel_dir.exists():
-        return
-    try:
-        shutil.rmtree(channel_dir)
-    except FileNotFoundError:
-        return
-    except OSError:
-        # Best effort: a partly cleared directory is no worse than the
-        # leftover that was there before, and ffmpeg still starts.
-        logger.exception("timeshift_buffer: couldn't fully clear leftover files in %s", channel_dir)
-    else:
+    it a fresh mtime too.
+
+    Moved aside rather than removed in place, so the removal itself can wait
+    until the start lock is released (_deferred_removals()). A failed removal
+    is logged there and is best effort: ffmpeg still starts."""
+    if _move_aside_and_remove(channel_dir, logger):
         logger.info("timeshift_buffer: cleared leftover files from %s before starting a new buffer", channel_dir)
 
 
@@ -1977,26 +1971,70 @@ def _remove_channel_files(state: dict, logger):
             "timeshift_buffer: refusing to remove files for invalid channel_uuid %r", state.get("channel_uuid")
         )
         return
-    # Renamed out of the way first, then removed: the removal of a large buffer can outlast _TEARDOWN_GRACE_SECONDS,
-    # and a start_buffer after that recreates this directory for its new ffmpeg -- which the old rmtree's final rmdir
-    # used to remove as well (2026-10-18 audit). The rename is one step; whatever is left of an interrupted removal is
-    # found by name by the orphan scrub (_scrub_tombstones()).
-    target = channel_dir.with_name(f"{_TOMBSTONE_PREFIX}{channel_dir.name}.removing-{secrets.token_hex(4)}")
+    _move_aside_and_remove(channel_dir, logger)
+
+
+def _move_aside_and_remove(directory: Path, logger) -> bool:
+    """Renames a buffer directory to a tombstone and removes that -- at once, or under _deferred_removals() once the
+    start lock is released. Returns whether the directory is gone from its own name: False when there was nothing
+    there, or when it could neither be moved aside nor removed in place.
+
+    Renamed out of the way first: the removal of a large buffer can outlast _TEARDOWN_GRACE_SECONDS, and a
+    start_buffer after that recreates this directory for its new ffmpeg -- which the old rmtree's final rmdir used to
+    remove as well (2026-10-18 audit). The rename is one step; whatever is left of an interrupted removal is found by
+    name by the orphan scrub (_scrub_tombstones())."""
+    target = directory.with_name(f"{_TOMBSTONE_PREFIX}{directory.name}.removing-{secrets.token_hex(4)}")
     try:
-        os.rename(channel_dir, target)
+        os.rename(directory, target)
     except FileNotFoundError:
-        return
+        return False
     except OSError:
+        # Now, even under a start lock: deferred, it would remove whatever the next start put here.
         logger.exception(
-            "timeshift_buffer: couldn't move %s aside before removing it -- removing it in place", channel_dir
+            "timeshift_buffer: couldn't move %s aside before removing it -- removing it in place", directory
         )
-        target = channel_dir
+        return _remove_tree(directory, logger)
+    pending = getattr(_pending_removals, "paths", None)
+    if pending is None:
+        _remove_tree(target, logger)
+    else:
+        pending.append(target)
+    return True
+
+
+def _remove_tree(path: Path, logger) -> bool:
     try:
-        shutil.rmtree(target)
+        shutil.rmtree(path)
     except FileNotFoundError:
         pass
     except OSError:
-        logger.exception("timeshift_buffer: couldn't fully clean up %s", target)
+        logger.exception("timeshift_buffer: couldn't fully clean up %s", path)
+        return False
+    return True
+
+
+_pending_removals = threading.local()
+
+
+@contextlib.contextmanager
+def _deferred_removals(logger):
+    """While active on this thread, _move_aside_and_remove() only renames, and the tombstones are removed on exit.
+    Entered outside a start lock's try/finally, so the removals run after the release: the lock's
+    _START_BUFFER_LOCK_TTL is never renewed, and a removal under it (network storage, a buffer at
+    _MAX_BUFFER_MINUTES) could outlast it, letting a second start_buffer for the channel take the lock and run
+    beside the first -- two ffmpegs in one directory, or its state deleted by the first (2026-10-23 sweep). A nested
+    use leaves the removals to the outermost."""
+    if getattr(_pending_removals, "paths", None) is not None:
+        yield
+        return
+    paths = []
+    _pending_removals.paths = paths
+    try:
+        yield
+    finally:
+        _pending_removals.paths = None
+        for path in paths:
+            _remove_tree(path, logger)
 
 
 #: A buffer directory moved aside for removal is named `.<channel uuid>.removing-<8 hex digits>`.
@@ -2263,30 +2301,31 @@ def _teardown_untracked_buffer(state: dict, logger) -> bool:
     ffmpeg, then remove its files and state only if nothing has been started for the channel since.
     Under the channel's start lock (skipped, as "a start is in progress", when held), with the state
     re-read: a different instance now tracked means a start_buffer finished meanwhile and owns the
-    directory."""
+    directory. The files are only moved aside under the lock (_deferred_removals())."""
     channel_uuid = state["channel_uuid"]
-    token = _acquire_start_buffer_lock(channel_uuid)
-    if token is None:
-        logger.info(
-            "timeshift_buffer: not removing the files of channel %s -- a start_buffer is in progress", channel_uuid
-        )
-        return False
-    try:
-        current = _get_buffer_state(channel_uuid)
-        if current is not None and not _same_buffer_instance(current, state):
-            logger.warning(
-                "timeshift_buffer: not tearing down channel %s -- a new buffer was started since (pid %s -> %s)",
-                channel_uuid,
-                state.get("pid"),
-                current.get("pid"),
+    with _deferred_removals(logger):
+        token = _acquire_start_buffer_lock(channel_uuid)
+        if token is None:
+            logger.info(
+                "timeshift_buffer: not removing the files of channel %s -- a start_buffer is in progress", channel_uuid
             )
             return False
-        _stop_ffmpeg(state, logger)
-        _remove_channel_files(state, logger)
-        _delete_buffer_state(channel_uuid)
-        return True
-    finally:
-        _release_start_buffer_lock(channel_uuid, token)
+        try:
+            current = _get_buffer_state(channel_uuid)
+            if current is not None and not _same_buffer_instance(current, state):
+                logger.warning(
+                    "timeshift_buffer: not tearing down channel %s -- a new buffer was started since (pid %s -> %s)",
+                    channel_uuid,
+                    state.get("pid"),
+                    current.get("pid"),
+                )
+                return False
+            _stop_ffmpeg(state, logger)
+            _remove_channel_files(state, logger)
+            _delete_buffer_state(channel_uuid)
+            return True
+        finally:
+            _release_start_buffer_lock(channel_uuid, token)
 
 
 def _is_canonical_uuid(name: str) -> bool:
@@ -2397,30 +2436,34 @@ def _is_untracked_orphan(entry: Path, min_age_seconds: int, now: float) -> bool:
 
 def _scrub_orphaned_dirs(storage_path: str, min_age_seconds: int, logger) -> list:
     removed = []
-    for entry in _find_orphaned_channel_dirs(storage_path, min_age_seconds):
-        # Per entry, under the channel's start lock, with everything re-checked: stopping an
-        # untracked ffmpeg takes up to two seconds, so by the time the scrub reached a later entry a
-        # start_buffer for it could have finished -- new ffmpeg, new owner file, new Redis state --
-        # and the stale list would have stopped that new ffmpeg and deleted its directory (found by
-        # the 2026-10-04 fourth hardening sweep; the rmtree half is older, the stop made the window
-        # seconds wide). A start in progress holds the lock, and the scrub skips that channel.
-        token = _acquire_start_buffer_lock(entry.name)
-        if token is None:
-            continue
-        try:
-            if not _is_untracked_orphan(entry, min_age_seconds, time.time()):
+    # Exited before _scrub_tombstones() below, which would otherwise find these (an orphan is old by definition).
+    with _deferred_removals(logger):
+        for entry in _find_orphaned_channel_dirs(storage_path, min_age_seconds):
+            # Per entry, under the channel's start lock, with everything re-checked: stopping an
+            # untracked ffmpeg takes up to two seconds, so by the time the scrub reached a later entry a
+            # start_buffer for it could have finished -- new ffmpeg, new owner file, new Redis state --
+            # and the stale list would have stopped that new ffmpeg and deleted its directory (found by
+            # the 2026-10-04 fourth hardening sweep; the rmtree half is older, the stop made the window
+            # seconds wide). A start in progress holds the lock, and the scrub skips that channel.
+            token = _acquire_start_buffer_lock(entry.name)
+            if token is None:
                 continue
             try:
+                if not _is_untracked_orphan(entry, min_age_seconds, time.time()):
+                    continue
                 # An orphan with a live ffmpeg is the lost-Redis-state case: stop the process
                 # first, or it recreates the files as fast as they are removed and keeps its
                 # provider slot.
-                _reap_untracked_ffmpeg(entry, logger)
-                shutil.rmtree(entry)
-                removed.append(entry.name)
-            except OSError:
-                logger.exception("timeshift_buffer: couldn't scrub orphaned directory %s", entry)
-        finally:
-            _release_start_buffer_lock(entry.name, token)
+                try:
+                    _reap_untracked_ffmpeg(entry, logger)
+                except OSError:
+                    # One entry, not the whole pass (the tombstone scrub below included).
+                    logger.exception("timeshift_buffer: couldn't scrub orphaned directory %s", entry)
+                    continue
+                if _move_aside_and_remove(entry, logger):
+                    removed.append(entry.name)
+            finally:
+                _release_start_buffer_lock(entry.name, token)
     if removed:
         logger.info(
             "timeshift_buffer: scrubbed %d orphaned buffer director%s: %s",
@@ -3788,18 +3831,21 @@ class Plugin:
         # blocking -- the lock's own short TTL already guarantees
         # whichever caller loses only waits briefly either way, and a
         # blocking wait here would risk this request itself timing out
-        # instead of a quick, clean "try again shortly".
-        lock_token = _acquire_start_buffer_lock(channel_uuid)
-        if lock_token is None:
-            return {
-                "status": "error",
-                "retryable": True,
-                "message": "Another start_buffer call for this channel is already in progress -- retry in a moment",
-            }
-        try:
-            return self._start_buffer_locked(channel_uuid, params, settings_dict, logger)
-        finally:
-            _release_start_buffer_lock(channel_uuid, lock_token)
+        # instead of a quick, clean "try again shortly". The directories a
+        # dead, stale-config or leftover buffer leaves are only moved aside
+        # under it, and removed after the release (_deferred_removals()).
+        with _deferred_removals(logger):
+            lock_token = _acquire_start_buffer_lock(channel_uuid)
+            if lock_token is None:
+                return {
+                    "status": "error",
+                    "retryable": True,
+                    "message": "Another start_buffer call for this channel is already in progress -- retry in a moment",
+                }
+            try:
+                return self._start_buffer_locked(channel_uuid, params, settings_dict, logger)
+            finally:
+                _release_start_buffer_lock(channel_uuid, lock_token)
 
     def _start_buffer_locked(self, channel_uuid, params, settings_dict, logger):
         """The actual classify-then-spawn logic, unchanged from before
@@ -3873,8 +3919,15 @@ class Plugin:
                 channel_uuid,
                 existing.get("pid"),
             )
+            # The state first, and only while it is still this dead instance: should this call have outlived its
+            # lock, a start that took the lock since owns the state and the directory, and both stay its own.
+            if _delete_buffer_state_if_instance(channel_uuid, existing) in ("replaced", "contended"):
+                return {
+                    "status": "error",
+                    "retryable": True,
+                    "message": "The buffer for this channel changed while restarting -- retry in a moment",
+                }
             _remove_channel_files(existing, logger)
-            _delete_buffer_state(channel_uuid)
             existing = None
 
         # This buffer's own http_port/storage_path no longer match current
