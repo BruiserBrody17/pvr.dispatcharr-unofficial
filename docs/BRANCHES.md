@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`8bc634a`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`9037649`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -147,6 +147,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `7f07461` | `10d7bd7` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | The guide-history re-measure on Dispatcharr 0.33.0 closed without a change; the guide fetch is the same code on both. |
 | `0fad167` | `42556c6` (`git cherry-pick -x`, without `[skip ci]`; the CoreELEC library kind, one test case and the running docs by hand) | The release gate's three fixes from the 2026-10-23 and 2026-10-24 sweeps. `Omega`'s CoreELEC asset is `-coreelec-armv7`, an ELF32 ARM library, and its wrong-platform test feeds that name Kodi 22's 64-bit build. The ported gate passes the shipped 0.13.1 set beside that tag's own plugin sources. |
 | `8bc634a` | `6fc5360` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and one entry's CoreELEC name by hand) | The repository tool's three fixes from the same sweeps. The tool and its tests are the same on both branches: it knows both Kodi lines. |
+| `9037649` | `06130d3` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | `timeshift_buffer` removes a channel's directory only after releasing its start lock (the 2026-10-23 sweep's MEDIUM), and the gevent open item its review filed. The plugin is the same file on both branches before and after; the live check on Dispatcharr 0.33.0 ran with that file. |
 
 ## Dependencies that differ by Kodi release
 
