@@ -803,6 +803,72 @@ static void live_segment_recycled(DispatcharrClient& cl)
   cl.CloseLiveTimeshiftStream();
 }
 
+// A run of failed segment fetches used to be retried inside one read for up to 25 s, and Kodi closes a player only
+// between reads, on its main thread, so a Stop held Kodi's whole interface until that read returned (18.6 s, measured
+// 2026-10-29; docs/CLOSED_ITEMS.md, "A Stop during a run of failed live segment fetches holds Kodi's interface for up
+// to 25 s"). Every segment answers 503 for 12 s: no read may block for more than the longest retry delay and a slice,
+// none may answer 0 (that sets Kodi's end of file), the reads must be handed back as -1, and once the segments answer
+// again the same stream must deliver bytes. The give-up at the end of a longer run is live_segment_recycled's phase 2.
+static void live_outage_handback(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  std::vector<uint8_t> buf(65536);
+  if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) <= 0)
+    FAIL("the first read delivered nothing");
+
+  const long segGetsBefore = fake_stat("GET /tsbuf/seg");
+  ctl("seg_status=503");
+  long maxReadMs = 0, minusOnes = 0, zeros = 0;
+  const long phase1 = ms();
+  while (ms() - phase1 < 12000)
+  {
+    const long t0 = ms();
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    maxReadMs = std::max(maxReadMs, ms() - t0);
+    if (n < 0)
+      minusOnes++;
+    else if (n == 0)
+      zeros++;
+    if (n <= 0)
+      sleep_ms(5);
+  }
+  ctl("seg_status=0");
+  const long segGets = fake_stat("GET /tsbuf/seg") - segGetsBefore;
+  INFO("outage hand-back: longest read %ld ms, %ld read(s) handed back (-1), %ld zero read(s), %ld segment GET(s) in "
+       "12 s",
+       maxReadMs, minusOnes, zeros, segGets);
+  if (maxReadMs > 2600)
+    FAIL("one read blocked for %ld ms during the failures; Kodi cannot act on a Stop for that long", maxReadMs);
+  if (zeros != 0)
+    FAIL("%ld read(s) answered 0 during a 12 s run of failures, which ends playback in Kodi", zeros);
+  if (minusOnes < 4)
+    FAIL("only %ld read(s) handed back in 12 s, so the retries were not cut into slices", minusOnes);
+  if (segGets > 15)
+    FAIL("%ld segment requests in 12 s: the retry delay is not taken before a read is handed back", segGets);
+
+  long resumed = 0;
+  const long phase2 = ms();
+  while (ms() - phase2 < 10000 && resumed == 0)
+  {
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n > 0)
+      resumed += n;
+    else
+      sleep_ms(5);
+  }
+  INFO("outage hand-back: %ld bytes within %ld ms of the segments answering again", resumed, ms() - phase2);
+  if (resumed == 0)
+    FAIL("the stream did not resume once the segments answered again");
+  if (!cl.IsLiveTimeshiftStreamOpen())
+    FAIL("the stream closed itself during a 12 s run of failures");
+  cl.CloseLiveTimeshiftStream();
+}
+
 // The end of the stall budget itself, by hand because it runs about 70 s: a quiet buffer on an answering plugin is
 // waited on, returning -1 slices, until about kLiveStallWaitBudgetMs of waiting has gone by, then the read returns 0.
 static void live_tail_giveup(DispatcharrClient& cl)
@@ -1565,6 +1631,8 @@ int main(int argc, char** argv)
       live_tail_giveup(*cl);
     else if (what == "live_segment_recycled")
       live_segment_recycled(*cl);
+    else if (what == "live_outage_handback")
+      live_outage_handback(*cl);
     else if (what == "live_blackhole_close")
       live_blackhole(*cl, false);
     else if (what == "live_blackhole_read")

@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**23 open, 366 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**22 open, 367 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -25,21 +25,20 @@ other MEDIUM (the timeshift plugin's token reaching a Redirect-profile provider)
 and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of the
 HEVC seek-probe fix: a live read in a gap that answers 0 while the buffer is alive (its other half, a recycled
 segment, was fixed on 2026-10-29). One (2026-10-28) came out of the review of the
-start-lock removal fix: a start parked on a gevent worker can still outlive its lock. One (2026-10-29) came out of the live check of the
-recycled-segment fix: a Stop during a run of failed live segment fetches holds Kodi's interface. One (2026-10-29) is
+start-lock removal fix: a start parked on a gevent worker can still outlive its lock. One (2026-10-29) is
 what the 2026-10-28 live check of a sustained outage left: the notice that ends playback blames the file server's port.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 15 |
+| Open: Fix known, not yet done | 14 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 316 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 317 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -71,23 +70,6 @@ so no refresh can land in that window. Reaching it here needs a throwaway build 
 Fix: a bound first, since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
 `HandleLiveTimeshiftSegmentFetchFailure()` is one now that the recycled segment goes through it: its forced refresh
 lets the retry's clamp move past a pruned segment, and a gap that persists ends through its give-up rule with a notice.
-
-#### A Stop during a run of failed live segment fetches holds Kodi's interface for up to 25 s
-
-**Opened 2026-10-29, from the live check of the recycled-segment fix; LOW, measured live.** `ReadLiveTimeshiftStream()`
-retries a failed segment fetch inside one `Read()` for up to `kOutageReadBudget` (25 s), sleeping between tries as
-`HandleLiveTimeshiftSegmentFetchFailure()` says. Kodi closes the player on its main thread and waits for the player
-thread, so a Stop pressed during that loop holds the whole interface until the read returns. Nothing tells
-the addon a Stop was pressed: `m_abortRequests` is set only when the addon instance is torn down. Live on Kodi 21.3
-(`CLOSED_ITEMS.md`, "A recycled live segment answered 0, so playback ended at the next stall"), with every segment
-answering 404 and a Stop sent 10 s in: the Stop took effect 18.6 s later and Kodi's JSON-RPC did not answer meanwhile.
-A server outage reaches the loop (it was added for `CLOSED_ITEMS.md`'s "A brief server outage ended playback for
-good"), and since 2026-10-29 so does a 404 on a segment the manifest still lists.
-
-Fix: cut the loop into slices that hand the read back to Kodi, as the tail wait already does (`TIMESHIFT.md`: a Stop
-20 s into the tail wait ended playback 3.5 s later). A handed-back read must return -1, not 0 (a 0 sets Kodi's end of
-file, the reason for the loop), with the handler's delay already taken so Kodi's immediate retry does not hammer the
-server, and the 25 s budget then has to live on the stream state across calls instead of inside one call.
 
 #### A whole-server outage ends live playback with a notice that blames the file server's port
 

@@ -3405,7 +3405,7 @@ channel only a 0 ends playback; a -1 there means "nothing yet, ask again".
 
 | Stalled means | Tolerated for | Answer |
 |---|---|---|
-| A segment fetch fails (server unreachable, gateway error, 401/403/5xx, or a 404 for a segment the buffer recycled: the retry's forced refresh moves past it, since 2026-10-29) | Retried inside one `Read()` with a delay doubling from 250 ms to 2 s, for up to 25 s (`kOutageReadBudget`); the failure streak carries across calls | 0 when the 25 s is used up |
+| A segment fetch fails (server unreachable, gateway error, 401/403/5xx, or a 404 for a segment the buffer recycled: the retry's forced refresh moves past it, since 2026-10-29) | Retried with a delay doubling from 250 ms to 2 s; a read still failing after a one-second slice (`kLiveTailWaitSliceMs`) is handed back so a Stop can land between reads (since 2026-10-29: it used to stay inside one `Read()` for up to 25 s; a read handed back mid-segment costs one frame, which FFmpeg logs as a decode error while the picture is frozen, measured live); the failure streak carries across calls | -1 per slice (Kodi retries); never 0 until the give-up below |
 | The same failures keep going | Four in a row and 30 s since the first (`kMaxConsecutiveSegmentFetchFailures`, `kMinSegmentFetchFailureStreak`), or at once when a manifest refresh reports the buffer gone | 0 on this and every later call, stream marked fatal, logged at error level, the viewer told once (-1 until 2026-10-20, which left Kodi buffering) |
 | Reader at the live tail, no new segment yet (normal for up to a segment's length) | One-second slices (`kLiveTailWaitSliceMs`) so a close can land between reads; budget 3 times the estimated segment length (mean of the last five, 6 s with no samples, floor 1.5 s, cap 60 s), counted across the slices of one episode at one position, **or 70 s (`kLiveStallWaitBudgetMs`) while the plugin keeps answering** (the last forced refresh got a manifest, so the ffmpeg is alive and a silent stall may be healed by Dispatcharr switching streams; since 2026-10-13, see "Upstream failover on a buffered channel: measured"), with the refresh pause slowing from 250 ms to one per slice once the ordinary budget is spent; a call is also capped at twice the budget's own sleep time, at most 120 s | -1 per slice, 0 once the budget is used up, at once when the plugin reports the ffmpeg ended, and after the ordinary budget when a refresh fails; a seek probe gets one attempt, then -1 (`LiveTailGiveUpResult()`) |
 | The buffer's ffmpeg has exited | Not a wait: the reader keeps playing what is on disk | 0 at the tail (`IsAtEndedTail`) |
@@ -3413,8 +3413,9 @@ channel only a 0 ends playback; a -1 there means "nothing yet, ask again".
 | The read sits in a gap | - | 0 (a recycled segment did too until 2026-10-29) |
 | The segment server ignores a range or sends the wrong size | - | 0, fatal |
 
-A sustained live outage therefore ends in two steps: the first `Read()` returns 0 after about 25 s, and if Kodi calls
-again the failure streak passes 30 s within that call and the stream is marked fatal. Measured live (`docs/CLOSED_ITEMS.md`,
+A sustained live outage therefore ends through the give-up rule: the reads are handed back as -1 once a slice until
+the failure streak has reached four failures and lasted 30 s, and then the stream is marked fatal, with a notice. Until
+2026-10-29 the first `Read()` also returned 0 after about 25 s on its own. Measured live (`docs/CLOSED_ITEMS.md`,
 "A brief server outage ended playback for good"): an outage of 8 s and one of 20 s resumed; one of 45 s ended playback
 at about 40 s. Both limits were chosen against that measurement and the plugin's own 30 s idle reaper, not tuned
 further.
@@ -3486,9 +3487,11 @@ Every wait is bounded, by a count times a request timeout at worst; none is unbo
 3. **No low-speed limit.** A server that trickles bytes holds a transfer for the whole `timeout` (up to 180 s if raised).
    Adding one risks cutting a legitimately slow link, and nothing seen in the lab trickles, so it is recorded here, not
    changed (decided 2026-10-11, with the open-time cap).
-4. **One live `Read()` can overrun its 25 s budget.** The budget is checked after each attempt, and an attempt can be a
-   full segment fetch plus a refresh, so against a server that drops packets one call can take about a minute. The
-   catch-up wait has the same documented overshoot (`kMaxCatchUpWallClockMs`: the budget plus one attempt's requests).
+4. **One failing live `Read()` attempt is bounded only by curl's timeouts.** The one-second slice is checked between
+   attempts, and an attempt is a segment fetch (the whole `timeout`, 30 s by default), a forced manifest refresh (the
+   short timeout) and the retry delay (up to 2 s), so against a server that accepts connections and never answers one
+   call, and a Stop, can take about 37 s. Until 2026-10-29 the call also kept retrying for up to 25 s. The catch-up
+   wait has the same documented overshoot (`kMaxCatchUpWallClockMs`: the budget plus one attempt's requests).
 5. **A recorded read that keeps returning -1 has no bound across calls.** Each call retries for up to 20 s and the budget
    restarts on the next, so Kodi's own give-up is the only end. Two comments in the source describe Kodi's behaviour
    differently ("does not keep retrying" in `SegmentFetchFailure.h`'s `IsTransientReadFailure` comment, "retries at once"
@@ -3518,8 +3521,8 @@ Server-side live mode) then played the same channel. The channel and both stream
 **Why the viewer's playback ended at 10 s (before the longer wait below).** At the live tail `ReadLiveTimeshiftStream()` waits for a new
 segment in slices of one to two seconds, handing the read back (`-1`) each time so a stop can land, up to a budget of three
 segment durations (6.25 s here, "waited 5537ms of ~6250ms at the live tail"); a refused tail wait is then the end of the
-stream and Kodi closes it. The "0 after about 25 s" in the stalled-streams table above is the failed-fetch path, not this
-one: a stall that sends no error is the tail wait, and it is short by design (the longest legitimate gap is about three
+stream and Kodi closes it. The failed-fetch rows in the stalled-streams table above (which answered 0 after about 25 s until
+2026-10-29) are a different path: a stall that sends no error is the tail wait, and it is short by design (the longest legitimate gap is about three
 segments).
 
 **What this says about hooks.** (1) A dropped connection fails over in about a second with the buffer and the viewer

@@ -103,6 +103,25 @@ TEST_CASE("A transient read keeps retrying until the budget is spent", "[Segment
   CHECK_FALSE(ShouldKeepRetryingTransientRead(milliseconds(20000), milliseconds(20000)));
 }
 
+TEST_CASE("A failing live read hands control back to Kodi once it has run for a slice", "[SegmentFetchFailure]")
+{
+  // The Stop freeze (2026-10-29): the retries stayed inside one read for up to 25 s, and Kodi's Stop waited for it.
+  using std::chrono::milliseconds;
+  const milliseconds slice{1000};
+  CHECK(DecideLiveSegmentRetryStep(false, milliseconds(0), slice) == LiveSegmentRetryStep::kTryAgain);
+  CHECK(DecideLiveSegmentRetryStep(false, milliseconds(999), slice) == LiveSegmentRetryStep::kTryAgain);
+  CHECK(DecideLiveSegmentRetryStep(false, milliseconds(1000), slice) == LiveSegmentRetryStep::kHandBack);
+  // A run of failures never gives up here (that is the handler's 30 s rule), however long one read has run.
+  CHECK(DecideLiveSegmentRetryStep(false, milliseconds(60000), slice) == LiveSegmentRetryStep::kHandBack);
+}
+
+TEST_CASE("A failing live read stops at once when the addon is torn down", "[SegmentFetchFailure]")
+{
+  using std::chrono::milliseconds;
+  CHECK(DecideLiveSegmentRetryStep(true, milliseconds(0), milliseconds(1000)) == LiveSegmentRetryStep::kStop);
+  CHECK(DecideLiveSegmentRetryStep(true, milliseconds(5000), milliseconds(1000)) == LiveSegmentRetryStep::kStop);
+}
+
 // ---------------------------------------------------------------------
 // PermanentReadFailureTracker (the fourteenth hardening sweep)
 // ---------------------------------------------------------------------

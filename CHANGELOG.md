@@ -24,6 +24,10 @@ compare against.
   timeshift buffer let go of the segment Kodi was about to read, playback carried on but ended at the next stall, with
   no message, instead of waiting for the stream to recover. It now skips ahead to the oldest part the buffer still
   holds.
+- **Stopping playback while the server refuses connections or answers with errors no longer freezes Kodi**
+  (Server-side live mode): pressing Stop while the addon was retrying a failed read froze Kodi's whole interface for up
+  to 25 seconds. It now stops within a couple of seconds. A server that accepts connections and never answers can still
+  hold a Stop for up to the connection timeout.
 - **Recurring timers in Manitoba (`America/Winnipeg`) stay on time after 2026-11-01**: Manitoba no longer changes its
   clocks and stays on UTC-5, but the addon still moved it back to UTC-6, so recurring timers set for dates after that
   day would have recorded an hour off. A Dispatcharr server whose time zone data predates the change is still
