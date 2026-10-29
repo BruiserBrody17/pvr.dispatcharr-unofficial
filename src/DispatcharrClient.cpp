@@ -5009,17 +5009,20 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
   }
   if (outcome == LiveSegmentOutcome::kSegmentGone)
   {
-    // Segment got recycled between our manifest fetch and this read -- a
-    // real, expected race for a rolling buffer (the same one plugin.py's
-    // own do_GET/_create_snapshot already tolerate). Treat as "nothing
-    // readable here" rather than a hard error. Also a positive sign this
-    // buffer's own file server is alive and answering normally, so this
-    // resets the same failure count a genuine error would have been
-    // building toward -- see HandleLiveTimeshiftSegmentFetchFailure()'s
-    // own comment.
-    m_liveTimeshiftStream.consecutiveSegmentFetchFailures = 0;
-    m_liveTimeshiftStream.firstSegmentFetchFailureAt = {};
-    return 0;
+    // The rolling buffer let go of this segment after the manifest this read went by -- an expected race (the same
+    // one plugin.py's own do_GET/_create_snapshot tolerate). It used to answer 0, which sets Kodi's end of file while
+    // the buffer is alive, so playback went on and then ended, with no notice, at the next stall instead of waiting
+    // it out (docs/CLOSED_ITEMS.md, "A recycled live segment answered 0, so playback ended at the next stall"). The
+    // bounded retry handler moves on instead: its forced refresh moves the oldest segment past this one, and the
+    // retry's clamp at the top of this function continues from there. A 404 on a segment the manifest still lists
+    // fails again and ends through the handler's give-up rule, with a notice, rather than as a silent loop.
+    kodi::Log(ADDON_LOG_INFO,
+              "pvr.dispatcharr-unofficial: ReadLiveTimeshiftStream: segment %s (sequence %lld) is gone from the "
+              "timeshift buffer (HTTP 404) -- refreshing the manifest to move past it",
+              segFilename.c_str(), static_cast<long long>(segSequence));
+    curlLock.unlock();
+    stateLock.unlock();
+    return HandleLiveTimeshiftSegmentFetchFailure();
   }
   // The same plain-200-at-a-non-zero-offset check as ReadRecordingStream(): the plugin's file
   // server always answers a Range GET with 206, so a 200 here is something in between ignoring

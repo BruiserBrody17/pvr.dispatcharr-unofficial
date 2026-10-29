@@ -156,7 +156,7 @@ TEST_CASE("ClassifyLiveSegmentResponse puts a transport failure first, then a re
 {
   CHECK(ClassifyLiveSegmentResponse(false, 0, 0, -1, 1000) == LiveSegmentOutcome::kTransportFailure);
   CHECK(ClassifyLiveSegmentResponse(false, 404, 0, -1, 1000) == LiveSegmentOutcome::kTransportFailure);
-  // A 404 is the rolling buffer recycling a segment, not a failure to count.
+  // A 404 is its own outcome, a segment the rolling buffer recycled: the read path's bounded retry moves past it.
   CHECK(ClassifyLiveSegmentResponse(true, 404, 0, -1, 1000) == LiveSegmentOutcome::kSegmentGone);
   CHECK(ClassifyLiveSegmentResponse(true, 404, 500, -1, 1000) == LiveSegmentOutcome::kSegmentGone);
 }

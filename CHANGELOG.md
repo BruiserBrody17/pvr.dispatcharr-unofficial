@@ -20,6 +20,10 @@ compare against.
 - **An HEVC channel no longer stops at its first stall** (Server-side live mode, Kodi 21): when an HEVC channel's
   stream stalled, playback ended after a few seconds instead of waiting for Dispatcharr to switch to another stream. It
   now waits as long as an H.264 channel does.
+- **Server-side live mode no longer stops at a stall after the buffer drops the part being read**: when the server's
+  timeshift buffer let go of the segment Kodi was about to read, playback carried on but ended at the next stall, with
+  no message, instead of waiting for the stream to recover. It now skips ahead to the oldest part the buffer still
+  holds.
 - **Recurring timers in Manitoba (`America/Winnipeg`) stay on time after 2026-11-01**: Manitoba no longer changes its
   clocks and stays on UTC-5, but the addon still moved it back to UTC-6, so recurring timers set for dates after that
   day would have recorded an hour off. A Dispatcharr server whose time zone data predates the change is still
