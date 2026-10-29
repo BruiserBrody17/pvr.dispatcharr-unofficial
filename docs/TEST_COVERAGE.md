@@ -2330,6 +2330,13 @@ manifest fatal with the reader at the live edge, or behind it with its next segm
 within 5 s, a 0 at once on every later read, and exactly one notification about the timeshift buffer (the stream
 harness's stub now counts notifications, as the PVR one does).
 
+A recycled live segment (a 404) goes to the bounded retry handler instead of answering 0 (2026-10-29,
+`docs/CLOSED_ITEMS.md`'s "A recycled live segment answered 0, so playback ended at the next stall"). The response
+classification was already unit-tested (`ClassifyLiveSegmentResponse()`); what changed is the read path's answer, so
+the glue scenario `live_segment_recycled` (in CI) pins it: a real recycle under an idle reader must be skipped with no
+0, and 404s on segments the manifest still lists must end the stream through the give-up rule with one notice and a
+bounded number of requests. On the old code the first phase answered 0 on every read and the second ended nothing.
+
 The API-key owner stamps are written whenever the key is confirmed for a changed owner, not only when the key itself
 changes (2026-10-20, `docs/CLOSED_ITEMS.md`'s "The owner stamps are not rewritten when the address changes but the key
 does not"): `WriteApiKeyOwnerStampsIfChanged()`, from `PersistApiKeyIfChanged()`, the constructor and

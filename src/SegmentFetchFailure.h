@@ -21,8 +21,8 @@ namespace dispatcharr
 // hang, not a clean, diagnosable failure.
 //
 // consecutiveFailures is the caller's own running count of segment
-// fetches that have failed this way in a row this Open() session (reset
-// to 0 on any 200/206/404 response -- see
+// fetches that have failed this way in a row this Open() session (a 404
+// counts too since 2026-10-29; reset to 0 by a successful read -- see
 // LiveTimeshiftStreamState::consecutiveSegmentFetchFailures's own
 // comment). refreshFatal is whatever the caller's own
 // RefreshLiveManifest(force=true, ...) call for this same failure came

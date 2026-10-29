@@ -6,6 +6,69 @@
 
 ### Fixed
 
+#### A recycled live segment answered 0, so playback ended at the next stall
+
+**Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix, as half of "Two more live-read paths answer 0
+while the buffer is alive" (the other half, a gap, is still in `OPEN_ITEMS.md`); LOW, confirmed live on 2026-10-28.**
+`ReadLiveTimeshiftStreamOnce()` answered 0 when the plugin's file server answered 404 for a segment its rolling buffer
+had let go of between the manifest fetch and the read (`LiveSegmentOutcome::kSegmentGone`). The buffer is alive then,
+but a 0 sets Kodi's end of file until the next seek (`CLOSED_ITEMS.md`'s "Server-side mode: an HEVC channel's opening
+seek probe leaves Kodi at end of file, so its first stall ends playback"), so playback can carry on and then end at the
+next stall instead of waiting out `kLiveStallWaitBudgetMs`. A likely trigger: pause for longer than the plugin's
+buffer, resume (the read moves to the oldest segment) and lose that segment to recycling before it is fetched.
+
+**Checked live 2026-10-28** on Kodi 21.3 on the Linux VM: addon 0.13.1 (the `Omega` tip's CI build), Server-side
+mode, an H.264 1080p channel on the lab server, and a fault proxy between the addon and both Dispatcharr ports. Each run
+paused for 30 s and resumed, so playback was behind live, then forced a silent stall by answering `get_live_manifest`
+with the last real manifest. The proxy still forwarded each call, so the plugin kept the buffer alive. The lab's
+300-minute buffer ruled out pausing past it, so the recycle was injected instead: one segment fetch answered 404, which
+is what the plugin's file server answers for a recycled segment.
+- **Control (no 404):** the stall was waited out. The tail wait reached 64.5 s of its 70 s, the picture froze for about
+  56 s, and playback resumed once the manifest moved.
+- **One 404, about 10 s after the resume:** playback went on normally. Once the reader reached the frozen tail, Kodi
+  logged "VideoPlayer: next stream" after 3.2 s of tail waiting and ended playback, with no notice. The 70 s wait never
+  happened.
+
+**Fixed 2026-10-29 (addon, unreleased), confirmed by a glue scenario that fails on the old code.** A 404 now goes to
+`HandleLiveTimeshiftSegmentFetchFailure()`, the bounded retry the other failed segment fetches use, with its own log
+line. Its forced manifest refresh moves the oldest segment past the recycled one, and the retry, inside the same
+`Read()`, starts with the clamp that continues from the oldest segment still held. A 404 on a segment the manifest
+still lists (something other than a recycle) fails again and ends through the handler's give-up rule (four failures
+and 30 s), with the "timeshift buffer can't be read" notice, rather than looping. The handler's counter no longer
+resets on a 404, only on a successful read. Answering -1, the fix the entry first suggested, was not taken: nothing
+would refresh the manifest before Kodi's next read, so the read would ask for the same missing segment every 100 ms.
+
+How often a real recycle happens is not known. The plugin keeps a file for a whole buffer length after ffmpeg drops it
+from the playlist (`-hls_delete_threshold`), and a paused Kodi keeps refreshing the manifest through `GetStreamTimes()`,
+so the read's clamp normally moves the reader on before it fetches; a 404 needs a manifest that is stale by more than
+a buffer length (the live check injected it). The review of the fix also noted a cost it shares with the other failed
+fetches: a 404 that persists on a listed segment keeps one `Read()` in the 25 s outage loop, so a Stop pressed then can
+wait up to that long (18.6 s in the live check below; the tail wait is cut into one-second slices for this reason; the outage loop is not). A real
+recycle costs one refresh and one 250 ms pause.
+
+The glue scenario `live_segment_recycled` (in CI) shrinks the fake's window under an idle reader, so its next segment
+is gone from disk and from the manifest, then answers 404 for every segment while the manifest still lists them. On
+the old code: 123 reads answered 0 in 5 s and the reader never moved on, and the persistent 404s answered 0 after 41 ms
+and cost 1,298 segment requests in 60 s with no notice. With the fix: one 404, no 0 and the stream went on, then the
+first 0 after 26 s of persistent 404s, the notice once after 32 s and 19 segment requests.
+
+**Checked live with the fix 2026-10-29**, with the same setup as on 2026-10-28, using the fix cherry-picked onto the
+`Omega` tip and built through Kodi's harness:
+- **One 404 behind live, then a 112 s silent stall:** the new log line, a forced refresh, then the same segment fetched
+  again 0.7 s later (the real manifest still listed it). Playback waited out the whole stall and played on.
+- **A real recycle:** the proxy answered 404 and then dropped that segment and every older one from each later
+  manifest. The log showed the new line, then "behind the oldest segment the timeshift buffer still holds -- continuing
+  from byte N", and reading went on at the next segment. The same 112 s stall was waited out without Kodi even
+  buffering.
+- **Every segment answering 404 for 60 s, at live:** 18 segment requests in 30 s (the retry delay is capped at 2 s, so
+  the count passes four well before 30 s), then "giving up after 18 consecutive segment fetch failure(s)". The notice
+  showed once and playback ended about 33 s in.
+- **A Stop sent 10 s into the same fault:** it took effect 18.6 s later. Kodi's interface and its JSON-RPC did not
+  answer meanwhile, because `CVideoPlayer::CloseFile()` runs on the main thread and waits for the player thread, which
+  was in the outage loop.
+- **Normal playback with six backward seeks:** 1,070 segment requests and no segment 404. The buffer was new, so this
+  did not reach its recycling edge.
+
 #### timeshift_buffer: on a Redirect-profile channel the buffer's ffmpeg sends the account's token to the provider
 
 **Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before

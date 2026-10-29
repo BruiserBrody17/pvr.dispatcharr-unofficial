@@ -127,10 +127,11 @@ inline RecordingReadOutcome ClassifyRecordingReadResponse(bool transferOk, long 
   return RecordingReadOutcome::kOk;
 }
 
-// The same for one segment body of the live timeshift buffer (ReadLiveTimeshiftStreamOnce()): a transport failure and
-// an unexpected status both go to the bounded retry handler; a 404 is a segment the rolling buffer recycled (not an
-// error, and it resets that handler's counters); a plain 200 past the segment's start is a proxy that dropped Range,
-// and a Content-Range total that differs from the manifest's size is a misaligned address space: both end the stream.
+// The same for one segment body of the live timeshift buffer (ReadLiveTimeshiftStreamOnce()): a transport failure, a
+// 404 (a segment the rolling buffer recycled; the handler's refresh moves past it) and an unexpected status all go to
+// the bounded retry handler, each with its own log line; a plain 200 past the segment's start is a proxy that dropped
+// Range, and a Content-Range total that differs from the manifest's size is a misaligned address space: both end the
+// stream.
 enum class LiveSegmentOutcome
 {
   kTransportFailure,
