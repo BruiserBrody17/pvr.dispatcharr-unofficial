@@ -1746,7 +1746,7 @@ private:
   // (SegmentFetchFailure.h) for the full incident and design -- this owns
   // the RefreshLiveManifest() call and the bounded-retry-vs-fatal
   // decision, returning the value ReadLiveTimeshiftStream() itself should
-  // return (kRetrySegmentFetch to retry within the same call, 0 once given up and
+  // return (kRetrySegmentFetch to try again, after its delay; 0 once given up and
   // m_liveTimeshiftStream.fatal is set).
   int HandleLiveTimeshiftSegmentFetchFailure();
   // Tells the viewer once that the live stream is dead, after a read answered 0 for a fatal stream.

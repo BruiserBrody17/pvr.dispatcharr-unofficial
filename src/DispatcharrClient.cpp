@@ -4873,10 +4873,10 @@ int DispatcharrClient::HandleLiveTimeshiftSegmentFetchFailure()
     return 0;
   }
 
-  // Bounded retry with a growing delay, then another try inside the same Read() call -- see
-  // ReadLiveTimeshiftStream(). Returning 0 to Kodi here instead was measured live to end playback: with
-  // nothing buffered ahead (at the live edge), a few zero-byte reads in a row inside five or six seconds and
-  // Kodi treats the stream as ended, however long the outage really is.
+  // Bounded retry with a growing delay, taken here so that Kodi's retry of a handed-back read (100 ms later on a live
+  // channel) does not hammer the server, then another try -- see ReadLiveTimeshiftStream(). Returning 0 to Kodi here
+  // instead was measured live to end playback: with nothing buffered ahead (at the live edge), a few zero-byte reads
+  // in a row inside five or six seconds and Kodi treats the stream as ended, however long the outage really is.
   std::this_thread::sleep_for(std::chrono::milliseconds(SegmentFetchRetryDelayMs(failures)));
   return kRetrySegmentFetch;
 }
@@ -4898,13 +4898,12 @@ void DispatcharrClient::NotifyLiveStreamFatalOnce()
 
 int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int size)
 {
-  // A segment fetch that fails (the server unreachable, a gateway error) is retried inside this one call, for up
-  // to the budget, rather than handed back to Kodi as a zero-byte read: Kodi ends the stream after a few of
-  // those in quick succession when it has nothing buffered, which turned a brief outage into a dead stream
-  // (docs/CLOSED_ITEMS.md, "A brief server outage ended playback for good"). A blocked read is just buffering to
-  // the viewer, and the give-up rule in HandleLiveTimeshiftSegmentFetchFailure() still ends a stream that stays
-  // dead.
-  constexpr std::chrono::milliseconds kOutageReadBudget{25000};
+  // A segment fetch that fails (the server unreachable, a gateway error) is never handed back to Kodi as a
+  // zero-byte read: Kodi ends the stream after a few of those in quick succession when it has nothing buffered,
+  // which turned a brief outage into a dead stream (docs/CLOSED_ITEMS.md, "A brief server outage ended playback for
+  // good"). It is retried here for up to a slice and then handed back as -1, which Kodi retries, so that a Stop can
+  // land between reads (DecideLiveSegmentRetryStep(), SegmentFetchFailure.h). The give-up rule in
+  // HandleLiveTimeshiftSegmentFetchFailure() still ends a stream that stays dead.
   const auto start = std::chrono::steady_clock::now();
   for (;;)
   {
@@ -4915,9 +4914,17 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
         NotifyLiveStreamFatalOnce();
       return result;
     }
-    const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-    if (m_abortRequests || !ShouldKeepRetryingTransientRead(waited, kOutageReadBudget))
+    const auto sinceStart =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+    switch (DecideLiveSegmentRetryStep(m_abortRequests, sinceStart, std::chrono::milliseconds(kLiveTailWaitSliceMs)))
+    {
+    case LiveSegmentRetryStep::kTryAgain:
+      continue;
+    case LiveSegmentRetryStep::kHandBack:
+      return -1;
+    case LiveSegmentRetryStep::kStop:
       return 0;
+    }
   }
 }
 

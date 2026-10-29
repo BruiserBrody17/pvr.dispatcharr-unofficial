@@ -6,6 +6,58 @@
 
 ### Fixed
 
+#### A Stop during a run of failed live segment fetches holds Kodi's interface for up to 25 s
+
+**Opened 2026-10-29, from the live check of the recycled-segment fix; LOW, measured live; fixed 2026-10-29, confirmed
+live the same day.** `ReadLiveTimeshiftStream()` retried a failed segment fetch inside one `Read()` for up
+to `kOutageReadBudget` (25 s), sleeping between tries as `HandleLiveTimeshiftSegmentFetchFailure()` says. Kodi closes
+the player on its main thread and waits for the player thread, so a Stop pressed during that loop held the whole
+interface until the read returned. Nothing tells the addon a Stop was pressed: `m_abortRequests` is set only when the
+addon instance is torn down. Live on Kodi 21.3 (this file's "A recycled live segment answered 0, so playback ended at
+the next stall"), with every segment answering 404 and a Stop sent 10 s in: the Stop took effect 18.6 s later and
+Kodi's JSON-RPC did not answer meanwhile. A server outage reaches the loop (it was added for this file's "A brief server
+outage ended playback for good"), and since 2026-10-29 so does a 404 on a segment the manifest still lists.
+
+**Fix:** the retries are cut into slices, as the tail wait already is (`TIMESHIFT.md`: a Stop 20 s into the tail wait
+ended playback 3.5 s later). A read that is still failing after `kLiveTailWaitSliceMs` (one second) hands control back
+with -1, which Kodi retries on a live channel; it never answers 0 for a failure the handler has not given up on, since a
+0 sets Kodi's end of file (`DecideLiveSegmentRetryStep()`, `SegmentFetchFailure.h`). The handler still takes its retry
+delay (250 ms doubling to 2 s) before a read is handed back, so Kodi's retry (100 ms later on a live channel,
+`NEXTSTREAM_RETRY`) does not add requests. The open item proposed moving the 25 s budget onto the stream state across calls; it was dropped instead. Its only effect was a 0
+a few seconds before the handler's give-up rule (four failures and a 30 s streak) ends the stream with a notice, and
+with reads handed back that 0 would leave Kodi at end of file in between, with nothing said. The give-up rule still
+ends a stream that stays dead, and teardown (`AbortInFlightRequests()`) still answers 0 at once.
+
+**Confirmed in the glue harness:** the new scenario `live_outage_handback` (in CI) answers 503 for every segment for
+12 s. With the fix, the longest read was 2.0 s, seven reads were handed back as -1, none answered 0, nine segment
+requests were made, and the stream delivered bytes 1 ms after the segments answered again. On the old code the first
+read blocked for 25.8 s and answered 0. `live_segment_recycled`'s second phase (404s on listed segments until the
+give-up) still ends the stream once with the notice.
+
+**Checked live 2026-10-29** on Kodi 21.3 on the Linux VM: the `Omega` build of the change against the `Omega` tip's
+build (the baseline), Server-side mode, an H.264 1080p channel on the lab server, and a fault proxy between the addon
+and both Dispatcharr ports. "Refused" below means every connection on both ports was reset.
+- **Stop 10 s into a refused outage, at the live edge:** playback ended 2.3 s after the Stop was sent (baseline 15.8 s),
+  and Kodi kept answering `Player.GetActivePlayers` throughout.
+- **Stop 10 s into an outage whose connections are accepted and never answered:** held for 25.4 s, until the segment
+  fetch's 30 s timeout and the manifest refresh's short one ran out. This is the limit in `TIMESHIFT.md`'s review list,
+  item 4: the slice is checked between attempts, so it cannot cut one short.
+- **Refused outages of 8 s and 20 s**, at the live edge and 30 s behind it: all four resumed, with no end of file.
+  Each logged one FFmpeg "error while decoding MB" about 8 s into the outage, while the picture was already frozen:
+  the frame cut by a read handed back in the middle of a segment. Screenshots taken in the six seconds after each
+  resume showed a clean picture. The baseline's 20 s outage logged "Missing reference picture" errors after the
+  resume instead, and its playback jumped 24 s forward.
+- **A 60 s refused outage at the live edge:** playback ended 31.5 s in, through "giving up after 18 consecutive segment
+  fetch failure(s)", with one notice and no end of file before it; Kodi's own connection-lost toast came about 12 s in.
+  The proxy saw one segment request about every 2.1 s and the manifest refreshes alongside, with no burst.
+- **A 30 s seek back 5 s into a refused outage:** the seek landed at the start of the session's buffer, the player kept
+  caching, and playback resumed when the outage ended.
+- **Every segment answering 404 for 5 s from before the channel opened:** FFmpeg's format probe failed twice ("error
+  probing input format"), Kodi retried the open by itself, the third probe succeeded once the segments answered, and
+  playback started and advanced. The review expected this case to fail the open; on Kodi 21 it does not.
+
+Not checked: Kodi 22 and the other platforms.
+
 #### A recycled live segment answered 0, so playback ended at the next stall
 
 **Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix, as half of "Two more live-read paths answer 0

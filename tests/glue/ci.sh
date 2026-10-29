@@ -36,6 +36,7 @@ run "live (first segment after 25 s)" TMO=30 T=120 -- live_late_start
 run "live (refresh throttle on 429)" TMO=30 T=120 -- live_refresh_throttle
 run "live (6 s API latency)"     TMO=30 T=300 -- live_slow_open
 run "live (recycled segment, then 404s)" TMO=30 T=120 -- live_segment_recycled
+run "live (failed fetches handed back)" TMO=30 T=120 -- live_outage_handback
 run "completed recording"        TMO=30 T=120 -- rec
 run "recording, Range dropped"   TMO=30 T=120 -- rec_range_dropped
 run "recording with no file"     TMO=30 T=120 -- rec_open_missing
