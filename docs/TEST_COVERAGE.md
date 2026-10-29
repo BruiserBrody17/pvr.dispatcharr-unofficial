@@ -2953,7 +2953,7 @@ on demand and against two real imports of the plugin file; their live confirmati
 on a real Dispatcharr was done 2026-10-01 (listener count 7/10/13/16 on 0.6.6, flat at 4 on 0.6.7;
 three injected races lost on 0.6.6, held on 0.6.7).
 
-`timeshift_buffer` 0.6.8 serializes `_ensure_http_server_running()`/`_ensure_reaper_running()` under locks (tested with eight simultaneous first calls, and that the tests fail without the locks).
+`timeshift_buffer` 0.6.8 serializes `_ensure_http_server_running()`/`_ensure_reaper_running()` under locks (tested with eight simultaneous first calls, and that the tests fail without the locks; since 2026-10-29 the HTTP-server ones use a stub server rather than a real bind, which could fail on a busy CI runner).
 
 `timeshift_buffer` 0.6.9 records the ffmpeg's start time (`pid_start_ticks`) and refuses to signal, or call alive, a pid whose start time changed -- a recycled pid is not our process (unit-tested, and checked against a real `/proc`).
 

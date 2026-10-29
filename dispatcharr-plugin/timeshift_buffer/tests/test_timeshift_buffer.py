@@ -4751,12 +4751,35 @@ def test_a_reloaded_copy_of_the_module_stops_the_previous_copys_real_listener(tm
 # ---------------------------------------------------------------------------
 
 
-def _free_port():
-    import socket
+class _StubHTTPServer:
+    """Stands in for the bound file server in the tests of the server lock, which are about the lock, not the socket.
+    A real bind on a port picked beforehand could fail on a shared CI runner when something took the port in between,
+    and every caller then found no server and tried again (docs/CLOSED_ITEMS.md, "timeshift_buffer:
+    test_concurrent_first_calls_start_exactly_one_http_server can fail on a busy CI runner")."""
 
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    def __init__(self, port):
+        self.server_port = port
+        self._stopped = threading.Event()
+
+    def serve_forever(self):
+        self._stopped.wait(timeout=30)
+
+    def shutdown(self):
+        self._stopped.set()
+
+    def server_close(self):
+        pass
+
+
+def _stub_create_http_server(port, logger):
+    return _StubHTTPServer(port), f"stub:{port}"
+
+
+_STUB_PORT = 19192  # never bound; any value works, but 0 would never match the "config unchanged" check
+
+
+def _logged_errors(logger):
+    return [msg for level, msg in logger.calls if level in ("error", "exception")]
 
 
 def _run_concurrently(target, count=8):
@@ -4780,21 +4803,22 @@ def _run_concurrently(target, count=8):
 
 def test_concurrent_first_calls_start_exactly_one_http_server(monkeypatch, tmp_path):
     created = []
-    real_create = timeshift_buffer_plugin._create_http_server
 
     def slow_create(port, logger):
         created.append(1)
         time.sleep(0.05)  # widens the window an unlocked check-then-create loses in
-        return real_create(port, logger)
+        return _stub_create_http_server(port, logger)
 
     monkeypatch.setattr(timeshift_buffer_plugin, "_http_server", None)
     monkeypatch.setattr(timeshift_buffer_plugin, "_http_server_thread", None)
     monkeypatch.setattr(timeshift_buffer_plugin, "_http_server_storage_path", None)
     monkeypatch.setattr(timeshift_buffer_plugin, "_create_http_server", slow_create)
     logger = _FakeLogger()
-    port = _free_port()  # a real port: with 0 the "config unchanged" check never matches the bound one
     try:
-        _run_concurrently(lambda: timeshift_buffer_plugin._ensure_http_server_running(str(tmp_path), port, logger))
+        _run_concurrently(
+            lambda: timeshift_buffer_plugin._ensure_http_server_running(str(tmp_path), _STUB_PORT, logger)
+        )
+        assert _logged_errors(logger) == []
         assert len(created) == 1
         assert timeshift_buffer_plugin._http_server is not None
     finally:
@@ -4807,11 +4831,12 @@ def test_a_config_change_restarts_the_http_server_without_deadlocking(monkeypatc
     monkeypatch.setattr(timeshift_buffer_plugin, "_http_server", None)
     monkeypatch.setattr(timeshift_buffer_plugin, "_http_server_thread", None)
     monkeypatch.setattr(timeshift_buffer_plugin, "_http_server_storage_path", None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_create_http_server", _stub_create_http_server)
     logger = _FakeLogger()
     other = tmp_path / "other"
     other.mkdir()
+    port = _STUB_PORT
     try:
-        port = _free_port()
         timeshift_buffer_plugin._ensure_http_server_running(str(tmp_path), port, logger)
         first = timeshift_buffer_plugin._http_server
         done = threading.Event()
@@ -4823,6 +4848,7 @@ def test_a_config_change_restarts_the_http_server_without_deadlocking(monkeypatc
         t = threading.Thread(target=restart, daemon=True)
         t.start()
         assert done.wait(timeout=10), "restart on a storage_path change deadlocked"
+        assert _logged_errors(logger) == []
         assert timeshift_buffer_plugin._http_server is not first
         assert timeshift_buffer_plugin._http_server_storage_path == str(other)
     finally:
