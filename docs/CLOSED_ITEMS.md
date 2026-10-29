@@ -8990,6 +8990,26 @@ addon's own bug.
 
 ### Project history and test infrastructure
 
+#### timeshift_buffer: test_concurrent_first_calls_start_exactly_one_http_server can fail on a busy CI runner
+
+**Opened 2026-10-29, from a CI failure; LOW, test-only, cause plausible, not confirmed. Fixed the same day.** A CI run on `Omega` failed
+`unit-tests-python` with `assert 8 == 1` in this test, then passed on a re-run of the same job with no change; the
+plugin file is identical on both branches and the test passed 30 times out of 30 locally. 8 creations under
+`_http_server_lock` means every `_create_http_server()` call returned `(None, None)`, so each of the 8 threads found no
+server and tried again: the bind failed. The likeliest cause is the port the test's `_free_port` helper picks (an ephemeral port probed
+on `127.0.0.1` only, released before the plugin binds `::` or `0.0.0.0`) being taken in between on a shared runner. The
+bind error went to the test's `_FakeLogger`, so the CI log cannot confirm it. Binding to port 0 is not the fix: the
+test's own comment says the "config unchanged" check never matches with 0. Fix: have `slow_create` return a stub server
+(`server_port`, `serve_forever`, `shutdown`, `server_close`) instead of binding, since the test is about the lock, not the
+socket; and assert the logger recorded no error first, so any later failure names its cause.
+
+**Fixed 2026-10-29 (tests only).** Both tests of the file server's lock that bound a real socket, this one and
+`test_a_config_change_restarts_the_http_server_without_deadlocking` (the same `_free_port` bind, so the same exposure),
+now patch `_create_http_server()` with a stub server (`_StubHTTPServer`) that never binds, and both assert that nothing
+was logged at error level. The concurrent test still fails without the lock (checked by removing it from
+`_ensure_http_server_running()`: `assert 8 == 1`), and both passed 20 runs out of 20. The real bind stays covered by the
+tests that start the server for real.
+
 #### The punch-list was 97% closed entries
 
 **Done 2026-10-08.** `docs/OPEN_ITEMS.md` had grown to about 730 KB with six open entries among 272 closed ones, so reading what was still open meant searching the history. The closed entries moved, unchanged, into this file; `OPEN_ITEMS.md` keeps the open ones and the status table. Every citation that names a heading (`docs/OPEN_ITEMS.md's "..."`, in docs, code comments, the workflow and the tests) was retargeted to the file that now holds the heading, and `tools/check_doc_refs.py` checks each against its own file, so a heading in the wrong one is flagged; the baseline changed only by renaming the file in 115 keys. Citations that name no heading keep the old file name and are covered by the note at the top of both files.
