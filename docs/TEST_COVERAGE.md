@@ -2337,6 +2337,14 @@ the glue scenario `live_segment_recycled` (in CI) pins it: a real recycle under 
 0, and 404s on segments the manifest still lists must end the stream through the give-up rule with one notice and a
 bounded number of requests. On the old code the first phase answered 0 on every read and the second ended nothing.
 
+A run of failed live segment fetches is handed back to Kodi in one-second slices instead of being retried inside one
+read for up to 25 s (2026-10-29, `docs/CLOSED_ITEMS.md`'s "A Stop during a run of failed live segment fetches holds
+Kodi's interface for up to 25 s"). The decision, `DecideLiveSegmentRetryStep()` (`SegmentFetchFailure.h`), is unit-tested
+(try again inside the slice, hand back with -1 after it however long the run, stop at teardown). The read loop itself is
+glue: `live_outage_handback` (in CI) answers 503 for every segment for 12 s and requires no read over 2.6 s, no 0, at
+least four reads handed back, at most 15 segment requests and a resume once the segments answer again. On the old code
+the first read blocked for 25.8 s and answered 0.
+
 The API-key owner stamps are written whenever the key is confirmed for a changed owner, not only when the key itself
 changes (2026-10-20, `docs/CLOSED_ITEMS.md`'s "The owner stamps are not rewritten when the address changes but the key
 does not"): `WriteApiKeyOwnerStampsIfChanged()`, from `PersistApiKeyIfChanged()`, the constructor and

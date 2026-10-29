@@ -95,6 +95,30 @@ constexpr bool ShouldKeepRetryingTransientRead(std::chrono::milliseconds waited,
   return waited < budget;
 }
 
+// What ReadLiveTimeshiftStream() does after a failed segment fetch, once HandleLiveTimeshiftSegmentFetchFailure() has
+// taken its retry delay and asked for another try. The retries used to stay inside one Read() for up to 25 s, and Kodi
+// closes a player only between reads, on its main thread, so a Stop during a run of failures held Kodi's whole
+// interface until that read returned: 18.6 s, measured 2026-10-29 (docs/CLOSED_ITEMS.md, "A Stop during a run of failed
+// live segment fetches holds Kodi's interface for up to 25 s"). A read now hands control back once it has run for a
+// slice, with -1, which Kodi retries on a live channel (a 0 would set its end of file, the reason the retries exist).
+// The handler's give-up rule is what ends a stream that stays dead, with 0 and a notice; the old 25 s budget answered 0
+// a few seconds before it, which with reads handed back would leave Kodi at end of file with nothing said, so it is
+// gone. kStop is the addon being torn down.
+enum class LiveSegmentRetryStep
+{
+  kTryAgain, // still inside the slice: fetch again in this same read
+  kHandBack, // the slice is used: return -1, Kodi reads again
+  kStop,     // the addon is being torn down: return 0
+};
+
+constexpr LiveSegmentRetryStep DecideLiveSegmentRetryStep(bool aborted, std::chrono::milliseconds sinceReadStarted,
+                                                          std::chrono::milliseconds slice)
+{
+  if (aborted)
+    return LiveSegmentRetryStep::kStop;
+  return sinceReadStarted >= slice ? LiveSegmentRetryStep::kHandBack : LiveSegmentRetryStep::kTryAgain;
+}
+
 // A recording read that fails for a reason that will not clear (a 403 or 404 on the file or segment, a file
 // replaced under the stream) returned -1 on every call, and Kodi retries a failed read at once -- measured about 226
 // segment GETs in 9 s in the glue harness, and about 8 per second in Kodi, until the player gave up (found by the
