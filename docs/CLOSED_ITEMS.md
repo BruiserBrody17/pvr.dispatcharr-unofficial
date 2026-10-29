@@ -8130,6 +8130,36 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 ### Closed without a change (refuted, explained or harmless)
 
+#### A sustained server outage may still end live playback with no notice
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; closed without a change 2026-10-28, checked live: playback
+never ended silently.** The concern, from reading: `ReadLiveTimeshiftStream()` gives up after its 25 s
+`kOutageReadBudget` and answers a plain 0, but the stream is only marked fatal (and `NotifyLiveStreamFatalOnce()` only
+has something to say) once `HandleLiveTimeshiftSegmentFetchFailure()`'s streak passes 30 s, which one call cannot reach;
+a 0 sets end of file in Kodi, so a server that stays unreachable might end playback with no word.
+
+**Checked on Kodi 21.3 on the Linux VM:** addon 0.13.1 (the `Omega` tip's CI build), Server-side mode, an H.264 1080p
+channel on the lab server, and a fault proxy between the addon and both Dispatcharr ports (the API and the plugin's file
+server). There were three 60 s outages:
+- **Connections reset, at the live edge:** the first `Read()` used its 25 s budget and answered 0, and Kodi called
+  `Read()` again about 5 ms later. That call passed the 30 s streak and marked the stream fatal. Its file-server probe
+  failed, so the addon queued "Can't reach Dispatcharr's timeshift file server", and playback ended 32 s into the outage.
+- **Connections accepted and never answered, at the live edge:** each segment fetch blocked until curl's own timeout, so
+  the budget never cut a call short. The second fetch failed when the outage ended. The manifest refresh then reported
+  the buffer gone (the plugin's 30 s idle timeout had reaped it), and the addon queued "This channel's timeshift buffer
+  can't be read" as playback ended, about a second after the outage.
+- **Connections reset, playing 30 s behind live:** the same as the first run, ending 32 s in with the file-server notice.
+
+In all three, Kodi also showed its own connection-lost toast about 12 s in, because the addon reports the backend lost.
+So a 0 at the end of the budget does not end playback by itself on Kodi 21: Kodi reads again while the player is
+stalled, and that read reaches the give-up and its notice. This agrees with the 2026-10-02 measurement in "A brief server
+outage ended playback for good" (a 45 s outage ended at about 40 s).
+
+**What is left, not acted on:** in a whole-server outage, the notice that ends playback is usually the file-server one
+("Publish that port..."), because its probe cannot tell a server that is down from a port that is not published, and
+its wording points at configuration. The connection-lost toast before it says what happened. Not checked: Kodi 22 and
+the other platforms.
+
 #### Dispatcharr 0.33.0: guide history now builds up, and the guide fetch asks for all of it
 
 **Opened 2026-10-24; closed without a change 2026-10-27, measured on a 0.33.0 server three days after day 0: the history
