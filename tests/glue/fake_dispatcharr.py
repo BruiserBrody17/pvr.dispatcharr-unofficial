@@ -761,6 +761,8 @@ class H(BaseHTTPRequestHandler):
             # filenames recycle mod 1000; find the newest seq with that name still on disk (2x window kept)
             cands = [s for s in range(max(0, n - 2 * w), n) if s % 1000 == idx]
             if not cands:
+                with lock:
+                    counts["tsbuf recycled 404"] += 1
                 return self.send(404, b"nf")
             s = cands[-1]
             return self.ranged(seg_bytes(0x5E000000, s, seg_size(s)), method == "HEAD", CTL["seg_norange"] == "1")

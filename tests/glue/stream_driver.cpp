@@ -739,6 +739,92 @@ static void live_fatal_ends(DispatcharrClient& cl, const std::string& where)
   cl.CloseLiveTimeshiftStream();
 }
 
+static long fake_stat(const char* key)
+{
+  const auto stats = nlohmann::json::parse(http("/__stats"), nullptr, false);
+  return stats.is_object() && stats.contains(key) ? stats[key].get<long>() : 0;
+}
+
+// A segment the rolling buffer let go of after the manifest the read went by answers 404. That read used to answer 0,
+// which sets Kodi's end of file while the buffer is alive (docs/CLOSED_ITEMS.md, "A recycled live segment answered 0,
+// so playback ended at the next stall"). Phase 1 shrinks the fake's window under the reader, so its next segment is
+// gone from disk and from the manifest: no read may answer 0, and the reader must move on to the oldest segment left.
+// Phase 2 answers 404 for every segment while the manifest still lists them: the reads must not answer 0 at once (nor
+// loop), and the stream must end through the bounded give-up, with the viewer told once.
+static void live_segment_recycled(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  std::vector<uint8_t> buf(65536);
+  if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) <= 0)
+    FAIL("the first read delivered nothing");
+
+  // Nothing refreshes the manifest while the reader is idle here, so the fake moves on while the stream still lists the
+  // segments it opened with; the shrink then takes the reader's next one off disk.
+  sleep_ms(1500);
+  const long recycledBefore = fake_stat("tsbuf recycled 404");
+  ctl("window=1");
+  long zeros = 0, bytes = 0;
+  const long phase1 = ms();
+  while (ms() - phase1 < 5000)
+  {
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n == 0)
+      zeros++;
+    else if (n > 0)
+      bytes += n;
+  }
+  const long recycled = fake_stat("tsbuf recycled 404") - recycledBefore;
+  INFO("recycled: %ld segment 404(s), %ld bytes and %ld zero read(s) in 5 s", recycled, bytes, zeros);
+  if (recycled == 0)
+    FAIL("the reader never asked for a recycled segment: the scenario did not exercise the 404");
+  if (zeros != 0)
+    FAIL("%ld read(s) answered 0 after a recycled segment, which ends playback in Kodi", zeros);
+  if (bytes == 0)
+    FAIL("the stream delivered nothing after the recycled segment");
+
+  ctl("window=12");
+  const long notifiesBefore = g_notifyCount;
+  const long segGetsBefore = fake_stat("GET /tsbuf/seg");
+  ctl("seg_status=404");
+  const long phase2 = ms();
+  long firstZeroAt = -1, endedAt = -1;
+  while (ms() - phase2 < 60000 && endedAt < 0)
+  {
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n == 0 && firstZeroAt < 0)
+      firstZeroAt = ms() - phase2;
+    if (g_notifyCount != notifiesBefore)
+      endedAt = ms() - phase2;
+    if (n == 0)
+      sleep_ms(5); // as Kodi calls again about 5 ms after a 0 (measured live)
+  }
+  ctl("seg_status=0");
+  const long segGets = fake_stat("GET /tsbuf/seg") - segGetsBefore;
+  std::string message;
+  {
+    std::lock_guard<std::mutex> lock(g_notifyMutex);
+    message = g_lastNotify;
+  }
+  INFO("404 on listed segments: first 0 after %ld ms, notified after %ld ms, %ld segment GET(s): %s", firstZeroAt,
+       endedAt, segGets, message.c_str());
+  if (firstZeroAt >= 0 && firstZeroAt < 20000)
+    FAIL("a read answered 0 after %ld ms of 404s, before the retry budget", firstZeroAt);
+  if (endedAt < 0)
+    FAIL("404s on every segment never ended the stream within 60 s");
+  else if (message.find("timeshift buffer") == std::string::npos)
+    FAIL("the notification did not say the timeshift buffer is gone: %s", message.c_str());
+  if (segGets > 40)
+    FAIL("%ld segment requests in the 404 phase: the retry is not bounded", segGets);
+  if (g_notifyCount - notifiesBefore > 1)
+    FAIL("the viewer was told %ld times, expected once", (long)(g_notifyCount - notifiesBefore));
+  cl.CloseLiveTimeshiftStream();
+}
+
 // The end of the stall budget itself, by hand because it runs about 70 s: a quiet buffer on an answering plugin is
 // waited on, returning -1 slices, until about kLiveStallWaitBudgetMs of waiting has gone by, then the read returns 0.
 static void live_tail_giveup(DispatcharrClient& cl)
@@ -1990,6 +2076,8 @@ int main(int argc, char** argv)
       live_seek_probe(*cl);
     else if (what == "live_tail_giveup")
       live_tail_giveup(*cl);
+    else if (what == "live_segment_recycled")
+      live_segment_recycled(*cl);
     else if (what == "live_blackhole_close")
       live_blackhole(*cl, false);
     else if (what == "live_blackhole_read")

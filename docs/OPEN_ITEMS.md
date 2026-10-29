@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**23 open, 369 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**23 open, 370 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
 work on `Piers`: what remains of Kodi 22 support. Nothing is left from the 2026-10-18 read-only audit of the whole
@@ -22,7 +22,8 @@ other MEDIUM (the timeshift plugin's token reaching a Redirect-profile provider)
 0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
 2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
 and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of the
-HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is alive. One (2026-10-28) came out of the review of the
+HEVC seek-probe fix: a live read in a gap that answers 0 while the buffer is alive (its other half, a recycled
+segment, was fixed on 2026-10-29). One (2026-10-28) came out of the review of the
 start-lock removal fix: a start parked on a gevent worker can still outlive its lock. One (2026-10-29) came from a CI
 failure: a timeshift plugin test that can fail on a busy runner.
 
@@ -36,7 +37,7 @@ failure: a timeshift plugin test that can fail on a busy runner.
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 320 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 321 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
@@ -48,36 +49,26 @@ None open.
 
 ### Fix known, not yet done
 
-#### Two more live-read paths answer 0 while the buffer is alive, which sets Kodi's end of file
+#### A live read that lands in a gap answers 0 while the buffer is alive, which sets Kodi's end of file
 
-**Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix; LOW. The recycled-segment path confirmed live
-on 2026-10-28; the gap path cannot be reached from outside on Kodi 21 for Linux.**
-`ReadLiveTimeshiftStreamOnce()` still answers 0 when the read position falls in a gap no segment covers (its "is a gap"
-debug line) and when the plugin reports that a segment was recycled between the manifest fetch and the read
-(`LiveSegmentOutcome::kSegmentGone`). Both happen while the buffer is alive, but a 0 sets Kodi's end of file until the
-next seek (`CLOSED_ITEMS.md`'s "Server-side mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its
-first stall ends playback"), so playback can carry on and then end at the next stall instead of waiting out
-`kLiveStallWaitBudgetMs`. A likely trigger: pause for longer than the plugin's buffer, resume (the read moves to the
-oldest segment) and lose that segment to recycling before it is fetched.
+**Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix; LOW; cannot be reached from outside on Kodi 21
+for Linux.** Filed as "Two more live-read paths answer 0 while the buffer is alive"; the other path, a recycled segment,
+was fixed on 2026-10-29 (`CLOSED_ITEMS.md`, "A recycled live segment answered 0, so playback ended at the next
+stall"). `ReadLiveTimeshiftStreamOnce()` still answers 0 when the read position falls in a gap no segment covers (its
+"is a gap" debug line). That happens while the buffer is alive, but a 0 sets Kodi's end of file until the next seek
+(`CLOSED_ITEMS.md`'s "Server-side mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its first
+stall ends playback"), so playback can carry on and then end at the next stall instead of waiting out
+`kLiveStallWaitBudgetMs`. The way in is a manifest refresh that prunes the segment being read between the read's clamp
+to the oldest segment and its segment lookup.
 
-**Checked live 2026-10-28** on Kodi 21.3 on the Linux VM: addon 0.13.1 (the `Omega` tip's CI build), Server-side
-mode, an H.264 1080p channel on the lab server, and a fault proxy between the addon and both Dispatcharr ports. Each run
-paused for 30 s and resumed, so playback was behind live, then forced a silent stall by answering `get_live_manifest`
-with the last real manifest. The proxy still forwarded each call, so the plugin kept the buffer alive. The lab's
-300-minute buffer ruled out pausing past it, so the recycle was injected instead: one segment fetch answered 404, which
-is what the plugin's file server answers for a recycled segment.
-- **Control (no 404):** the stall was waited out. The tail wait reached 64.5 s of its 70 s, the picture froze for about
-  56 s, and playback resumed once the manifest moved.
-- **One 404, about 10 s after the resume:** playback went on normally. Once the reader reached the frozen tail, Kodi
-  logged "VideoPlayer: next stream" after 3.2 s of tail waiting and ended playback, with no notice. The 70 s wait never
-  happened.
-- **The gap:** holding the heartbeat for 1.8 s (the only network call between the read's clamp to the oldest segment and
-  its segment lookup) while answering manifests with the segment being read removed changed nothing. Kodi 21 on Linux
-  calls `GetStreamTimes()`, the only other caller of the refresh, on the reader's own thread, so no refresh can land in
-  that window. Reaching it here needs a throwaway build with a second thread, and it answers the same 0.
+**Checked live 2026-10-28** on Kodi 21.3 on the Linux VM (the setup is in the recycled-segment entry in `CLOSED_ITEMS.md`): holding the heartbeat
+for 1.8 s (the only network call in that window) while answering manifests with the segment being read removed changed
+nothing. Kodi 21 on Linux calls `GetStreamTimes()`, the only other caller of the refresh, on the reader's own thread,
+so no refresh can land in that window. Reaching it here needs a throwaway build with a second thread.
 
-Fix: a recycled segment could answer -1 instead (check that the next read refreshes the manifest and moves on); a gap
-needs a bound first, since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
+Fix: a bound first, since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
+`HandleLiveTimeshiftSegmentFetchFailure()` is one now that the recycled segment goes through it: its forced refresh
+lets the retry's clamp move past a pruned segment, and a gap that persists ends through its give-up rule with a notice.
 
 #### The live heartbeat carries no access token, so a resumed viewer can stick to a replacement buffer
 

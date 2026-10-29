@@ -1677,8 +1677,8 @@ private:
     // The viewer has been told the stream is dead (once per stream; the file-server notice counts).
     bool fatalNotified = false;
     // This Open() session's own running count of segment-body fetches that
-    // have failed with an HTTP status other than 200/206/404 in a row --
-    // reset to 0 by any 200/206/404 response. See
+    // have failed (anything but a usable 200/206, a 404 included since
+    // 2026-10-29) in a row -- reset to 0 by a successful read. See
     // dispatcharr::ShouldGiveUpAfterSegmentFetchFailure()'s own comment
     // (SegmentFetchFailure.h) for the real, live-confirmed request-storm
     // bug this bounds: without a cap, a segment fetch failing for a reason
@@ -1739,7 +1739,8 @@ private:
 
   // Shared give-up-or-retry handling for ReadLiveTimeshiftStream()'s
   // segment-body fetch, called after a failure (a transport-level curl
-  // error, or an HTTP status other than 200/206/404) the caller has
+  // error, a 404 for a recycled segment, or another status that is not
+  // 200/206) the caller has
   // already logged its own failure-specific detail for. See
   // dispatcharr::ShouldGiveUpAfterSegmentFetchFailure()'s own comment
   // (SegmentFetchFailure.h) for the full incident and design -- this owns
