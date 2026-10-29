@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`fbd0e6b`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`d646434`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -149,6 +149,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `8bc634a` | `6fc5360` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and one entry's CoreELEC name by hand) | The repository tool's three fixes from the same sweeps. The tool and its tests are the same on both branches: it knows both Kodi lines. |
 | `9037649` | `06130d3` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | `timeshift_buffer` removes a channel's directory only after releasing its start lock (the 2026-10-23 sweep's MEDIUM), and the gevent open item its review filed. The plugin is the same file on both branches before and after; the live check on Dispatcharr 0.33.0 ran with that file. |
 | `fbd0e6b` | `26f9231` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand) | A Redirect-profile channel's buffer gets no token or viewer address on ffmpeg's `-headers` (the 2026-10-24 sweep's other MEDIUM). The plugin is the same file on both branches before and after; the live check on Dispatcharr 0.33.0 ran with that file. |
+| `d646434` | `c262f64` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and intro by hand) | The live checks of the sustained-outage item (closed without a change) and the live-read-0 item (recycled segment confirmed, moved to "Fix known, not yet done"). Both ran on `Omega`'s own CI build on Kodi 21, and both items read the same on both branches. |
 
 ## Dependencies that differ by Kodi release
 
