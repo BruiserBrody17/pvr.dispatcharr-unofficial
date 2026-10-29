@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**23 open, 371 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
+**24 open, 371 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two open items came from the two
 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself
 with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)); one comes from the Kodi 22
 work on `Piers`: what remains of Kodi 22 support. Nothing is left from the 2026-10-18 read-only audit of the whole
@@ -25,12 +25,13 @@ and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of
 HEVC seek-probe fix: a live read in a gap that answers 0 while the buffer is alive (its other half, a recycled
 segment, was fixed on 2026-10-29). One (2026-10-28) came out of the review of the
 start-lock removal fix: a start parked on a gevent worker can still outlive its lock. One (2026-10-29) came out of the live check of the
-recycled-segment fix: a Stop during a run of failed live segment fetches holds Kodi's interface.
+recycled-segment fix: a Stop during a run of failed live segment fetches holds Kodi's interface. One (2026-10-29) is
+what the 2026-10-28 live check of a sustained outage left: the notice that ends playback blames the file server's port.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 14 |
+| Open: Fix known, not yet done | 15 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 1 |
@@ -86,6 +87,23 @@ Fix: cut the loop into slices that hand the read back to Kodi, as the tail wait 
 20 s into the tail wait ended playback 3.5 s later). A handed-back read must return -1, not 0 (a 0 sets Kodi's end of
 file, the reason for the loop), with the handler's delay already taken so Kodi's immediate retry does not hammer the
 server, and the 25 s budget then has to live on the stream state across calls instead of inside one call.
+
+#### A whole-server outage ends live playback with a notice that blames the file server's port
+
+**Opened 2026-10-29, from the 2026-10-28 live check of a sustained outage (`CLOSED_ITEMS.md`, "A sustained server outage
+may still end live playback with no notice"); LOW, seen live.** When `HandleLiveTimeshiftSegmentFetchFailure()` gives
+up, it probes the plugin's file server with `ProbeTimeshiftFileServer()` and, if that fails, queues
+`BuildTimeshiftFileServerUnreachableMessage()`: "Can't reach Dispatcharr's timeshift file server on port N. Publish that
+port and make it match the plugin's http_port setting." The probe cannot tell a port that is not published from a server
+that is down, so in an outage of the whole server (two of the three runs on Kodi 21.3, connections reset on both
+Dispatcharr ports) that is the notice playback ends with, and it sends the viewer to their configuration. Kodi's own
+connection-lost toast, about 12 s into the outage, says what really happened, but the addon's notice comes last.
+
+Fix: mid-session, the file server answered when the stream opened, so a failed probe there is more likely an outage
+than a port left unpublished. Before choosing the message, also try Dispatcharr's own API port (or use the last
+connection state the addon reported); if that fails too, say the server could not be reached instead. Keep the port
+wording for `OpenLiveTimeshiftStream()`, where the API has just answered. The choice of message is pure logic and gets a
+test beside `BuildTimeshiftFileServerUnreachableMessage()`'s in `tests/test_plugin_url_util.cpp`.
 
 #### The live heartbeat carries no access token, so a resumed viewer can stick to a replacement buffer
 
