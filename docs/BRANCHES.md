@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`0371335`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`2f1d59b`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -153,6 +153,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `403c404` | `a920e11` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | Files the flaky `test_concurrent_first_calls_start_exactly_one_http_server` as an open item; the test and the plugin are the same on both branches, and the failure it records was on `Omega`'s run. |
 | `a5ef0b5` | `5dbe8ef` (the branch's three commits `git cherry-pick -x`'d onto `Omega` and squash-merged; `OPEN_ITEMS.md`'s counts by hand) | A 404 for a recycled live segment goes to the bounded segment-fetch retry instead of answering 0, with the glue scenario `live_segment_recycled`. The code is the same on both branches; the live check on Kodi 21.3 ran with the `Omega` build of it, and the glue harness passed against both branches' headers. |
 | `0371335` | `08e0aa2` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | Files the Stop freeze during failed live segment fetches as an open item; the read loop is the same on both branches, and it was measured on `Omega`'s build. |
+| `2f1d59b` | `56eec11` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand, its "Release, CI and manual testing" section now empty on `Omega`) | The `timeshift_buffer` server-lock tests use a stub server instead of a real bind (the flaky-test open item, closed). Test-only; the plugin and its tests are the same on both branches. |
 
 ## Dependencies that differ by Kodi release
 
