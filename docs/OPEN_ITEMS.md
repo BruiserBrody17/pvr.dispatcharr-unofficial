@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**21 open, 364 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**22 open, 364 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -24,7 +24,8 @@ other MEDIUM (the timeshift plugin's token reaching a Redirect-profile provider)
 2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
 and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of the
 HEVC seek-probe fix: two more live-read paths that answer 0 while the buffer is alive. One (2026-10-28) came out of the review of the
-start-lock removal fix: a start parked on a gevent worker can still outlive its lock.
+start-lock removal fix: a start parked on a gevent worker can still outlive its lock. One (2026-10-29) came from a CI
+failure: a timeshift plugin test that can fail on a busy runner.
 
 | Section | Entries |
 |---|---|
@@ -32,7 +33,7 @@ start-lock removal fix: a start parked on a gevent worker can still outlive its 
 | Open: Fix known, not yet done | 13 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
-| Open: Release, CI and manual testing | 0 |
+| Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
@@ -262,7 +263,18 @@ bites is unknown.
 
 ### Release, CI and manual testing
 
-Nothing open here at the moment.
+#### timeshift_buffer: test_concurrent_first_calls_start_exactly_one_http_server can fail on a busy CI runner
+
+**Opened 2026-10-29, from a CI failure; LOW, test-only, cause plausible, not confirmed.** A CI run on `Omega` failed
+`unit-tests-python` with `assert 8 == 1` in this test, then passed on a re-run of the same job with no change; the
+plugin file is identical on both branches and the test passed 30 times out of 30 locally. 8 creations under
+`_http_server_lock` means every `_create_http_server()` call returned `(None, None)`, so each of the 8 threads found no
+server and tried again: the bind failed. The likeliest cause is the port the test's `_free_port` helper picks (an ephemeral port probed
+on `127.0.0.1` only, released before the plugin binds `::` or `0.0.0.0`) being taken in between on a shared runner. The
+bind error went to the test's `_FakeLogger`, so the CI log cannot confirm it. Binding to port 0 is not the fix: the
+test's own comment says the "config unchanged" check never matches with 0. Fix: have `slow_create` return a stub server
+(`server_port`, `serve_forever`, `shutdown`, `server_close`) instead of binding, since the test is about the lock, not the
+socket; and assert the logger recorded no error first, so any later failure names its cause.
 
 ### Upstream (Dispatcharr) or documentation accuracy
 
