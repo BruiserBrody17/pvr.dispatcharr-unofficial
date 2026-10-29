@@ -4,16 +4,17 @@
 
 ## Status at a glance
 
-**22 open, 363 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**21 open, 364 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
 the TSan start-up crash, fixed on 2026-10-22) or from the 2026-10-18 read-only audit, made on `Piers` and checked
 against `Omega`'s code the same day (all 21 held here; 14 fixed on 2026-10-19, four on 2026-10-21, one on 2026-10-22 and
-the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). 13 more come from the 2026-10-23
+the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). 12 more come from the 2026-10-23
 bug-hunting sweep of the whole project, made on `Piers` and checked against `Omega`'s code the same day (all 17 held
 here), all LOW; three more of its 17 (the release gate's unscanned bytes and two in `tools/build_kodi_repo.py`) were
-fixed on 2026-10-27, and its one MEDIUM (the timeshift start lock) on 2026-10-28.
+fixed on 2026-10-27, its one MEDIUM (the timeshift start lock) on 2026-10-28, and one (a sustained outage ending
+playback silently) was closed without a change after a live check on 2026-10-28.
 
 Three (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
 checked against the code before it was filed, all LOW; three more of its seven (two release-gate findings, a stale
@@ -27,8 +28,8 @@ start-lock removal fix: a start parked on a gevent worker can still outlive its 
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 2 |
-| Open: Fix known, not yet done | 12 |
+| Open: Needs a live check | 0 |
+| Open: Fix known, not yet done | 13 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
@@ -36,40 +37,47 @@ start-lock removal fix: a start parked on a gevent worker can still outlive its 
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 315 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 39 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 9 |
 
 ## Open
 
 ### Needs a live check
 
-#### A sustained server outage may still end live playback with no notice
+None open.
 
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible from reading.** `ReadLiveTimeshiftStream()`
-gives up after its 25 s `kOutageReadBudget` and answers a plain 0, but the stream is only marked fatal (and
-`NotifyLiveStreamFatalOnce()` only has something to say) once `HandleLiveTimeshiftSegmentFetchFailure()`'s streak passes
-30 s, which one call cannot reach. A 0 sets end of file in Kodi (`CLOSED_ITEMS.md`, "A live stream marked fatal leaves
-Kodi buffering instead of ending"), so a server that stays unreachable may end playback silently, the symptom the
-2026-10-20 notice was added for. Not settled by reading: the 2026-10-02 measurement (a 45 s outage ended playback at
-about 40 s) suggests Kodi read again after the first 0, and the file-server-unreachable notice may already cover this
-case. Check live with the server-down simulation; if it ends silently, mark the stream fatal and queue the notice when
-the budget runs out.
+### Fix known, not yet done
 
 #### Two more live-read paths answer 0 while the buffer is alive, which sets Kodi's end of file
 
-**Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix; LOW, plausible from reading.**
+**Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix; LOW. The recycled-segment path confirmed live
+on 2026-10-28; the gap path cannot be reached from outside on Kodi 21 for Linux.**
 `ReadLiveTimeshiftStreamOnce()` still answers 0 when the read position falls in a gap no segment covers (its "is a gap"
 debug line) and when the plugin reports that a segment was recycled between the manifest fetch and the read
 (`LiveSegmentOutcome::kSegmentGone`). Both happen while the buffer is alive, but a 0 sets Kodi's end of file until the
 next seek (`CLOSED_ITEMS.md`'s "Server-side mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its
 first stall ends playback"), so playback can carry on and then end at the next stall instead of waiting out
 `kLiveStallWaitBudgetMs`. A likely trigger: pause for longer than the plugin's buffer, resume (the read moves to the
-oldest segment) and lose that segment to recycling before it is fetched. Check live: pause past the buffer length,
-resume, force a stall, and see whether playback ends at once or after about 70 s. If it ends at once, a recycled segment
-could answer -1 instead (check that the next read refreshes the manifest and moves on); a gap needs a bound first,
-since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
+oldest segment) and lose that segment to recycling before it is fetched.
 
-### Fix known, not yet done
+**Checked live 2026-10-28** on Kodi 21.3 on the Linux VM: addon 0.13.1 (the `Omega` tip's CI build), Server-side
+mode, an H.264 1080p channel on the lab server, and a fault proxy between the addon and both Dispatcharr ports. Each run
+paused for 30 s and resumed, so playback was behind live, then forced a silent stall by answering `get_live_manifest`
+with the last real manifest. The proxy still forwarded each call, so the plugin kept the buffer alive. The lab's
+300-minute buffer ruled out pausing past it, so the recycle was injected instead: one segment fetch answered 404, which
+is what the plugin's file server answers for a recycled segment.
+- **Control (no 404):** the stall was waited out. The tail wait reached 64.5 s of its 70 s, the picture froze for about
+  56 s, and playback resumed once the manifest moved.
+- **One 404, about 10 s after the resume:** playback went on normally. Once the reader reached the frozen tail, Kodi
+  logged "VideoPlayer: next stream" after 3.2 s of tail waiting and ended playback, with no notice. The 70 s wait never
+  happened.
+- **The gap:** holding the heartbeat for 1.8 s (the only network call between the read's clamp to the oldest segment and
+  its segment lookup) while answering manifests with the segment being read removed changed nothing. Kodi 21 on Linux
+  calls `GetStreamTimes()`, the only other caller of the refresh, on the reader's own thread, so no refresh can land in
+  that window. Reaching it here needs a throwaway build with a second thread, and it answers the same 0.
+
+Fix: a recycled segment could answer -1 instead (check that the next read refreshes the manifest and moves on); a gap
+needs a bound first, since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
 
 #### The live heartbeat carries no access token, so a resumed viewer can stick to a replacement buffer
 
