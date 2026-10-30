@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`77c70e9`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`2f43a87`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -156,6 +156,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `2f1d59b` | `56eec11` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand, which leaves `Omega` with no open release-and-CI item) | The `timeshift_buffer` server-lock tests use a stub server instead of a real bind (the flaky-test open item, closed). Test-only; the plugin and its tests are the same on both branches. |
 | `acdcbe2` | `674835e` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | Files the outage notice that blames the file server's port as an open item; the give-up path and the message are the same on both branches, and the outage was seen on `Omega`'s build. |
 | `77c70e9` | `98b99aa` (the branch's three commits `git cherry-pick -x`'d onto `Omega` and squash-merged; `OPEN_ITEMS.md`'s counts by hand) | A failing live read is handed back to Kodi with -1 after a one-second slice, so a Stop during an outage is not held, with the glue scenario `live_outage_handback`. The read loop is the same on both branches; the live check on Kodi 21.3 ran with the `Omega` build of it, and the glue suite passed against both branches' Kodi headers. |
+| `2f43a87` | `2ed5972` (the branch's five commits `git cherry-pick -x`'d onto `Omega` and collapsed into one commit citing `2f43a87`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand) | When a whole-server outage ends live playback, the notice says the server can't be reached instead of naming the file server's port, including after the access token lapsed during the outage, with the glue scenario `live_lost_notice`. The give-up path and `EnsureAuthenticated()` are the same on both branches; the live check on Kodi 21.3 ran with the `Omega` build of it, and the glue suite passed against both branches' Kodi headers. |
 
 ## Dependencies that differ by Kodi release
 
