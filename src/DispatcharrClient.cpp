@@ -567,8 +567,10 @@ void DispatcharrClient::InvalidateAccessToken()
   m_accessTokenExpiry = std::chrono::steady_clock::time_point{};
 }
 
-bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOverride)
+bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOverride, long* httpStatusOut)
 {
+  if (httpStatusOut)
+    *httpStatusOut = -1;
   // Fast path: a still-valid cached token needs only the short state lock, so a thread that has a token is
   // never held up behind another thread's login or refresh (docs/CLOSED_ITEMS.md, "m_authMutex held across a
   // network round trip": ReadLiveTimeshiftStream()'s refresh used to wait out a whole login this way).
@@ -625,7 +627,11 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   case AuthGate::kHaveToken:
     return true;
   case AuthGate::kLoginBackoff:
+    error = m_lastLoginError;
+    return false;
   case AuthGate::kTransientCooldown:
+    if (httpStatusOut)
+      *httpStatusOut = m_transientLoginFailedStatus;
     error = m_lastLoginError;
     return false;
   case AuthGate::kProceed:
@@ -644,6 +650,9 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
     if (refreshed)
     {
       NotifyConnection(ConnectionReport::kConnected);
+      // The server has just answered, so a call the cooldown still turns away must not report the earlier "no
+      // response" (the live give-up would blame the whole server). The cooldown itself stays as it was.
+      m_transientLoginFailedStatus = -1;
       // Reset here too, not just in Login()'s own success branch below
       // (fixed 2026-09-27, a 58th-pass audit, fixing a real, confirmed
       // gap found via a project-wide review, not itself independently
@@ -675,6 +684,9 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
       m_lastLoginError = error;
       m_transientLoginFailedAt = std::chrono::steady_clock::now();
       m_transientLoginArmedByShortAttempt = callerHasShortBound;
+      m_transientLoginFailedStatus = refreshHttpStatus;
+      if (httpStatusOut)
+        *httpStatusOut = refreshHttpStatus;
       return false;
     case RefreshTokenFailure::kOther:
       break; // fall through to Login() below, same as always
@@ -691,6 +703,7 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
     m_consecutiveLoginFailures = 0;
     m_transientLoginFailedAt = {};
     m_transientLoginArmedByShortAttempt = false;
+    m_transientLoginFailedStatus = -1;
     return true;
   }
 
@@ -708,6 +721,8 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   // just had fixed (PVRDispatcharr.cpp).
   auto failedAt = std::chrono::steady_clock::now();
   m_lastLoginError = error;
+  if (httpStatusOut)
+    *httpStatusOut = httpStatus;
   // What this failure proves to Kodi's connection state (ConnectionReport.h); the same status split as the backoff.
   NotifyConnection(ReportForAuthFailure(httpStatus, callerHasShortBound));
   // Only a genuine credential/authorization rejection extends the
@@ -729,6 +744,7 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   {
     m_transientLoginFailedAt = failedAt;
     m_transientLoginArmedByShortAttempt = callerHasShortBound;
+    m_transientLoginFailedStatus = httpStatus;
   }
   return false;
 }
@@ -2287,6 +2303,7 @@ void DispatcharrClient::DeferAuthenticationAfterUnresponsiveServer(const std::st
   m_transientLoginFailedAt = std::chrono::steady_clock::now();
   m_transientLoginArmedByShortAttempt =
       false; // everyone waits: this exists to keep Kodi's own threads off a dead server
+  m_transientLoginFailedStatus = 0;
   m_lastLoginError = reason;
 }
 
@@ -4293,12 +4310,14 @@ size_t DispatcharrClient::OpenRecordedStreamCount() const
 }
 
 bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool* fatalOut, bool coldStart,
-                                            bool* pluginAnsweredNotReadyOut)
+                                            bool* pluginAnsweredNotReadyOut, long* httpStatusOut)
 {
   if (fatalOut)
     *fatalOut = false;
   if (pluginAnsweredNotReadyOut)
     *pluginAnsweredNotReadyOut = false;
+  if (httpStatusOut)
+    *httpStatusOut = -1;
 
   // One refresh at a time (see m_liveRefreshMutex). Two overlapping refreshes both merged the same new
   // segments, splicing a repeated chunk into the byte stream -- reproduced live with a second thread forcing
@@ -4342,7 +4361,7 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
   }
 
   const long requestTimeoutMs = coldStart ? 0 : ShortRequestTimeoutMs();
-  if (!EnsureAuthenticated(error, requestTimeoutMs))
+  if (!EnsureAuthenticated(error, requestTimeoutMs, httpStatusOut))
     return false;
 
   // viewer_id: this call is the *only* thing a paused client still sends -- SendTimeshiftHeartbeat() only ever
@@ -4363,7 +4382,7 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
   };
   json response;
   if (!Request("POST", kTimeshiftPluginRunPath, body, response, error, /*withAuth=*/true, /*retryOnAuthFailure=*/1,
-               nullptr, requestTimeoutMs))
+               httpStatusOut, requestTimeoutMs))
     return false;
   json result;
   if (!UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error))
@@ -4834,7 +4853,12 @@ int DispatcharrClient::HandleLiveTimeshiftSegmentFetchFailure()
 
   std::string refreshError;
   bool refreshFatal = false;
-  RefreshLiveManifest(/*force=*/true, refreshError, &refreshFatal);
+  // The refresh's HTTP status, for the notice below: a file server that fails its probe while the API answers is a
+  // port problem, and while the API does not answer either, the whole server is out of reach
+  // (IsDispatcharrOutOfReach(), PluginUrlUtil.h).
+  long refreshHttpStatus = -1;
+  RefreshLiveManifest(/*force=*/true, refreshError, &refreshFatal, /*coldStart=*/false,
+                      /*pluginAnsweredNotReadyOut=*/nullptr, &refreshHttpStatus);
 
   // The streak has to have lasted this long as well as reached the count: a server that is briefly unreachable
   // (a restart, a blip) fails four times in about two seconds, and playback resumes fine once it is back.
@@ -4860,7 +4884,8 @@ int DispatcharrClient::HandleLiveTimeshiftSegmentFetchFailure()
       }
     }
     // A file server that stopped answering mid-session (the container restarted without the port, a firewall rule)
-    // looks the same to the viewer as any dead stream; name it when that is what it is.
+    // looks the same to the viewer as any dead stream; name it when that is what it is, and say the server is out of
+    // reach when its API did not answer either (BuildLiveFileServerLostMessage(), PluginUrlUtil.h).
     if (!probeUrl.empty() && !ProbeTimeshiftFileServer(probeUrl))
     {
       {
@@ -4868,7 +4893,8 @@ int DispatcharrClient::HandleLiveTimeshiftSegmentFetchFailure()
         if (m_liveSession == session)
           m_liveTimeshiftStream.fatalNotified = true;
       }
-      kodi::QueueNotification(QUEUE_ERROR, "", BuildTimeshiftFileServerUnreachableMessage(probePort));
+      kodi::QueueNotification(QUEUE_ERROR, "",
+                              BuildLiveFileServerLostMessage(probePort, IsDispatcharrOutOfReach(refreshHttpStatus)));
     }
     return 0;
   }

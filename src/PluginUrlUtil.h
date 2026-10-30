@@ -44,4 +44,17 @@ bool IsTimeshiftFileServerReachable(bool transferOk, long httpCode);
 // What Kodi shows for an unreachable file server. Short on purpose: it is a toast.
 std::string BuildTimeshiftFileServerUnreachableMessage(int httpPort);
 
+// Whether the HTTP status of the live give-up's forced manifest refresh shows Dispatcharr itself out of reach. -1 is
+// nothing known (the login backoff after a rejected login turned the refresh away), which says nothing either way; 0
+// is no response at all; a 5xx is a proxy in front of a Dispatcharr that is down. Any other status is the server
+// answering, a 4xx included (a removed plugin's run/ answers 404 while the web UI works).
+bool IsDispatcharrOutOfReach(long refreshHttpStatus);
+
+// The notice for a live stream that gives up mid-session with its file server failing the same probe. The probe cannot
+// tell a port that is not published from a server that is down, and in a whole-server outage the port wording sent
+// the viewer to their configuration (measured live 2026-10-28, docs/CLOSED_ITEMS.md, "A whole-server outage ends live
+// playback with a notice that blames the file server's port"). The port wording stays unless the server is known to be
+// out of reach (IsDispatcharrOutOfReach()).
+std::string BuildLiveFileServerLostMessage(int httpPort, bool serverOutOfReach);
+
 } // namespace dispatcharr

@@ -87,6 +87,31 @@ TEST_CASE("BuildTimeshiftFileServerUnreachableMessage names the port", "[PluginU
   CHECK(BuildTimeshiftFileServerUnreachableMessage(9393).find("9393") != std::string::npos);
 }
 
+TEST_CASE("IsDispatcharrOutOfReach counts only no response and a 5xx", "[PluginUrlUtil]")
+{
+  CHECK(IsDispatcharrOutOfReach(0));   // refused, reset, timed out
+  CHECK(IsDispatcharrOutOfReach(502)); // a proxy in front of a Dispatcharr that is down
+  CHECK(IsDispatcharrOutOfReach(503));
+  CHECK(IsDispatcharrOutOfReach(500));
+  // Nothing is known (the login backoff after a rejected login turned the refresh away), so not out of reach.
+  CHECK_FALSE(IsDispatcharrOutOfReach(-1));
+  CHECK_FALSE(IsDispatcharrOutOfReach(200));
+  CHECK_FALSE(IsDispatcharrOutOfReach(401));
+  CHECK_FALSE(IsDispatcharrOutOfReach(404)); // a removed plugin's run/, with the web UI working
+  CHECK_FALSE(IsDispatcharrOutOfReach(429));
+}
+
+TEST_CASE("BuildLiveFileServerLostMessage keeps the port wording unless the server is out of reach", "[PluginUrlUtil]")
+{
+  // The server answered (or nothing is known), so the file server's port is what fails.
+  CHECK(BuildLiveFileServerLostMessage(9192, false) == BuildTimeshiftFileServerUnreachableMessage(9192));
+  // The API did not answer either: a whole-server outage, which the port wording blamed on configuration.
+  const std::string outage = BuildLiveFileServerLostMessage(9192, true);
+  CHECK(outage.find("Dispatcharr server") != std::string::npos);
+  CHECK(outage.find("9192") == std::string::npos);
+  CHECK(outage.find("http_port") == std::string::npos);
+}
+
 // ---------------------------------------------------------------------
 // IsValidTimeshiftRoute / IsValidTimeshiftPort
 // ---------------------------------------------------------------------

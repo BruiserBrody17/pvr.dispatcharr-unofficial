@@ -6,6 +6,64 @@
 
 ### Fixed
 
+#### A whole-server outage ends live playback with a notice that blames the file server's port
+
+**Opened 2026-10-29, from the 2026-10-28 live check of a sustained outage (this file's "A sustained server outage may
+still end live playback with no notice"); LOW, seen live; fixed 2026-10-30, confirmed live the same
+day.** When `HandleLiveTimeshiftSegmentFetchFailure()` gave up, it probed the plugin's file server with
+`ProbeTimeshiftFileServer()` and, if that failed, queued `BuildTimeshiftFileServerUnreachableMessage()`: "Can't reach
+Dispatcharr's timeshift file server on port N. Publish that port and make it match the plugin's http_port setting." The
+probe cannot tell a port that is not published from a server that is down, so in an outage of the whole server (two of
+the three runs on Kodi 21.3, connections reset on both Dispatcharr ports) that was the notice playback ended with, and
+it sent the viewer to their configuration. Kodi's own connection-lost toast, about 12 s into the outage, said what
+really happened, but the addon's notice came last.
+
+**Fix:** the give-up already forces a manifest refresh through Dispatcharr's own API, and its HTTP status now comes
+back (`RefreshLiveManifest()`'s `httpStatusOut`). When the file server then fails its probe, the notice says "Can't
+reach the Dispatcharr server, so this channel stopped. Play it again once the server is back." only if that refresh got
+no response or a 5xx (`IsDispatcharrOutOfReach()`, `PluginUrlUtil.h`; a 5xx is a proxy in front of a Dispatcharr that
+is down), and keeps the port wording otherwise (`BuildLiveFileServerLostMessage()`). No extra request is made. The open
+item suggested a separate probe of the API port; the refresh it already makes answers the same question. The review of
+the first version, which counted any failed refresh as the server out of reach, found two cases that wording got wrong:
+the 30 s login cooldown turns a refresh away without a request (so a port problem right after a blip read as an
+outage), and a removed or disabled plugin's `run/` answers 404 while the web UI works. A refresh that sent nothing and
+a 4xx now keep the port wording. The port wording
+at open time (`OpenLiveTimeshiftStream()`) is unchanged: the API has just answered there.
+
+**What the live check added:** with both ports accepting connections and never answering, the first version still
+showed the port wording. The access token (4 minutes) lapsed during the 3-minute outage, so the give-up's refresh failed
+in `EnsureAuthenticated()`'s token refresh, before any manifest request, and reported nothing. A long outage often ends
+this way: once one token refresh has failed, the 30 s transient cooldown turns the next refreshes away without a request.
+`EnsureAuthenticated()` now hands back (`httpStatusOut`) the status of its own token refresh or login, or of the failure
+that armed the cooldown (`m_transientLoginFailedStatus`; 0 for the startup deferral after an unresponsive server); only
+the login backoff after a rejected login still reports nothing. The review of that change found a successful token
+refresh left the stored status behind (the cooldown is not cleared there), so a call the cooldown turned away after the
+server had answered again could still report "no response"; the refresh now clears the status. This takes back part of the review's cooldown case: a
+port problem whose 30 s failure streak overlaps an auth failure that got no answer now reads as the server out of reach.
+That needs the API itself to have stopped answering during the streak that ended playback, which is what the server
+wording says, while the token lapsing in a real outage is common.
+
+**Confirmed in the glue harness:** the new scenario `live_lost_notice` (in CI, with the fake's new `all_down` knob for
+a server whose every path stops answering) ends a stream once with the whole server gone and once with only the file
+server moved to a port nothing listens on. With the fix the first notice says the server is out of reach and the second
+names the port; on the old code the first named the port too. A middle phase repeats the outage with the token lapsing
+as it starts (`InvalidateAccessToken()`); it named the port before the `EnsureAuthenticated()` change and passes with
+it. The decision is unit-tested in `tests/test_plugin_url_util.cpp`.
+
+**Confirmed live** on Kodi 21.3 (the Linux test client, the `Omega` port of the change), with a fault proxy between Kodi
+and the lab's Dispatcharr on both the API and the plugin's port, one channel each time, ended by the addon's give-up:
+- **Every connection reset on both ports:** "Can't reach the Dispatcharr server ..." after 32.3 s 30 s behind live and
+  31.4 s at the live edge (the edge also ends through the segment give-up, not the stalled-buffer notice), and again
+  (31.5 s) on the final build. Kodi's own "Connection lost" toast came first, about 11 s in.
+- **Only the plugin's port reset, the API answering 200:** the port wording, after 34.5 s (33.9 s on the final build).
+- **The API answering 502 and the plugin's port reset:** the server wording, after 32.3 s.
+- **Both ports hanging:** the port wording on the first version after 200.8 s (above), the server wording on the final
+  build after 184.8 s, with the auth path's "connection is now lost" logged at the moment the give-up's refresh
+  returned. The time is the existing cost of a silent server: each segment fetch waits out the 30 s connection timeout,
+  and the give-up needs four failures.
+- **A 20 s outage 30 s behind live:** playback resumed with no notice from the addon (Kodi's connection lost and
+  connected toasts only).
+
 #### A Stop during a run of failed live segment fetches holds Kodi's interface for up to 25 s
 
 **Opened 2026-10-29, from the live check of the recycled-segment fix; LOW, measured live; fixed 2026-10-29, confirmed
@@ -8272,7 +8330,8 @@ outage ended playback for good" (a 45 s outage ended at about 40 s).
 
 **What is left, not acted on:** in a whole-server outage, the notice that ends playback is usually the file-server one
 ("Publish that port..."), because its probe cannot tell a server that is down from a port that is not published, and
-its wording points at configuration. The connection-lost toast before it says what happened. Not checked: Kodi 22 and
+its wording points at configuration. The connection-lost toast before it says what happened. (Filed and fixed
+2026-10-29: this file's "A whole-server outage ends live playback with a notice that blames the file server's port".) Not checked: Kodi 22 and
 the other platforms.
 
 #### Dispatcharr 0.33.0: guide history now builds up, and the guide fetch asks for all of it

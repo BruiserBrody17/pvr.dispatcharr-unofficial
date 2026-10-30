@@ -891,6 +891,100 @@ static void live_outage_handback(DispatcharrClient& cl)
   cl.CloseLiveTimeshiftStream();
 }
 
+// Which notice ends a live stream whose file server fails its probe at the give-up. The probe cannot tell an
+// unpublished port from a server that is down, and in a whole-server outage the port wording sent the viewer to their
+// configuration (docs/CLOSED_ITEMS.md, "A whole-server outage ends live playback with a notice that blames the file
+// server's port"). Phase 1 takes the whole server away (all_down): the stream must end with one notice that says the
+// server is out of reach and does not name the port, and again with the access token lapsing as it starts. Phase 2
+// moves only the file server (the manifest names a port nothing listens on) while the API answers: the notice must
+// still name the port.
+static bool live_read_until_notice(DispatcharrClient& cl, long limitMs, long& endedAt, std::string& message)
+{
+  std::vector<uint8_t> buf(65536);
+  const long notifiesBefore = g_notifyCount;
+  const long t0 = ms();
+  endedAt = -1;
+  while (ms() - t0 < limitMs && endedAt < 0)
+  {
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (g_notifyCount != notifiesBefore)
+      endedAt = ms() - t0;
+    if (n <= 0)
+      sleep_ms(5);
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_notifyMutex);
+    message = g_lastNotify;
+  }
+  if (g_notifyCount - notifiesBefore > 1)
+    FAIL("the viewer was told %ld times, expected once", (long)(g_notifyCount - notifiesBefore));
+  return endedAt >= 0;
+}
+
+static void live_lost_notice(DispatcharrClient& cl)
+{
+  std::string err, message;
+  long endedAt = -1;
+  std::vector<uint8_t> buf(65536);
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) <= 0)
+    FAIL("the first read delivered nothing");
+  ctl("all_down=1");
+  const bool ended = live_read_until_notice(cl, 60000, endedAt, message);
+  ctl("all_down=0");
+  INFO("whole server down: notified after %ld ms: %s", endedAt, message.c_str());
+  if (!ended)
+    FAIL("a whole-server outage never ended the stream within 60 s");
+  else if (message.find("Dispatcharr server") == std::string::npos || message.find("port") != std::string::npos)
+    FAIL("a whole-server outage was not reported as the server being out of reach: %s", message.c_str());
+  cl.CloseLiveTimeshiftStream();
+
+  // The same outage with the access token lapsing as it starts, as a long one does (the token lasts 4 minutes): the
+  // give-up's refresh fails in its token refresh, or is turned away by the cooldown that failure armed, before any
+  // manifest request goes out. Measured live on Kodi 21.3 with both ports hanging: the port wording.
+  err.clear();
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("reopen: %s", err.c_str());
+    return;
+  }
+  if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) <= 0)
+    FAIL("the first read after the reopen delivered nothing");
+  ctl("all_down=1");
+  cl.InvalidateAccessToken();
+  const bool endedLapsed = live_read_until_notice(cl, 60000, endedAt, message);
+  ctl("all_down=0");
+  INFO("whole server down, token lapsed: notified after %ld ms: %s", endedAt, message.c_str());
+  if (!endedLapsed)
+    FAIL("a whole-server outage with the token lapsed never ended the stream within 60 s");
+  else if (message.find("Dispatcharr server") == std::string::npos || message.find("port") != std::string::npos)
+    FAIL("a whole-server outage with the token lapsed was not reported as the server being out of reach: %s",
+         message.c_str());
+  cl.CloseLiveTimeshiftStream();
+
+  err.clear();
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("reopen: %s", err.c_str());
+    return;
+  }
+  if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) <= 0)
+    FAIL("the first read after the reopen delivered nothing");
+  ctl("fs_port=1"); // the next manifest names a port nothing listens on; the API keeps answering
+  const bool ended2 = live_read_until_notice(cl, 60000, endedAt, message);
+  ctl("fs_port=0");
+  INFO("file server moved: notified after %ld ms: %s", endedAt, message.c_str());
+  if (!ended2)
+    FAIL("an unreachable file server never ended the stream within 60 s");
+  else if (message.find("port 1") == std::string::npos)
+    FAIL("an unreachable file server with the API answering did not name the port: %s", message.c_str());
+  cl.CloseLiveTimeshiftStream();
+}
+
 // The end of the stall budget itself, by hand because it runs about 70 s: a quiet buffer on an answering plugin is
 // waited on, returning -1 slices, until about kLiveStallWaitBudgetMs of waiting has gone by, then the read returns 0.
 static void live_tail_giveup(DispatcharrClient& cl)
@@ -2146,6 +2240,8 @@ int main(int argc, char** argv)
       live_segment_recycled(*cl);
     else if (what == "live_outage_handback")
       live_outage_handback(*cl);
+    else if (what == "live_lost_notice")
+      live_lost_notice(*cl);
     else if (what == "live_blackhole_close")
       live_blackhole(*cl, false);
     else if (what == "live_blackhole_read")

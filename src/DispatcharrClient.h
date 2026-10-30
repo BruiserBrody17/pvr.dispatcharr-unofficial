@@ -361,7 +361,11 @@ public:
   // promises a short worst case, like Stop and the live-edge manifest refresh, must not wait out the configured
   // timeout in the authentication step before its own bounded request even starts -- found by the fifteenth
   // hardening sweep: Close took 30 s, not 5, once the token hint had lapsed during a blackhole).
-  bool EnsureAuthenticated(std::string& error, long timeoutMsOverride = 0);
+  // httpStatusOut, if non-null, gets on failure the HTTP status of the login or token-refresh request this call made,
+  // or of the one that armed the transient cooldown that turned it away (0 for no response); -1 when nothing is known
+  // (the login backoff after a rejected login). A whole-server outage outlasts the token, and the live give-up's notice
+  // reads the server's state from this (RefreshLiveManifest()).
+  bool EnsureAuthenticated(std::string& error, long timeoutMsOverride = 0, long* httpStatusOut = nullptr);
   // Forgets the cached access token's freshness hint so the next authenticated
   // call refreshes it first. For a wake from suspend: the hint is a
   // steady_clock deadline a few minutes out, and steady_clock does not advance
@@ -1432,6 +1436,9 @@ private:
   // Whether that cooldown was armed by an attempt that only waited the short bound
   // (dispatcharr::IsTransientCooldownBlocking()).
   bool m_transientLoginArmedByShortAttempt = false;
+  // The HTTP status of the failure that armed that cooldown (0 for no response), which EnsureAuthenticated() reports
+  // for a call the cooldown turns away.
+  long m_transientLoginFailedStatus = -1;
   // Matches ComputeLoginBackoffSeconds()'s own kInitialSeconds (AuthBackoff.cpp)
   // -- a transient failure gets the same first-failure wait a genuine
   // credential rejection does, it just never escalates beyond it.
@@ -1734,8 +1741,11 @@ private:
   // `pluginAnsweredNotReadyOut`, if non-null, is set true when the plugin itself answered "not ready" without `fatal`
   // (its ffmpeg is alive and has not produced a segment yet), as opposed to a transport or HTTP failure: only that
   // earns the cold-start loop the longer wait (ColdStartTryLimit()).
+  // `httpStatusOut`, if non-null, gets the get_live_manifest request's HTTP status, 0 when it got no response. When
+  // authentication fails first it gets EnsureAuthenticated()'s status instead (the token lapses during a long outage);
+  // -1 when nothing is known (the throttle, or the login backoff turning the call away).
   bool RefreshLiveManifest(bool force, std::string& error, bool* fatalOut = nullptr, bool coldStart = false,
-                           bool* pluginAnsweredNotReadyOut = nullptr);
+                           bool* pluginAnsweredNotReadyOut = nullptr, long* httpStatusOut = nullptr);
 
   // Shared give-up-or-retry handling for ReadLiveTimeshiftStream()'s
   // segment-body fetch, called after a failure (a transport-level curl
