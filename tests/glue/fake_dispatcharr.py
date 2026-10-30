@@ -615,7 +615,8 @@ class H(BaseHTTPRequestHandler):
             with lock:
                 counts.clear()
             return self.J(200, {})
-        if CTL["api_down"] == "1" and not p.startswith("/tsbuf/"):
+        # all_down: the whole server out of reach, the file server's paths included (api_down spares them).
+        if CTL["all_down"] == "1" or (CTL["api_down"] == "1" and not p.startswith("/tsbuf/")):
             self.close_connection = True
             with contextlib.suppress(OSError):
                 self.connection.shutdown(socket.SHUT_RDWR)

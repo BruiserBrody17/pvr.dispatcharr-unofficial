@@ -949,6 +949,15 @@ result comes back on a 1 MiB thread stack, which crashed with the copy (see `Rec
 
 ### `PluginUrlUtil`
 
+2026-10-30: `IsDispatcharrOutOfReach()` and `BuildLiveFileServerLostMessage()` pick the notice for a live stream that
+gives up mid-session with its file server failing the probe: "Can't reach the Dispatcharr server" only when the give-up's
+refresh got no response or a 5xx (its token refresh's, when the token had lapsed), the port wording otherwise (nothing
+known, a 4xx) (`docs/CLOSED_ITEMS.md`'s "A whole-server outage ends live playback with a notice that blames the file
+server's port"). Unit-tested (the status classes and both wordings); the glue scenario `live_lost_notice` (in CI) ends a
+stream with the whole server gone (the fake's `all_down`), again with the token lapsing as it goes, and with only the file
+server moved. On the old code the first two named the port; on the first version of the fix the second did, which the
+live check found.
+
 2026-10-11: `IsTimeshiftFileServerReachable()` and `BuildTimeshiftFileServerUnreachableMessage()` (`PluginUrlUtil.h`, `tests/test_plugin_url_util.cpp`: any HTTP answer including the token-less 403 is reachable; a failed transfer is not, whatever stale status was left behind; the message names the port and the setting) decide the open-time probe of the plugin's file server. The glue harness gained the live_fileserver_unreachable scenario (the fake's fs_port knob reports a port nothing listens on: the open must fail at once with the port in the error, and succeed again once it is reachable; it fails on the old code, where the open succeeded; in CI's glue run). Checked live through a forwarder that exposed only the API port: 35.4 s of spinner before, 3.5 s to the notification after (`docs/CLOSED_ITEMS.md`).
 
 ### `RealtimeUpdateParser`

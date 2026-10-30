@@ -28,6 +28,10 @@ compare against.
   (Server-side live mode): pressing Stop while the addon was retrying a failed read froze Kodi's whole interface for up
   to 25 seconds. It now stops within a couple of seconds. A server that accepts connections and never answers can still
   hold a Stop for up to the connection timeout.
+- **A server outage no longer ends live playback with a message blaming your setup** (Server-side live mode): when the
+  whole Dispatcharr server stopped answering, playback ended with "Can't reach Dispatcharr's timeshift file server on
+  port ... Publish that port", which pointed at a configuration problem. It now says the Dispatcharr server can't be
+  reached. The port message still appears when the server answers but its timeshift port does not.
 - **Recurring timers in Manitoba (`America/Winnipeg`) stay on time after 2026-11-01**: Manitoba no longer changes its
   clocks and stays on UTC-5, but the addon still moved it back to UTC-6, so recurring timers set for dates after that
   day would have recorded an hour off. A Dispatcharr server whose time zone data predates the change is still

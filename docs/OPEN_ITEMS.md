@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**22 open, 367 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**21 open, 368 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
@@ -25,20 +25,19 @@ other MEDIUM (the timeshift plugin's token reaching a Redirect-profile provider)
 and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of the
 HEVC seek-probe fix: a live read in a gap that answers 0 while the buffer is alive (its other half, a recycled
 segment, was fixed on 2026-10-29). One (2026-10-28) came out of the review of the
-start-lock removal fix: a start parked on a gevent worker can still outlive its lock. One (2026-10-29) is
-what the 2026-10-28 live check of a sustained outage left: the notice that ends playback blames the file server's port.
+start-lock removal fix: a start parked on a gevent worker can still outlive its lock.
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 14 |
+| Open: Fix known, not yet done | 13 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 317 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 318 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -70,23 +69,6 @@ so no refresh can land in that window. Reaching it here needs a throwaway build 
 Fix: a bound first, since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
 `HandleLiveTimeshiftSegmentFetchFailure()` is one now that the recycled segment goes through it: its forced refresh
 lets the retry's clamp move past a pruned segment, and a gap that persists ends through its give-up rule with a notice.
-
-#### A whole-server outage ends live playback with a notice that blames the file server's port
-
-**Opened 2026-10-29, from the 2026-10-28 live check of a sustained outage (`CLOSED_ITEMS.md`, "A sustained server outage
-may still end live playback with no notice"); LOW, seen live.** When `HandleLiveTimeshiftSegmentFetchFailure()` gives
-up, it probes the plugin's file server with `ProbeTimeshiftFileServer()` and, if that fails, queues
-`BuildTimeshiftFileServerUnreachableMessage()`: "Can't reach Dispatcharr's timeshift file server on port N. Publish that
-port and make it match the plugin's http_port setting." The probe cannot tell a port that is not published from a server
-that is down, so in an outage of the whole server (two of the three runs on Kodi 21.3, connections reset on both
-Dispatcharr ports) that is the notice playback ends with, and it sends the viewer to their configuration. Kodi's own
-connection-lost toast, about 12 s into the outage, says what really happened, but the addon's notice comes last.
-
-Fix: mid-session, the file server answered when the stream opened, so a failed probe there is more likely an outage
-than a port left unpublished. Before choosing the message, also try Dispatcharr's own API port (or use the last
-connection state the addon reported); if that fails too, say the server could not be reached instead. Keep the port
-wording for `OpenLiveTimeshiftStream()`, where the API has just answered. The choice of message is pure logic and gets a
-test beside `BuildTimeshiftFileServerUnreachableMessage()`'s in `tests/test_plugin_url_util.cpp`.
 
 #### The live heartbeat carries no access token, so a resumed viewer can stick to a replacement buffer
 
