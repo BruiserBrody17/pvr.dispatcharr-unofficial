@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`65bf59c`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`1a5d93e`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -158,6 +158,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `77c70e9` | `98b99aa` (the branch's three commits `git cherry-pick -x`'d onto `Omega` and squash-merged; `OPEN_ITEMS.md`'s counts by hand) | A failing live read is handed back to Kodi with -1 after a one-second slice, so a Stop during an outage is not held, with the glue scenario `live_outage_handback`. The read loop is the same on both branches; the live check on Kodi 21.3 ran with the `Omega` build of it, and the glue suite passed against both branches' Kodi headers. |
 | `2f43a87` | `2ed5972` (the branch's five commits `git cherry-pick -x`'d onto `Omega` and collapsed into one commit citing `2f43a87`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand) | When a whole-server outage ends live playback, the notice says the server can't be reached instead of naming the file server's port, including after the access token lapsed during the outage, with the glue scenario `live_lost_notice`. The give-up path and `EnsureAuthenticated()` are the same on both branches; the live check on Kodi 21.3 ran with the `Omega` build of it, and the glue suite passed against both branches' Kodi headers. |
 | `65bf59c` | `27aa589` (`git cherry-pick -x`) | Records the Kodi 22 live checks of the outage-notice, Stop and recycled-segment fixes in `CLOSED_ITEMS.md`; the entries are the same on both branches. |
+| `1a5d93e` | `af68f04` (`git cherry-pick -x`) | Records the remaining four Kodi 22 live checks of the Stop fix in `CLOSED_ITEMS.md`. |
 
 ## Dependencies that differ by Kodi release
 
