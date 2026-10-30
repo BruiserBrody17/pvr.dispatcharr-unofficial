@@ -48,4 +48,16 @@ std::string BuildTimeshiftFileServerUnreachableMessage(int httpPort)
          ". Publish that port and make it match the plugin's http_port setting.";
 }
 
+bool IsDispatcharrOutOfReach(long refreshHttpStatus)
+{
+  return refreshHttpStatus == 0 || (refreshHttpStatus >= 500 && refreshHttpStatus < 600);
+}
+
+std::string BuildLiveFileServerLostMessage(int httpPort, bool serverOutOfReach)
+{
+  if (!serverOutOfReach)
+    return BuildTimeshiftFileServerUnreachableMessage(httpPort);
+  return "Can't reach the Dispatcharr server, so this channel stopped. Play it again once the server is back.";
+}
+
 } // namespace dispatcharr
