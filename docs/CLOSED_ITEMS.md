@@ -64,6 +64,27 @@ and the lab's Dispatcharr on both the API and the plugin's port, one channel eac
 - **A 20 s outage 30 s behind live:** playback resumed with no notice from the addon (Kodi's connection lost and
   connected toasts only).
 
+**Confirmed live on Kodi 22.0-RC1 2026-10-30** (the same client and proxy, the PR's CI build for Kodi 22, whose source
+matches the `Piers` squash commit), each run 30 s behind live:
+- **Every connection reset on both ports:** the server wording after 31.9 s. **Only the plugin's port reset:** the port
+  wording after 33.1 s. **The API answering 502 and the plugin's port reset:** the server wording after 32.3 s.
+- **Both ports hanging, timed so the token lapsed 88 s into the hang:** the refresh the lapsed token needed got no
+  answer ("connection is now lost" logged), and the give-up 36 s later showed the server wording, 172.8 s into the
+  hang. An untimed run whose token was still valid at the give-up showed the server wording too (173.1 s), from the
+  manifest request's own timeout.
+
+The review's further checks, on the same Kodi 22 setup. The token endpoints were answered by the proxy itself where
+credentials had to look broken, so the lab account was never touched:
+- **The trade-off above:** both ports reset from 8 s before a token refresh was due, the API back 20 s later with the
+  plugin's port still reset. The refresh got no answer, the addon sent nothing to the API for the 30 s cooldown, and
+  the give-up, 31.5 s in and inside that cooldown, showed the server wording. Playing the channel again 40 s later,
+  port still reset, gave the port wording at open, 3.7 s after `Player.Open`.
+- **No stale wording after recovery:** both ports reset for 42 s across a token refresh (the server wording after
+  31.5 s), everything restored, the channel opened again after the cooldown and played; 30 s later only the plugin's
+  port was reset, and the notice named the port (34.8 s), with "connection is now connected" logged in between.
+- **Credentials refused (the login backoff):** login and token refresh answered 401 until both had been tried (one
+  refresh, two logins; Kodi was told "access denied"), then the plugin's port reset: the port wording after 31.5 s.
+
 #### A Stop during a run of failed live segment fetches holds Kodi's interface for up to 25 s
 
 **Opened 2026-10-29, from the live check of the recycled-segment fix; LOW, measured live; fixed 2026-10-29, confirmed
@@ -114,7 +135,13 @@ and both Dispatcharr ports. "Refused" below means every connection on both ports
   probing input format"), Kodi retried the open by itself, the third probe succeeded once the segments answered, and
   playback started and advanced. The review expected this case to fail the open; on Kodi 21 it does not.
 
-Not checked: Kodi 22 and the other platforms.
+**Checked live on Kodi 22.0-RC1 2026-10-30** (the same client and proxy, the CI build for Kodi 22 of the `Piers`
+source that includes the change): a Stop 10 s into a refused outage at the live edge took effect 2.1 s after it was sent,
+with no JSON-RPC ping waiting more than 0.8 s; a refused 20 s outage 30 s behind live resumed with no end of file; and
+every segment answering 404 at live ended playback 34.1 s in through "giving up after 18 consecutive segment fetch
+failure(s)", with the "timeshift buffer can't be read" notice once.
+
+Not checked: the other platforms.
 
 #### A recycled live segment answered 0, so playback ended at the next stall
 
@@ -173,6 +200,11 @@ first 0 after 26 s of persistent 404s, the notice once after 32 s and 19 segment
 - **Every segment answering 404 for 60 s, at live:** 18 segment requests in 30 s (the retry delay is capped at 2 s, so
   the count passes four well before 30 s), then "giving up after 18 consecutive segment fetch failure(s)". The notice
   showed once and playback ended about 33 s in.
+
+**Checked live on Kodi 22.0-RC1 2026-10-30** (the same client and proxy, the CI build for Kodi 22 of the `Piers` source
+with the fix), a real recycle behind live as above, then a 114 s silent stall: the new log line, "behind the oldest
+segment the timeshift buffer still holds -- continuing from byte N", reading went on, and the stall was waited out
+(58.7 s of the tail wait's 70 s) with no end of file; playback resumed when the manifest moved.
 - **A Stop sent 10 s into the same fault:** it took effect 18.6 s later. Kodi's interface and its JSON-RPC did not
   answer meanwhile, because `CVideoPlayer::CloseFile()` runs on the main thread and waits for the player thread, which
   was in the outage loop.
