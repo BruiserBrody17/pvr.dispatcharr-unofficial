@@ -141,6 +141,22 @@ with no JSON-RPC ping waiting more than 0.8 s; a refused 20 s outage 30 s behind
 every segment answering 404 at live ended playback 34.1 s in through "giving up after 18 consecutive segment fetch
 failure(s)", with the "timeshift buffer can't be read" notice once.
 
+The remaining four Kodi 21 checks, on Kodi 22.0-RC1 later the same day (same build, client and proxy):
+- **Stop 10 s into an outage whose connections are accepted and never answered:** held for 30.5 s, with no JSON-RPC
+  ping waiting more than 0.9 s. The segment fetch had started as the outage began and ran 20 s past the Stop to its
+  30 s timeout; the manifest refresh after it and the close's own API call then waited about 5 s each. The same limit
+  as on Kodi 21: an attempt in progress is not cut short.
+- **A 60 s refused outage at the live edge:** playback ended 31.4 s in, through "giving up after 18 consecutive segment
+  fetch failure(s)", with one notice ("Can't reach the Dispatcharr server ...") and no end of file before it; Kodi's own
+  connection-lost toast came about 11 s in.
+- **A 30 s seek back 5 s into a refused outage:** the addon resolved the seek to the start of the session's buffer
+  (position 0). Kodi 22 logged "seek failed or hit end of stream" while that segment could not be fetched, and its
+  clock kept moving for about 6 s on what it already had. When the outage ended, playback restarted from the start of
+  the buffer and advanced, with no give-up and no end of file.
+- **Every segment answering 404 for 5 s from before the channel opened:** as on Kodi 21, FFmpeg's probe failed twice
+  ("error probing input format"), Kodi retried the open by itself, and playback started and advanced once the
+  segments answered.
+
 Not checked: the other platforms.
 
 #### A recycled live segment answered 0, so playback ended at the next stall
