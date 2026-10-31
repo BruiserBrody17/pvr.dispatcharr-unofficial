@@ -605,6 +605,29 @@ def test_str_setting_does_not_reject_a_relative_path():
     )
 
 
+def test_str_setting_strips_a_pasted_space_from_storage_path():
+    # " /data/timeshift" as typed is a relative path under the worker's working directory.
+    assert (
+        timeshift_buffer_plugin._str_setting({"storage_path": " /data/timeshift"}, "storage_path", "/x")
+        == "/data/timeshift"
+    )
+
+
+def test_start_ffmpeg_strips_a_trailing_space_from_internal_base_url(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: commands.append(cmd) or _FakeProc()
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: None)
+
+    timeshift_buffer_plugin._start_ffmpeg(
+        _UUID, {}, {"storage_path": str(tmp_path), "internal_base_url": "http://127.0.0.1:9191 \t"}, _FakeLogger()
+    )
+
+    cmd = commands[0]
+    assert cmd[cmd.index("-i") + 1].startswith("http://127.0.0.1:9191/proxy/")
+
+
 # ---------------------------------------------------------------------
 # _compute_segment_counts
 # ---------------------------------------------------------------------
@@ -6745,6 +6768,22 @@ def test_start_ffmpeg_caps_buffer_minutes_at_a_day(tmp_path, monkeypatch):
 
     cmd = commands[0]
     assert cmd[cmd.index("-hls_list_size") + 1] == str(24 * 60 * 60 // 2)
+
+
+def test_start_ffmpeg_caps_segment_seconds_inside_the_addons_cold_start(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: commands.append(cmd) or _FakeProc()
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: None)
+
+    timeshift_buffer_plugin._start_ffmpeg(
+        _UUID, {}, {"storage_path": str(tmp_path), "buffer_minutes": 1, "segment_seconds": 3600}, _FakeLogger()
+    )
+
+    cmd = commands[0]
+    assert cmd[cmd.index("-hls_time") + 1] == "20"
+    assert cmd[cmd.index("-hls_list_size") + 1] == "3"
 
 
 def test_scrub_action_caps_the_idle_timeout(monkeypatch, tmp_path):

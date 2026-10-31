@@ -4,20 +4,22 @@
 
 ## Status at a glance
 
-**21 open, 368 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
+**17 open, 374 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
 plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
 live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
 the TSan start-up crash, fixed on 2026-10-22) or from the 2026-10-18 read-only audit, made on `Piers` and checked
 against `Omega`'s code the same day (all 21 held here; 14 fixed on 2026-10-19, four on 2026-10-21, one on 2026-10-22 and
-the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). 12 more come from the 2026-10-23
+the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). Nine more come from the 2026-10-23
 bug-hunting sweep of the whole project, made on `Piers` and checked against `Omega`'s code the same day (all 17 held
 here), all LOW; three more of its 17 (the release gate's unscanned bytes and two in `tools/build_kodi_repo.py`) were
-fixed on 2026-10-27, its one MEDIUM (the timeshift start lock) on 2026-10-28, and one (a sustained outage ending
-playback silently) was closed without a change after a live check on 2026-10-28.
+fixed on 2026-10-27, its one MEDIUM (the timeshift start lock) on 2026-10-28, one (a sustained outage ending
+playback silently) was closed without a change after a live check on 2026-10-28, and three more on 2026-10-31, with
+half of two others (the `segment_seconds` cap and the C1 controls).
 
-Three (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
-checked against the code before it was filed, all LOW; three more of its seven (two release-gate findings, a stale
+Two (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
+checked against the code before it was filed, all LOW; one more (the plugin's unstripped string settings) was fixed on
+2026-10-31, and three more of its seven (two release-gate findings, a stale
 plugin zip, MEDIUM, and the unchecked binaries, and one in `tools/build_kodi_repo.py`) were fixed on 2026-10-27, and its
 other MEDIUM (the timeshift plugin's token reaching a Redirect-profile provider) on 2026-10-28. One more (the same day) came out of the
 0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
@@ -30,14 +32,14 @@ start-lock removal fix: a start parked on a gevent worker can still outlive its 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 13 |
+| Open: Fix known, not yet done | 9 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 318 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 324 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -99,17 +101,6 @@ and its stop is declined, and when B stops the buffer and its provider slot stay
 matches, as `get_live_manifest` does. Also reword `CLOSED_ITEMS.md`'s 0.8.15 entry, which says heartbeats carried the
 token in the probe (the heartbeat action's body does not).
 
-#### OpenRecordedStream() writes the API-key owner stamps before the key they vouch for
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading, narrow window.** On a successful
-`ObtainApiKey()` it calls `WriteApiKeyOwnerStampsIfChanged()` at once, but the adopted or regenerated key reaches
-`api_key` only at the end of the open, via `PersistApiKeyIfChanged(keyBefore)`; the constructor does it in the right
-order. If Kodi exits or crashes during the open (or the settings dialog is open and cancelled, so the `api_key` write is
-dropped), the next start finds stamps for the new account beside the old account's key, sets
-`m_apiKeyOwnershipVerified`, and on the same server that key authorises as the wrong user with no 401. Fix:
-`PersistApiKeyIfChanged(keyBefore)` first, then the stamps, then refresh `keyBefore`. A glue variant of the
-`owner_stamps` scenario can check the stamps are never on disk without their key.
-
 #### Windows (and 32-bit) parse a pre-1970 (pre-1901) date to a floor that later subtractions overflow
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, reproduced with an injected `gm` under UBSan.**
@@ -123,15 +114,6 @@ days-from-civil in place of `_mkgmtime`/`timegm`, saturated to `time_t`, or have
 floor. Tests: a Windows-like `gm` in `test_time_util.cpp` and floor-valued starts in the recording, EPG-tag and
 catch-up-session tests (they fail under UBSan today).
 
-#### ParseProgramLookupResponse() and the timer body copy server subtrees of any depth
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, reproduced on a 1 MiB stack.**
-`TimerRequestBuilder.cpp` copies `id`/`title`/`sub_title`/`description`/`tvg_id` from the EPG search response (`out[key]
-= *it`) and into the timer body (`program[key] = *it`) whatever their type, and the body is later `dump()`ed: the
-recursive copy the 2026-10-19 `FieldRefOrNull` fix removed elsewhere. A `description` nested 12,000 deep segfaults on a
-1 MiB thread. Dispatcharr sends strings, so only a hostile server reaches it. Fix: copy a key only when it is a string
-(an integer for `id`). Test: a 100,000-deep value via `RunOnSmallStack` in `test_timer_request_builder.cpp`.
-
 #### A search-mode series rule costs terms times text length per recording
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, measured.** `SeriesRuleTextMatch.cpp`: `Leaf()` rescans
@@ -142,23 +124,22 @@ every `GetTimers()`. Needs a runaway or hostile rule. Fix: memoize leaves per ca
 once, and optionally answer `kUnsupported` past a terms-times-text budget. Test: a timing-bounded case and unchanged
 results in `test_series_rule_text_match.cpp`.
 
-#### Two text-handling gaps: SanitizeRecordingDirectory's std::isspace, and C1 controls in SanitizeServerErrorBody
+#### SanitizeRecordingDirectory trims with std::isspace
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading (the locale case not reproduced
-here).** (1) `RecordingDirectory.h` trims with `std::isspace`, which depends on the C locale Kodi sets from the user's
-region; under a Windows code page that counts 0xA0 as a space, a title ending in "à" (UTF-8 `C3 A0`) loses its last byte
-and the folder name is invalid UTF-8. It also trims only ASCII whitespace, where the function says it mirrors
-Dispatcharr's `_safe_name()` (check whether that uses Python's Unicode `.strip()`). Fix: `StripUnicodeWhitespace()` from
-`UnicodeText.h`; tests for "Voilà" and a U+3000 edge. (2) `SanitizeServerErrorBody()` (`JsonResponse.cpp`) blanks C0 and
-DEL but passes C1 controls, raw 0x80-0x9F and UTF-8 U+0080-U+009F (`C2 9B` is CSI), into `kodi.log`. Fix: blank those
-too, with a test in `test_json_response.cpp`.
+here).** Filed as "Two text-handling gaps: SanitizeRecordingDirectory's std::isspace, and C1 controls in
+SanitizeServerErrorBody"; the C1 half was fixed on 2026-10-31 (`CLOSED_ITEMS.md`, "SanitizeServerErrorBody passes C1
+control characters into kodi.log"). `RecordingDirectory.h` trims with `std::isspace`, which depends on the C locale Kodi
+sets from the user's region; under a Windows code page that counts 0xA0 as a space, a title ending in "à" (UTF-8 `C3
+A0`) loses its last byte and the folder name is invalid UTF-8. It also trims only ASCII whitespace, where the function
+says it mirrors Dispatcharr's `_safe_name()` (check whether that uses Python's Unicode `.strip()`). Fix:
+`StripUnicodeWhitespace()` from `UnicodeText.h`; tests for "Voilà" and a U+3000 edge.
 
-#### timeshift_buffer: segment_seconds has no upper limit, and the 1440-minute cap makes manifests heavy
+#### timeshift_buffer: the 1440-minute cap makes manifests heavy
 
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, (1) confirmed by reading, (2) measured.** (1)
-`segment_seconds` is read with `minimum=1` only, missed by the 2026-10-18 caps: a typo such as 3600 means no segment
-ever closes, every open fails the addon's cold start with "live playlist not found", and one `.ts` file grows until the
-buffer stops. Cap it (60, and no more than `buffer_minutes*60`) and say so in the help text. (2) At the new
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, measured.** Filed as "timeshift_buffer:
+segment_seconds has no upper limit, and the 1440-minute cap makes manifests heavy"; the `segment_seconds` half was
+fixed on 2026-10-31 (`CLOSED_ITEMS.md`, "timeshift_buffer: segment_seconds has no upper limit"). At the new
 `_MAX_BUFFER_MINUTES` with 2 s segments a cold manifest build takes 3.2 s on local disk (137 ms at the default), returns
 5.9 MB of JSON, and holds the single per-worker `_manifest_cache_lock` throughout, serialising every channel's
 `get_live_manifest` in that worker; the 16-entry cache was sized for the default. Fix: a lower cap, a byte-based cache
@@ -173,14 +154,6 @@ so each playlist or segment request during an outage (or with a corrupt state, t
 the same errors. Fix: catch in `_resolve_and_authorize`, answer 503, and rate-limit the log as
 `_should_log_reaper_error` does; test with a raising `_get_buffer_state` through `_fake_handler`.
 
-#### RefreshAccessToken() drops a rotated refresh token
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible: depends on Dispatcharr's SimpleJWT
-settings.** Only `access` is kept from the refresh response, unlike `Login()`. With `ROTATE_REFRESH_TOKENS` and
-blacklisting on, every second refresh would send a blacklisted token, get a 401 (`kRejected`) and fall back to a full
-password login, feeding the login rate limit `AuthBackoff` exists to avoid. Without rotation it costs nothing. Fix: keep
-`refresh` when present, under the state lock; check Dispatcharr's `SIMPLE_JWT` settings while there.
-
 #### CONNECTED is held back with no limit while the DVR access level is unknown
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible.** `TakePending(report, m_dvrAccessChecked)`
@@ -189,16 +162,6 @@ delivers `CONNECTED` only once `SyncDvrAccessFromDispatcharr()` has succeeded, w
 showing the client unreachable and never re-reading `GetCapabilities()`; playback is unaffected. Every Dispatcharr seen
 so far sends the field. Fix: treat a parse failure (as opposed to a network failure) as checked and fail open, or
 deliver `CONNECTED` after a few failed reads; testable in `ConnectionReport`.
-
-#### timeshift_buffer: string settings are not stripped, so a pasted space breaks storage_path or internal_base_url
-
-**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
-it was filed); LOW, reproduced with pytest against the real file.** `_str_setting()` rejects a blank value but returns
-the value unstripped, and Dispatcharr stores plugin settings as typed. A `storage_path` of " /data/timeshift" becomes a
-relative path, so buffers land under the worker's working directory inside the container and nothing flags it; an
-`internal_base_url` with a trailing space puts the space into ffmpeg's input URL, so every start fails with the message
-about a provider-side stream limit, pointing away from the cause. The plugin already strips `test_channel_uuid` for this
-reason. Fix: return `value.strip()`; tests for both settings.
 
 #### A connection state Kodi ignores while its PVR manager is stopped is marked delivered and never re-sent
 

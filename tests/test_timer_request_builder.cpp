@@ -2,6 +2,7 @@
 
 #include "DateTimeFormat.h"
 #include "UrlEncode.h"
+#include "small_stack.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -376,6 +377,38 @@ TEST_CASE("ParseProgramLookupResponse accepts a bare array and returns null for 
                                     nlohmann::json{{"id", 3}, {"title", ""}, {"start_time", IsoFromTime(1000000)}},
                                     nlohmann::json{{"id", 3}, {"start_time", IsoFromTime(1000000)}}})
     CHECK(ParseProgramLookupResponse(nlohmann::json::array({bad}), 1000000, 1000540).is_null());
+}
+
+TEST_CASE("ParseProgramLookupResponse and the timer body copy only an integer id and string fields, on a 1 MiB stack",
+          "[TimerRequestBuilder]")
+{
+  // A description nested 100,000 deep: copying it into the result or the body recursed per level and overflowed the
+  // stack. Moved into place, since an initializer list would copy it on this thread.
+  nlohmann::json entry = {{"id", 4}, {"title", "Show A"}, {"tvg_id", 7}, {"start_time", IsoFromTime(1000000)}};
+  entry["description"] = dispatcharr_test::DeeplyNestedArray(dispatcharr_test::kDeepNestingLevels);
+  nlohmann::json response = nlohmann::json::array();
+  response.push_back(std::move(entry));
+  nlohmann::json fields = {{"id", "4"}, {"title", "Show A"}, {"sub_title", {{"x", 1}}}};
+  fields["description"] = dispatcharr_test::DeeplyNestedArray(dispatcharr_test::kDeepNestingLevels);
+
+  nlohmann::json out, body;
+  REQUIRE(dispatcharr_test::RunOnSmallStack(
+      [&]
+      {
+        out = ParseProgramLookupResponse(response, 1000000, 1000540);
+        body = BuildOneTimeRecordingCreateBody(5, 1000000, 1000540, 999000, true, fields);
+      }));
+
+  REQUIRE(out.is_object());
+  CHECK(out["id"] == 4);
+  CHECK(out["title"] == "Show A");
+  CHECK_FALSE(out.contains("description"));
+  CHECK_FALSE(out.contains("tvg_id"));
+  const auto& program = body["custom_properties"]["program"];
+  CHECK(program["title"] == "Show A");
+  CHECK_FALSE(program.contains("id"));
+  CHECK_FALSE(program.contains("sub_title"));
+  CHECK_FALSE(program.contains("description"));
 }
 
 TEST_CASE("BuildSeriesRuleDeleteQuery always includes title", "[TimerRequestBuilder]")

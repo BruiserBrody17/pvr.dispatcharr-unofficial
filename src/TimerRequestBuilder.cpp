@@ -8,6 +8,20 @@
 namespace dispatcharr
 {
 
+namespace
+{
+
+constexpr const char* kProgramFieldKeys[] = {"id", "title", "sub_title", "description", "tvg_id"};
+
+// Only the type Dispatcharr sends (an integer id, strings otherwise): copying whatever is there copies a server
+// subtree recursively, and one nested about 12,000 deep overflowed a 1 MiB thread stack (2026-10-23 sweep).
+bool IsProgramFieldValue(const char* key, const nlohmann::json& value)
+{
+  return std::string(key) == "id" ? value.is_number_integer() : value.is_string();
+}
+
+} // namespace
+
 nlohmann::json BuildSeriesRuleRequestBody(int channelId, const std::string& tvgId, const std::string& titlePattern,
                                           bool recordNewOnly, const std::string& titleMode,
                                           const std::string& description, const std::string& descriptionMode,
@@ -106,10 +120,10 @@ nlohmann::json BuildOneTimeRecordingCreateBody(int channelId, time_t start, time
     nlohmann::json program = {{"start_time", IsoFromTime(effectiveStart)}, {"end_time", IsoFromTime(end)}};
     if (programFields.is_object())
     {
-      for (const char* key : {"id", "title", "sub_title", "description", "tvg_id"})
+      for (const char* key : kProgramFieldKeys)
       {
         auto it = programFields.find(key);
-        if (it != programFields.end() && !it->is_null())
+        if (it != programFields.end() && IsProgramFieldValue(key, *it))
           program[key] = *it;
       }
     }
@@ -167,10 +181,10 @@ nlohmann::json ParseProgramLookupResponse(const nlohmann::json& response, time_t
     return nullptr;
 
   nlohmann::json out = nlohmann::json::object();
-  for (const char* key : {"id", "title", "sub_title", "description", "tvg_id"})
+  for (const char* key : kProgramFieldKeys)
   {
     auto it = best->find(key);
-    if (it != best->end() && !it->is_null())
+    if (it != best->end() && IsProgramFieldValue(key, *it))
       out[key] = *it;
   }
   return out;

@@ -62,6 +62,25 @@ TEST_CASE("SanitizeServerErrorBody turns control characters into spaces", "[Json
   CHECK(SanitizeServerErrorBody(withNul) == "a b");
 }
 
+TEST_CASE("SanitizeServerErrorBody turns C1 control characters into spaces", "[JsonResponse]")
+{
+  // U+009B (C2 9B) is CSI, a terminal escape on its own; U+0085 is NEL.
+  CHECK(SanitizeServerErrorBody("a\xC2\x9B"
+                                "31mb\xC2\x85"
+                                "c") == "a 31mb c");
+  // A stray 0x80-0x9F byte with no lead byte is the 8-bit form of the same controls.
+  CHECK(SanitizeServerErrorBody("a\x9B"
+                                "31m\x80"
+                                "b") == "a 31m b");
+}
+
+TEST_CASE("SanitizeServerErrorBody keeps characters whose UTF-8 has 0x80-0x9F continuation bytes", "[JsonResponse]")
+{
+  // U+00A0 (C2 A0) is not a control; U+0100 is C4 80, U+2014 is E2 80 94, U+1F600 is F0 9F 98 80.
+  const std::string text = "\xC2\xA0\xC4\x80\xE2\x80\x94\xF0\x9F\x98\x80";
+  CHECK(SanitizeServerErrorBody(text) == text);
+}
+
 TEST_CASE("SanitizeServerErrorBody cuts a long body at the limit and says how much was dropped", "[JsonResponse]")
 {
   const std::string big(10000, 'x');

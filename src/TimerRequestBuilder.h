@@ -170,8 +170,9 @@ std::string BuildProgramLookupQuery(int channelId, time_t start);
 
 // Picks the programme a timer is for out of the search response (a paginated `{"results": [...]}` or a bare array).
 // A programme qualifies when its start equals `start` and it has a positive `id` and a non-empty `title`; one whose end
-// also equals `end` wins over one that only starts at the same time. Returns the fields to send (null values dropped),
-// or null json when nothing qualifies, which leaves the recording to the server's own enrichment.
+// also equals `end` wins over one that only starts at the same time. Returns the fields to send (only an integer `id`
+// and string text fields; null and any other type dropped, as BuildOneTimeRecordingCreateBody() also does), or null
+// json when nothing qualifies, which leaves the recording to the server's own enrichment.
 nlohmann::json ParseProgramLookupResponse(const nlohmann::json& response, time_t start, time_t end);
 
 // DispatcharrClient::DeleteSeriesRule()'s own query-string suffix
