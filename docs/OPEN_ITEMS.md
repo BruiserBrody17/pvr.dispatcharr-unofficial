@@ -4,30 +4,24 @@
 
 ## Status at a glance
 
-**17 open, 374 closed** (the closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md)). Two came from the two 2026-10-10
-source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and Dispatcharr itself with its
-plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)). Nothing is left from the 2026-10-19
-live check of four audit fixes on `Piers` (two findings held here too: the manifest throttle, fixed the same day, and
-the TSan start-up crash, fixed on 2026-10-22) or from the 2026-10-18 read-only audit, made on `Piers` and checked
-against `Omega`'s code the same day (all 21 held here; 14 fixed on 2026-10-19, four on 2026-10-21, one on 2026-10-22 and
-the last two closed without a change on 2026-10-22, all in `CLOSED_ITEMS.md`). Nine more come from the 2026-10-23
-bug-hunting sweep of the whole project, made on `Piers` and checked against `Omega`'s code the same day (all 17 held
-here), all LOW; three more of its 17 (the release gate's unscanned bytes and two in `tools/build_kodi_repo.py`) were
-fixed on 2026-10-27, its one MEDIUM (the timeshift start lock) on 2026-10-28, one (a sustained outage ending
-playback silently) was closed without a change after a live check on 2026-10-28, and three more on 2026-10-31, with
-half of two others (the `segment_seconds` cap and the C1 controls).
+**17 open, 374 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+confirmed. The open ones came from:
 
-Two (2026-10-24) come from a second bug-hunting sweep, one reviewer over the whole project with each finding
-checked against the code before it was filed, all LOW; one more (the plugin's unstripped string settings) was fixed on
-2026-10-31, and three more of its seven (two release-gate findings, a stale
-plugin zip, MEDIUM, and the unchecked binaries, and one in `tools/build_kodi_repo.py`) were fixed on 2026-10-27, and its
-other MEDIUM (the timeshift plugin's token reaching a Redirect-profile provider) on 2026-10-28. One more (the same day) came out of the
-0.33.0 stream-switch re-test (a codec-changing switch, checked live on 2026-10-25 and now a design question), and on
-2026-10-25 an upstream note from the 0.33.0 review (a Server-side stall that check turned up was fixed the same day
-and is in `CLOSED_ITEMS.md`). One (2026-10-26) came out of a read-only review of the
-HEVC seek-probe fix: a live read in a gap that answers 0 while the buffer is alive (its other half, a recycled
-segment, was fixed on 2026-10-29). One (2026-10-28) came out of the review of the
-start-lock removal fix: a start parked on a gevent worker can still outlive its lock.
+- Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
+  Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
+- Nine, all LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
+  (all 17 findings held here). Eight of its 17 are fixed or closed; two of the nine are what is left of findings half
+  fixed on 2026-10-31.
+- Two, both LOW, from the 2026-10-24 sweep (one reviewer over the whole project). Five of its seven are fixed.
+- One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
+- One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0.
+- One from the 2026-10-26 review of the HEVC seek-probe fix: a live read in a gap that answers 0 while the buffer is
+  alive.
+- One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
+  lock.
+
+Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
+held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 
 | Section | Entries |
 |---|---|

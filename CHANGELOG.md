@@ -31,8 +31,9 @@ Dispatcharr restart for every worker to pick it up.
 ### Fixed
 
 - **A space pasted before or after the Storage path or Internal base URL setting no longer breaks the buffer**: a
-  leading space on the storage path put every buffer's files inside the container's working directory, and a trailing
-  space on the base URL made every start fail with a message about the provider's stream limit. Both are now trimmed.
+  leading space on the storage path made every live channel fail to start with "live playlist not found", and a
+  trailing space on the base URL made every start fail with a message about the provider's stream limit. Both are now
+  trimmed.
 - **Segment length is capped at 20 seconds**: a mistyped value such as 3600 meant no segment ever finished, so live
   channels never started in Server-side mode. Above about 25 seconds the first segment takes longer than the addon
   waits for it.
