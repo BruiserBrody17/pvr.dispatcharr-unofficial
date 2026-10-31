@@ -1512,8 +1512,9 @@ def _str_setting(settings_dict: dict, key: str, default: str) -> str:
     `storage_path` (unusual, but not itself invalid) is left alone.
 
     Returned stripped (2026-10-24 sweep): Dispatcharr stores the value as
-    typed, so a pasted " /data/timeshift" was a relative path that put
-    every buffer inside the container's working directory, and a trailing
+    typed, so a pasted " /data/timeshift" was a relative path (and ffmpeg,
+    run from the channel directory, then never wrote its playlist, so
+    every start failed with "live playlist not found"), and a trailing
     space on `internal_base_url` reached ffmpeg's input URL and failed
     every start with the provider-stream-limit message.
     """

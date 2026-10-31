@@ -23,7 +23,14 @@ Confirmed live on 2026-10-31 against a real Dispatcharr 0.33.0, from Kodi 22 RC1
 the plugin's settings endpoint stored " /data/timeshift" and a base URL ending in a space exactly as typed, a live
 channel still started on the first open, the buffer's ffmpeg (its `/proc` command line, read by a throwaway probe
 plugin) had no space in its input URL and wrote under `/data/timeshift/<uuid>`, and nothing appeared under the worker's
-working directory.
+working directory. A second session the same day, from Kodi 21.3 with the `Omega` port's CI build, found the old
+symptom worse than filed: on 0.8.16 a leading space did not just move the files. ffmpeg runs with the channel's own
+directory as its working directory, so the relative playlist path pointed into a directory that does not exist; the
+segments piled up under `/app/ /data/timeshift/<uuid>` (holding a provider stream) but no playlist was ever written,
+and the open failed after the addon's 30 s wait with "live playlist not found". With that 0.8.16 buffer still running,
+deploying 0.8.17 and starting the channel again as a second viewer took the `stale_config` path: the old ffmpeg was
+stopped and its directory removed, and a new buffer ran under `/data/timeshift` within 2.4 s. The empty leftover
+directory was removed afterwards.
 
 #### timeshift_buffer: segment_seconds has no upper limit
 
@@ -44,8 +51,12 @@ implied: `buffer_minutes` is at least 1. `test_start_ffmpeg_caps_segment_seconds
 ffmpeg's `-hls_time` and `-hls_list_size` for a 3600 on a one-minute buffer. Confirmed live on 2026-10-31 in the same
 session as the entry above: with 3600 saved, the buffer's ffmpeg ran with `-hls_time 20`, and on Kodi 22 RC1 the
 channel was playing (position advancing) 8.5 s after the open, then ran at real time across five 20 s segments with no
-caching. Kodi 22's live read starts on the growing first segment, so this does not show a 20 s first segment fitting
-the cold-start wait on a slow provider or on Kodi 21.
+caching. That start was quicker than a 20 s segment suggests, and the second session (Kodi 21.3, `Omega` build) shows
+why: sampling the buffer directory every 0.25 s from the start, the first segment (20.8 s of video) and the playlist
+appeared 4.5 s after ffmpeg started, the second segment 13 s later and the third at real time. The stream reached ffmpeg
+faster than real time at first, about 25 s of video in the first five seconds; whether the provider or Dispatcharr's
+own proxy sends that burst was not told apart. Kodi 21 was playing 5.9 s after the open. A source with no burst would
+need about 21 s plus ffmpeg's start, which fits the ~30 s wait by the reasoning above but was not seen live.
 
 #### RefreshAccessToken() drops a rotated refresh token
 
@@ -63,7 +74,11 @@ out a new refresh token on each refresh and answers 401 to any other; the new `a
 CI) lapses the token four times and requires four refreshes, no 401 and no password login. On the old code it saw two
 refreshes rejected and two logins. Live on 2026-10-31 (Kodi 22 RC1, real Dispatcharr 0.33.0, request lines logged by a
 forwarder) only the unchanged default was checked: one password login, then a refresh about seven minutes later
-answered 200 and no second login. A server with rotation turned on was not tried.
+answered 200 and no second login. Rotation was then emulated live (Kodi 21.3, the `Omega` port's CI build, the real
+server behind a proxy that gave the client a new refresh token on each refresh and answered 401 "Token is blacklisted"
+to any it had replaced, as SimpleJWT does): over 27.6 minutes the addon made five refreshes, each presenting the newest
+token, none refused, and logged in with the password once, at the start. The proxy's own check: an old token got the
+401. The glue scenario also fails on `Omega`'s pre-fix code.
 
 #### OpenRecordedStream() writes the API-key owner stamps before the key they vouch for
 
@@ -87,7 +102,10 @@ Linux, real Dispatcharr 0.33.0): with a wrong stored key, stamps naming the serv
 pointed at a local forwarder) and the forwarder down at Kodi's start, nothing was saved while the server was
 unreachable; once it came up, the first recording open (Kodi's thumbnail loader) made the only key lookup, adopted the
 account's existing key (its hash matched the server's, nothing regenerated) and saved the key and the new stamps. Both
-arrived in one `settings.xml` save (an inotify watcher), so the order itself is the glue scenario's to prove.
+arrived in one `settings.xml` save (an inotify watcher), so the order itself is the glue scenario's to prove. The same
+check on Kodi 21.3 with the `Omega` build (a recording opened over JSON-RPC, as Kodi 21 opens none by itself) adopted
+the existing key too; there the key and the stamps were two saves 2 ms apart, still too close to order from outside.
+The glue scenario fails on `Omega`'s pre-fix code as well.
 
 #### ParseProgramLookupResponse() and the timer body copy server subtrees of any depth
 
@@ -105,7 +123,9 @@ and runs them on a 1 MiB stack; the old code ended the test binary with SIGSEGV.
 ordinary case still copies everything: Record from Kodi 22 RC1's guide info on two future programmes on a real
 Dispatcharr 0.33.0 created one-time recordings whose `custom_properties.program` held an integer `id` and the string
 `title`, `description` and `tvg_id`, each equal to the server's own programme record, plus `sub_title` on the one
-whose programme had one (the other's was null on the server and was left out). Both were deleted afterwards.
+whose programme had one (the other's was null on the server and was left out). Both were deleted afterwards. The same
+on Kodi 21.3 with the `Omega` build (`PVR.AddTimer` with two guide broadcast ids, the EPG-based path): all five fields,
+`sub_title` included, equal to the server's. The deep-nesting test also crashes `Omega`'s pre-fix code.
 
 #### SanitizeServerErrorBody passes C1 control characters into kodi.log
 
