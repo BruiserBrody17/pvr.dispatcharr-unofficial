@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`9000c0c`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`93789bb`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -161,6 +161,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `1a5d93e` | `af68f04` (`git cherry-pick -x`) | Records the remaining four Kodi 22 live checks of the Stop fix in `CLOSED_ITEMS.md`. |
 | `75a1ca8`, `8f6ae77` | not ported: `Piers` release line | `0.14.2` and its CoreELEC checksum; `Omega` has its own `0.13.2` (`583cfe1`, `c2e2576`). |
 | `9000c0c` | `e292c44` (`git cherry-pick -x`) | Records the throwaway-build live check of the live-read gap in `OPEN_ITEMS.md`; the entry is the same on both branches. |
+| `93789bb` | `4a2aaa3` (`git cherry-pick -x`, without `[skip ci]`) | Six fixes from the 2026-10-23/24 bug sweeps: `timeshift_buffer` 0.8.17 (trimmed path and base URL, `segment_seconds` capped at 20), the rotated refresh token, the key saved before the owner stamps on a recording open, plain programme fields only in a guide timer, and C1 controls blanked in logged server errors. The code and the glue harness applied cleanly (Omega has the same cold-start constants); `CHANGELOG.md` and `OPEN_ITEMS.md` were resolved by hand with `Omega`'s own counts. The live checks recorded in `CLOSED_ITEMS.md` were made on Kodi 22 only. |
 
 ## Dependencies that differ by Kodi release
 
