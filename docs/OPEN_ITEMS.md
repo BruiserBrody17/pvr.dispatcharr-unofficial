@@ -51,8 +51,8 @@ None open.
 
 #### A live read that lands in a gap answers 0 while the buffer is alive, which sets Kodi's end of file
 
-**Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix; LOW; cannot be reached from outside on Kodi 21
-for Linux.** Filed as "Two more live-read paths answer 0 while the buffer is alive"; the other path, a recycled segment,
+**Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix; LOW; reproduced live with a throwaway build,
+not reached from outside on Kodi 21.3 or Kodi 22.0 RC1 for Linux.** Filed as "Two more live-read paths answer 0 while the buffer is alive"; the other path, a recycled segment,
 was fixed on 2026-10-29 (`CLOSED_ITEMS.md`, "A recycled live segment answered 0, so playback ended at the next
 stall"). `ReadLiveTimeshiftStreamOnce()` still answers 0 when the read position falls in a gap no segment covers (its
 "is a gap" debug line). That happens while the buffer is alive, but a 0 sets Kodi's end of file until the next seek
@@ -65,6 +65,24 @@ to the oldest segment and its segment lookup.
 for 1.8 s (the only network call in that window) while answering manifests with the segment being read removed changed
 nothing. Kodi 21 on Linux calls `GetStreamTimes()`, the only other caller of the refresh, on the reader's own thread,
 so no refresh can land in that window. Reaching it here needs a throwaway build with a second thread.
+
+**Checked live 2026-10-31** with such a build: the `Omega` tip (addon 0.13.2) plus a second thread calling
+`GetLiveTimeshiftStreamDurationMs()`, what `GetStreamTimes()` calls, every 250 ms, standing in for a Kodi that polls
+stream times off the reader's thread. Same VM, channel and fault proxy, on Kodi 21.3. Each run paused for 30 s and
+resumed, held one heartbeat for 1.8 s while manifests dropped the segment being read, then froze the manifest so the
+reader met a silent stall once it caught up.
+- **Control (no pruning):** the tail wait reached 64.5 s of its 70 s and playback resumed once the manifest moved.
+- **Pruning:** the second thread's refresh landed inside the held heartbeat, the read logged "is a gap" and answered 0,
+  and the next read continued from the oldest segment. Playback carried on normally for about 56 s; once the reader
+  reached the frozen tail, Kodi logged "VideoPlayer: next stream" after 3.2 s of tail waiting and ended playback, with
+  no notice, the same as the recycled segment before its fix. (A first run that started further behind live never
+  reached the tail; playback ran on for the two minutes the freeze lasted.)
+- **Kodi 22.0 RC1, the released 0.14.2 Linux build (no second thread), twice:** no manifest request reached the proxy
+  during the held heartbeat, no gap was logged, and the stall was waited out to about 69 s of the 70 s budget. Kodi 22
+  on Linux polls stream times on the reader's thread too.
+
+So the 0 ends playback as described once a refresh can run on another thread; neither Linux Kodi runs one there, and
+other platforms were not checked.
 
 Fix: a bound first, since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
 `HandleLiveTimeshiftSegmentFetchFailure()` is one now that the recycled segment goes through it: its forced refresh
