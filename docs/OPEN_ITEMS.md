@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**18 open, 379 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**29 open, 379 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -20,19 +20,21 @@ confirmed. The open ones came from:
   alive.
 - One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
   lock.
+- Eleven, one MEDIUM, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area, each finding checked
+  against the code before it was filed).
 
 Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings).
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 9 |
+| Open: Fix known, not yet done | 16 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 0 |
+| Open: Tooling (tools/) | 4 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 329 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
@@ -170,6 +172,91 @@ Kodi keeps the old state and skips the `GetCapabilities()` re-read, and the latc
 really changes. Fix: allow re-delivering the current observation now and then (Kodi ignores a state equal to the one it
 has), or keep "delivered" apart from "observed".
 
+#### A Stop while a recording rides out a transient failure holds Kodi's interface for up to 20 s
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading, not reproduced.** `ReadRecordingStreamImpl()` and
+`ReadInProgressRecordingStreamImpl()` retry a transient failure (a refused connection, 500/502/503/504) inside one read
+for up to `kTransientReadBudget` (20 s, plus up to one request timeout against a server that never answers), and only
+`m_abortRequests` at teardown cuts the loop short. Kodi acts on a Stop only between reads, so a Stop during an outage
+holds its interface that long: the mechanism `CLOSED_ITEMS.md`'s "A Stop during a run of failed live segment fetches
+holds Kodi's interface for up to 25 s" measured and fixed on the live path, not carried over here. Two comments
+disagree on whether that fix applies: `IsTransientReadFailure()`'s (`SegmentFetchFailure.h`) says Kodi does not keep
+retrying a failed recorded read, while the in-progress tail wait already answers -1 so a stop can land, confirmed live
+(`CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the live one is"). Fix: if -1 is retried on a
+recorded stream, as the tail wait suggests, slice both retry loops the way the live path does, with the budget counted
+across calls; if not, say so beside `kTransientReadBudget` and consider a shorter budget for a finished recording's
+small ranged reads. Correct whichever comment is wrong. Needs a live Stop-latency check before and after.
+
+#### GetChannelGroups() falls back to a route that does not exist
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, confirmed by reading.** When `/api/channels/groups/`
+fails, `GetChannelGroups()` retries `kChannelGroupsPathFallback` (`/api/channels/channel-groups/`), which the constant's
+own comment and `API_NOTES.md` say Dispatcharr does not have: its web app answers it with 200 and `index.html`. So in an
+outage the refresh waits out two request timeouts instead of one, a real 403 or 500 from the primary is reported with
+"Failed to parse JSON response" appended, and the access token goes to a route that is not an API. The comment inside
+the function ("Neither path was independently confirmed") is stale. Fix: drop the fallback (or fall back only on a 404
+from the primary).
+
+#### A 401 whose re-authentication fails is reported to the caller as a 401
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, latent, confirmed by reading.** `Request()`'s 401 retry
+calls `EnsureAuthenticated()` without a status pointer, so when the re-login itself fails (a backoff, a 5xx, a transport
+error) `httpStatusOut` still holds the first attempt's 401. Every current caller decides correctly anyway (traced:
+`ClassifyApiKeyLookupFailure()` sends a 401 to generating a key, but `GenerateApiKey()` re-runs `EnsureAuthenticated()`
+and fails the same way; the recording lookup's playlist skip acts only on status 0; the delete and stop paths treat only
+404 specially), but a new caller that takes 401 as a lasting refusal would misread an outage. `CLOSED_ITEMS.md`'s "A 401
+during recurring-rule adoption was recorded as a permanent refusal" fixed one caller, not this. Fix: report the
+re-authentication's own status, or a "no request made" value, instead of the stale 401.
+
+#### TrackDetachedThread() joins threads inside a std::remove_if predicate
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, standards conformance, confirmed by reading.** The
+opportunistic prune hands `std::remove_if` a predicate that calls `entry.thread.join()`, and [algorithms.requirements]
+forbids a predicate applying a non-constant function through the iterator. It works on libstdc++, libc++ and MSVC
+because each calls the predicate once per element, in order, before moving that element, which is also what makes the
+later move-assignment onto the slot safe (move-assigning onto a joinable `std::thread` is `std::terminate`). An
+implementation that did otherwise would throw `std::system_error` under the lock, on a path reachable from
+`OnAddonSettingChanged()` ("Nothing stops an exception crossing from a PVR callback into Kodi", below). Fix, with no
+change in behaviour: join the finished entries in a plain loop, then `remove_if` on `!thread.joinable()`.
+
+#### A recurring rule starting inside a spring-forward gap on its first day is shown ending before it starts
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced with a Catch2 case built against the real
+`RecurringRuleUtil.cpp` and `TimeZoneUtil.cpp`.** `ComputeRecurringRuleDisplayTimes()` decides the overnight rollover
+on the seconds of day (`endTimeOfDaySeconds <= startTimeOfDaySeconds`), then resolves the start under the pre-gap offset
+and the end on its own (since `CLOSED_ITEMS.md`'s "The recurring-rule display took the end's offset from the start
+instant", which covers a rule that starts before the gap). For a short rule that starts inside the gap on its
+`start_date`, nothing re-checks the order of the two instants: in a zone whose clocks go from 02:00 to 03:00, a rule
+from 02:30 to 03:15 is shown on the change day ending 15 minutes before it starts. Only the first occurrence's displayed
+window, and only when `start_date` is the change day. Fix: once both instants are resolved, roll the end over on the
+instants too (`if (endTimeOut <= startTimeOut) endTimeOut += 86400`), and add the case to `test_recurring_rule_util.cpp`.
+Which window Dispatcharr itself records depends on whether its scheduler compares the two datetimes in UTC (pytz) or by
+wall clock (zoneinfo); check that live before deciding what the display should match.
+
+#### timeshift_buffer: a symlink loop under storage_path drops a file-server request with a traceback
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced on Python 3.12.** `_resolve_request_path()`
+calls `Path.resolve()` with nothing around it, and on Python 3.12 and earlier a symlink that points back at itself
+raises `RuntimeError` (3.13 no longer raises outside strict mode; which Python Dispatcharr's image ships is not recorded
+here). `_resolve_and_authorize()` does not catch it, so with `loopdir -> loopdir` under `storage_path` every request for
+`loopdir/live.m3u8` ends in `handle_error`'s `logger.exception` and a dropped connection, before the token is checked.
+It needs such a link left on the (often shared) storage by something else; the reaper is unaffected (`Path.is_dir()`
+answers False). Same shape as the Redis-outage entry above. Fix: catch `(OSError, RuntimeError)` around the two
+`resolve()` calls and answer 404 as the NUL case does; a test beside
+`test_paths_that_escape_or_do_not_name_a_file_are_404`.
+
+#### timeshift_buffer: a port that cannot be bound is logged as an error on every plugin call
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced (five calls, five error lines).** `run()`
+calls `_ensure_http_server_running()` before every action, which retries `_create_http_server()` while `_http_server`
+is None, and each failed bind logs "couldn't bind http server on port ..." at error level. With the port held by a
+process that does not set `SO_REUSEPORT`, or `http_port` below 1024 in a container not running as root, every action
+in every worker adds an error line for as long as the port stays taken.
+`test_create_http_server_reports_a_port_that_is_taken_once` pins one line per call, not one per episode. Fix: keep the
+last failure's port, errno and time and log once per interval as `_should_log_reaper_error()` does; a test that calls
+it three times and gets one error line.
+
 ### Architectural / concurrency
 
 #### Nothing stops an exception crossing from a PVR callback into Kodi
@@ -281,4 +368,44 @@ handling in `OnAddonSettingChanged()` are the work. Not started.
 
 ### Tooling (tools/)
 
-None open.
+#### The release gate passes a plugin zip whose files are not the tag's
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; MEDIUM, reproduced in a scratch copy.** Under
+`--expect-release`, `check_release_zip.py`'s `_plugin_contents` checks only that a plugin zip's `plugin.json` version equals its `Plugin` class
+version and the `plugin.json` in the `dispatcharr-plugin/` beside the gate's `tools/`. Nothing compares the zip's
+members or bytes with that directory, or limits which members it may have. `BUILDING.md`'s plugin-only refresh recipe
+zips a working tree with `zip -r` (the release path exports the tag with `git archive`), so an uncommitted edit to
+`plugin.py` at the same version, or an untracked file beside it (an editor backup, notes), ships under the release's
+name and the gate says clean unless a blocklist term is in it. The addon zips' member check (`_outside`) also lets
+`.DS_Store`, `Thumbs.db` and `desktop.ini` through. Repro: a copied `recording_edl/` with one line of `plugin.py`
+changed and a notes file added, zipped and normalised as the workflow does, passed both `check_release_contents` and
+`check_zip`. `CLOSED_ITEMS.md`'s "The release gate passes a stale plugin zip under --expect-release" added the version
+and timestamp rules only. Fix: when the plugin source is there, require the member set to equal its files (less
+`tests/` and `__pycache__/`) byte for byte, reporting extra, missing and differing members; switch the recipe to `git
+archive`; reject those three file names. Test: the dirty-tree zip above must fail.
+
+#### The release gate compares entry timestamps in the central directory only
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced with a hand-patched zip.** The
+one-timestamp rule in the gate's `_layout_problems` reads `info.date_time`, the central directory's copy; each local header's own
+DOS time and date are never compared, though its name and extra-field length are. A zip whose local headers carry
+another time (the build machine's local clock) passes. No real tool writes the two copies from different values
+(CPack/libarchive, Info-ZIP, .NET and Python each write one), so this is a gap against a crafted zip, not an expected
+leak. `CLOSED_ITEMS.md`'s "The release gate does not catch local-clock entry timestamps" fixed the central-directory
+half. Fix: compare the local header's time and date with `info.date_time`'s DOS encoding; one test with a patched zip.
+
+#### The release gate crashes on an entry flagged encrypted instead of reporting it
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced.** `archive.read()` raises `RuntimeError`
+for an entry with general-purpose flag bit 0 set, and neither the scan's read nor its `_read` helper catches it (both catch
+`BadZipFile`, `zlib.error`, `NotImplementedError` and `OSError`). The gate exits 1 with a traceback, so it fails closed,
+but the rest of the set goes unchecked in that run and the output names no cause. Fix: catch `RuntimeError` in both and
+report the entry as unreadable (encrypted); a test with a flagged entry.
+
+#### A PRIVACY_BLOCKLIST naming a missing file falls back to the home blocklist
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, confirmed by reading.** `check_release_zip.py`'s `find_blocklist` refuses a
+`--blocklist` path that does not exist, so that a mistyped one never falls back to another list, but a set
+`PRIVACY_BLOCKLIST` naming a missing file is skipped and `~/.privacy-blocklist.txt` used instead; `BUILDING.md`'s
+release recipe relies on the environment or the home file, not `--blocklist`. A false negative only when the two lists
+differ. Fix: treat a set `PRIVACY_BLOCKLIST` like `--blocklist`, an error when the file is missing; a test.
