@@ -10,7 +10,11 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased] -- addon
+## [0.14.2] - 2026-10-31
+
+For Kodi 22 only, and still built against Kodi 22.0 RC1, so it is a pre-release like `0.14.1`; Kodi 21 users want
+`0.13.2` (tag `0.13.2-Omega`), which has the same fixes. It bundles `timeshift_buffer` `0.8.16` (below), which needs
+redeploying to Dispatcharr for its fixes, and `recording_edl` `0.2.3` as it was in `0.14.1`. It carries the same eight downloads as `0.14.1`.
 
 ### Fixed
 
@@ -37,7 +41,7 @@ compare against.
   day would have recorded an hour off. A Dispatcharr server whose time zone data predates the change is still
   followed, once it has scheduled occurrences after 2026-11-01.
 
-## `timeshift_buffer` [0.8.16] - Unreleased
+## `timeshift_buffer` [0.8.16] - 2026-10-31
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
 Dispatcharr restart for every worker to pick it up.
