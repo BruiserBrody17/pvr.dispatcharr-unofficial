@@ -157,6 +157,12 @@ _BUFFER_STATE_TTL = 600
 _MAX_BUFFER_MINUTES = 24 * 60
 _MAX_CONCURRENT_BUFFERS = 64
 _MAX_IDLE_TIMEOUT_SECONDS = _BUFFER_STATE_TTL // 2
+# Missed by that audit (2026-10-23 sweep): a mistyped 3600 meant no segment closed before the addon's cold start gave
+# up on the playlist, and one .ts file grew until the buffer stopped. The playlist appears only once the first segment
+# closes (at least this long, then the next keyframe), and the addon waits about 30 s for it while this plugin answers
+# "not ready" (kColdStartExtendedAttempts in DispatcharrClient.cpp), so the cap leaves about 10 s for ffmpeg's start,
+# the provider connection and the keyframe. Lower it if that budget shrinks. Never more than the shortest buffer.
+_MAX_SEGMENT_SECONDS = 20
 
 _HTTP_THREAD_NAME = "timeshift_buffer_http"
 _REAPER_THREAD_NAME = "timeshift_buffer_reaper"
@@ -1504,11 +1510,17 @@ def _str_setting(settings_dict: dict, key: str, default: str) -> str:
     Doesn't reject a relative path -- only an emptied/missing/non-string
     value falls back to `default`; a deliberately-relative
     `storage_path` (unusual, but not itself invalid) is left alone.
+
+    Returned stripped (2026-10-24 sweep): Dispatcharr stores the value as
+    typed, so a pasted " /data/timeshift" was a relative path that put
+    every buffer inside the container's working directory, and a trailing
+    space on `internal_base_url` reached ffmpeg's input URL and failed
+    every start with the provider-stream-limit message.
     """
     value = settings_dict.get(key, default)
     if not isinstance(value, str) or not value.strip():
         return default
-    return value
+    return value.strip()
 
 
 def _compute_segment_counts(buffer_minutes: int, segment_seconds: int) -> tuple[int, int]:
@@ -1705,7 +1717,7 @@ def _clear_channel_dir(channel_dir: Path, logger):
 
 def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) -> dict:
     storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
-    segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1)
+    segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1, maximum=_MAX_SEGMENT_SECONDS)
     buffer_minutes = _int_setting(settings_dict, "buffer_minutes", 60, minimum=1, maximum=_MAX_BUFFER_MINUTES)
     base_url = _str_setting(settings_dict, "internal_base_url", "http://127.0.0.1:9191")
     http_port = _int_setting(settings_dict, "http_port", 9192, minimum=1, maximum=65535)
@@ -3457,7 +3469,7 @@ def _ensure_reaper_running(settings_dict, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "0.8.16"
+    version = "0.8.17"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."
@@ -3526,7 +3538,7 @@ class Plugin:
                 "file server. Confirmed live at the default (2s) with several "
                 "channels buffering concurrently -- steady, error-free segment "
                 "production throughout, see the addon's own docs/TIMESHIFT.md "
-                "for the full account."
+                "for the full account. At most 20."
             ),
         },
         {

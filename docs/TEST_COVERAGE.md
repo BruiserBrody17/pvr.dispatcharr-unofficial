@@ -2169,6 +2169,12 @@ The glue harness's `functional` scenario covers the client side: the fake answer
 recording the addon creates carries the looked-up id and title, and with the endpoint answering 404 the timer is still
 created.
 
+2026-10-31 (`docs/CLOSED_ITEMS.md`, "ParseProgramLookupResponse() and the timer body copy server subtrees of any
+depth"): both copies keep only an integer `id` and string text fields (`IsProgramFieldValue()`). One test feeds a
+100,000-deep `description` to `ParseProgramLookupResponse()` and to `BuildOneTimeRecordingCreateBody()`'s
+`programFields` on a 1 MiB stack (`tests/small_stack.h`), and checks the wrong-typed fields (a numeric `tvg_id`, a
+string `id`, an object `sub_title`) are dropped; the old code crashed the test binary.
+
 2026-10-13: `SeriesRuleTitleModeForSetting()` and the `kSeriesTitleMode*` values (`TimerRequestBuilder.h`, `tests/test_timer_request_builder.cpp`: the three choices, Exact being "" so the key is omitted and the request is unchanged, any value outside the list sending nothing, the values matching the `settings.xml` options, and the body a new rule carries). The glue harness's `functional` scenario creates series rules under each setting value through `OnAddonSettingChanged()` and reads what reached the fake server; with the wiring reverted to an empty mode it fails for Contains and Whole words. The cross-file test `tools/tests/test_settings_ids_sync.py` covers the setting's id and its strings.
 
 ### `TimeZoneUtil`
@@ -2397,6 +2403,15 @@ does not"): `WriteApiKeyOwnerStampsIfChanged()`, from `PersistApiKeyIfChanged()`
 `OpenRecordedStream()`. It needs Kodi's stored values and a server lookup, so not a unit test: the glue scenario
 `owner_stamps` (in CI, plain and `late`) starts with the right key and a stale `api_key_host`, and requires one lookup,
 the stamp rewritten and no lookup at a second start; on the old code the stamp stayed and every start looked the key up.
+A third CI run, `owner_stamps 8000 late newkey` (2026-10-31, `docs/CLOSED_ITEMS.md`'s "OpenRecordedStream() writes the
+API-key owner stamps before the key they vouch for"), starts with another account's key and has the first recording
+open fetch a new one; the stub records the stored `api_key` at each `api_key_host` write, and any but the new key
+fails. On the old code the stamp was written beside the old key.
+
+`RefreshAccessToken()` keeps a rotated refresh token (2026-10-31, `docs/CLOSED_ITEMS.md`'s "RefreshAccessToken() drops
+a rotated refresh token"). A network path, so the glue harness: the fake's `rotate_refresh` knob plays SimpleJWT with
+rotation and blacklisting on, and `auth_refresh_rotated` (in CI) lapses the token four times and requires four
+refreshes, no 401 and no password login. On the old code two of the four were rejected and fell back to a login.
 
 ### Test-extraction passes and hardening sweeps
 
@@ -2656,6 +2671,11 @@ comparing ages in 64 bits (a 32-bit `time_t` overflow, so its test fails only in
 workspace could not build); `SaturatingTimeGm()`'s floor (`kEarliestRepresentableTime`); `ParseEpisodeNum()` refusing a field
 below -1 (-1 stays: it is Dispatcharr's season 0); `ParseNewLiveManifestSegments()` keeping only a strictly increasing run;
 and the range-checked `days_of_week` (`ParseRecurringRuleJson()`) and adoption-state ids (`ParseAdoptionState()`).
+
+2026-10-31 (`docs/CLOSED_ITEMS.md`, "SanitizeServerErrorBody passes C1 control characters into kodi.log"):
+`SanitizeServerErrorBody()` blanks U+0080-U+009F and a stray 0x80-0x9F byte, decoding with `DecodeUtf8At()` first.
+`tests/test_json_response.cpp` pins both forms of CSI and NEL, and that characters whose UTF-8 has 0x80-0x9F
+continuation bytes (U+0100, U+2014, an emoji) pass unchanged; the first test fails on the old code.
 
 ### What the C++ suite does not test
 
@@ -3053,6 +3073,14 @@ lookup: a Redirect channel gets `None` and no token is minted, a proxied one get
 cases check the spawned command line itself. Four of the five fail on the previous plugin code (the proxied command
 line is the old behaviour). Not covered here: Dispatcharr's real 302 and what ffmpeg sends after it, checked live (see
 that entry).
+
+2026-10-31 (the plugin's 0.8.17, `docs/CLOSED_ITEMS.md`'s "string settings are not stripped, so a pasted space breaks
+storage_path or internal_base_url" and "segment_seconds has no upper limit"): `_str_setting()` returns the value
+stripped, pinned by a leading space on `storage_path` and by a `_start_ffmpeg()` case whose `internal_base_url` ends in
+a space and a tab (ffmpeg's `-i` URL must not carry them); `segment_seconds` is capped at `_MAX_SEGMENT_SECONDS` (20, inside
+the addon's 30 s cold start), pinned by a `_start_ffmpeg()` case with 3600 on a one-minute buffer (`-hls_time 20`,
+`-hls_list_size 3`). All three
+fail on the previous plugin code.
 
 ## Tools
 

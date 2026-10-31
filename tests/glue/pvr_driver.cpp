@@ -20,6 +20,7 @@ void InitKodiStub();
 KODI_ADDON_INSTANCE_STRUCT* MakePvrInstanceStruct();
 extern std::mutex g_setMu;
 extern std::map<std::string, std::string> g_settings;
+extern std::vector<std::string> g_apiKeyAtHostStamp;
 extern std::atomic<bool> g_dropSetSetting;
 extern std::atomic<long> g_setCount, g_notifyCount, g_triggerCount;
 extern std::string g_userPath;
@@ -359,10 +360,14 @@ int main(int argc, char** argv)
   set("timeout", getenv("TMO") ? getenv("TMO") : "5");
   set("live_timeshift_mode", what == "warm_up" ? "0" : "2");
   set("api_key", "");
+  // owner_stamps ... late newkey (run with CTL="api_down=1&require_key=K2"): the stored key is another account's, so
+  // the lookup brings a new one and the stamps must not reach disk before it does.
+  const bool ownerStampsNewKey = what == "owner_stamps" && argc > 5 && std::string(argv[5]) == "newkey";
+  const std::string ownerStampsKey = ownerStampsNewKey ? "K2" : "K1";
   if (what == "owner_stamps")
   {
     // The account's own key (the fake's), stamped for the same server under another form of its address.
-    set("api_key", "K1");
+    set("api_key", ownerStampsNewKey ? "K0" : "K1");
     set("api_key_host", "http://localhost:" + std::to_string(g_port));
     set("api_key_username", "u");
   }
@@ -1697,6 +1702,14 @@ int main(int argc, char** argv)
       FAIL("expected one key lookup at the first start, got %d", first);
     if (setting("api_key_host") != want)
       FAIL("api_key_host is '%s' after the key was confirmed, not '%s'", setting("api_key_host").c_str(), want.c_str());
+    {
+      // A crash between the stamps and the key would leave the stamps vouching for the old key at the next start.
+      std::lock_guard<std::mutex> g(g_setMu);
+      for (const auto& stored : g_apiKeyAtHostStamp)
+        if (stored != ownerStampsKey)
+          FAIL("api_key_host was written while api_key was still '%s', not '%s'", stored.c_str(),
+               ownerStampsKey.c_str());
+    }
     delete pvr;
     inst = MakePvrInstanceStruct();
     {
@@ -1707,7 +1720,7 @@ int main(int argc, char** argv)
     INFO("second start: %d key lookup(s) in all", second);
     if (second != first)
       FAIL("the second start looked the key up again (%d lookups in all)", second);
-    if (setting("api_key") != "K1")
+    if (setting("api_key") != ownerStampsKey)
       FAIL("api_key is '%s', not the account's key", setting("api_key").c_str());
   }
   else if (what == "dtor_busy")

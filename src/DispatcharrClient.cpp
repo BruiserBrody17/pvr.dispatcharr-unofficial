@@ -548,8 +548,14 @@ bool DispatcharrClient::RefreshAccessToken(std::string& error, long* httpStatusO
     error = "Refresh response did not contain an access token";
     return false;
   }
+  // Present only when SimpleJWT rotates refresh tokens (Dispatcharr 0.33.0 ships ROTATE_REFRESH_TOKENS off, with
+  // BLACKLIST_AFTER_ROTATION on): keeping the old one then makes every second refresh a 401 and a password login.
+  std::string rotatedRefreshToken;
+  const bool rotated = ReadNonEmptyStringField(response, "refresh", rotatedRefreshToken);
   std::lock_guard<std::mutex> stateLock(m_authStateMutex);
   m_accessToken = std::move(accessToken);
+  if (rotated)
+    m_refreshToken = std::move(rotatedRefreshToken);
   m_accessTokenExpiry = std::chrono::steady_clock::now() + std::chrono::minutes(4);
   return true;
 }
@@ -4661,7 +4667,8 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   // still took the full ~15s to fail instead of a couple hundred
   // milliseconds, with no indication in the error of why.
   constexpr int kColdStartMaxAttempts = 30;
-  // 30 s in all, for a channel whose plugin keeps answering "not ready" (see ColdStartTryLimit()).
+  // 30 s in all, for a channel whose plugin keeps answering "not ready" (see ColdStartTryLimit()). timeshift_buffer's
+  // _MAX_SEGMENT_SECONDS (20) is sized to close the first segment inside it: shorten this and lower that too.
   constexpr int kColdStartExtendedAttempts = 60;
   constexpr int kColdStartSleepMs = 500;
   bool manifestReady = false;

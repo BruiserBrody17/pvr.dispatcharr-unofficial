@@ -10,6 +10,33 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased] -- addon
+
+### Fixed
+
+- **No more password logins every other token refresh on a server that rotates its login tokens**: if Dispatcharr is
+  set to hand out a new refresh token with each refresh (it is not by default), the addon kept the old one, so every
+  second refresh was refused and it logged in with the password again, which could run into the server's login limit.
+- **A recording opened right after switching Dispatcharr accounts can no longer leave the old account's key marked as
+  the new account's** if Kodi closed during that open; the next start then used the old account's key without noticing.
+- **Hardening against bad server data**: a guide search reply whose programme fields are not plain text (or an
+  integer id) can no longer crash Kodi when a timer is created from the guide, and server error text written to the
+  log has its C1 control characters (terminal escape sequences) blanked like the others.
+
+## `timeshift_buffer` [0.8.17] - Unreleased
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **A space pasted before or after the Storage path or Internal base URL setting no longer breaks the buffer**: a
+  leading space on the storage path put every buffer's files inside the container's working directory, and a trailing
+  space on the base URL made every start fail with a message about the provider's stream limit. Both are now trimmed.
+- **Segment length is capped at 20 seconds**: a mistyped value such as 3600 meant no segment ever finished, so live
+  channels never started in Server-side mode. Above about 25 seconds the first segment takes longer than the addon
+  waits for it.
+
 ## [0.14.2] - 2026-10-31
 
 For Kodi 22 only, and still built against Kodi 22.0 RC1, so it is a pre-release like `0.14.1`; Kodi 21 users want

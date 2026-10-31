@@ -745,6 +745,37 @@ static long fake_stat(const char* key)
   return stats.is_object() && stats.contains(key) ? stats[key].get<long>() : 0;
 }
 
+// A server that rotates refresh tokens and blacklists the old one (SimpleJWT's ROTATE_REFRESH_TOKENS with
+// BLACKLIST_AFTER_ROTATION; Dispatcharr 0.33.0 ships rotation off): every refresh must send the token the last one
+// handed out. Keeping only the access token made every second refresh a 401 and a full password login, feeding the
+// login rate limit.
+static void auth_refresh_rotated(DispatcharrClient& cl)
+{
+  ctl("rotate_refresh=1");
+  std::string err;
+  if (!cl.EnsureAuthenticated(err))
+  {
+    FAIL("first authentication: %s", err.c_str());
+    return;
+  }
+  const long loginsBefore = fake_stat("POST /api/accounts/token/");
+  const long refreshesBefore = fake_stat("POST /api/accounts/token/refresh/");
+  for (int i = 0; i < 4; i++)
+  {
+    cl.InvalidateAccessToken();
+    if (!cl.EnsureAuthenticated(err))
+      FAIL("authentication %d after the token lapsed: %s", i + 1, err.c_str());
+  }
+  const long logins = fake_stat("POST /api/accounts/token/") - loginsBefore;
+  const long refreshes = fake_stat("POST /api/accounts/token/refresh/") - refreshesBefore;
+  const long rejected = fake_stat("refresh rejected");
+  INFO("four lapses: %ld refreshes, %ld rejected, %ld logins", refreshes, rejected, logins);
+  if (rejected != 0 || logins != 0)
+    FAIL("a rotated refresh token was not kept: %ld refreshes rejected, %ld password logins", rejected, logins);
+  if (refreshes != 4)
+    FAIL("expected four refreshes, saw %ld", refreshes);
+}
+
 // A segment the rolling buffer let go of after the manifest the read went by answers 404. That read used to answer 0,
 // which sets Kodi's end of file while the buffer is alive (docs/CLOSED_ITEMS.md, "A recycled live segment answered 0,
 // so playback ended at the next stall"). Phase 1 shrinks the fake's window under the reader, so its next segment is
@@ -2242,6 +2273,8 @@ int main(int argc, char** argv)
       live_outage_handback(*cl);
     else if (what == "live_lost_notice")
       live_lost_notice(*cl);
+    else if (what == "auth_refresh_rotated")
+      auth_refresh_rotated(*cl);
     else if (what == "live_blackhole_close")
       live_blackhole(*cl, false);
     else if (what == "live_blackhole_read")
