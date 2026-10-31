@@ -19,7 +19,8 @@ AddonGlobalInterface* kodi::addon::CPrivateBase::m_interface = nullptr;
 
 std::mutex g_setMu;
 std::map<std::string, std::string> g_settings;
-std::atomic<bool> g_dropSetSetting{false}; // Kodi drops addon writes while its settings dialog is open
+std::vector<std::string> g_apiKeyAtHostStamp; // the stored api_key at each write of api_key_host (under g_setMu)
+std::atomic<bool> g_dropSetSetting{false};    // Kodi drops addon writes while its settings dialog is open
 std::atomic<long> g_setCount{0}, g_notifyCount{0}, g_triggerCount{0};
 std::string g_userPath;
 
@@ -124,6 +125,8 @@ static bool ss(const char* id, const std::string& v)
   if (g_dropSetSetting)
     return true; // Kodi reports success and drops it
   std::lock_guard<std::mutex> g(g_setMu);
+  if (std::string(id) == "api_key_host")
+    g_apiKeyAtHostStamp.push_back(g_settings["api_key"]);
   g_settings[id] = v;
   return true;
 }

@@ -38,6 +38,7 @@ run "live (6 s API latency)"     TMO=30 T=300 -- live_slow_open
 run "live (recycled segment, then 404s)" TMO=30 T=120 -- live_segment_recycled
 run "live (failed fetches handed back)" TMO=30 T=120 -- live_outage_handback
 run "live (which notice ends a lost stream)" TMO=30 T=180 -- live_lost_notice
+run "rotated refresh tokens"     TMO=30 T=60 -- auth_refresh_rotated
 run "completed recording"        TMO=30 T=120 -- rec
 run "recording, Range dropped"   TMO=30 T=120 -- rec_range_dropped
 run "recording with no file"     TMO=30 T=120 -- rec_open_missing
@@ -52,6 +53,7 @@ run "PVR: guide redirect loop"     BIN=pvr_harness T=60 CTL="epg_redirect=loop" 
 run "PVR: guide redirect to FTP"   BIN=pvr_harness T=60 CTL="epg_redirect=ftp" -- epg_redirect
 run "PVR: owner stamps, address form changed" BIN=pvr_harness T=60 -- owner_stamps
 run "PVR: owner stamps, confirmed on a recording open" BIN=pvr_harness T=120 CTL="api_down=1" -- owner_stamps 8000 late
+run "PVR: owner stamps, new key on a recording open" BIN=pvr_harness T=120 CTL="api_down=1&require_key=K2" -- owner_stamps 8000 late newkey
 run "PVR: M3U refresh event"       BIN=pvr_harness T=60 -- refresh_events
 run "PVR: server offset vs table"   BIN=pvr_harness T=60 -- offset_cross_check
 run "PVR: finished recording, playlist gone" BIN=pvr_harness T=60 -- finished_hls_gone

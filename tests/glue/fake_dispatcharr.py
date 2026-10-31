@@ -27,6 +27,9 @@ T0 = {"live": None, "ip": time.time()}
 LIVE_FROZEN_AT = {"n": None}
 IP_FROZEN_AT = {"n": None}
 TOKEN = {"v": "tok1"}
+# rotate_refresh=1: SimpleJWT with ROTATE_REFRESH_TOKENS and BLACKLIST_AFTER_ROTATION, so each refresh hands out a new
+# refresh token and answers 401 to any other (Dispatcharr 0.33.0 ships rotation off; this is the case if it turns on).
+REFRESH = {"n": 0}
 LAST_STOP = {"params": None}  # the params of the last stop_buffer, for /__laststop
 WS_PUSHED = []  # realtime messages pushed through /__ctl?ws_push= (every connected client gets all of them)
 REC_SIZE = 3 * 1024 * 1024 + 5
@@ -629,8 +632,20 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/accounts/token/":
             if CTL["login_status"]:  # a rejected login (401), a throttled one (429), a proxy error (502) ...
                 return self.J(ctl_int("login_status"), {"detail": "No active account found with the given credentials"})
+            if CTL["rotate_refresh"] == "1":
+                with lock:
+                    REFRESH["n"] += 1
+                    return self.J(200, {"access": "A", "refresh": "R%d" % REFRESH["n"]})
             return self.J(200, {"access": "A", "refresh": "R"})
         if p == "/api/accounts/token/refresh/":
+            if CTL["rotate_refresh"] == "1":
+                sent = json.loads(b or b"{}").get("refresh")
+                with lock:
+                    if sent != "R%d" % REFRESH["n"]:
+                        counts["refresh rejected"] += 1
+                        return self.J(401, {"detail": "Token is blacklisted", "code": "token_not_valid"})
+                    REFRESH["n"] += 1
+                    return self.J(200, {"access": "AR", "refresh": "R%d" % REFRESH["n"]})
             return self.J(200, {"access": "AR"})
         if p == "/api/accounts/api-keys/":
             return self.J(200, {"key": CTL["require_key"] or "K1"})

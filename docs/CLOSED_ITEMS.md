@@ -6,6 +6,120 @@
 
 ### Fixed
 
+#### timeshift_buffer: string settings are not stripped, so a pasted space breaks storage_path or internal_base_url
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); LOW, reproduced with pytest against the real file.** `_str_setting()` rejects a blank value but returns
+the value unstripped, and Dispatcharr stores plugin settings as typed. A `storage_path` of " /data/timeshift" becomes a
+relative path, so buffers land under the worker's working directory inside the container and nothing flags it; an
+`internal_base_url` with a trailing space puts the space into ffmpeg's input URL, so every start fails with the message
+about a provider-side stream limit, pointing away from the cause. The plugin already strips `test_channel_uuid` for this
+reason. Fix: return `value.strip()`; tests for both settings.
+
+**Fixed 2026-10-31 in the plugin's 0.8.17, confirmed with tests that fail on the old code.** `_str_setting()` returns
+the value stripped, which covers every read of both settings. A new `_str_setting()` test (a leading space on
+`storage_path`) and `test_start_ffmpeg_strips_a_trailing_space_from_internal_base_url` (ffmpeg's `-i` URL) pin it.
+Confirmed live on 2026-10-31 against a real Dispatcharr 0.33.0, from Kodi 22 RC1 on Linux with the branch's CI build:
+the plugin's settings endpoint stored " /data/timeshift" and a base URL ending in a space exactly as typed, a live
+channel still started on the first open, the buffer's ffmpeg (its `/proc` command line, read by a throwaway probe
+plugin) had no space in its input URL and wrote under `/data/timeshift/<uuid>`, and nothing appeared under the worker's
+working directory.
+
+#### timeshift_buffer: segment_seconds has no upper limit
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading.** Filed as part (1) of
+"timeshift_buffer: segment_seconds has no upper limit, and the 1440-minute cap makes manifests heavy" (part (2), the
+heavy manifests, is still in `OPEN_ITEMS.md`). `segment_seconds` is read with `minimum=1` only, missed by the 2026-10-18
+caps: a typo such as 3600 means no segment ever closes, every open fails the addon's cold start with "live playlist not
+found", and one `.ts` file grows until the buffer stops. Cap it (60, and no more than `buffer_minutes*60`) and say so in
+the help text.
+
+**Fixed 2026-10-31 in `timeshift_buffer` 0.8.17, confirmed with a test that fails on the old code.**
+`_MAX_SEGMENT_SECONDS` (20) caps the setting in `_start_ffmpeg()`, its only read, and the help text says "At most 20".
+The suggested 60 was too high, as the branch's review found by reading: the playlist appears only once the first segment
+closes, and the addon's cold start gives up after about 30 s of "not ready" (`kColdStartExtendedAttempts` in
+`DispatcharrClient.cpp`), so a capped 60 still never started. 20 leaves about 10 s for ffmpeg's start, the provider
+connection and the next keyframe, and each constant's comment names the other. The `buffer_minutes*60` bound is
+implied: `buffer_minutes` is at least 1. `test_start_ffmpeg_caps_segment_seconds_inside_the_addons_cold_start` checks
+ffmpeg's `-hls_time` and `-hls_list_size` for a 3600 on a one-minute buffer. Confirmed live on 2026-10-31 in the same
+session as the entry above: with 3600 saved, the buffer's ffmpeg ran with `-hls_time 20`, and on Kodi 22 RC1 the
+channel was playing (position advancing) 8.5 s after the open, then ran at real time across five 20 s segments with no
+caching. Kodi 22's live read starts on the growing first segment, so this does not show a 20 s first segment fitting
+the cold-start wait on a slow provider or on Kodi 21.
+
+#### RefreshAccessToken() drops a rotated refresh token
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible: depends on Dispatcharr's SimpleJWT
+settings.** Only `access` is kept from the refresh response, unlike `Login()`. With `ROTATE_REFRESH_TOKENS` and
+blacklisting on, every second refresh would send a blacklisted token, get a 401 (`kRejected`) and fall back to a full
+password login, feeding the login rate limit `AuthBackoff` exists to avoid. Without rotation it costs nothing. Fix: keep
+`refresh` when present, under the state lock; check Dispatcharr's `SIMPLE_JWT` settings while there.
+
+**Fixed 2026-10-31, confirmed in the glue harness, failing before the fix.** Dispatcharr `v0.33.0`'s
+`dispatcharr/settings.py` sets `ROTATE_REFRESH_TOKENS: False` with `BLACKLIST_AFTER_ROTATION: True`, so no released
+Dispatcharr hits this today; a server that turns rotation on would. `RefreshAccessToken()` now keeps a non-empty
+`refresh` from the response, under the same state lock as the access token. The fake's new `rotate_refresh` knob hands
+out a new refresh token on each refresh and answers 401 to any other; the new `auth_refresh_rotated` stream scenario (in
+CI) lapses the token four times and requires four refreshes, no 401 and no password login. On the old code it saw two
+refreshes rejected and two logins. Live on 2026-10-31 (Kodi 22 RC1, real Dispatcharr 0.33.0, request lines logged by a
+forwarder) only the unchanged default was checked: one password login, then a refresh about seven minutes later
+answered 200 and no second login. A server with rotation turned on was not tried.
+
+#### OpenRecordedStream() writes the API-key owner stamps before the key they vouch for
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading, narrow window.** On a successful
+`ObtainApiKey()` it calls `WriteApiKeyOwnerStampsIfChanged()` at once, but the adopted or regenerated key reaches
+`api_key` only at the end of the open, via `PersistApiKeyIfChanged(keyBefore)`; the constructor does it in the right
+order. If Kodi exits or crashes during the open (or the settings dialog is open and cancelled, so the `api_key` write is
+dropped), the next start finds stamps for the new account beside the old account's key, sets
+`m_apiKeyOwnershipVerified`, and on the same server that key authorises as the wrong user with no 401. Fix:
+`PersistApiKeyIfChanged(keyBefore)` first, then the stamps, then refresh `keyBefore`. A glue variant of the
+`owner_stamps` scenario can check the stamps are never on disk without their key.
+
+**Fixed 2026-10-31 as described, confirmed in the glue harness, failing before the fix.** The stub now records the
+stored `api_key` at every write of `api_key_host`, and `owner_stamps 8000 late newkey` (in CI, with
+`CTL="api_down=1&require_key=K2"`) starts with another account's key, lets the first recording open look up the new
+one, and fails if the stamp was ever written beside anything but the new key. On the old code: "api_key_host was
+written while api_key was still 'K0', not 'K2'". The cancelled-dialog case was not re-tested: the stamps are settings
+writes like the key, so by the mechanism in "SetSetting*() swallowed while the settings dialog is open" a cancel drops
+them together, and `ReassertApiKeySetting()` writes the key again. Confirmed live on 2026-10-31 (Kodi 22 RC1 on
+Linux, real Dispatcharr 0.33.0): with a wrong stored key, stamps naming the server under another address (the addon
+pointed at a local forwarder) and the forwarder down at Kodi's start, nothing was saved while the server was
+unreachable; once it came up, the first recording open (Kodi's thumbnail loader) made the only key lookup, adopted the
+account's existing key (its hash matched the server's, nothing regenerated) and saved the key and the new stamps. Both
+arrived in one `settings.xml` save (an inotify watcher), so the order itself is the glue scenario's to prove.
+
+#### ParseProgramLookupResponse() and the timer body copy server subtrees of any depth
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, reproduced on a 1 MiB stack.**
+`TimerRequestBuilder.cpp` copies `id`/`title`/`sub_title`/`description`/`tvg_id` from the EPG search response (`out[key]
+= *it`) and into the timer body (`program[key] = *it`) whatever their type, and the body is later `dump()`ed: the
+recursive copy the 2026-10-19 `FieldRefOrNull` fix removed elsewhere. A `description` nested 12,000 deep segfaults on a
+1 MiB thread. Dispatcharr sends strings, so only a hostile server reaches it. Fix: copy a key only when it is a string
+(an integer for `id`). Test: a 100,000-deep value via `RunOnSmallStack` in `test_timer_request_builder.cpp`.
+
+**Fixed 2026-10-31 as described, confirmed with a test that crashes the old code.** Both copies go through
+`IsProgramFieldValue()`: an integer `id`, a string for the rest, anything else dropped like a null. The new test puts a
+100,000-deep `description` in both the search response and the fields passed to `BuildOneTimeRecordingCreateBody()`
+and runs them on a 1 MiB stack; the old code ended the test binary with SIGSEGV. Confirmed live on 2026-10-31 that the
+ordinary case still copies everything: Record from Kodi 22 RC1's guide info on two future programmes on a real
+Dispatcharr 0.33.0 created one-time recordings whose `custom_properties.program` held an integer `id` and the string
+`title`, `description` and `tvg_id`, each equal to the server's own programme record, plus `sub_title` on the one
+whose programme had one (the other's was null on the server and was left out). Both were deleted afterwards.
+
+#### SanitizeServerErrorBody passes C1 control characters into kodi.log
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading.** Filed as part (2) of "Two
+text-handling gaps: SanitizeRecordingDirectory's std::isspace, and C1 controls in SanitizeServerErrorBody" (part (1),
+`SanitizeRecordingDirectory`, is still in `OPEN_ITEMS.md`). `SanitizeServerErrorBody()` (`JsonResponse.cpp`) blanks C0
+and DEL but passes C1 controls, raw 0x80-0x9F and UTF-8 U+0080-U+009F (`C2 9B` is CSI), into `kodi.log`. Fix: blank
+those too, with a test in `test_json_response.cpp`.
+
+**Fixed 2026-10-31, confirmed with a test that fails on the old code.** The body is decoded with `DecodeUtf8At()`
+(`UnicodeText.h`), and U+0080-U+009F and a stray 0x80-0x9F byte become spaces. A 0x80-0x9F byte inside a valid sequence
+is a continuation byte and is kept, so blanking raw bytes without decoding would have broken characters such as U+0100
+(`C4 80`), U+2014 (`E2 80 94`) and emoji; a second new test pins those.
+
 #### A whole-server outage ends live playback with a notice that blames the file server's port
 
 **Opened 2026-10-29, from the 2026-10-28 live check of a sustained outage (this file's "A sustained server outage may

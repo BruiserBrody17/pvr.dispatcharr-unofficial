@@ -4153,9 +4153,13 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
     std::string genKey, genError;
     if (m_client.ObtainApiKey(genKey, genError))
     {
-      // As in the constructor: an unchanged key never reaches PersistApiKeyIfChanged()'s stamp writes below.
+      // Key first, then the stamps, as in the constructor: stamps written before a new key would vouch for the old
+      // account's key at the next start if Kodi exited during this open (the glue harness's owner_stamps newkey).
+      PersistApiKeyIfChanged(keyBefore);
+      // An unchanged key never reaches PersistApiKeyIfChanged()'s stamp writes.
       WriteApiKeyOwnerStampsIfChanged();
       m_apiKeyOwnershipVerified = true;
+      keyBefore = m_client.GetApiKey();
     }
     else
       kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to obtain an API key before opening recording: %s",
