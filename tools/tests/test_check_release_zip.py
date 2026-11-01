@@ -153,18 +153,20 @@ def test_the_known_upstream_strings_are_allowed_only_in_their_own_members(tmp_pa
     assert gate.check_zip(mixed, [])
 
 
-def _raw_zip(path, name, data, local_extra):
+def _raw_zip(path, name, data, local_extra, local_time=None):
     """A one-entry stored zip, written byte by byte, whose local header carries `local_extra` while the central
-    directory carries none (zipfile writes the same extra field to both)."""
+    directory carries none (zipfile writes the same extra field to both), and `local_time` (DOS time and date) in
+    place of the central directory's when given."""
     encoded, crc, dos_time, dos_date = name.encode(), zlib.crc32(data), 0, (46 << 9) | (10 << 5) | 7
+    local_dos_time, local_dos_date = local_time or (dos_time, dos_date)
     local = struct.pack(
         "<4sHHHHHIIIHH",
         b"PK\x03\x04",
         20,
         0,
         0,
-        dos_time,
-        dos_date,
+        local_dos_time,
+        local_dos_date,
         crc,
         len(data),
         len(data),
@@ -203,6 +205,47 @@ def test_an_extra_field_only_in_the_local_header_fails(tmp_path):
     bad = _raw_zip(tmp_path / "bad.zip", "addon/x.txt", b"x", ut)
     assert any("local header" in p for p in gate.check_zip(bad, []))
     assert gate.check_zip(_raw_zip(tmp_path / "ok.zip", "addon/x.txt", b"x", b""), []) == []
+
+
+def test_a_local_header_carrying_another_time_fails(tmp_path):
+    # the 2026-10-31 sweep's finding: the one-timestamp rule read the central directory's copy only
+    central = gate._dos_time_and_date((2026, 10, 7, 0, 0, 0))
+    for local in ((central[0] + (3 << 11), central[1]), (central[0], central[1] + 1)):  # three hours on; a day on
+        bad = _raw_zip(tmp_path / "bad.zip", "addon/x.txt", b"x", b"", local_time=local)
+        with zipfile.ZipFile(bad) as z:
+            assert z.read("addon/x.txt") == b"x"  # still a zip every unzipper accepts
+        assert any("different time in its local header" in p for p in gate.check_zip(bad, [])), local
+    # and zipfile's own zips, at a time with odd seconds (DOS keeps two-second steps)
+    path = tmp_path / "ok.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(zipfile.ZipInfo("addon/a.txt", date_time=(2026, 12, 31, 23, 59, 59)), b"a")
+    assert gate.check_zip(str(path), []) == []
+
+
+def _encrypted_flag(path, name):
+    """Set general-purpose flag bit 0 (encrypted) on `name` in both of its headers."""
+    data = bytearray(Path(path).read_bytes())
+    encoded = name.encode()
+    for signature, flag_offset, name_offset in ((b"PK\x03\x04", 6, 30), (b"PK\x01\x02", 8, 46)):
+        start = data.find(signature)
+        while data[start + name_offset : start + name_offset + len(encoded)] != encoded:
+            start = data.find(signature, start + 1)
+        data[start + flag_offset] |= 0x01
+    Path(path).write_bytes(bytes(data))
+
+
+def test_an_encrypted_entry_is_reported_rather_than_crashing_the_run(tmp_path):
+    # zipfile raises RuntimeError for it, which neither read caught: a traceback, and the rest of the set unchecked
+    path = _zip(tmp_path / "a.zip", {"addon/a.txt": b"a", "addon/b.txt": _unix_path(b"home")})
+    _encrypted_flag(path, "addon/a.txt")
+    problems = gate.check_zip(path, [])
+    assert any("addon/a.txt is encrypted" in p for p in problems)
+    assert any("/home/" in p for p in problems)  # the next entry is still scanned
+    # and in the --expect-release reads (_read), on a plugin zip's plugin.json
+    paths = _release(tmp_path, "9.9.9")
+    _encrypted_flag(next(p for p in paths if p.endswith("recording_edl.zip")), "recording_edl/plugin.json")
+    problems = _contents(tmp_path, paths, "9.9.9")
+    assert any(p.startswith("recording_edl.zip") and "no plugin.json version" in p for p in problems)
 
 
 def _two_entry_zip(path, before=b"", between=b"", after=b""):
@@ -337,6 +380,22 @@ def test_a_debug_or_log_member_fails(tmp_path, name):
     assert any("debug or log" in p for p in gate.check_zip(path, []))
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "addon/.DS_Store",
+        "addon/resources/.ds_store",
+        "addon/._plugin.py",
+        "__MACOSX/addon/._addon.xml",
+        "addon/Thumbs.db",
+        "addon/desktop.ini",
+    ],
+)
+def test_a_desktops_folder_metadata_fails(tmp_path, name):
+    path = _zip(tmp_path / "a.zip", {"addon/addon.xml": b"x", name: b"x"})
+    assert any("folder metadata" in p for p in gate.check_zip(path, []))
+
+
 def test_an_unstripped_elf_fails_and_a_stripped_one_passes(tmp_path):
     assert gate.elf_debug_sections(_elf([".text", ".dynsym"])) == []
     assert gate.elf_debug_sections(_elf([".text", ".debug_info", ".symtab"])) == [".debug_info", ".symtab"]
@@ -435,6 +494,16 @@ def test_a_blocklist_that_blocks_nothing_or_does_not_exist_fails_the_release_run
     monkeypatch.setenv("PRIVACY_BLOCKLIST", str(real))
     # a mistyped explicit path is an error, not a quiet fallback to $PRIVACY_BLOCKLIST
     assert gate.main(["prog", "--blocklist", str(tmp_path / "typo.txt"), clean]) == 2
+    # and a mistyped $PRIVACY_BLOCKLIST, not a quiet fallback to the home list (the release recipe sets it rather than
+    # pass --blocklist; the 2026-10-31 sweep's finding)
+    (tmp_path / ".privacy-blocklist.txt").write_text("other\n", encoding="utf-8")
+    monkeypatch.setenv("PRIVACY_BLOCKLIST", str(tmp_path / "typo.txt"))
+    with pytest.raises(gate.BlocklistError, match="PRIVACY_BLOCKLIST"):
+        gate.find_blocklist(None)
+    assert gate.main(["prog", "--require-blocklist", clean]) == 2
+    monkeypatch.setenv("PRIVACY_BLOCKLIST", "")  # set but empty is unset
+    assert gate.find_blocklist(None) == str(tmp_path / ".privacy-blocklist.txt")
+    monkeypatch.setenv("PRIVACY_BLOCKLIST", str(real))
     empty = tmp_path / "empty.txt"
     for content in ("", "# only a comment\n\n"):
         empty.write_text(content, encoding="utf-8")
@@ -476,6 +545,18 @@ _LIBRARIES = {
 }
 
 
+def _plugin_files(plugin, declared, running):
+    """A plugin's files with `plugin.json` at version `declared` and the Plugin class at `running`."""
+    return {
+        plugin + "/plugin.json": json.dumps({"name": plugin, "version": declared}).encode(),
+        plugin + "/plugin.py": (
+            'class Handler:\n    server_version = "x/9"\n\n\nclass Plugin:\n    name = "P"\n    version = "%s"\n'
+            % running
+        ).encode(),
+        plugin + "/README.md": b"# readme\n",
+    }
+
+
 def _release(
     tmp_path,
     version,
@@ -487,8 +568,9 @@ def _release(
     source_versions=None,
 ):
     """A full release set of small zips, each addon zip with its addon.xml and library, each plugin zip with its two
-    versions, plus the plugin sources the gate compares them with (`tmp_path/dispatcharr-plugin`). `libraries` swaps
-    an addon zip's library image, `members` adds or replaces members of any zip ({zip: {member: bytes}})."""
+    versions, plus the plugin sources the gate compares them with (`tmp_path/dispatcharr-plugin`, the same files at
+    `source_versions`, with a tests/ and __pycache__/ the zips leave out). `libraries` swaps an addon zip's library
+    image, `members` adds or replaces members of any zip ({zip: {member: bytes}}), not of the sources."""
     paths = []
     for name in _concrete(version):
         contents, stamp = {}, (stamps or {}).get(name, _STAMP)
@@ -504,16 +586,16 @@ def _release(
         else:
             plugin = name[: -len(".zip")]
             declared, running = (plugin_versions or {}).get(name, ("1.2.3", "1.2.3"))
-            contents[plugin + "/plugin.json"] = json.dumps({"name": plugin, "version": declared}).encode()
-            contents[plugin + "/plugin.py"] = (
-                'class Handler:\n    server_version = "x/9"\n\n\nclass Plugin:\n    name = "P"\n    version = "%s"\n'
-                % running
-            ).encode()
-            source = tmp_path / "dispatcharr-plugin" / plugin
-            source.mkdir(parents=True, exist_ok=True)
-            (source / "plugin.json").write_text(
-                json.dumps({"version": (source_versions or {}).get(name, "1.2.3")}), encoding="utf-8"
-            )
+            contents.update(_plugin_files(plugin, declared, running))
+            # the zip's files as committed, plus what the gate's tree has and a zip leaves out
+            source = tmp_path / "dispatcharr-plugin"
+            version = (source_versions or {}).get(name, "1.2.3")
+            for member, data in _plugin_files(plugin, version, version).items():
+                (source / member).parent.mkdir(parents=True, exist_ok=True)
+                (source / member).write_bytes(data)
+            for left_out in ("tests/test_plugin.py", "tests/__pycache__/t.pyc", "__pycache__/plugin.pyc"):
+                (source / plugin / left_out).parent.mkdir(parents=True, exist_ok=True)
+                (source / plugin / left_out).write_bytes(b"not shipped")
         contents.update((members or {}).get(name, {}))
         path = tmp_path / name
         with zipfile.ZipFile(path, "w") as z:
@@ -583,6 +665,38 @@ def test_a_gate_without_the_plugin_sources_beside_it_fails_rather_than_passes(tm
     problems = gate.check_release_contents(paths, "9.9.9", str(tmp_path / "nowhere"))
     assert sorted(p.split(":")[0] for p in problems) == ["recording_edl.zip", "timeshift_buffer.zip"]
     assert all("release's own tree" in p for p in problems)
+
+
+def test_a_plugin_zip_built_from_a_dirty_tree_fails(tmp_path):
+    # the 2026-10-31 sweep's finding (MEDIUM): the refresh recipe zipped a working tree, and the gate compared the
+    # version only, so an uncommitted edit at the same version and an untracked file beside it shipped as clean
+    edited = _plugin_files("recording_edl", "1.2.3", "1.2.3")["recording_edl/plugin.py"] + b"# local edit\n"
+    dirty = {"recording_edl/plugin.py": edited, "recording_edl/notes.txt": b"to do"}
+    problems = _contents(tmp_path, _release(tmp_path, "9.9.9", members={"recording_edl.zip": dirty}), "9.9.9")
+    problems = [p for p in problems if p.startswith("recording_edl.zip")]
+    assert any("recording_edl/notes.txt" in p and "does not" in p for p in problems), problems
+    assert any("recording_edl/plugin.py differ" in p for p in problems), problems
+    assert len(problems) == 2, problems
+
+
+def test_a_plugin_zip_lacking_a_committed_file_fails(tmp_path):
+    paths = _release(tmp_path, "9.9.9")
+    readme = tmp_path / "dispatcharr-plugin" / "timeshift_buffer" / "docs" / "extra.md"
+    readme.parent.mkdir()
+    readme.write_bytes(b"committed after the zip was built")
+    problems = _contents(tmp_path, paths, "9.9.9")
+    assert problems == [
+        "timeshift_buffer.zip: lacks timeshift_buffer/docs/extra.md, which this tree's dispatcharr-plugin/ has"
+    ]
+
+
+def test_a_plugin_zip_leaves_out_only_the_top_tests_folder(tmp_path):
+    # build.yml's -x "$plugin/tests/*" leaves out the plugin's own tests/ only; a deeper one ships, so the zip needs it
+    paths = _release(tmp_path, "9.9.9")
+    nested = tmp_path / "dispatcharr-plugin" / "recording_edl" / "lib" / "tests" / "x.py"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b"x")
+    assert any("lacks recording_edl/lib/tests/x.py" in p for p in _contents(tmp_path, paths, "9.9.9"))
 
 
 def test_the_gate_compares_with_the_plugin_sources_of_its_own_tree():

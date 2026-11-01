@@ -982,17 +982,20 @@ Cutting a release, in order:
    It fails on a build-machine path (`/home/`, `/Users/`, `/media/`, `/Volumes/`, `C:\` or `C:/`, a UNC path, a CI
    runner's work directory) or a blocklist term anywhere in a member (as text, as UTF-8 for a non-ASCII term, and as
    UTF-16), any extra field in the zip (timezone, uid/gid; in the central directory or in a local header), entries
-   with more than one timestamp, a zip or entry comment, any byte of the file outside its entries and directory
-   (prepended data, a gap between entries), a directory entry carrying data, an unsafe entry name, a symlink out of
-   the zip, an archive inside it, a debug or log file (also anything in a `.dSYM` bundle), an ELF library that is not
-   stripped (`.debug_*`, `.zdebug_*`, `.symtab`), and a release that is missing an asset or carries an unexpected one.
+   with more than one timestamp (or a local header's time differing from the central directory's), a zip or entry
+   comment, any byte of the file outside its entries and directory (prepended data, a gap between entries), a
+   directory entry carrying data, an encrypted entry, an unsafe entry name, a symlink out of the zip, an archive inside
+   it, a debug or log file (also anything in a `.dSYM` bundle), a desktop's folder metadata (`.DS_Store`, `._*`,
+   `__MACOSX/`, `Thumbs.db`, `desktop.ini`), an ELF library that is not stripped (`.debug_*`, `.zdebug_*`, `.symtab`),
+   and a release that is missing an asset or carries an unexpected one.
    With `--expect-release` it also opens the zips: each addon zip must hold only `pvr.dispatcharr-unofficial/`, its
    `addon.xml` must carry that id and the version (CoreELEC's, the version plus its package revision), and its library
    must be the binary its name promises (a PE x86-64 DLL, a Mach-O arm64 dylib, an ELF of the right class and machine);
    the six addon zips must share one timestamp; each plugin zip must hold only its own folder, its `plugin.json`
-   version must equal its `Plugin` class version and the tag's `plugin.json`, and it must be no older than the addon
-   zips. A `--blocklist` path that does not exist, a list with
-   no terms (with `--require-blocklist`) and a UTF-16 list are errors. The handful of upstream strings it has to allow (the Windows
+   version must equal its `Plugin` class version and the tag's `plugin.json`, its files must be the tag's plugin
+   folder byte for byte (less `tests/` and `__pycache__/`), and it must be no older than the addon zips. A
+   `--blocklist` path or a set `$PRIVACY_BLOCKLIST` that does not exist, a list with no terms (with
+   `--require-blocklist`) and a UTF-16 list are errors. The handful of upstream strings it has to allow (the Windows
    zip's two prebuilt DLLs carry Kodi's own dependency-build path) are listed in the script with the reason each
    is safe. CI runs the pattern half of the same gate on every zip it builds; only a local run has the
    blocklist. Fix the cause and rebuild, never edit the gate to make
@@ -1022,17 +1025,24 @@ shipped build cannot reach; those wait for the next addon release, since replaci
 own and one refresh of a bundle of small fixes beats one per fix. The replacement still needs the user's go-ahead, because
 it publishes to the public release. When it applies, do not wait for the next release: rebuild just that plugin's zip from the branch of the release being refreshed (the plugins are the same files on
 `Omega` and `Piers`, [BRANCHES.md](BRANCHES.md)) the way
-`package-dispatcharr-plugins` does, from `dispatcharr-plugin/`:
+`package-dispatcharr-plugins` does, from a `git archive` export of that branch's commit rather than the working tree,
+so an uncommitted edit or a stray file beside the plugin cannot ride along:
 
 ```bash
+stamp="$(git log -1 --format=%ct <commit>)"  # here, in the repository: the export is not one
+mkdir <export> && git archive <commit> tools dispatcharr-plugin | tar -x -C <export>
+cd <export>/dispatcharr-plugin && mkdir ../dist
 TZ=UTC zip -X -r "../dist/${plugin}.zip" "$plugin" -x "$plugin/tests/*" -x "*/__pycache__/*"
-cd .. && python3 tools/normalize_zip.py "$(git log -1 --format=%ct)" "dist/${plugin}.zip"
+cd .. && python3 tools/normalize_zip.py "$stamp" "dist/${plugin}.zip"
 ```
 
 (`TZ=UTC` and `-X` matter: a bare `zip` stores the local and the UTC time of every entry, which publishes the build
-machine's timezone; the normalisation gives every entry the commit's time, which the gate requires.) Run the gate on it, `gh release upload <tag> <zip> --clobber` onto the existing release (no new tag,
-no new addon build), then add a dated addendum to the release notes inlining the fix and correct any now-false "neither
-plugin changed" sentence.
+machine's timezone; the normalisation gives every entry the commit's time, which the gate requires.) Run the export's
+gate on the new zip (`python3 tools/check_release_zip.py --require-blocklist dist/${plugin}.zip`). Not with
+`--expect-release` over the whole set: that would also hold the release's other plugin zip against this commit, where
+that plugin may have moved on since the tag, so here the export is what keeps the zip to committed files. Then `gh
+release upload <tag> <zip> --clobber` onto the existing release (no new tag, no new addon build), and add a dated
+addendum to the release notes inlining the fix and correct any now-false "neither plugin changed" sentence.
 
 ## Distribution: the Kodi repository
 

@@ -3187,6 +3187,16 @@ source ignored, `--time` still accepted). `test_each_lines_assets_are_a_release_
 this branch's gate. The tests that indexed a single zip now index a whole release, `_release()` taking the CoreELEC
 suffix for Kodi 21's line. 14 cases fail on the old tool; both published indexes rebuild byte for byte.
 
+2026-10-31: `tools/tests/test_check_release_zip.py` covers the gate's four fixes from the 2026-10-31 sweep
+(`docs/CLOSED_ITEMS.md`'s release-gate entries of that date). A plugin zip against the gate's tree byte for byte: an
+edited `plugin.py` and an added notes file (the finding's repro), a committed file the zip lacks, and a nested `tests/`
+that must ship, since build.yml leaves out the top-level one only; `_release()` now writes the sources as the same files
+as its zips, with a `tests/` and `__pycache__/` beside them. A desktop's folder metadata (`.DS_Store` at two depths,
+`._*`, `__MACOSX/`, `Thumbs.db`, `desktop.ini`); a local header's time three hours and a day off the central
+directory's (a byte-written zip `zipfile` still reads); an encrypted entry, in `check_zip` and in a plugin zip's
+`plugin.json`; and a missing `$PRIVACY_BLOCKLIST` with a home list present. 12 cases fail on the old gate. The gate
+passes the shipped 0.14.2 set run with that tag's plugin sources.
+
 ### `kodi_smoke_test.py`
 
 `tools/kodi_smoke_test.py` (added 2026-09-29, fixing several real,
