@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`dfd0b2e`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`d6f744a`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -164,6 +164,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `93789bb` | `4a2aaa3` (`git cherry-pick -x`, without `[skip ci]`) | Six fixes from the 2026-10-23/24 bug sweeps: `timeshift_buffer` 0.8.17 (trimmed path and base URL, `segment_seconds` capped at 20), the rotated refresh token, the key saved before the owner stamps on a recording open, plain programme fields only in a guide timer, and C1 controls blanked in logged server errors. The code and the glue harness applied cleanly (Omega has the same cold-start constants); `CHANGELOG.md` and `OPEN_ITEMS.md` were resolved by hand with `Omega`'s own counts. The live checks recorded in `CLOSED_ITEMS.md` were made on Kodi 22 only (Kodi 21 followed, next row). |
 | `6025b4f` | `caca234` (`git cherry-pick -x`) | Records the Kodi 21 live checks of those fixes and corrects two claims, the same in `CLOSED_ITEMS.md`, `CHANGELOG.md` and a `plugin.py` docstring on both branches; the shortened open-items summary was written for each branch's own counts by hand. |
 | `dfd0b2e` | `ce1ed11` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and intro by hand, and the two recorded-read functions under their `Omega` names) | Files the 2026-10-31 bug sweep's eleven findings as open items; all eleven were checked against `Omega`'s code and hold there (its gate differs only in the CoreELEC asset name). |
+| `d6f744a` | `f27ba96` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro and one `BUILDING.md` sentence by hand) | The release gate's four fixes from the 2026-10-31 sweep: a plugin zip checked against the tree byte for byte, desktop metadata, local-header times, encrypted entries and a missing `$PRIVACY_BLOCKLIST`. The ported gate passes the shipped 0.13.2 set. |
 
 ## Dependencies that differ by Kodi release
 
