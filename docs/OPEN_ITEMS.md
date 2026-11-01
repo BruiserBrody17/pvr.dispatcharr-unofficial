@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**13 open, 389 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**13 open, 390 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -14,12 +14,14 @@ confirmed. The open ones came from:
   fixed on 2026-10-31.
 - One, LOW, from the 2026-10-24 sweep (one reviewer over the whole project). Six of its seven are fixed.
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
-- One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0.
+- One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
+  recurring rule on a spring-forward day.
 - One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
   lock.
-- Two, both LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and
-  checked against `Omega`'s code the same day (all 11 findings held here). Nine of its eleven are fixed: the release
-  gate's four, two in `timeshift_buffer`'s file server and three in the addon's request and thread handling.
+- One, LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and checked
+  against `Omega`'s code the same day (all 11 findings held here), confirmed live. Nine of its eleven are fixed (the
+  release gate's four, two in `timeshift_buffer`'s file server and three in the addon's request and thread handling)
+  and one was closed without a change once checked live.
 
 Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
 held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
@@ -27,15 +29,15 @@ held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 6 |
+| Open: Fix known, not yet done | 5 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 1 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 339 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 41 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
 ## Open
@@ -56,6 +58,20 @@ and its stop is declined, and when B stops the buffer and its provider slot stay
 `access_token` with the heartbeat and have `_heartbeat()` skip and answer "replaced" when `_is_stale_access_token()`
 matches, as `get_live_manifest` does. Also reword `CLOSED_ITEMS.md`'s 0.8.15 entry, which says heartbeats carried the
 token in the probe (the heartbeat action's body does not).
+
+**Confirmed live 2026-11-01** (Dispatcharr 0.33.0, `timeshift_buffer` 0.8.16, Kodi 21.3 with the current `Omega`
+build in Server-side mode, behind a proxy on the Kodi machine that could drop all of the addon's traffic). Kodi played a
+channel and paused; with its traffic dropped, the reaper ended the buffer 47 s later; a second viewer then started the
+channel through the plugin's API; Kodi was reconnected and resumed. Within 1.6 s the new buffer counted two viewers: the
+first read after the resume sends the overdue heartbeat before anything else, and the polls Kodi made while paused had
+already been answered "replaced, fatal" but do not mark the stream fatal (`GetLiveTimeshiftStreamLength()` and
+`GetLiveTimeshiftStreamDurationMs()` call `RefreshLiveManifest()` without `fatalOut`). Kodi's playback then ended
+10.2 s after the resume ("giving up after 1 consecutive segment fetch failure(s) (manifest refresh reported fatal=true:
+this caller's buffer was replaced ..."), its stop was declined, and when the second viewer stopped the buffer and its
+provider connection stayed up 22 s more, until the reaper dropped the stale entry. The same sequence driven entirely
+through the plugin's actions gave 42 s. The cost is bounded: one provider connection for up to `idle_timeout_seconds`
+plus a reaper tick after the stale viewer's last heartbeat. A second fix on the addon side: let those paused polls
+pass `fatalOut` and mark the stream fatal, so no heartbeat follows a "replaced" answer.
 
 #### timeshift_buffer: the 1440-minute cap makes manifests heavy
 
@@ -105,19 +121,19 @@ recorded stream, as the tail wait suggests, slice both retry loops the way the l
 across calls; if not, say so beside `kTransientReadBudget` and consider a shorter budget for a finished recording's
 small ranged reads. Correct whichever comment is wrong. Needs a live Stop-latency check before and after.
 
-#### A recurring rule starting inside a spring-forward gap on its first day is shown ending before it starts
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced with a Catch2 case built against the real
-`RecurringRuleUtil.cpp` and `TimeZoneUtil.cpp`.** `ComputeRecurringRuleDisplayTimes()` decides the overnight rollover
-on the seconds of day (`endTimeOfDaySeconds <= startTimeOfDaySeconds`), then resolves the start under the pre-gap offset
-and the end on its own (since `CLOSED_ITEMS.md`'s "The recurring-rule display took the end's offset from the start
-instant", which covers a rule that starts before the gap). For a short rule that starts inside the gap on its
-`start_date`, nothing re-checks the order of the two instants: in a zone whose clocks go from 02:00 to 03:00, a rule
-from 02:30 to 03:15 is shown on the change day ending 15 minutes before it starts. Only the first occurrence's displayed
-window, and only when `start_date` is the change day. Fix: once both instants are resolved, roll the end over on the
-instants too (`if (endTimeOut <= startTimeOut) endTimeOut += 86400`), and add the case to `test_recurring_rule_util.cpp`.
-Which window Dispatcharr itself records depends on whether its scheduler compares the two datetimes in UTC (pytz) or by
-wall clock (zoneinfo); check that live before deciding what the display should match.
+**Checked live 2026-11-01, before any change** (Kodi 21.3 with the current `Omega` build, behind a proxy on the Kodi
+machine that answered recording reads with 503 while a flag file existed; a finished recording, and a disposable
+recording made through the API and played while it recorded). Both comments are right, each for one path. **A finished
+recording:** one read retried a 503 every 2 s from 2.1 s to 21.9 s, answered -1, and Kodi read no further: playback
+ended, so a -1 there is final and slicing that loop would end playback at the first slice. **An in-progress
+recording:** the read of one segment gave up after about 22 s and Kodi called the read again three more times (at
+26.8, 48.7 and 70.5 s); when the 84 s outage ended, playback carried on. **A Stop pressed during the retry**, about 5 s
+into the outage: `Player.Stop` returned in 0.3 s, but Kodi's interface (an `XBMC.GetInfoLabels` call, which needs its
+main thread) was held for 16.7 s on the finished recording and 18.1 s on the in-progress one, and the player was gone
+17.4 s and 18.8 s after the Stop, which is the rest of the 20 s budget. Without a Stop the interface stayed responsive
+(0.4 s), since the reads run on Kodi's own reading thread. So: slice the in-progress loop the way the live path does,
+with the budget counted across calls; for a finished recording keep one call's budget but consider a shorter one, and
+say beside `kTransientReadBudget` that a -1 there ends playback.
 
 ### Architectural / concurrency
 
@@ -180,6 +196,19 @@ bites is unknown.
 None open.
 
 ### Upstream (Dispatcharr) or documentation accuracy
+
+#### Dispatcharr schedules a recurring rule's occurrence that starts inside a spring-forward gap to end before it starts
+
+**Opened 2026-11-01, from the live check of the display item it closed (`CLOSED_ITEMS.md`, "A recurring rule starting
+inside a spring-forward gap on its first day is shown ending before it starts"); confirmed against Dispatcharr 0.33.0.**
+`sync_recurring_rule_impl()` (`apps/channels/tasks.py`) builds both times with `timezone.make_aware(datetime.combine(
+...), tz)` on a `ZoneInfo` and rolls the end over only `if end_dt <= start_dt`. Two aware datetimes sharing one
+`tzinfo` compare by wall clock, so a 02:30 that does not exist is still "before" 03:15 and nothing rolls over; stored,
+02:30 takes the offset before the change. A disposable rule from 02:30 to 03:15 on the lab zone's next spring-forward
+day (clocks from 02:00 to 03:00) got an occurrence stored ending 15 minutes before it starts. What the recorder then
+does with it
+was not run (it is months away). Not this addon's bug, and only a rule whose start falls in the skipped hour on a
+change day. Worth reporting to Dispatcharr: compare in UTC, or normalise the start out of the gap first.
 
 #### Dispatcharr's own DVR, HDHR and M3U output follow a non-MPEG-TS Default Output Format
 
