@@ -4,24 +4,24 @@
 
 ## Status at a glance
 
-**24 open, 378 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**20 open, 382 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
-- Nine, all LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
-  (all 17 findings held here). Eight of its 17 are fixed or closed; two of the nine are what is left of findings half
+- Eight, all LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
+  (all 17 findings held here). Nine of its 17 are fixed or closed; two of the eight are what is left of findings half
   fixed on 2026-10-31.
-- Two, both LOW, from the 2026-10-24 sweep (one reviewer over the whole project). Five of its seven are fixed.
+- One, LOW, from the 2026-10-24 sweep (one reviewer over the whole project). Six of its seven are fixed.
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0.
 - One from the 2026-10-26 review of the HEVC seek-probe fix: a live read in a gap that answers 0 while the buffer is
   alive.
 - One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
   lock.
-- Seven, all LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and
-  checked against `Omega`'s code the same day (all 11 findings held here). Four of its eleven, the release gate's, are
-  fixed.
+- Five, all LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and
+  checked against `Omega`'s code the same day (all 11 findings held here). Six of its eleven are fixed: the release
+  gate's four and two in `timeshift_buffer`'s file server.
 
 Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
 held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
@@ -29,14 +29,14 @@ held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 16 |
+| Open: Fix known, not yet done | 13 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 1 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 328 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 332 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -142,15 +142,6 @@ fixed on 2026-10-31 (`CLOSED_ITEMS.md`, "timeshift_buffer: segment_seconds has n
 `get_live_manifest` in that worker; the 16-entry cache was sized for the default. Fix: a lower cap, a byte-based cache
 limit, or the stat sweep outside the lock.
 
-#### timeshift_buffer: a Redis outage logs a traceback per file-server request and drops the connection
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading.** `_check_access_token()` is
-called from the request handler with no try, and redis-py's `ConnectionError`/`TimeoutError` are not the built-in ones,
-so each playlist or segment request during an outage (or with a corrupt state, through `ValueError`) reaches
-`handle_error`'s `logger.exception` and the client gets a dropped connection instead of a status. The reaper rate-limits
-the same errors. Fix: catch in `_resolve_and_authorize`, answer 503, and rate-limit the log as
-`_should_log_reaper_error` does; test with a raising `_get_buffer_state` through `_fake_handler`.
-
 #### CONNECTED is held back with no limit while the DVR access level is unknown
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible.** `TakePending(report, m_dvrAccessChecked)`
@@ -235,29 +226,6 @@ instants too (`if (endTimeOut <= startTimeOut) endTimeOut += 86400`), and add th
 Which window Dispatcharr itself records depends on whether its scheduler compares the two datetimes in UTC (pytz) or by
 wall clock (zoneinfo); check that live before deciding what the display should match.
 
-#### timeshift_buffer: a symlink loop under storage_path drops a file-server request with a traceback
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced on Python 3.12.** `_resolve_request_path()`
-calls `Path.resolve()` with nothing around it, and on Python 3.12 and earlier a symlink that points back at itself
-raises `RuntimeError` (3.13 no longer raises outside strict mode; which Python Dispatcharr's image ships is not recorded
-here). `_resolve_and_authorize()` does not catch it, so with `loopdir -> loopdir` under `storage_path` every request for
-`loopdir/live.m3u8` ends in `handle_error`'s `logger.exception` and a dropped connection, before the token is checked.
-It needs such a link left on the (often shared) storage by something else; the reaper is unaffected (`Path.is_dir()`
-answers False). Same shape as the Redis-outage entry above. Fix: catch `(OSError, RuntimeError)` around the two
-`resolve()` calls and answer 404 as the NUL case does; a test beside
-`test_paths_that_escape_or_do_not_name_a_file_are_404`.
-
-#### timeshift_buffer: a port that cannot be bound is logged as an error on every plugin call
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced (five calls, five error lines).** `run()`
-calls `_ensure_http_server_running()` before every action, which retries `_create_http_server()` while `_http_server`
-is None, and each failed bind logs "couldn't bind http server on port ..." at error level. With the port held by a
-process that does not set `SO_REUSEPORT`, or `http_port` below 1024 in a container not running as root, every action
-in every worker adds an error line for as long as the port stays taken.
-`test_create_http_server_reports_a_port_that_is_taken_once` pins one line per call, not one per episode. Fix: keep the
-last failure's port, errno and time and log once per interval as `_should_log_reaper_error()` does; a test that calls
-it three times and gets one error line.
-
 ### Architectural / concurrency
 
 #### Nothing stops an exception crossing from a PVR callback into Kodi
@@ -319,17 +287,6 @@ bites is unknown.
 None open.
 
 ### Upstream (Dispatcharr) or documentation accuracy
-
-#### timeshift_buffer: the Streams network allowlist applies to the viewer's address, not localhost as the plugin says
-
-**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
-it was filed); LOW, confirmed by reading the plugin and Dispatcharr's source, not run.** The module docstring says a
-loopback request needs only localhost in Settings → Network Access → Streams. But the buffer's request carries
-`X-Real-IP: <viewer's address>`, and Dispatcharr trusts that header from 127.0.0.1 (`get_client_ip()`), so
-`network_access_allowed(request, "STREAMS")` is judged against the Kodi device. A device outside a narrowed Streams list
-gets a 403, ffmpeg exits, and the addon reports a provider-side stream limit. (Direct playback from that device would be
-refused the same way, so the outcome is right; the explanation and the message are not.) Fix: correct the docstring and
-the plugin README, and show the proxy's HTTP status from ffmpeg's log in the start failure.
 
 #### Dispatcharr's own DVR, HDHR and M3U output follow a non-MPEG-TS Default Output Format
 

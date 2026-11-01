@@ -141,6 +141,49 @@ def test_paths_that_escape_or_do_not_name_a_file_are_404(served, path):
     assert status == 404
 
 
+def test_a_symlink_loop_is_404_not_a_dropped_connection(served):
+    # Python 3.12 and earlier raise RuntimeError from resolve() on the loop; 3.13 resolves it and the file check 404s.
+    (served.root / "loopdir").symlink_to("loopdir")
+    (served.channel_dir / "loop").symlink_to("loop")
+    for path in (f"/loopdir/live.m3u8?token={_TOKEN}", _url("loop/live.m3u8")):
+        status, _, _ = _request(served, "GET", path)
+        assert status == 404, path
+        status, _, _ = _request(served, "HEAD", path)
+        assert status == 404, path
+    assert not [line for line in served.logger.lines if "error while serving" in line]
+
+
+def test_a_resolve_that_raises_is_404_on_any_python(served, monkeypatch):
+    class _LoopingPath(type(Path())):
+        def resolve(self, strict=False):
+            raise RuntimeError("Symlink loop")
+
+    monkeypatch.setattr(plugin, "Path", _LoopingPath)
+    status, _, _ = _request(served, "GET", _url())
+    assert status == 404
+    monkeypatch.setattr(plugin, "Path", type(Path()))
+    assert plugin._resolve_request_path(_url(), str(served.root))[0] == _UUID
+
+
+class _RedisConnectionError(Exception):
+    """Stands in for redis.exceptions.ConnectionError, which is not the built-in ConnectionError."""
+
+
+@pytest.mark.parametrize("error", [_RedisConnectionError("Connection refused"), ValueError("corrupt state")])
+def test_a_buffer_state_that_cannot_be_read_is_503_logged_once(served, monkeypatch, error):
+    def failing_state(uuid):
+        raise error
+
+    monkeypatch.setattr(plugin, "_get_buffer_state", failing_state)
+    monkeypatch.setattr(plugin, "_token_lookup_log_throttle", plugin._LogThrottle())
+    for method in ("GET", "HEAD", "GET"):
+        status, _, _ = _request(served, method, _url())
+        assert status == 503
+    assert len([line for line in served.logger.lines if "couldn't read the buffer state" in line]) == 1
+    assert not [line for line in served.logger.lines if "error while serving" in line]
+    assert served.heartbeats == []
+
+
 def test_a_file_that_does_not_exist_is_404_and_does_not_count_as_a_viewer(served):
     status, _, _ = _request(served, "GET", _url("seg_99999.ts"))
     assert status == 404

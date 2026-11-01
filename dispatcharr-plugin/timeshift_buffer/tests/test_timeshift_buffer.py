@@ -1839,6 +1839,7 @@ def test_create_http_server_reports_a_port_that_is_taken_once(monkeypatch):
     holder.listen(1)
     port = holder.getsockname()[1]
     logger = _FakeLogger()
+    monkeypatch.setattr(timeshift_buffer_plugin, "_bind_failure_log_throttle", timeshift_buffer_plugin._LogThrottle())
     try:
         # No SO_REUSEPORT on the holder, so neither the v6 attempt nor the v4 one can share the port.
         server, bound = timeshift_buffer_plugin._create_http_server(port, logger)
@@ -1846,6 +1847,71 @@ def test_create_http_server_reports_a_port_that_is_taken_once(monkeypatch):
         assert sum(1 for level, msg in logger.calls if level == "error" and "couldn't bind" in msg) == 1
     finally:
         holder.close()
+
+
+def test_a_port_that_stays_taken_is_logged_once_per_interval_not_once_per_call(monkeypatch):
+    import socket
+
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.bind(("0.0.0.0", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+    logger = _FakeLogger()
+    monkeypatch.setattr(timeshift_buffer_plugin, "_bind_failure_log_throttle", timeshift_buffer_plugin._LogThrottle())
+    server = None
+    try:
+        for _ in range(3):
+            assert timeshift_buffer_plugin._create_http_server(port, logger) == (None, None)
+        assert sum(1 for level, msg in logger.calls if level == "error" and "couldn't bind" in msg) == 1
+        assert sum(1 for level, msg in logger.calls if level == "debug" and "still couldn't bind" in msg) == 2
+        holder.close()
+        # A bind that works clears the throttle, so the next failure is reported at once.
+        server, _ = timeshift_buffer_plugin._create_http_server(port, logger)
+        assert server is not None
+        assert timeshift_buffer_plugin._bind_failure_log_throttle.check(("any", 1)) == (True, 0)
+    finally:
+        holder.close()
+        if server is not None:
+            server.server_close()
+
+
+def test_log_throttle_logs_the_first_then_once_per_interval_and_a_new_key_at_once():
+    now = [1000.0]
+    throttle = timeshift_buffer_plugin._LogThrottle(interval=300, clock=lambda: now[0])
+    assert throttle.check() == (True, 0)
+    now[0] = 1100.0
+    assert throttle.check() == (False, 0)
+    assert throttle.check() == (False, 0)
+    now[0] = 1300.0
+    assert throttle.check() == (True, 2)
+    now[0] = 1301.0
+    assert throttle.check((9192, 98)) == (True, 0)
+    assert throttle.check((9192, 98)) == (False, 0)
+    throttle.reset()
+    assert throttle.check((9192, 98)) == (True, 0)
+
+
+def test_buffer_failed_message_names_a_403_from_the_live_proxy():
+    lines = [
+        "[http @ 0x1] HTTP error 403 Forbidden",
+        "[in#0 @ 0x2] Error opening input: Server returned 403 Forbidden (access denied)",
+    ]
+    message = timeshift_buffer_plugin._buffer_failed_message(lines)
+    assert message.startswith("ffmpeg exited before producing any segments")
+    assert "HTTP 403" in message and "Network Access -> Streams" in message and "127.0.0.1" in message
+    assert "concurrent-stream limit" not in message
+    assert message.endswith("last ffmpeg.log lines: " + " | ".join(lines))
+
+
+def test_buffer_failed_message_keeps_the_provider_hint_otherwise():
+    lines = [f"line {i}" for i in range(8)] + ["Server returned 503 Service Unavailable"]
+    message = timeshift_buffer_plugin._buffer_failed_message(lines)
+    assert "concurrent-stream limit is the most common cause" in message
+    assert "HTTP 403" not in message
+    assert message.endswith("last ffmpeg.log lines: " + " | ".join(lines[-5:]))
+    assert "last ffmpeg.log lines" not in timeshift_buffer_plugin._buffer_failed_message([])
+    # A 403 elsewhere in a number is not a 403 response.
+    assert "HTTP 403" not in timeshift_buffer_plugin._buffer_failed_message(["frame=14030 Forbiddenly"])
 
 
 # ---------------------------------------------------------------------

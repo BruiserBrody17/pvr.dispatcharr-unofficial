@@ -37,6 +37,13 @@ Dispatcharr restart for every worker to pick it up.
 - **Segment length is capped at 20 seconds**: a mistyped value such as 3600 meant no segment ever finished, so live
   channels never started in Server-side mode. Above about 25 seconds the first segment takes longer than the addon
   waits for it.
+- **A start refused by Dispatcharr's Streams network-access list now says so in Kodi's log**: it used to blame the
+  provider's stream limit. The plugin's README now says that a narrowed Streams list has to allow each Kodi device and
+  loopback.
+- **Quieter, cleaner failures from the buffer's file server**: while Redis is down it answers each request with
+  "503 Service Unavailable" instead of dropping the connection, a symlink loop in the storage path is a plain 404, and
+  neither logs a traceback per request any more. A buffer port that is already taken is logged as an error once every
+  five minutes, not on every plugin call.
 
 ## [0.13.2] - 2026-10-31
 

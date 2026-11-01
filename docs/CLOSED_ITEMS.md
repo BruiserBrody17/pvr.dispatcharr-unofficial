@@ -6,6 +6,102 @@
 
 ### Fixed
 
+#### timeshift_buffer: a Redis outage logs a traceback per file-server request and drops the connection
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading.** `_check_access_token()` is
+called from the request handler with no try, and redis-py's `ConnectionError`/`TimeoutError` are not the built-in ones,
+so each playlist or segment request during an outage (or with a corrupt state, through `ValueError`) reaches
+`handle_error`'s `logger.exception` and the client gets a dropped connection instead of a status. The reaper rate-limits
+the same errors. Fix: catch in `_resolve_and_authorize`, answer 503, and rate-limit the log as
+`_should_log_reaper_error` does; test with a raising `_get_buffer_state` through `_fake_handler`.
+
+**Fixed 2026-10-31 in the plugin's 0.8.17, confirmed with tests that fail on the old code and live on 2026-11-01.**
+`_resolve_and_authorize()` catches any exception from the token check and answers 503, logged through a shared
+`_LogThrottle` (the reaper's `_should_log_reaper_error()` rule, one traceback per 300 s per worker process, since each
+has its own and `SO_REUSEPORT` spreads requests across them, with a count of the ones skipped; it is not reset by a
+lookup that works, so a second outage within 300 s of the last report waits out the interval).
+`test_a_buffer_state_that_cannot_be_read_is_503_logged_once` (a non-built-in connection error and a `ValueError`, three
+requests each) pins it. The addon treats the 503 like the dropped connection it replaces: both reach
+`HandleLiveTimeshiftSegmentFetchFailure()`'s give-up rule (checked by reading, in the branch's review).
+**Live check (2026-11-01, Dispatcharr 0.33.0 with four workers, Kodi 21.3 on Linux, Server-side mode):** Redis cannot
+be stopped from outside that deployment (and a real outage takes the live proxy down too), so a throwaway probe
+plugin wrapped the module's `_get_buffer_state()` in every worker to raise redis-py's `ConnectionError` while a Redis
+flag key existed, and wrapped the file server's `plugin_logger` to record what it logged. With Channel B playing, the
+flag was set for 70 s: the next 18 segment requests were answered 503 (`kodi.log`: "segment body fetch returned
+unexpected HTTP 503"), the addon gave up after 18 failures 31 s in and showed its "can't be read from Dispatcharr any
+more" notice, and the plugin logged exactly one "answering 503" traceback per worker (four for the 18 requests) and
+no "error while serving" traceback. Once the flag expired, playing the channel again started at once.
+
+#### timeshift_buffer: a symlink loop under storage_path drops a file-server request with a traceback
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced on Python 3.12.** `_resolve_request_path()`
+calls `Path.resolve()` with nothing around it, and on Python 3.12 and earlier a symlink that points back at itself
+raises `RuntimeError` (3.13 no longer raises outside strict mode; which Python Dispatcharr's image ships is not recorded
+here). `_resolve_and_authorize()` does not catch it, so with `loopdir -> loopdir` under `storage_path` every request for
+`loopdir/live.m3u8` ends in `handle_error`'s `logger.exception` and a dropped connection, before the token is checked.
+It needs such a link left on the (often shared) storage by something else; the reaper is unaffected (`Path.is_dir()`
+answers False). Same shape as the Redis-outage entry above. Fix: catch `(OSError, RuntimeError)` around the two
+`resolve()` calls and answer 404 as the NUL case does; a test beside
+`test_paths_that_escape_or_do_not_name_a_file_are_404`.
+
+**Fixed 2026-10-31 in the plugin's 0.8.17, confirmed with tests that fail on the old code (Python 3.12).** Dispatcharr
+0.33.0's image ships Python 3.13 (read from a worker, 2026-11-01), where `resolve()` does not raise on a loop, so that
+image never reached the bug; a live request for a `zzz_loopdir -> zzz_loopdir` link under `storage_path` got a plain
+403 at the token check, with no traceback. The catch covers an install on an older Python.
+`_resolve_request_path()` catches `(OSError, RuntimeError)` around both `resolve()` calls and answers (None, None),
+so the request is a 404 before the token check, as the NUL case is. `test_a_symlink_loop_is_404_not_a_dropped_connection`
+(a real loop at the storage root and under a channel directory) and `test_a_resolve_that_raises_is_404_on_any_python`
+pin it.
+
+#### timeshift_buffer: a port that cannot be bound is logged as an error on every plugin call
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced (five calls, five error lines).** `run()`
+calls `_ensure_http_server_running()` before every action, which retries `_create_http_server()` while `_http_server`
+is None, and each failed bind logs "couldn't bind http server on port ..." at error level. With the port held by a
+process that does not set `SO_REUSEPORT`, or `http_port` below 1024 in a container not running as root, every action
+in every worker adds an error line for as long as the port stays taken.
+`test_create_http_server_reports_a_port_that_is_taken_once` pins one line per call, not one per episode. Fix: keep the
+last failure's port, errno and time and log once per interval as `_should_log_reaper_error()` does; a test that calls
+it three times and gets one error line.
+
+**Fixed 2026-10-31 in the plugin's 0.8.17, confirmed with a test that fails on the old code.** `_create_http_server()`
+logs a failed bind at error level once per 300 s for the same port and errno (a `_LogThrottle` keyed on both), at
+debug in between, and a bind that works clears it so the next failure is reported at once.
+`test_a_port_that_stays_taken_is_logged_once_per_interval_not_once_per_call` (three calls, one error line) pins it. The
+bind is still retried on every call, which is what lets the server start once the port frees.
+
+#### timeshift_buffer: the Streams network allowlist applies to the viewer's address, not localhost as the plugin says
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); LOW, confirmed by reading the plugin and Dispatcharr's source, not run.** The module docstring says a
+loopback request needs only localhost in Settings → Network Access → Streams. But the buffer's request carries
+`X-Real-IP: <viewer's address>`, and Dispatcharr trusts that header from 127.0.0.1 (`get_client_ip()`), so
+`network_access_allowed(request, "STREAMS")` is judged against the Kodi device. A device outside a narrowed Streams list
+gets a 403, ffmpeg exits, and the addon reports a provider-side stream limit. (Direct playback from that device would be
+refused the same way, so the outcome is right; the explanation and the message are not.) Fix: correct the docstring and
+the plugin README, and show the proxy's HTTP status from ffmpeg's log in the start failure.
+
+**Fixed 2026-10-31 in the plugin's 0.8.17, confirmed with tests and live on 2026-11-01.** The entry's
+premise holds only for a proxied channel with a `client_ip`: the branch's review found that a Redirect-profile channel
+(or a failed profile lookup) gets no `-headers` from `_ffmpeg_input_headers()` and a start with no `client_ip` no
+`X-Real-IP`, so those are judged against loopback, as `docs/TIMESHIFT.md`'s 0.8.16 note already said; a first draft of
+the README told users to drop loopback. The module docstring now says which address is judged when (and that the
+viewer's address is the one the addon sees locally, `CURLINFO_LOCAL_IP`, not a NAT-translated one), the plugin README's
+install steps say a narrowed Streams list must allow each Kodi device and loopback, and `_buffer_failed_message()`
+names a 403 in ffmpeg's log ("the stream was refused with HTTP 403", with both addresses to allow and, since ffmpeg
+follows a Redirect channel's 302, the provider as the other possible source) in place of the provider-limit hint. The
+message reaches `kodi.log` (`PVRDispatcharr::OpenLiveStream()`'s error line), not a notification. Two
+`_buffer_failed_message()` tests pin both hints.
+**Live check (2026-11-01, Dispatcharr 0.33.0, Kodi 21.3 on Linux, Server-side mode):** a Streams list of every IPv4
+address but the Kodi device's own (33 CIDRs plus `::/0`, so loopback and every other client stayed allowed) made
+Channel B's start fail within a second with the new message in `kodi.log`; a list of every address but `127.0.0.1`
+refused a disposable Redirect-profile channel on Channel B's stream (ffmpeg.log: "HTTP error 403 Forbidden" for
+`http://127.0.0.1:9191/proxy/ts/stream/...`) while proxied Channel B started normally in the same window, and with the
+list removed the Redirect channel buffered normally. So both halves of the docstring hold: a proxied channel is
+judged by the viewer's `X-Real-IP`, a Redirect one by loopback. The nginx in Dispatcharr's image passes `/proxy/` to
+uwsgi with `uwsgi_params`, so its `proxy_set_header X-Real-IP` does not overwrite the plugin's header (read in
+`docker/nginx.conf`).
+
 #### The release gate passes a plugin zip whose files are not the tag's
 
 **Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; MEDIUM, reproduced in a scratch copy.** Under

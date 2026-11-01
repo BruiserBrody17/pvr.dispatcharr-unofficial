@@ -3045,6 +3045,20 @@ the addon's 30 s cold start), pinned by a `_start_ffmpeg()` case with 3600 on a 
 `-hls_list_size 3`). All three
 fail on the previous plugin code.
 
+2026-10-31 (the plugin's 0.8.17, `docs/CLOSED_ITEMS.md`'s "a Redis outage logs a traceback per file-server request",
+"a symlink loop under storage_path drops a file-server request", "a port that cannot be bound is logged as an error on
+every plugin call" and "the Streams network allowlist applies to the viewer's address"): in `test_http_handler.py`, a
+real symlink loop at the storage root and under a channel directory is 404 to GET and HEAD with no `handle_error`
+traceback (on Python 3.12, where `resolve()` raises; 3.13 reaches the same 404 through the file check), a `Path` whose
+`resolve()` raises pins the catch on any Python, and a `_get_buffer_state` raising a non-built-in connection error or a
+`ValueError` is 503 three times with one log line and no heartbeat. In `test_timeshift_buffer.py`, three binds on a
+held port log one error and two debug lines and a bind that works clears the throttle; `_LogThrottle` (the reaper's
+once-per-interval rule for failures outside its loop) is tested with a fake clock for the count, a new key and
+`reset()`; `_buffer_failed_message()` names a 403 in ffmpeg's log (the two lines ffmpeg's HTTP input writes) and keeps
+the provider hint otherwise. The four behaviour tests fail on the previous plugin code; the helper tests have no
+previous version. Not covered here: Dispatcharr's real network-access check and a Redis failure inside a real worker,
+both checked live on 2026-11-01 (see those entries).
+
 ## Tools
 
 ### `tools/tests/`
