@@ -4,13 +4,13 @@
 
 ## Status at a glance
 
-**14 open, 388 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**13 open, 389 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
-- Six, all LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
-  (all 17 findings held here). Eleven of its 17 are fixed or closed; one of the six is what is left of a finding half
+- Five, all LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
+  (all 17 findings held here). Twelve of its 17 are fixed or closed; one of the five is what is left of a finding half
   fixed on 2026-10-31.
 - One, LOW, from the 2026-10-24 sweep (one reviewer over the whole project). Six of its seven are fixed.
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
@@ -27,14 +27,14 @@ held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 7 |
+| Open: Fix known, not yet done | 6 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 1 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 338 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 339 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -56,16 +56,6 @@ and its stop is declined, and when B stops the buffer and its provider slot stay
 `access_token` with the heartbeat and have `_heartbeat()` skip and answer "replaced" when `_is_stale_access_token()`
 matches, as `get_live_manifest` does. Also reword `CLOSED_ITEMS.md`'s 0.8.15 entry, which says heartbeats carried the
 token in the probe (the heartbeat action's body does not).
-
-#### A search-mode series rule costs terms times text length per recording
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, measured.** `SeriesRuleTextMatch.cpp`: `Leaf()` rescans
-the folded text for every operand, repeated terms included, `ContainsWholeWord()` visits every occurrence that fails the
-word-boundary check, and `Combine()` evaluates every leaf. The 4 KiB query cap bounds the query, not the work: 680
-copies of one short term ORed together take 105 ms against 10 KB of text and 10.8 s against 1 MB, per recording, on
-every `GetTimers()`. Needs a runaway or hostile rule. Fix: memoize leaves per call, precompute a word-boundary table
-once, and optionally answer `kUnsupported` past a terms-times-text budget. Test: a timing-bounded case and unchanged
-results in `test_series_rule_text_match.cpp`.
 
 #### timeshift_buffer: the 1440-minute cap makes manifests heavy
 

@@ -297,3 +297,123 @@ TEST_CASE("MatchSeriesText accepts a query of exactly the byte bound and decline
   CHECK(MatchSeriesText(SeriesTextMode::kContains, exact, "aaaa") != SeriesTextMatch::kUnsupported);
   CHECK(MatchSeriesText(SeriesTextMode::kContains, exact + "a", "aaaa") == SeriesTextMatch::kUnsupported);
 }
+
+namespace
+{
+
+// `term OR term OR ...` up to the query byte bound.
+std::string RepeatedOrQuery(const std::string& term)
+{
+  std::string query = term;
+  while (query.size() + 4 + term.size() <= kMaxSeriesQueryBytes)
+    query += " OR " + term;
+  return query;
+}
+
+// Distinct two-letter terms joined by `op` (" OR " or " AND ") up to `maxBytes`, leaving out any term
+// that contains `skip`.
+std::string DistinctTermsQuery(char skip, const std::string& op = " OR ",
+                               std::size_t maxBytes = kMaxSeriesQueryBytes - 32)
+{
+  std::string query;
+  for (char first = 'a'; first <= 'z'; ++first)
+  {
+    for (char second = 'a'; second <= 'z'; ++second)
+    {
+      if (first == skip || second == skip)
+        continue;
+      const std::string term{first, second};
+      const std::string next = query.empty() ? term : query + op + term;
+      if (next.size() > maxBytes)
+        return query;
+      query = next;
+    }
+  }
+  return query;
+}
+
+} // namespace
+
+TEST_CASE("MatchSeriesText searches for a repeated term once", "[SeriesRuleTextMatch]")
+{
+  // 680 copies of "ab" ORed, in search mode, against text where "ab" occurs at every other byte but never
+  // as a whole word: each copy used to rescan the text and visit every occurrence, 5.7 s at -O2 for 1 MB
+  // (found by the 2026-10-23 bug-hunting sweep).
+  std::string glued;
+  while (glued.size() < 1000000)
+    glued += "abababab";
+  const std::string query = RepeatedOrQuery("ab");
+  const auto start = std::chrono::steady_clock::now();
+  CHECK(MatchSeriesText(SeriesTextMode::kSearch, query, glued) == SeriesTextMatch::kNoMatch);
+  CHECK(MatchSeriesText(SeriesTextMode::kSearch, query, glued + " ab") == SeriesTextMatch::kMatches);
+  CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(2));
+}
+
+TEST_CASE("MatchSeriesText skips an operand that cannot change the result", "[SeriesRuleTextMatch]")
+{
+  // Left to right with no precedence: a true result before OR and a false one before AND stand whatever
+  // follows, so the many distinct terms after them are never searched for and the work bound is not reached.
+  const std::string text(1000000, 'x');
+  const std::string distinct = DistinctTermsQuery('x');
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, "xx OR " + distinct, text) == SeriesTextMatch::kMatches);
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, "ab AND " + DistinctTermsQuery('x', " AND "), text) ==
+        SeriesTextMatch::kNoMatch);
+  // Still strictly left to right: the AND after a true OR is evaluated.
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, "xx OR ab AND yy", text) == SeriesTextMatch::kNoMatch);
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, "xx OR ab AND xx", text) == SeriesTextMatch::kMatches);
+  // An empty phrase after a false AND still leaves it false, and before anything else drops out.
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, "ab AND \"\" OR xx", text) == SeriesTextMatch::kMatches);
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, "\"\" AND ab", text) == SeriesTextMatch::kNoMatch);
+}
+
+TEST_CASE("MatchSeriesText declines a query whose work against the text passes the bound", "[SeriesRuleTextMatch]")
+{
+  // Some 600 distinct terms, none of them present: every one is a full scan of the text.
+  const std::string distinct = DistinctTermsQuery('x');
+  const std::string small(10000, 'x');
+  const std::string large(1000000, 'x');
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, distinct, small) == SeriesTextMatch::kNoMatch);
+  CHECK(MatchSeriesText(SeriesTextMode::kSearch, distinct, small) == SeriesTextMatch::kNoMatch);
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, distinct, large) == SeriesTextMatch::kUnsupported);
+  CHECK(MatchSeriesText(SeriesTextMode::kSearch, distinct, large) == SeriesTextMatch::kUnsupported);
+  // Even when a term late in the query would have matched.
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, distinct + " OR xx", large) == SeriesTextMatch::kUnsupported);
+
+  // "a", "aa", "aaa", ... in search mode against a run of "a": each term sits inside the run at every
+  // position, and every one of those occurrences is visited: 1.45 s at -O2 before the bound, a few tens of
+  // milliseconds to the decline now. Not timed here: a Debug sanitizer build is some thirty times slower.
+  std::string lengths;
+  for (std::size_t n = 1; lengths.size() + 4 + n <= kMaxSeriesQueryBytes; ++n)
+    lengths += (lengths.empty() ? "" : " OR ") + std::string(n, 'a');
+  CHECK(MatchSeriesText(SeriesTextMode::kSearch, lengths, std::string(1000000, 'a')) == SeriesTextMatch::kUnsupported);
+  // The same query against a guide-sized run is evaluated.
+  CHECK(MatchSeriesText(SeriesTextMode::kSearch, lengths, std::string(2000, 'a')) == SeriesTextMatch::kNoMatch);
+  CHECK(MatchSeriesText(SeriesTextMode::kSearch, lengths, "aaa") == SeriesTextMatch::kMatches);
+}
+
+TEST_CASE("MatchSeriesText charges each place a term's first byte stops the scan", "[SeriesRuleTextMatch]")
+{
+  // Some 580 distinct terms "abb", "abc", ... against a long run of "a": the scan stops at every byte and
+  // compares there, so a byte of this text costs far more than a byte the term's first byte is absent from.
+  // Charged per byte scanned only, this was computed in full, 638 ms at -O2 for 220 KB (found by the review
+  // of the work bound).
+  std::string query;
+  for (char second = 'b'; second <= 'z'; ++second)
+  {
+    for (char third = 'b'; third <= 'z'; ++third)
+    {
+      const std::string term{'a', second, third};
+      const std::string next = query.empty() ? term : query + " OR " + term;
+      if (next.size() <= kMaxSeriesQueryBytes)
+        query = next;
+    }
+  }
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, query, std::string(220000, 'a')) == SeriesTextMatch::kUnsupported);
+  // The same query against a guide-sized description of ordinary prose is evaluated: "ate" (some 470 terms
+  // in) sits inside "investigates", and no three-letter word starting with "a" is there to match a whole one.
+  std::string prose;
+  while (prose.size() < 10000)
+    prose += "In tonight's episode the team investigates a mysterious signal from the north. ";
+  CHECK(MatchSeriesText(SeriesTextMode::kContains, query, prose) == SeriesTextMatch::kMatches);
+  CHECK(MatchSeriesText(SeriesTextMode::kSearch, query, prose) == SeriesTextMatch::kNoMatch);
+}
