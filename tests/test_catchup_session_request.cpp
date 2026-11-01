@@ -1,4 +1,5 @@
 #include "CatchupSessionRequest.h"
+#include "TimeUtil.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -75,4 +76,16 @@ TEST_CASE("CatchupSessionDurationMinutes caps a long span at the API's maximum b
   CHECK(CatchupSessionDurationMinutes(start, start + 480 * 60 + 1) == kMaxCatchupSessionDurationMinutes);
   // A span whose minute count does not fit an int must not wrap into a small or negative value.
   CHECK(CatchupSessionDurationMinutes(0, static_cast<time_t>(0x7fffffff)) == kMaxCatchupSessionDurationMinutes);
+}
+
+// A programme whose start was clamped to the floor: the duration came out as a large negative number while the floor
+// was the smallest time_t plus a year (docs/CLOSED_ITEMS.md, "Windows (and 32-bit) parse a pre-1970 (pre-1901) date to
+// a floor that later subtractions overflow").
+TEST_CASE("CatchupSessionDurationMinutes caps a start at the parse floor", "[CatchupSessionRequest]")
+{
+  const time_t now = 1791072000;
+  CHECK(CatchupSessionDurationMinutes(kEarliestRepresentableTime, now) == kMaxCatchupSessionDurationMinutes);
+  CHECK(CatchupSessionDurationMinutes(kEarliestRepresentableTime, kLatestRepresentableTime) ==
+        kMaxCatchupSessionDurationMinutes);
+  CHECK(CatchupSessionDurationMinutes(now, kEarliestRepresentableTime) == 0);
 }

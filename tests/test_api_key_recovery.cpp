@@ -80,6 +80,15 @@ TEST_CASE("ClassifyApiKeyLookupFailure treats no response at all as transient", 
   CHECK(ClassifyApiKeyLookupFailure(0).state == ServerApiKeyState::kTransientError);
 }
 
+// Request() reports -1 when a 401 sent it to re-authenticate and that failed: the lookup was never retried, so the
+// account may well have a key, and generating one blind would revoke it for every other client. It used to report the
+// first attempt's 401, which classified as kUnsupported and went on to generate.
+TEST_CASE("ClassifyApiKeyLookupFailure treats a lookup whose re-login failed as transient", "[ApiKeyRecovery]")
+{
+  CHECK(ClassifyApiKeyLookupFailure(-1).state == ServerApiKeyState::kTransientError);
+  CHECK(DecideApiKeyRecovery(ClassifyApiKeyLookupFailure(-1)) == ApiKeyRecoveryAction::kFail);
+}
+
 TEST_CASE("ClassifyApiKeyLookupFailure treats server errors and throttling as transient", "[ApiKeyRecovery]")
 {
   for (long status : {408L, 429L, 500L, 502L, 503L, 504L, 599L})

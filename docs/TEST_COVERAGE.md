@@ -2684,6 +2684,23 @@ and the range-checked `days_of_week` (`ParseRecurringRuleJson()`) and adoption-s
 `tests/test_json_response.cpp` pins both forms of CSI and NEL, and that characters whose UTF-8 has 0x80-0x9F
 continuation bytes (U+0100, U+2014, an emoji) pass unchanged; the first test fails on the old code.
 
+2026-11-01, five fixes from the 2026-10-23 and 2026-10-31 sweeps (`docs/CLOSED_ITEMS.md`, the entries dated
+2026-11-01). `TimeUtil`: `UtcCivilSeconds()` and `UtcCivilFromSeconds()` replace the libc behind `SaturatingTimeGm()` and
+`GmTimeUtc()` (Windows' `_mkgmtime()`/`gmtime_s()` refuse dates outside 1970-3000), checked against known dates and,
+field for field, against `timegm()`/`gmtime_r()` over about 1559-2380 (a 32-bit `time_t`'s whole range in the 32-bit
+job); the bounds on a 64-bit `time_t` are a quarter of its range, so floor- and ceiling-valued times are now tested in
+`ClampedDurationSeconds()`, `IsWithinCatchupWindow()`, `CatchupSessionDurationMinutes()`, `EpgProgramMatch` (now 64-bit
+arithmetic, with the 4/5 coverage edge pinned) and `ComputeRecordingExtendMinutes()`; `IsoFromTime()`/
+`DateStringFromTime()` clamp to years 0000-9999 and pad to four digits (`tests/test_date_time_format.cpp`), found by the
+review of the fix.
+Against the old `src/` all five floor-valued tests fail under ASan/UBSan, and the EPG-match and extend-minutes ones in a
+32-bit UBSan build.
+`SanitizeRecordingDirectory()` trims with `StripUnicodeWhitespace()` (Python's `str.strip()` set, as Dispatcharr's
+`_safe_name()`); its Unicode-whitespace cases fail on the old code. `ClassifyApiKeyLookupFailure()` and
+`ClassifyAdoptionPatchFailure()` pin -1, the status `Request()` now reports for a 401 whose re-login failed. The glue
+scenario `auth_reauth_failed` (in CI) covers the request side: no retry on the old `/api/channels/channel-groups/` guess,
+and -1 rather than 401 from a lookup whose re-authentication fails; both phases fail on the old code.
+
 ### What the C++ suite does not test
 
 `PVRDispatcharr`/`DispatcharrClient`/`WebSocketClient`'s actual PVR API

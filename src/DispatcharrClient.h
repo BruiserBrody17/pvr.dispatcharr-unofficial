@@ -1326,15 +1326,14 @@ private:
   // Performs one HTTP call. `body` is sent as the JSON request body for
   // POST/PATCH/DELETE-with-body; pass an empty object for bodyless calls.
   // On success, parses the response into `responseOut` (may be left null
-  // for 204 No Content) and returns true. `httpStatusOut` (added
-  // 2026-09-27, a 43rd-pass audit), if non-null, is set to the real HTTP
-  // status received, or left at 0 for a transport failure (no response
-  // received at all) -- every existing call site leaves this null and is
-  // unaffected; only Login() currently passes a real pointer through, so
-  // EnsureAuthenticated() can distinguish a genuine credential rejection
-  // from a transient network/server failure (see
-  // dispatcharr::ShouldCountTowardLoginBackoff()'s own comment,
-  // AuthBackoff.h).
+  // for 204 No Content) and returns true. `httpStatusOut`, if non-null, is
+  // set to the real HTTP status received, 0 for a transport failure (no
+  // response received at all), or -1 when a 401 sent it to re-authenticate
+  // and that failed, so the request was never retried and its answer is
+  // unknown. Login() uses it so EnsureAuthenticated() can distinguish a
+  // genuine credential rejection from a transient network/server failure
+  // (dispatcharr::ShouldCountTowardLoginBackoff(), AuthBackoff.h); the
+  // other callers act on a 404 or on "no response".
   bool Request(const std::string& method, const std::string& path, const nlohmann::json& body,
                nlohmann::json& responseOut, std::string& error, bool withAuth = true, int retryOnAuthFailure = 1,
                long* httpStatusOut = nullptr, long timeoutMsOverride = 0);

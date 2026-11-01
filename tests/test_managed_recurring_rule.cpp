@@ -233,9 +233,9 @@ TEST_CASE("A 4xx that will repeat is a permanent failure for that rule", "[Manag
 
 TEST_CASE("No response, a server error, a timeout or a rate limit is worth retrying", "[ManagedRecurringRule]")
 {
-  CHECK(ClassifyAdoptionPatchFailure(0) == AdoptionFailureKind::kRetryLater); // no response at all
-  // 401 included: Request() reports the first attempt's 401 even when the re-login it triggered
-  // then failed, so it says nothing about the rule itself.
+  CHECK(ClassifyAdoptionPatchFailure(0) == AdoptionFailureKind::kRetryLater);  // no response at all
+  CHECK(ClassifyAdoptionPatchFailure(-1) == AdoptionFailureKind::kRetryLater); // a 401 whose re-login failed
+  // 401 included: it is the credentials, not the rule.
   for (long status : {500L, 502L, 503L, 504L, 401L, 408L, 429L})
     CHECK(ClassifyAdoptionPatchFailure(status) == AdoptionFailureKind::kRetryLater);
 }
