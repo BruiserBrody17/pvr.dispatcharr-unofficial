@@ -11,9 +11,10 @@ CoreELEC), so no platform gets a weaker gate than another. Per zip it checks:
   clock, whose difference from the commit or upload time is its timezone), no zip comment and no entry comment, no
   byte of the file outside its entries, central directory and end record (prepended data or a gap between entries,
   which every unzipper skips and an entry-by-entry scan never reads), no directory entry carrying data, no local
-  header naming its entry differently from the central directory, no absolute, `..` or drive-letter entry names, no
-  symlink pointing outside the zip, no archive inside the zip (its contents would go unchecked), no debug-symbol or
-  log members (`.pdb`, anything in a `.dSYM` bundle, `.debug`, `.map`, `.log`);
+  header naming its entry differently from the central directory or carrying another time, no encrypted entry, no
+  absolute, `..` or drive-letter entry names, no symlink pointing outside the zip, no archive inside the zip (its
+  contents would go unchecked), no debug-symbol or log members (`.pdb`, anything in a `.dSYM` bundle, `.debug`,
+  `.map`, `.log`), no desktop folder metadata (`.DS_Store`, `._*`, `__MACOSX/`, `Thumbs.db`, `desktop.ini`);
 - every member's bytes, as plain text and as UTF-16 (Windows binaries keep wide strings), for build-machine paths
   (`/home/`, `/Users/`, `/root/`, `/var/folders/`, `/media/`, `/run/media/`, `/Volumes/`, a CI runner's work
   directory, a `C:\\` or `C:/` path, a UNC path) except the few known-benign upstream strings in ALLOWED_PATH_STRINGS,
@@ -21,8 +22,8 @@ CoreELEC), so no platform gets a weaker gate than another. Per zip it checks:
 - every member's bytes for each term of a private blocklist (one term per line, case-insensitive; the file is
   never in the repository: `--blocklist FILE`, else `$PRIVACY_BLOCKLIST`, else `~/.privacy-blocklist.txt`);
   `--require-blocklist` fails when none is found or the one found has no terms, which is how a release is cut -- CI
-  has no blocklist and checks the patterns only; a `--blocklist` path that does not exist is an error, never a
-  fallback to another list;
+  has no blocklist and checks the patterns only; a `--blocklist` path or a set `$PRIVACY_BLOCKLIST` that does not
+  exist is an error, never a fallback to another list;
 - ELF members: no `.debug_*`, `.zdebug_*` or `.symtab` section (an unstripped library carries the build machine's
   source paths, which is how the hand-built Android libraries once shipped them).
 
@@ -36,7 +37,8 @@ mixed-up zip renamed to the new release's name does not pass:
 - the six addon zips share one timestamp (one tag, one normalisation);
 - each plugin zip holds only its own folder, its `plugin.json` version equals its `Plugin` class version and the
   `plugin.json` of the gate's own tree (`dispatcharr-plugin/` beside this `tools/`, so the gate is run from the
-  release's tree), and its timestamp is no older than the addon zips' (a plugin-only fix may replace it later).
+  release's tree), its files are that tree's plugin folder byte for byte (less `tests/` and `__pycache__/`, as CI
+  zips it), and its timestamp is no older than the addon zips' (a plugin-only fix may replace it later).
 
 usage: check_release_zip.py [--blocklist FILE] [--require-blocklist] [--expect-release VERSION] <zip> [<zip> ...]
 """
@@ -136,6 +138,18 @@ ALLOWED_PATH_STRINGS = (
 
 BAD_MEMBER_SUFFIXES = (".pdb", ".debug", ".map", ".log", ".dsym")
 
+# What a desktop leaves beside the files it showed: Finder's `.DS_Store` (which lists the folder's names, deleted ones
+# too) and its AppleDouble `._*` and `__MACOSX/` companions, Explorer's `Thumbs.db` and `desktop.ini`. Never part of a
+# release, so their arrival means the zip was made from a folder somebody browsed.
+DESKTOP_METADATA = (".ds_store", "thumbs.db", "desktop.ini")
+
+# What a plugin zip leaves out of its source folder, as build.yml's zip step does (`-x "$plugin/tests/*"`, at the top
+# only, and `-x "*/__pycache__/*"`, at any depth).
+PLUGIN_TESTS, PYCACHE = "tests", "__pycache__"
+
+# What reading a member can raise for a damaged or unusual zip; RuntimeError is zipfile's for an encrypted entry.
+READ_ERRORS = (zipfile.BadZipFile, zlib.error, NotImplementedError, RuntimeError, OSError)
+
 # An archive inside a release zip is never scanned, so nothing may hide in one. By name, and by its first bytes for a
 # member named otherwise (zip, gzip, bzip2, xz, 7z; tar has its mark at offset 257).
 ARCHIVE_SUFFIXES = (".zip", ".jar", ".apk", ".whl", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".zst")
@@ -179,10 +193,15 @@ def find_blocklist(explicit):
         if not os.path.isfile(explicit):
             raise BlocklistError("--blocklist %s: no such file" % explicit)
         return explicit
-    for candidate in (os.environ.get("PRIVACY_BLOCKLIST"), os.path.expanduser("~/.privacy-blocklist.txt")):
-        if candidate and os.path.isfile(candidate):
-            return candidate
-    return None
+    # A set $PRIVACY_BLOCKLIST is a choice as much as --blocklist is, and the release recipe sets it rather than pass
+    # the flag, so a missing file there is an error too, not a fall back to the home list.
+    environment = os.environ.get("PRIVACY_BLOCKLIST")
+    if environment:
+        if not os.path.isfile(environment):
+            raise BlocklistError("$PRIVACY_BLOCKLIST %s: no such file" % environment)
+        return environment
+    home = os.path.expanduser("~/.privacy-blocklist.txt")
+    return home if os.path.isfile(home) else None
 
 
 def _views(data):
@@ -281,6 +300,12 @@ def _local_header_extra_length(handle, info):
     return struct.unpack_from("<H", header, 28)[0]
 
 
+def _dos_time_and_date(date_time):
+    """`info.date_time` back in the two 16-bit DOS fields it was read from (exact: zipfile's reading loses nothing)."""
+    year, month, day, hour, minute, second = date_time
+    return (hour << 11) | (minute << 5) | (second // 2), ((year - 1980) << 9) | (month << 5) | day
+
+
 def _layout_problems(base, data, archive):
     """Bytes of the file that belong to no entry, the central directory or its end record (prepended data, a gap
     between entries or before the directory, all of which zipfile, Kodi and unzip skip over, so a scan of the entries
@@ -303,6 +328,13 @@ def _layout_problems(base, data, archive):
         name_length, extra_length = struct.unpack_from("<HH", header, 26)
         if data[start + 30 : start + 30 + name_length] != name:
             problems.append("%s: entry %s has a different name in its local header" % (base, info.filename))
+        # zipfile reports only the central directory's time, which the one-timestamp rule reads; a local header can
+        # carry another (the build machine's clock) and unzip shows that one.
+        if struct.unpack_from("<HH", header, 10) != _dos_time_and_date(info.date_time):
+            problems.append(
+                "%s: entry %s has a different time in its local header than in the central directory"
+                % (base, info.filename)
+            )
         end = start + 30 + name_length + extra_length + info.compress_size
         if flags & 0x08:  # a data descriptor follows, with or without its optional signature
             end += 16 if data[end : end + 4] == b"PK\x07\x08" else 12
@@ -367,6 +399,9 @@ def check_zip(path, blocklist_terms):
             lowered = name.lower().rstrip("/")
             if lowered.endswith(BAD_MEMBER_SUFFIXES) or any(p.endswith(".dsym") for p in lowered.split("/")):
                 problems.append("%s: entry %s is a debug or log file" % (base, name))
+            parts = lowered.split("/")
+            if parts[-1] in DESKTOP_METADATA or parts[-1].startswith("._") or "__macosx" in parts:
+                problems.append("%s: entry %s is a desktop's folder metadata (Finder or Explorer)" % (base, name))
             for term in blocklist_terms:
                 if term.lower() in lowered:
                     problems.append("%s: entry name %s contains a blocklist term" % (base, name))
@@ -377,9 +412,13 @@ def check_zip(path, blocklist_terms):
                 if info.file_size or info.compress_size:
                     problems.append("%s: directory entry %s carries data" % (base, name))
                 continue
+            if info.flag_bits & 0x1:
+                # zipfile raises RuntimeError for it, which once ended the run with a traceback and the rest unchecked
+                problems.append("%s: entry %s is encrypted, so it cannot be checked" % (base, name))
+                continue
             try:
                 data = archive.read(info)
-            except (zipfile.BadZipFile, zlib.error, NotImplementedError, OSError) as error:
+            except READ_ERRORS as error:
                 problems.append("%s: entry %s cannot be read (%s)" % (base, name, error))
                 continue
             if _is_symlink(info) and _escapes(data.decode("utf-8", errors="replace")):
@@ -434,7 +473,7 @@ def _read(archive, name):
         try:
             info = archive.getinfo(name)
             data = archive.read(info)
-        except (KeyError, zipfile.BadZipFile, zlib.error, NotImplementedError, OSError):
+        except (KeyError,) + READ_ERRORS:
             return None
         if not _is_symlink(info):
             return data
@@ -521,6 +560,53 @@ def _plugin_contents(base, archive, plugin_source):
         problems.append(
             "%s: is version %s, but this tree's dispatcharr-plugin/%s/plugin.json says %s (a zip left over from "
             "another release?)" % (base, declared, plugin, expected)
+        )
+    else:
+        problems += _plugin_differences(base, archive, plugin_source, plugin)
+    return problems
+
+
+def _plugin_source_files(plugin_source, plugin):
+    """{member name: bytes} of what a zip of the plugin's source folder holds, less what build.yml leaves out."""
+    files = {}
+    for root, dirs, names in os.walk(os.path.join(plugin_source, plugin)):
+        relative = os.path.relpath(root, plugin_source).replace(os.sep, "/")
+        dirs[:] = [d for d in dirs if d != PYCACHE and not (relative == plugin and d == PLUGIN_TESTS)]
+        for name in names:
+            with open(os.path.join(root, name), "rb") as handle:
+                files[relative + "/" + name] = handle.read()
+    return files
+
+
+def _names(names):
+    names = sorted(names)
+    return ", ".join(names[:3]) + (" ..." if names[3:] else "")
+
+
+def _plugin_differences(base, archive, plugin_source, plugin):
+    """A plugin zip's files against the gate's own tree, byte for byte. The version alone let a working tree's
+    uncommitted edit, or a file lying beside the plugin, ship under the release's name (the refresh recipe zipped a
+    working tree); the gate's tree is exported from the tag, so it holds exactly what was committed."""
+    expected = _plugin_source_files(plugin_source, plugin)
+    found = {info.filename: info for info in archive.infolist() if not info.is_dir()}
+    problems = []
+    extra, missing = set(found) - set(expected), set(expected) - set(found)
+    if extra:
+        problems.append("%s: holds %s, which this tree's dispatcharr-plugin/ does not" % (base, _names(extra)))
+    if missing:
+        problems.append("%s: lacks %s, which this tree's dispatcharr-plugin/ has" % (base, _names(missing)))
+    differing = []
+    for name in set(found) & set(expected):
+        try:
+            same = archive.read(found[name]) == expected[name]
+        except READ_ERRORS:
+            same = False  # check_zip reports why
+        if not same:
+            differing.append(name)
+    if differing:
+        problems.append(
+            "%s: %s differ(s) from this tree's dispatcharr-plugin/ (built from an uncommitted or other tree?)"
+            % (base, _names(differing))
         )
     return problems
 
