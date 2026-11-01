@@ -685,6 +685,8 @@ class H(BaseHTTPRequestHandler):
                     LAST_STOP["params"] = params
                 return self.J(200, {"success": True, "result": {"status": "ok"}})
             if act == "heartbeat":
+                if ctl_int("heartbeat_delay_ms"):  # holds the read that sent it, with its state lock released
+                    time.sleep(ctl_int("heartbeat_delay_ms") / 1000.0)
                 return self.J(200, {"success": True, "result": {"status": "ok"}})
             if act == "get_live_manifest":
                 if CTL["manifest_hang"] == "1":  # answers start_buffer, then goes silent

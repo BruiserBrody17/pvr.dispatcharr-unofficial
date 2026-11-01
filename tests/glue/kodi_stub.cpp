@@ -7,10 +7,18 @@
 #include <mutex>
 #include <string>
 AddonGlobalInterface* kodi::addon::CPrivateBase::m_interface = nullptr;
+// Read by stream_driver.cpp's scenarios that must prove a path was really taken: the count of log lines containing
+// g_logWatch, a line only that path writes.
+std::mutex g_logWatchMutex;
+std::string g_logWatch;
+std::atomic<long> g_logWatchCount{0};
 static void my_log(const KODI_ADDON_BACKEND_HDL, const int lvl, const char* msg)
 {
   if (getenv("GLUE_LOG"))
     fprintf(stderr, "[kodi %d] %s\n", lvl, msg);
+  std::lock_guard<std::mutex> lock(g_logWatchMutex);
+  if (msg && !g_logWatch.empty() && strstr(msg, g_logWatch.c_str()))
+    g_logWatchCount++;
 }
 static void my_free(const KODI_ADDON_BACKEND_HDL, char* s)
 {
