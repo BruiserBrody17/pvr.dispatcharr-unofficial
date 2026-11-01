@@ -2389,6 +2389,13 @@ the glue scenario `live_segment_recycled` (in CI) pins it: a real recycle under 
 0, and 404s on segments the manifest still lists must end the stream through the give-up rule with one notice and a
 bounded number of requests. On the old code the first phase answered 0 on every read and the second ended nothing.
 
+A live read that lands in a gap goes to the same handler (2026-11-01, `docs/CLOSED_ITEMS.md`'s "A live read that lands
+in a gap answers 0 while the buffer is alive"). No new pure logic (the gap is `FindSegmentContainingPosition()`
+answering nothing, already tested); the glue scenario `live_read_gap` (in CI) pins the read path's answer: a
+`GetStreamTimes` poller's refresh prunes the segment being read while the fake holds the read's heartbeat, the stub
+counts the "is a gap" line so the scenario fails if it is not reached, and no read may answer 0. On the old code it
+answered 0 once per run, at the gap.
+
 A run of failed live segment fetches is handed back to Kodi in one-second slices instead of being retried inside one
 read for up to 25 s (2026-10-29, `docs/CLOSED_ITEMS.md`'s "A Stop during a run of failed live segment fetches holds
 Kodi's interface for up to 25 s"). The decision, `DecideLiveSegmentRetryStep()` (`SegmentFetchFailure.h`), is unit-tested

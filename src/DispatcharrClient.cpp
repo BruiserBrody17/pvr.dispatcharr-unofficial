@@ -5220,7 +5220,15 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
                   ? -1LL
                   : static_cast<long long>(m_liveTimeshiftStream.segments.back().byteOffset +
                                            m_liveTimeshiftStream.segments.back().byteSize));
-    return 0; // position points into a gap/rolled-off region -- nothing safely readable here
+    // A refresh on another thread (GetStreamTimes() off the reader's thread) can prune the segment being read while
+    // this read has its lock released for the heartbeat or the tail wait, after the clamp at the top. This used to
+    // answer 0, which sets Kodi's end of file while the buffer is alive, so playback went on and then ended, with no
+    // notice, at the next stall (docs/CLOSED_ITEMS.md, "A live read that lands in a gap answers 0 while the buffer is
+    // alive"). It goes through the same bounded handler as a recycled segment: the retry's clamp continues from the
+    // oldest segment left, and a gap that never fills ends through the handler's give-up rule, with a notice, rather
+    // than as -1 retried forever.
+    stateLock.unlock();
+    return HandleLiveTimeshiftSegmentFetchFailure();
   }
 
   // Copied out of `seg` immediately rather than kept as a live pointer: the

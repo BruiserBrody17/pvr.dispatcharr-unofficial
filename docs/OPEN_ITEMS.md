@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**21 open, 387 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**20 open, 388 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -16,8 +16,6 @@ confirmed. The open ones came from:
 - One, LOW, from the 2026-10-24 sweep (one reviewer over the whole project). Six of its seven are fixed.
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0.
-- One from the 2026-10-26 review of the HEVC seek-probe fix: a live read in a gap that answers 0 while the buffer is
-  alive.
 - One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
   lock.
 - Five, all LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area, each finding checked
@@ -29,14 +27,14 @@ Nothing is left from the 2026-10-18 read-only audit of the whole project (28 fin
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 13 |
+| Open: Fix known, not yet done | 12 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 1 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 337 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 338 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -47,45 +45,6 @@ Nothing is left from the 2026-10-18 read-only audit of the whole project (28 fin
 None open.
 
 ### Fix known, not yet done
-
-#### A live read that lands in a gap answers 0 while the buffer is alive, which sets Kodi's end of file
-
-**Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix; LOW; reproduced live with a throwaway build,
-not reached from outside on Kodi 21.3 or Kodi 22.0 RC1 for Linux.** Filed as "Two more live-read paths answer 0 while the buffer is alive"; the other path, a recycled segment,
-was fixed on 2026-10-29 (`CLOSED_ITEMS.md`, "A recycled live segment answered 0, so playback ended at the next
-stall"). `ReadLiveTimeshiftStreamOnce()` still answers 0 when the read position falls in a gap no segment covers (its
-"is a gap" debug line). That happens while the buffer is alive, but a 0 sets Kodi's end of file until the next seek
-(`CLOSED_ITEMS.md`'s "Server-side mode: an HEVC channel's opening seek probe leaves Kodi at end of file, so its first
-stall ends playback"), so playback can carry on and then end at the next stall instead of waiting out
-`kLiveStallWaitBudgetMs`. The way in is a manifest refresh that prunes the segment being read between the read's clamp
-to the oldest segment and its segment lookup.
-
-**Checked live 2026-10-28** on Kodi 21.3 on the Linux VM (the setup is in the recycled-segment entry in `CLOSED_ITEMS.md`): holding the heartbeat
-for 1.8 s (the only network call in that window) while answering manifests with the segment being read removed changed
-nothing. Kodi 21 on Linux calls `GetStreamTimes()`, the only other caller of the refresh, on the reader's own thread,
-so no refresh can land in that window. Reaching it here needs a throwaway build with a second thread.
-
-**Checked live 2026-10-31** with such a build: the `Omega` tip (addon 0.13.2) plus a second thread calling
-`GetLiveTimeshiftStreamDurationMs()`, what `GetStreamTimes()` calls, every 250 ms, standing in for a Kodi that polls
-stream times off the reader's thread. Same VM, channel and fault proxy, on Kodi 21.3. Each run paused for 30 s and
-resumed, held one heartbeat for 1.8 s while manifests dropped the segment being read, then froze the manifest so the
-reader met a silent stall once it caught up.
-- **Control (no pruning):** the tail wait reached 64.5 s of its 70 s and playback resumed once the manifest moved.
-- **Pruning:** the second thread's refresh landed inside the held heartbeat, the read logged "is a gap" and answered 0,
-  and the next read continued from the oldest segment. Playback carried on normally for about 56 s; once the reader
-  reached the frozen tail, Kodi logged "VideoPlayer: next stream" after 3.2 s of tail waiting and ended playback, with
-  no notice, the same as the recycled segment before its fix. (A first run that started further behind live never
-  reached the tail; playback ran on for the two minutes the freeze lasted.)
-- **Kodi 22.0 RC1, the released 0.14.2 Linux build (no second thread), twice:** no manifest request reached the proxy
-  during the held heartbeat, no gap was logged, and the stall was waited out to about 69 s of the 70 s budget. Kodi 22
-  on Linux polls stream times on the reader's thread too.
-
-So the 0 ends playback as described once a refresh can run on another thread; neither Linux Kodi runs one there, and
-other platforms were not checked.
-
-Fix: a bound first, since -1 on a gap that never fills would make Kodi retry every 100 ms forever.
-`HandleLiveTimeshiftSegmentFetchFailure()` is one now that the recycled segment goes through it: its forced refresh
-lets the retry's clamp move past a pruned segment, and a gap that persists ends through its give-up rule with a notice.
 
 #### The live heartbeat carries no access token, so a resumed viewer can stick to a replacement buffer
 
