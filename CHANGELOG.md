@@ -35,6 +35,10 @@ compare against.
 - **Dates before 1970 and after 3000 from the server are read correctly on Windows**, and on Windows and 32-bit
   systems a date that far out no longer produces nonsense guide, catch-up or recording lengths. Only a damaged or
   unusual server date is affected.
+- **A series rule with hundreds of search terms can no longer stall the timers list**: Kodi checks
+  each rule against every upcoming recording, and a rule like that against a long programme description could take
+  seconds per recording. A repeated term is now looked up once, and a rule too costly to check against a recording is
+  left unlinked from it, as a regular-expression rule is.
 
 ## `timeshift_buffer` [0.8.17] - Unreleased
 

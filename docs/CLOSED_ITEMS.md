@@ -6,6 +6,44 @@
 
 ### Fixed
 
+#### A search-mode series rule costs terms times text length per recording
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, measured.** `SeriesRuleTextMatch.cpp`: `Leaf()` rescans
+the folded text for every operand, repeated terms included, `ContainsWholeWord()` visits every occurrence that fails the
+word-boundary check, and `Combine()` evaluates every leaf. The 4 KiB query cap bounds the query, not the work: 680
+copies of one short term ORed together take 105 ms against 10 KB of text and 10.8 s against 1 MB, per recording, on
+every `GetTimers()`. Needs a runaway or hostile rule. Fix: memoize leaves per call, precompute a word-boundary table
+once, and optionally answer `kUnsupported` past a terms-times-text budget. Test: a timing-bounded case and unchanged
+results in `test_series_rule_text_match.cpp`.
+
+**Fixed 2026-11-01, confirmed by tests and a benchmark (no live check: only a runaway or hostile rule or guide text
+reaches it).** Three changes in `MatchSeriesText()`, all within one call. Each distinct term (after case folding) is
+searched for once and its answer reused, so the 680 copies are one search. An operand that cannot change the result is
+not evaluated: the operators apply strictly left to right, so a true result before OR or a false one before AND stands
+whatever follows (an empty operand drops out either way). And a work bound, `kMaxSeriesMatchWork`: the search is
+written out rather than left to `std::string::find`, so the work is charged where it is done, a unit per byte scanned
+and `kSeriesMatchCandidateCost` more (plus a unit per 16 bytes of the term) at each position the scan stops at because
+it holds the term's first byte, where it compares and, in search mode, checks the boundaries; a call that would pass it
+answers `kUnsupported`, so the rule is left unlinked, as a regex or an over-long query already is. The weights are the
+measured costs relative to a scanned byte, so each case below that is declined gets there in 16 to 40 ms at -O2, plus
+folding the text's case. A real rule
+against a guide description uses some thousands of units of the 128 Mi; 580 distinct terms against 10 KB of ordinary
+prose stay well inside it. The first version charged one unit per byte scanned for each term, which the review of the
+change showed was 10 to 20 times too little when the term's first byte is common: 580 terms "abb", "abc", ... against
+220 KB of "a" were computed in full in 638 ms. **Measured at -O2 on the new code against the old:** the sweep's case
+(680 copies, search mode, 1 MB of text with the term inside every word) went from 5.7 s to 12 ms; the review's case
+from 638 ms to 21 ms, declined; two 2,000-byte terms that nearly match a run of "a" against 8 MB of it from 440 ms to
+56 ms, declined (most of that is the case folding, which is linear and outside the bound); terms "a", "aa",
+"aaa", ... against a 1 MB run of "a" from 1.45 s to 40 ms, declined; a realistic five-term rule against a 2 KB
+description stays at about 10 microseconds. The word-boundary table the entry suggested was not needed: the bound also
+caps how many occurrences are checked. **Results unchanged:** the new matcher
+agreed with the old one, which had been checked against Dispatcharr's own parser, on 6,000,000 random query and text
+pairs in contains and search mode (operators in either case, quotes, parentheses, multi-byte and invalid UTF-8), with
+zero differences. Tests in `test_series_rule_text_match.cpp`: the repeated-term case under a time bound, operands
+skipped after a settled result (including the AND that follows a true OR, which is still evaluated), declines past
+the bound with the same queries still evaluated against guide-sized text, and the review's frequent-first-byte case;
+the timing and decline cases fail on the old code.
+
 #### Windows (and 32-bit) parse a pre-1970 (pre-1901) date to a floor that later subtractions overflow
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, reproduced with an injected `gm` under UBSan.**

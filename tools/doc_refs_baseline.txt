@@ -16,6 +16,7 @@ docs/CLOSED_ITEMS.md|function|AbortDemux
 docs/CLOSED_ITEMS.md|function|CloseFile
 docs/CLOSED_ITEMS.md|function|ClosePVRStream
 docs/CLOSED_ITEMS.md|function|ComputeSeriesRuleDisplayFields
+docs/CLOSED_ITEMS.md|function|ContainsWholeWord
 docs/CLOSED_ITEMS.md|function|DeleteFromClient
 docs/CLOSED_ITEMS.md|function|DemuxAbort
 docs/CLOSED_ITEMS.md|function|FetchContent_Declare
