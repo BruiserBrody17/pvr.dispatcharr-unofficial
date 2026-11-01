@@ -1,4 +1,5 @@
 #include "RecordingParser.h"
+#include "TimeUtil.h"
 
 #include "DateTimeFormat.h"
 #include "small_stack.h"
@@ -784,4 +785,15 @@ TEST_CASE("ParseRecordingFields reads a deeply nested custom_properties on a 1 M
   CHECK(a.title == "Show A");
   CHECK(b.title == "Show B");
   CHECK(c.recurringRuleId == 9);
+}
+
+// A start date clamped to the floor (a garbage or hostile server timestamp) against a real end: the 64-bit difference
+// overflowed while the floor was the smallest time_t plus a year (docs/CLOSED_ITEMS.md, "Windows (and 32-bit) parse a
+// pre-1970 (pre-1901) date to a floor that later subtractions overflow").
+TEST_CASE("ClampedDurationSeconds takes a start or end at the parse bounds without overflowing", "[RecordingParser]")
+{
+  const time_t now = 1791072000;
+  CHECK(ClampedDurationSeconds(kEarliestRepresentableTime, now) == 2147483647);
+  CHECK(ClampedDurationSeconds(kEarliestRepresentableTime, kLatestRepresentableTime) == 2147483647);
+  CHECK(ClampedDurationSeconds(now, kEarliestRepresentableTime) == 0);
 }

@@ -60,6 +60,7 @@ docs/CLOSED_ITEMS.md|function|check_section_titles
 docs/CLOSED_ITEMS.md|function|check_settings
 docs/CLOSED_ITEMS.md|function|discover_plugins
 docs/CLOSED_ITEMS.md|function|get_id
+docs/CLOSED_ITEMS.md|function|gmtime_r
 docs/CLOSED_ITEMS.md|function|library_kind
 docs/CLOSED_ITEMS.md|function|line_version
 docs/CLOSED_ITEMS.md|function|log_system_event
@@ -132,6 +133,7 @@ docs/TEST_COVERAGE.md|function|IsApiKeyValidFor
 docs/TEST_COVERAGE.md|function|_release
 docs/TEST_COVERAGE.md|function|_time_to_seconds
 docs/TEST_COVERAGE.md|function|add_internal
+docs/TEST_COVERAGE.md|function|gmtime_r
 docs/TEST_COVERAGE.md|function|source_time
 docs/TEST_COVERAGE.md|setting|dvr_settings
 docs/TIMESHIFT.md|function|CallChannelMenuHook

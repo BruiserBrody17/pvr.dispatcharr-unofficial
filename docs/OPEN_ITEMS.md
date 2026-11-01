@@ -4,22 +4,22 @@
 
 ## Status at a glance
 
-**19 open, 383 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**14 open, 388 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
-- Eight, all LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
-  (all 17 findings held here). Nine of its 17 are fixed or closed; two of the eight are what is left of findings half
+- Six, all LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
+  (all 17 findings held here). Eleven of its 17 are fixed or closed; one of the six is what is left of a finding half
   fixed on 2026-10-31.
 - One, LOW, from the 2026-10-24 sweep (one reviewer over the whole project). Six of its seven are fixed.
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0.
 - One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
   lock.
-- Five, all LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and
-  checked against `Omega`'s code the same day (all 11 findings held here). Six of its eleven are fixed: the release
-  gate's four and two in `timeshift_buffer`'s file server.
+- Two, both LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and
+  checked against `Omega`'s code the same day (all 11 findings held here). Nine of its eleven are fixed: the release
+  gate's four, two in `timeshift_buffer`'s file server and three in the addon's request and thread handling.
 
 Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
 held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
@@ -27,14 +27,14 @@ held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 12 |
+| Open: Fix known, not yet done | 7 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 1 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 333 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 338 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -57,19 +57,6 @@ and its stop is declined, and when B stops the buffer and its provider slot stay
 matches, as `get_live_manifest` does. Also reword `CLOSED_ITEMS.md`'s 0.8.15 entry, which says heartbeats carried the
 token in the probe (the heartbeat action's body does not).
 
-#### Windows (and 32-bit) parse a pre-1970 (pre-1901) date to a floor that later subtractions overflow
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, reproduced with an injected `gm` under UBSan.**
-`_mkgmtime` returns -1 outside 1970-3000, so since the 2026-10-18 floor fix any date before 1969 on Windows saturates to
-`kEarliestRepresentableTime` (`INT64_MIN` plus a year) instead of -1; on 32-bit the same happens before 1901-12-13. The
-floor leaves room for an offset, not for `now - t` or `end - start`: with a start of 1960 `ClampedDurationSeconds()`
-overflows, `IsWithinCatchupWindow()` answers true and `CatchupSessionDurationMinutes()` a large negative number (also
-`EpgProgramMatch.cpp` and `ComputeRecordingExtendMinutes`). Only a garbage or hostile server timestamp reaches it.
-Related: a date after 3000 on Windows saturates to a value `gmtime_s` cannot format. Fix: a portable int64
-days-from-civil in place of `_mkgmtime`/`timegm`, saturated to `time_t`, or have the parsers answer 0 (unknown) at the
-floor. Tests: a Windows-like `gm` in `test_time_util.cpp` and floor-valued starts in the recording, EPG-tag and
-catch-up-session tests (they fail under UBSan today).
-
 #### A search-mode series rule costs terms times text length per recording
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, measured.** `SeriesRuleTextMatch.cpp`: `Leaf()` rescans
@@ -79,17 +66,6 @@ copies of one short term ORed together take 105 ms against 10 KB of text and 10.
 every `GetTimers()`. Needs a runaway or hostile rule. Fix: memoize leaves per call, precompute a word-boundary table
 once, and optionally answer `kUnsupported` past a terms-times-text budget. Test: a timing-bounded case and unchanged
 results in `test_series_rule_text_match.cpp`.
-
-#### SanitizeRecordingDirectory trims with std::isspace
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading (the locale case not reproduced
-here).** Filed as "Two text-handling gaps: SanitizeRecordingDirectory's std::isspace, and C1 controls in
-SanitizeServerErrorBody"; the C1 half was fixed on 2026-10-31 (`CLOSED_ITEMS.md`, "SanitizeServerErrorBody passes C1
-control characters into kodi.log"). `RecordingDirectory.h` trims with `std::isspace`, which depends on the C locale Kodi
-sets from the user's region; under a Windows code page that counts 0xA0 as a space, a title ending in "à" (UTF-8 `C3
-A0`) loses its last byte and the folder name is invalid UTF-8. It also trims only ASCII whitespace, where the function
-says it mirrors Dispatcharr's `_safe_name()` (check whether that uses Python's Unicode `.strip()`). Fix:
-`StripUnicodeWhitespace()` from `UnicodeText.h`; tests for "Voilà" and a U+3000 edge.
 
 #### timeshift_buffer: the 1440-minute cap makes manifests heavy
 
@@ -138,38 +114,6 @@ retrying a failed recorded read, while the in-progress tail wait already answers
 recorded stream, as the tail wait suggests, slice both retry loops the way the live path does, with the budget counted
 across calls; if not, say so beside `kTransientReadBudget` and consider a shorter budget for a finished recording's
 small ranged reads. Correct whichever comment is wrong. Needs a live Stop-latency check before and after.
-
-#### GetChannelGroups() falls back to a route that does not exist
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, confirmed by reading.** When `/api/channels/groups/`
-fails, `GetChannelGroups()` retries `kChannelGroupsPathFallback` (`/api/channels/channel-groups/`), which the constant's
-own comment and `API_NOTES.md` say Dispatcharr does not have: its web app answers it with 200 and `index.html`. So in an
-outage the refresh waits out two request timeouts instead of one, a real 403 or 500 from the primary is reported with
-"Failed to parse JSON response" appended, and the access token goes to a route that is not an API. The comment inside
-the function ("Neither path was independently confirmed") is stale. Fix: drop the fallback (or fall back only on a 404
-from the primary).
-
-#### A 401 whose re-authentication fails is reported to the caller as a 401
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, latent, confirmed by reading.** `Request()`'s 401 retry
-calls `EnsureAuthenticated()` without a status pointer, so when the re-login itself fails (a backoff, a 5xx, a transport
-error) `httpStatusOut` still holds the first attempt's 401. Every current caller decides correctly anyway (traced:
-`ClassifyApiKeyLookupFailure()` sends a 401 to generating a key, but `GenerateApiKey()` re-runs `EnsureAuthenticated()`
-and fails the same way; the recording lookup's playlist skip acts only on status 0; the delete and stop paths treat only
-404 specially), but a new caller that takes 401 as a lasting refusal would misread an outage. `CLOSED_ITEMS.md`'s "A 401
-during recurring-rule adoption was recorded as a permanent refusal" fixed one caller, not this. Fix: report the
-re-authentication's own status, or a "no request made" value, instead of the stale 401.
-
-#### TrackDetachedThread() joins threads inside a std::remove_if predicate
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, standards conformance, confirmed by reading.** The
-opportunistic prune hands `std::remove_if` a predicate that calls `entry.thread.join()`, and [algorithms.requirements]
-forbids a predicate applying a non-constant function through the iterator. It works on libstdc++, libc++ and MSVC
-because each calls the predicate once per element, in order, before moving that element, which is also what makes the
-later move-assignment onto the slot safe (move-assigning onto a joinable `std::thread` is `std::terminate`). An
-implementation that did otherwise would throw `std::system_error` under the lock, on a path reachable from
-`OnAddonSettingChanged()` ("Nothing stops an exception crossing from a PVR callback into Kodi", below). Fix, with no
-change in behaviour: join the finished entries in a plain loop, then `remove_if` on `!thread.joinable()`.
 
 #### A recurring rule starting inside a spring-forward gap on its first day is shown ending before it starts
 

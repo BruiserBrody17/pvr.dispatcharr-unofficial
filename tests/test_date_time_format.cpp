@@ -1,4 +1,5 @@
 #include "DateTimeFormat.h"
+#include "TimeUtil.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -209,7 +210,7 @@ TEST_CASE("TimeFromIso rejects a date or time with a field outside its range", "
 
 TEST_CASE("A far-future date parses to a real far-future time on a 64-bit time_t", "[DateTimeFormat]")
 {
-  // A 32-bit build saturates instead (SaturatingTimeGm); either way never -1 or 0, so a rule ending
+  // A 32-bit build clamps instead (SaturatingTimeGm); either way never -1 or 0, so a rule ending
   // in 2099 is never read as having no end date.
   CHECK(TimeFromIso("2099-12-31T00:00:00Z") > 2000000000LL);
   CHECK(TimeFromDateString("2099-12-31") > 2000000000LL);
@@ -218,6 +219,35 @@ TEST_CASE("A far-future date parses to a real far-future time on a 64-bit time_t
     CHECK(TimeFromIso("2099-12-31T00:00:00Z") == 4102358400LL);
     CHECK(TimeFromDateString("2099-12-31") == 4102358400LL);
   }
+}
+
+// The parse and the format no longer go through the libc, whose range differs by platform: Windows' _mkgmtime() and
+// gmtime_s() refuse dates before 1970 and after 3000.
+TEST_CASE("A date before 1970 or after 3000 round-trips on a 64-bit time_t", "[DateTimeFormat]")
+{
+  CHECK(TimeFromDateString("1960-01-01") == static_cast<time_t>(-315619200LL));
+  CHECK(TimeFromIso("1960-01-01T12:00:00Z") == static_cast<time_t>(-315576000LL));
+  CHECK(DateStringFromTime(TimeFromDateString("1960-01-01")) == "1960-01-01");
+  if (sizeof(time_t) > 4)
+  {
+    CHECK(DateStringFromTime(TimeFromDateString("3500-06-15")) == "3500-06-15");
+    CHECK(DateStringFromTime(TimeFromDateString("9999-12-31")) == "9999-12-31");
+  }
+}
+
+// Always four-digit years, and never a year the Windows CRT refuses (it ends the process on one outside 0-9999).
+TEST_CASE("Formatting clamps a time outside years 0000-9999 to the nearest end", "[DateTimeFormat]")
+{
+  if (sizeof(time_t) < 8)
+    SKIP("a 32-bit time_t cannot hold years outside 1901-2038");
+  const time_t last = static_cast<time_t>(253402300799LL); // 9999-12-31T23:59:59Z
+  CHECK(IsoFromTime(last) == "9999-12-31T23:59:59Z");
+  CHECK(IsoFromTime(last + 1) == "9999-12-31T23:59:59Z");
+  CHECK(DateStringFromTime(last + 86400 * 400) == "9999-12-31");
+  CHECK(IsoFromTime(static_cast<time_t>(-62167219200LL)) == "0000-01-01T00:00:00Z");
+  CHECK(IsoFromTime(static_cast<time_t>(-62167219201LL)) == "0000-01-01T00:00:00Z");
+  CHECK(DateStringFromTime(kEarliestRepresentableTime) == "0000-01-01");
+  CHECK(DateStringFromTime(kLatestRepresentableTime) == "9999-12-31");
 }
 
 TEST_CASE("An impossible calendar date is rejected, not rolled over into the next month", "[DateTimeFormat]")

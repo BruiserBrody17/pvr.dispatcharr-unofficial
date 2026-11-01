@@ -50,7 +50,8 @@ ServerApiKeyLookup ParseApiKeyListResponse(const nlohmann::json& response);
 
 // Classifies a *failed* fetch by its HTTP status (0 == no response at all,
 // per DispatcharrClient::Request()'s own httpStatusOut convention). A
-// transport failure, 5xx, 408, 429, or a 2xx/3xx whose body couldn't be
+// transport failure, -1 (a 401 whose re-login failed, so the lookup was
+// never retried), 5xx, 408, 429, or a 2xx/3xx whose body couldn't be
 // used is kTransientError -- the outcome is genuinely unknown, and
 // generating a key blind on such a failure could revoke a perfectly good
 // one for every other client. Any other 4xx (404/405 from an older

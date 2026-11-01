@@ -754,6 +754,47 @@ static void auth_refresh_rotated(DispatcharrClient& cl)
     FAIL("expected four refreshes, saw %ld", refreshes);
 }
 
+// Two request-layer answers to a failure (docs/CLOSED_ITEMS.md, "GetChannelGroups() falls back to a route that does not
+// exist" and "A 401 whose re-authentication fails is reported to the caller as a 401"). Phase 1: a failing groups
+// request must not be retried on /api/channels/channel-groups/, which is the web app, not an API. Phase 2: a request
+// answered 401 whose re-authentication then fails (refresh 503, login 503) was never retried, so it must report -1,
+// not the first attempt's 401 that a caller could read as a lasting refusal.
+static void auth_reauth_failed(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.EnsureAuthenticated(err))
+  {
+    FAIL("first authentication: %s", err.c_str());
+    return;
+  }
+  ctl("groups_status=500");
+  std::vector<ChannelGroup> groups;
+  if (cl.GetChannelGroups(groups, err))
+    FAIL("GetChannelGroups succeeded against a 500");
+  const long fallbackRequests = fake_stat("GET /api/channels/channel-groups/");
+  INFO("groups 500: %s; %ld requests to the old fallback route", err.c_str(), fallbackRequests);
+  if (fallbackRequests != 0)
+    FAIL("a failed groups request was retried on the route that is not an API (%ld requests)", fallbackRequests);
+  if (err.find("parse") != std::string::npos)
+    FAIL("the groups error carries a JSON parse failure: %s", err.c_str());
+
+  ctl("bearer_401=/api/channels/recordings/5/");
+  ctl("refresh_status=503");
+  ctl("login_status=503");
+  Recording rec;
+  long status = 0;
+  if (cl.GetRecordingById(5, rec, err, &status))
+  {
+    FAIL("GetRecordingById succeeded against a 401 whose re-authentication failed");
+    return;
+  }
+  INFO("401 then a failed re-authentication: status %ld (%s)", status, err.c_str());
+  if (fake_stat("401 GET /api/channels/recordings/5/") != 1)
+    FAIL("expected exactly one 401 on the lookup, saw %ld", fake_stat("401 GET /api/channels/recordings/5/"));
+  if (status != -1)
+    FAIL("the lookup reported HTTP %ld, expected -1 (never retried)", status);
+}
+
 // A segment the rolling buffer let go of after the manifest the read went by answers 404. That read used to answer 0,
 // which sets Kodi's end of file while the buffer is alive (docs/CLOSED_ITEMS.md, "A recycled live segment answered 0,
 // so playback ended at the next stall"). Phase 1 shrinks the fake's window under the reader, so its next segment is
@@ -1841,6 +1882,8 @@ int main(int argc, char** argv)
       live_lost_notice(*cl);
     else if (what == "auth_refresh_rotated")
       auth_refresh_rotated(*cl);
+    else if (what == "auth_reauth_failed")
+      auth_reauth_failed(*cl);
     else if (what == "live_blackhole_close")
       live_blackhole(*cl, false);
     else if (what == "live_blackhole_read")

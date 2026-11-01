@@ -231,6 +231,8 @@ def pvr_route(h, method, p, q, body):
             time.sleep(ctl_int("channels_slow_ms") / 1000.0)
         return h.J(200, channels())
     if p == "/api/channels/groups/":
+        if CTL["groups_status"]:
+            return h.J(ctl_int("groups_status"), {"detail": "groups failed"})
         return h.J(200, [{"id": 1, "name": "G1"}, {"id": 2, "name": "G2"}, {"id": 3, "name": "Empty"}])
     if p == "/output/epg":
         LAST_EPG_QUERY["q"] = {k: v[0] for k, v in q.items()}
@@ -638,6 +640,8 @@ class H(BaseHTTPRequestHandler):
                     return self.J(200, {"access": "A", "refresh": "R%d" % REFRESH["n"]})
             return self.J(200, {"access": "A", "refresh": "R"})
         if p == "/api/accounts/token/refresh/":
+            if CTL["refresh_status"]:  # a refresh that fails transiently (503) or is rejected (401)
+                return self.J(ctl_int("refresh_status"), {"detail": "refresh failed"})
             if CTL["rotate_refresh"] == "1":
                 sent = json.loads(b or b"{}").get("refresh")
                 with lock:
@@ -647,6 +651,11 @@ class H(BaseHTTPRequestHandler):
                     REFRESH["n"] += 1
                     return self.J(200, {"access": "AR", "refresh": "R%d" % REFRESH["n"]})
             return self.J(200, {"access": "AR"})
+        # bearer_401=<path>: that one API path rejects every access token, as after a revocation server-side.
+        if CTL["bearer_401"] and p == CTL["bearer_401"] and self.headers.get("Authorization"):
+            with lock:
+                counts["401 " + key] += 1
+            return self.J(401, {"detail": "Given token not valid for any token type", "code": "token_not_valid"})
         if p == "/api/accounts/api-keys/":
             return self.J(200, {"key": CTL["require_key"] or "K1"})
         if p == "/api/plugins/plugins/recording_edl/run/":

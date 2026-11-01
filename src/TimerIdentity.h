@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <ctime>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -102,12 +103,18 @@ inline DecodedTimerIdentity DecodeTimerClientIndex(unsigned int clientIndex, uns
 // Kodi's timer-edit dialog has no separate "shorten" action, so a user
 // picking an earlier or unchanged end time here just means they didn't
 // actually intend to extend anything.
+//
+// The difference is taken in 64 bits and the minutes capped at INT_MAX: two representable end times can be further
+// apart than a 32-bit time_t holds (a garbage date clamped to kEarliestRepresentableTime, TimeUtil.h), and that
+// subtraction overflowed.
 inline bool ComputeRecordingExtendMinutes(time_t currentEndTime, time_t requestedEndTime, int& extraMinutesOut)
 {
-  time_t deltaSeconds = requestedEndTime - currentEndTime;
+  const long long deltaSeconds = static_cast<long long>(requestedEndTime) - static_cast<long long>(currentEndTime);
   if (deltaSeconds <= 0)
     return false;
-  extraMinutesOut = static_cast<int>((deltaSeconds + 59) / 60);
+  const long long minutes = deltaSeconds / 60 + (deltaSeconds % 60 != 0 ? 1 : 0);
+  extraMinutesOut =
+      minutes > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() : static_cast<int>(minutes);
   return true;
 }
 

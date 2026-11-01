@@ -1,7 +1,7 @@
 #pragma once
 
-#include <algorithm>
-#include <cctype>
+#include "UnicodeText.h"
+
 #include <string>
 
 namespace dispatcharr
@@ -13,7 +13,7 @@ namespace dispatcharr
 // repo -- stronger than the API shape alone, not the same standard as a
 // live test): strips exactly the same forbidden-filename-character set
 // (backslash, forward slash, colon, asterisk, question mark, double quote,
-// angle brackets, pipe) and trims leading/trailing whitespace, so
+// angle brackets, pipe) and trims leading/trailing Unicode whitespace, so
 // PVRDispatcharr::GetRecordings()'s own SetDirectory(rec.title) call
 // matches the single flat per-show folder Dispatcharr itself actually
 // wrote the recording under.
@@ -44,9 +44,11 @@ inline std::string SanitizeRecordingDirectory(const std::string& title)
       continue;
     result.push_back(c);
   }
-  auto notSpace = [](unsigned char c) { return !std::isspace(c); };
-  result.erase(result.begin(), std::find_if(result.begin(), result.end(), notSpace));
-  result.erase(std::find_if(result.rbegin(), result.rend(), notSpace).base(), result.end());
+  // _safe_name() trims with Python's str.strip(), which removes Unicode whitespace. std::isspace() trimmed only ASCII,
+  // and under a C locale Kodi set from a Windows code page that counts 0xA0 as a space it cut the second byte off a
+  // title ending in "à" (UTF-8 C3 A0), leaving a folder name that was not valid UTF-8 (docs/CLOSED_ITEMS.md,
+  // "SanitizeRecordingDirectory trims with std::isspace").
+  result = StripUnicodeWhitespace(result);
   return result.empty() ? "Recording" : result;
 }
 
