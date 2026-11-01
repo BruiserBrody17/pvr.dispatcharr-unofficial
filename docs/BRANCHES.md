@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`43089ad`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`7372d63`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -167,6 +167,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `d6f744a` | `f27ba96` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro and one `BUILDING.md` sentence by hand) | The release gate's four fixes from the 2026-10-31 sweep: a plugin zip checked against the tree byte for byte, desktop metadata, local-header times, encrypted entries and a missing `$PRIVACY_BLOCKLIST`. The ported gate passes the shipped 0.13.2 set. |
 | `ea862ff` | `dd8190a` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | `timeshift_buffer` 0.8.17's file-server hardening: 503 on a state-read failure, 404 on a symlink loop, throttled logs for both and for a taken port, and the Streams allowlist wording and 403 message, with the 2026-11-01 live checks; `plugin.py` is identical on both branches. |
 | `43089ad` | `f40c6d2` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | A live read that lands in a gap goes through the bounded segment-failure handler instead of answering 0, with the `live_read_gap` glue scenario; the 2026-11-01 second-thread live check was run on an `Omega` build. |
+| `7372d63` | `a231242` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | Five LOW fixes: 64-bit date conversion without the libc and four-digit date formatting, Unicode trimming of recording folder names, no channel-groups fallback route, -1 for a 401 whose re-login failed, and the `TrackDetachedThread()` join; the `auth_reauth_failed` glue scenario applied unchanged. |
 
 ## Dependencies that differ by Kodi release
 
