@@ -8852,6 +8852,32 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 ### Closed without a change (refuted, explained or harmless)
 
+#### A recurring rule starting inside a spring-forward gap on its first day is shown ending before it starts
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced with a Catch2 case built against the real
+`RecurringRuleUtil.cpp` and `TimeZoneUtil.cpp`.** `ComputeRecurringRuleDisplayTimes()` decides the overnight rollover
+on the seconds of day (`endTimeOfDaySeconds <= startTimeOfDaySeconds`), then resolves the start under the pre-gap offset
+and the end on its own (since `CLOSED_ITEMS.md`'s "The recurring-rule display took the end's offset from the start
+instant", which covers a rule that starts before the gap). For a short rule that starts inside the gap on its
+`start_date`, nothing re-checks the order of the two instants: in a zone whose clocks go from 02:00 to 03:00, a rule
+from 02:30 to 03:15 is shown on the change day ending 15 minutes before it starts. Only the first occurrence's displayed
+window, and only when `start_date` is the change day. Fix: once both instants are resolved, roll the end over on the
+instants too (`if (endTimeOut <= startTimeOut) endTimeOut += 86400`), and add the case to `test_recurring_rule_util.cpp`.
+Which window Dispatcharr itself records depends on whether its scheduler compares the two datetimes in UTC (pytz) or by
+wall clock (zoneinfo); check that live before deciding what the display should match.
+
+**Closed without a change 2026-11-01, checked live: the display matches what Dispatcharr itself schedules.** A
+disposable rule on an existing channel, 02:30 to 03:15 on the lab zone's next spring-forward day only (start and end
+date that day; with an end date Dispatcharr creates every occurrence up to it, not just the next 14 days). Dispatcharr
+0.33.0 stored its occurrence ending 15 minutes before it starts: its scheduler compares the two times by wall clock
+(`ZoneInfo`, not pytz), so it rolls nothing over either, and stores 02:30 under the offset before the change. Kodi 21.3
+with the current `Omega` build, in the same zone, showed the rule as running from 3:30 AM to 3:15 AM local time and the
+occurrence at exactly the server's two instants. The suggested fix (roll the end over to the next day once both instants
+are resolved) would show a window of 23 h 45 min, which matches neither the server nor the rule, so the display stays
+as it is: it shows what will be recorded. The server's side is `OPEN_ITEMS.md`'s upstream note "Dispatcharr schedules a
+recurring rule's occurrence that starts inside a spring-forward gap to end before it starts". The rule and its
+occurrence were deleted afterwards (404 on re-read).
+
 #### A sustained server outage may still end live playback with no notice
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; closed without a change 2026-10-28, checked live: playback
