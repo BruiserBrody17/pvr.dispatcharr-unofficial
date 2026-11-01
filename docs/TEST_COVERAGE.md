@@ -1652,7 +1652,12 @@ database's locale was settled live first (an `icontains` for "ünder" found a
 channel named "ÜNDER"). Verified exhaustively against glibc/Python for all
 1,112,064 scalar values, and live: real Kodi against the real instance,
 eleven rules covering every mode beside eight recordings, each linked or
-left unlinked exactly as predicted.
+left unlinked exactly as predicted. On 2026-11-01 (the 2026-10-23 sweep's "A search-mode series rule costs terms
+times text length per recording", `CLOSED_ITEMS.md`) each distinct term is searched for once per call, an operand
+after a settled result is skipped, and a call past `kMaxSeriesMatchWork` (charged per byte scanned and per place the
+scan stops at a term's first byte) is `kUnsupported`; four tests pin the repeated-term case under a time bound (5.7 s
+at -O2 before), the skipped operands, the declines and a term whose first byte fills the text, and the new matcher
+agreed with the old on 6,000,000 random query/text pairs.
 
 ### `SocketWait`
 

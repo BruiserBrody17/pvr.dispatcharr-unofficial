@@ -37,16 +37,27 @@ SeriesTextMode ParseSeriesTextMode(const std::string& rawMode, bool isTitle);
 // strip) and "(" groups (outside quotes). See MatchSeriesText()'s own comment for what these guard.
 constexpr std::size_t kMaxSeriesQueryBytes = 4096;
 constexpr std::size_t kMaxSeriesQueryGroups = 64;
+// The most work one contains/search call may do before it declines too, in units of one byte of programme
+// text scanned for a distinct term (each term is searched for once per call). Each position the scan stops
+// at, because it holds the term's first byte, costs kSeriesMatchCandidateCost more plus a unit per 16 bytes
+// of the term, for the comparison made there (and the word-boundary check in search mode); those are about
+// the measured costs relative to a scanned byte, so the bound is reached in a few tens of milliseconds
+// whatever the text and terms. The query bounds above limit the query, not the work, which is terms times
+// text: a few hundred distinct terms against a text of some hundreds of kilobytes, or fewer whose first
+// byte is common in a long text, reach it. A real rule against a guide description is some thousands of
+// units.
+constexpr std::size_t kMaxSeriesMatchWork = std::size_t{128} * 1024 * 1024;
+constexpr std::size_t kSeriesMatchCandidateCost = 64;
 
 enum class SeriesTextMatch
 {
   kMatches,
   kNoMatch,
   // The filter uses something this addon can't evaluate faithfully -- a regex,
-  // whose PostgreSQL syntax isn't ECMAScript's, or a query past the size and
-  // nesting bounds below. A rule that
-  // depends on one is left unlinked, exactly as every non-exact rule used to
-  // be, rather than guessed at.
+  // whose PostgreSQL syntax isn't ECMAScript's, or a query past the size,
+  // nesting or work bounds above. A rule that depends on one is left
+  // unlinked, exactly as every non-exact rule used to be, rather than
+  // guessed at.
   kUnsupported,
 };
 

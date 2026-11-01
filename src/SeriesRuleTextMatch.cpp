@@ -4,6 +4,7 @@
 
 #include <map>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace dispatcharr
@@ -112,16 +113,6 @@ bool HasWordBoundaryAt(const std::string& s, std::size_t position)
   return previousIsWord != nextIsWord;
 }
 
-bool ContainsWholeWord(const std::string& text, const std::string& term)
-{
-  for (std::size_t pos = text.find(term); pos != std::string::npos; pos = text.find(term, pos + 1))
-  {
-    if (HasWordBoundaryAt(text, pos) && HasWordBoundaryAt(text, pos + term.size()))
-      return true;
-  }
-  return false;
-}
-
 // One parse_text_query() call: the phrases pulled out of the raw value, the
 // programme text already case-folded, and whether each term must be a whole
 // word.
@@ -133,7 +124,12 @@ public:
   {
   }
 
-  Condition ParseExpression(const std::string& rawExpression) const
+  bool OverBudget() const
+  {
+    return m_overBudget;
+  }
+
+  Condition ParseExpression(const std::string& rawExpression)
   {
     const std::string expression = StripUnicodeWhitespace(rawExpression);
 
@@ -187,9 +183,15 @@ public:
     if (tokens.empty())
       return std::nullopt;
 
+    // Left to right with no precedence, so once the result so far is true before an OR or false before an
+    // AND, the next operand cannot change it (an empty one drops out either way) and is not evaluated.
     Condition result = Leaf(tokens[0]);
     for (std::size_t i = 0; i < operators.size() && i + 1 < tokens.size(); ++i)
+    {
+      if (result && *result == (operators[i] == '|'))
+        continue;
       result = Combine(result, Leaf(tokens[i + 1]), operators[i]);
+    }
     return result;
   }
 
@@ -197,7 +199,7 @@ private:
   // `(` ... `)`: the *last* "(" and the first ")" after it, recursing into
   // what is inside and on either side. See MatchSeriesText()'s comment on
   // why that leaves a stray ")" behind for a nested group.
-  Condition ParseGrouped(const std::string& expression) const
+  Condition ParseGrouped(const std::string& expression)
   {
     const std::size_t open = expression.rfind('(');
     const std::size_t close = expression.find(')', open);
@@ -240,22 +242,70 @@ private:
   }
 
   // build_q(): an operand that is exactly a phrase placeholder stands for the
-  // phrase's text; anything else is the operand itself.
-  Condition Leaf(const std::string& token) const
+  // phrase's text; anything else is the operand itself. A term's answer depends
+  // only on its folded form, so each distinct one is searched for once per call.
+  Condition Leaf(const std::string& token)
   {
+    if (m_overBudget)
+      return std::nullopt;
     const auto phrase = m_phrases.find(token);
     const std::string term = StripUnicodeWhitespace(phrase != m_phrases.end() ? phrase->second : token);
     if (term.empty())
       return std::nullopt;
-    const std::string foldedTerm = FoldCaseForDatabaseMatch(term);
-    if (m_wholeWord)
-      return ContainsWholeWord(m_foldedText, foldedTerm);
-    return m_foldedText.find(foldedTerm) != std::string::npos;
+    std::string foldedTerm = FoldCaseForDatabaseMatch(term);
+    const auto known = m_answers.find(foldedTerm);
+    if (known != m_answers.end())
+      return known->second;
+    const bool found = Find(foldedTerm);
+    if (m_overBudget)
+      return std::nullopt;
+    m_answers.emplace(std::move(foldedTerm), found);
+    return found;
+  }
+
+  // `text.find(term)` (and, for a whole word, every later occurrence until one sits on word boundaries)
+  // written out, so that the work is charged where it is done: `find` stops at every position holding the
+  // term's first byte and compares from there, which costs far more than the scan between them when that
+  // byte is common, and more again for a long term whose prefix the text repeats.
+  bool Find(const std::string& term)
+  {
+    const std::string& text = m_foldedText;
+    const std::size_t candidateCost = kSeriesMatchCandidateCost + term.size() / 16;
+    std::size_t from = 0;
+    while (from < text.size())
+    {
+      const std::size_t hit = text.find(term[0], from);
+      if (!Spend((hit == std::string::npos ? text.size() : hit + 1) - from))
+        return false;
+      if (hit == std::string::npos || term.size() > text.size() - hit)
+        return false;
+      if (!Spend(candidateCost))
+        return false;
+      if (text.compare(hit, term.size(), term) == 0 &&
+          (!m_wholeWord || (HasWordBoundaryAt(text, hit) && HasWordBoundaryAt(text, hit + term.size()))))
+        return true;
+      from = hit + 1;
+    }
+    return false;
+  }
+
+  bool Spend(std::size_t units)
+  {
+    if (units > kMaxSeriesMatchWork - m_work)
+    {
+      m_overBudget = true;
+      return false;
+    }
+    m_work += units;
+    return true;
   }
 
   const std::map<std::string, std::string>& m_phrases;
   const std::string& m_foldedText;
   bool m_wholeWord;
+  std::unordered_map<std::string, bool> m_answers;
+  std::size_t m_work = 0;
+  bool m_overBudget = false;
 };
 
 std::string LowerAscii(const std::string& s)
@@ -321,8 +371,10 @@ SeriesTextMatch MatchSeriesText(SeriesTextMode mode, const std::string& query, c
   if (groupCount > kMaxSeriesQueryGroups)
     return SeriesTextMatch::kUnsupported;
   const std::string foldedText = FoldCaseForDatabaseMatch(text);
-  const TextQuery textQuery(phrases, foldedText, mode == SeriesTextMode::kSearch);
+  TextQuery textQuery(phrases, foldedText, mode == SeriesTextMode::kSearch);
   const Condition condition = textQuery.ParseExpression(processed);
+  if (textQuery.OverBudget())
+    return SeriesTextMatch::kUnsupported;
   // An expression that is empty all the way down filters nothing.
   return (!condition || *condition) ? SeriesTextMatch::kMatches : SeriesTextMatch::kNoMatch;
 }
