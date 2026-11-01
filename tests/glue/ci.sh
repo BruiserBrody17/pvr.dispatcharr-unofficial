@@ -36,6 +36,7 @@ run "live (first segment after 25 s)" TMO=30 T=120 -- live_late_start
 run "live (refresh throttle on 429)" TMO=30 T=120 -- live_refresh_throttle
 run "live (6 s API latency)"     TMO=30 T=300 -- live_slow_open
 run "live (recycled segment, then 404s)" TMO=30 T=120 -- live_segment_recycled
+run "live (a read in a gap)"     TMO=30 T=60 -- live_read_gap
 run "live (failed fetches handed back)" TMO=30 T=120 -- live_outage_handback
 run "live (which notice ends a lost stream)" TMO=30 T=180 -- live_lost_notice
 run "rotated refresh tokens"     TMO=30 T=60 -- auth_refresh_rotated

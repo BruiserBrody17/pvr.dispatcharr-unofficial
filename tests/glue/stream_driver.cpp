@@ -834,6 +834,83 @@ static void live_segment_recycled(DispatcharrClient& cl)
   cl.CloseLiveTimeshiftStream();
 }
 
+extern std::mutex g_logWatchMutex;
+extern std::string g_logWatch;
+extern std::atomic<long> g_logWatchCount;
+
+// A read whose position falls in a gap no segment covers used to answer 0, which sets Kodi's end of file while the
+// buffer is alive (docs/CLOSED_ITEMS.md, "A live read that lands in a gap answers 0 while the buffer is alive"). The
+// way in is a manifest refresh on another thread, pruning the segment being read, while the read has its state lock
+// released: here the fake holds the read's heartbeat for 1.8 s while a poller calls GetStreamTimes()'s path, the
+// second-thread build that reproduced it live. After 10.5 s idle the reader's segment is far behind the fake's window,
+// so that refresh prunes it. No read may answer 0, the gap must really have been hit, and the stream must move on.
+static void live_read_gap(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  std::vector<uint8_t> buf(65536);
+  if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) <= 0)
+    FAIL("the first read delivered nothing");
+  {
+    std::lock_guard<std::mutex> lock(g_logWatchMutex);
+    g_logWatch = " is a gap ";
+  }
+  // Past the 10 s heartbeat interval, so the next read sends one; nothing refreshes the manifest meanwhile.
+  sleep_ms(10500);
+  ctl("heartbeat_delay_ms=1800");
+  std::atomic<bool> stop{false};
+  std::thread poller(
+      [&]
+      {
+        while (!stop)
+        {
+          cl.GetLiveTimeshiftStreamDurationMs();
+          sleep_ms(100);
+        }
+      });
+  long zeros = 0, bytes = 0, badTag = 0;
+  const long start = ms();
+  while (ms() - start < 6000)
+  {
+    const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n == 0)
+    {
+      zeros++;
+      sleep_ms(5); // as Kodi calls again about 5 ms after a 0 (measured live)
+    }
+    else if (n > 0)
+    {
+      bytes += n;
+      if (n >= 8 && (be32(buf.data()) >> 16) != 0x5E00)
+        badTag++;
+    }
+  }
+  stop = true;
+  poller.join();
+  ctl("heartbeat_delay_ms=0");
+  const long gaps = g_logWatchCount;
+  {
+    std::lock_guard<std::mutex> lock(g_logWatchMutex);
+    g_logWatch.clear();
+  }
+  INFO("gap: %ld gap read(s), %ld bytes and %ld zero read(s) in 6 s", gaps, bytes, zeros);
+  if (gaps == 0)
+    FAIL("no read landed in a gap: the scenario did not exercise it");
+  if (zeros != 0)
+    FAIL("%ld read(s) answered 0 after a gap, which ends playback in Kodi", zeros);
+  if (bytes == 0)
+    FAIL("the stream delivered nothing after the gap");
+  if (badTag != 0)
+    FAIL("%ld read(s) after the gap did not start on segment data", badTag);
+  if (g_notifyCount != 0)
+    FAIL("the viewer was told the stream ended (%ld notification(s))", (long)g_notifyCount);
+  cl.CloseLiveTimeshiftStream();
+}
+
 // A run of failed segment fetches used to be retried inside one read for up to 25 s, and Kodi closes a player only
 // between reads, on its main thread, so a Stop held Kodi's whole interface until that read returned (18.6 s, measured
 // 2026-10-29; docs/CLOSED_ITEMS.md, "A Stop during a run of failed live segment fetches holds Kodi's interface for up
@@ -1756,6 +1833,8 @@ int main(int argc, char** argv)
       live_tail_giveup(*cl);
     else if (what == "live_segment_recycled")
       live_segment_recycled(*cl);
+    else if (what == "live_read_gap")
+      live_read_gap(*cl);
     else if (what == "live_outage_handback")
       live_outage_handback(*cl);
     else if (what == "live_lost_notice")

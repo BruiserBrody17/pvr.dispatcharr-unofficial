@@ -22,6 +22,11 @@ compare against.
 - **Hardening against bad server data**: a guide search reply whose programme fields are not plain text (or an
   integer id) can no longer crash Kodi when a timer is created from the guide, and server error text written to the
   log has its C1 control characters (terminal escape sequences) blanked like the others.
+- **Server-side timeshift: a guide-time update landing at the wrong moment no longer ends playback later**: if Kodi
+  asked for the stream's times on another thread while a read was waiting, the read could find its spot in the buffer
+  gone and report the end of the stream, so playback carried on and then stopped, with no message, at the next stall.
+  It now carries on from the oldest part of the buffer still there. Kodi 21 and 22 on Linux do not ask from another
+  thread; other platforms were not checked.
 
 ## `timeshift_buffer` [0.8.17] - Unreleased
 
