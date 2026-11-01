@@ -1020,14 +1020,15 @@ void PVRDispatcharr::TrackDetachedThread(std::function<void()> work, bool runInl
     // already finished, so this list doesn't grow unbounded over a long
     // Kodi uptime with many timers added / many settings saves -- see this
     // member's own comment (PVRDispatcharr.h) for the leak this fixes.
+    // Joined in a plain loop, then removed: a std::remove_if predicate may not modify the element
+    // ([algorithms.requirements]), and the join used to happen inside one.
+    for (DetachedThreadEntry& entry : m_detachedThreads)
+    {
+      if (entry.done->load() && entry.thread.joinable())
+        entry.thread.join();
+    }
     m_detachedThreads.erase(std::remove_if(m_detachedThreads.begin(), m_detachedThreads.end(),
-                                           [](DetachedThreadEntry& entry)
-                                           {
-                                             if (!entry.done->load())
-                                               return false;
-                                             entry.thread.join();
-                                             return true;
-                                           }),
+                                           [](const DetachedThreadEntry& entry) { return !entry.thread.joinable(); }),
                             m_detachedThreads.end());
     // A thread that cannot be created throws std::system_error, and a push_back that ran out of
     // memory after the thread existed would destroy a joinable std::thread, which is

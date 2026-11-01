@@ -2,6 +2,7 @@
 
 #include "TimeUtil.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <stdexcept>
@@ -9,12 +10,45 @@
 namespace dispatcharr
 {
 
+namespace
+{
+// The UTC broken-down time of `t`, clamped to years 0000-9999 so the year is always four digits. Written with
+// snprintf(), not strftime(): glibc's "%Y" does not pad a year below 1000, and the Windows CRT's strftime() runs its
+// invalid-parameter handler (by default, ending the process) on a tm_year outside -1900..8099. A parsed server date
+// stays inside the range, but an offset or a second added to one at 9999-12-31T23:59:59 does not.
+tm UtcFieldsForFormatting(time_t t)
+{
+  static const long long kFirst = []
+  {
+    tm first{};
+    first.tm_year = -1900;
+    first.tm_mday = 1;
+    return UtcCivilSeconds(first);
+  }();
+  static const long long kLast = []
+  {
+    tm last{};
+    last.tm_year = 9999 - 1900;
+    last.tm_mon = 11;
+    last.tm_mday = 31;
+    last.tm_hour = 23;
+    last.tm_min = 59;
+    last.tm_sec = 59;
+    return UtcCivilSeconds(last);
+  }();
+  const long long seconds = std::min(std::max(static_cast<long long>(t), kFirst), kLast);
+  tm tmVal{};
+  UtcCivilFromSeconds(seconds, &tmVal);
+  return tmVal;
+}
+} // namespace
+
 std::string IsoFromTime(time_t t)
 {
-  char buf[32];
-  tm tmVal{};
-  GmTimeUtc(t, &tmVal);
-  std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tmVal);
+  char buf[80]; // room for any int in each field, so nothing can truncate
+  const tm tmVal = UtcFieldsForFormatting(t);
+  std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02dZ", tmVal.tm_year + 1900, tmVal.tm_mon + 1,
+                tmVal.tm_mday, tmVal.tm_hour, tmVal.tm_min, tmVal.tm_sec);
   return std::string(buf);
 }
 
@@ -185,10 +219,9 @@ int SecondsSinceMidnightFromString(const std::string& hms)
 
 std::string DateStringFromTime(time_t t)
 {
-  char buf[16];
-  tm tmVal{};
-  GmTimeUtc(t, &tmVal);
-  std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tmVal);
+  char buf[40];
+  const tm tmVal = UtcFieldsForFormatting(t);
+  std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", tmVal.tm_year + 1900, tmVal.tm_mon + 1, tmVal.tm_mday);
   return std::string(buf);
 }
 

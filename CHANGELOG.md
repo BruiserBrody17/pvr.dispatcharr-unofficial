@@ -27,6 +27,14 @@ compare against.
   gone and report the end of the stream, so playback carried on and then stopped, with no message, at the next stall.
   It now carries on from the oldest part of the buffer still there. Kodi 21 and 22 on Linux do not ask from another
   thread; other platforms were not checked.
+- **Recording folders for titles that start or end in non-ASCII spaces**: a title with, say, a no-break or ideographic
+  space at either end is now filed under the same folder name Dispatcharr gives it, and on Windows a title ending in
+  "à" can no longer lose part of that letter from its folder name.
+- **Channel groups: a failed refresh no longer tries a second address** that Dispatcharr does not have, so in an outage
+  it gives up after one timeout instead of two, and the log shows the server's real error.
+- **Dates before 1970 and after 3000 from the server are read correctly on Windows**, and on Windows and 32-bit
+  systems a date that far out no longer produces nonsense guide, catch-up or recording lengths. Only a damaged or
+  unusual server date is affected.
 
 ## `timeshift_buffer` [0.8.17] - Unreleased
 

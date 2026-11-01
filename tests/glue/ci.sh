@@ -40,6 +40,7 @@ run "live (a read in a gap)"     TMO=30 T=60 -- live_read_gap
 run "live (failed fetches handed back)" TMO=30 T=120 -- live_outage_handback
 run "live (which notice ends a lost stream)" TMO=30 T=180 -- live_lost_notice
 run "rotated refresh tokens"     TMO=30 T=60 -- auth_refresh_rotated
+run "failed re-authentication, failed groups" TMO=30 T=60 -- auth_reauth_failed
 run "completed recording"        TMO=30 T=120 -- rec
 run "recording, Range dropped"   TMO=30 T=120 -- rec_range_dropped
 run "recording with no file"     TMO=30 T=120 -- rec_open_missing

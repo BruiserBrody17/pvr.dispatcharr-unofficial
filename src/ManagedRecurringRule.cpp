@@ -149,10 +149,9 @@ RecurringRuleAdoptionPlan PlanRecurringRuleAdoption(const std::vector<int>& pend
 
 AdoptionFailureKind ClassifyAdoptionPatchFailure(long httpStatus)
 {
-  // 401 is the credentials, not the rule: Request() reports the first attempt's 401 even when the
-  // re-login it triggered then failed (login backoff, a 429 from the login limiter, a 5xx), so one
-  // authentication hiccup during the one-time pass would otherwise skip every pending rule for good
-  // (found by the 2026-10-04 third hardening sweep).
+  // 401 is the credentials, not the rule: one authentication hiccup during the one-time pass would
+  // otherwise skip every pending rule for good (found by the 2026-10-04 third hardening sweep). A 401
+  // whose re-login then failed is reported as -1 since 2026-11-01, which lands here too.
   if (httpStatus >= 400 && httpStatus < 500 && httpStatus != 401 && httpStatus != 408 && httpStatus != 429)
     return AdoptionFailureKind::kPermanent;
   return AdoptionFailureKind::kRetryLater;

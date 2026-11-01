@@ -1,4 +1,5 @@
 #include "EpgProgramMatch.h"
+#include "TimeUtil.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -252,4 +253,31 @@ TEST_CASE("FindEpgEntryIndexByStartTime accepts an entry exactly the tolerance a
   CHECK(FindEpgEntryIndexByStartTime(entries, 1000, 29) == -1);
   std::vector<EpgEntry> before = {MakeEntry(970, 2000)};
   CHECK(FindEpgEntryIndexByStartTime(before, 1000, 30) == 0);
+}
+
+// Times at the parse bounds, where the difference does not fit a 32-bit time_t (docs/CLOSED_ITEMS.md, "Windows (and
+// 32-bit) parse a pre-1970 (pre-1901) date to a floor that later subtractions overflow").
+TEST_CASE("EPG matching takes a recording or entry at the parse bounds without overflowing", "[EpgProgramMatch]")
+{
+  const time_t now = 1791072000;
+  std::vector<EpgEntry> entries = {MakeEntry(now, now + 3600)};
+  // A recording from the floor to now covers far more than the one entry: no match, and no overflow on the way.
+  CHECK(FindEpgEntryIndexCoveringRecording(entries, kEarliestRepresentableTime, now + 3600) == -1);
+  CHECK(FindEpgEntryIndexCoveringRecording(entries, kEarliestRepresentableTime, kLatestRepresentableTime) == -1);
+  std::vector<EpgEntry> wide = {MakeEntry(kEarliestRepresentableTime, kLatestRepresentableTime)};
+  CHECK(FindEpgEntryIndexCoveringRecording(wide, kEarliestRepresentableTime, kLatestRepresentableTime) == 0);
+  CHECK(FindEpgEntryIndexByStartTime(entries, kEarliestRepresentableTime, 300) == -1);
+  std::vector<EpgEntry> atFloor = {MakeEntry(kEarliestRepresentableTime, now)};
+  CHECK(FindEpgEntryIndexByStartTime(atFloor, now, 300) == -1);
+  CHECK(FindEpgEntryIndexByStartTime(atFloor, kLatestRepresentableTime, 300) == -1);
+}
+
+TEST_CASE("The 4/5 coverage rule is exact at the boundary", "[EpgProgramMatch]")
+{
+  // 80 of 100 seconds covered matches, 79 does not.
+  CHECK(FindEpgEntryIndexCoveringRecording({MakeEntry(1000, 1080)}, 1000, 1100) == 0);
+  CHECK(FindEpgEntryIndexCoveringRecording({MakeEntry(1000, 1079)}, 1000, 1100) == -1);
+  // 4 of 6: 5 * 4 = 20 < 24, no match; 5 of 6 matches.
+  CHECK(FindEpgEntryIndexCoveringRecording({MakeEntry(0, 4)}, 0, 6) == -1);
+  CHECK(FindEpgEntryIndexCoveringRecording({MakeEntry(0, 5)}, 0, 6) == 0);
 }

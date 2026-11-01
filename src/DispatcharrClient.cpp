@@ -74,9 +74,6 @@ constexpr const char* kChannelsPath = "/api/channels/channels/";
 // -- Dispatcharr's SPA catches unmatched routes and serves index.html for it,
 // which returned HTTP 200 but wasn't JSON, so it always failed to parse.
 constexpr const char* kChannelGroupsPath = "/api/channels/groups/";
-constexpr const char* kChannelGroupsPathFallback =
-    "/api/channels/channel-groups/"; // pre-confirmation guess, kept as a fallback in case older Dispatcharr versions
-                                     // differ
 constexpr const char* kEpgOutputPath = "/output/epg";
 // Both confirmed against a live instance's own OpenAPI schema -- see the
 // endpoint/payload notes in DispatcharrClient.h.
@@ -467,6 +464,11 @@ bool DispatcharrClient::Request(const std::string& method, const std::string& pa
     if (EnsureAuthenticated(refreshError, timeoutMsOverride))
       return Request(method, path, body, responseOut, error, withAuth, retryOnAuthFailure - 1, httpStatusOut,
                      timeoutMsOverride);
+    // The request was never retried, so nothing is known about its answer: -1, not the first attempt's 401, which a
+    // caller could read as the server refusing the resource for good when the re-login only hit an outage or a
+    // backoff (docs/CLOSED_ITEMS.md, "A 401 whose re-authentication fails is reported to the caller as a 401").
+    if (httpStatusOut)
+      *httpStatusOut = -1;
     error = "Authentication failed: " + refreshError;
     return false;
   }
@@ -802,19 +804,13 @@ bool DispatcharrClient::GetChannelGroups(std::vector<ChannelGroup>& out, std::st
   if (!EnsureAuthenticated(error))
     return false;
 
-  // Neither path was independently confirmed against a live Swagger doc
-  // (see docs/API_NOTES.md); try the primary one and fall back to the
-  // alternate on failure rather than guessing wrong and going silent.
+  // No fallback route: the old guess, /api/channels/channel-groups/, is not an API at all (see kChannelGroupsPath), so
+  // retrying it in an outage only waited out a second timeout, appended a JSON parse error to a real 403 or 500, and
+  // sent the access token to the web app (docs/CLOSED_ITEMS.md, "GetChannelGroups() falls back to a route that does not
+  // exist").
   json response;
   if (!Request("GET", kChannelGroupsPath, json(), response, error))
-  {
-    std::string fallbackError;
-    if (!Request("GET", kChannelGroupsPathFallback, json(), response, fallbackError))
-    {
-      error += " / " + fallbackError;
-      return false;
-    }
-  }
+    return false;
 
   // Same truncated-pagination guard as GetChannels() above -- see
   // dispatcharr::IsTruncatedPaginatedResponse()'s own comment.

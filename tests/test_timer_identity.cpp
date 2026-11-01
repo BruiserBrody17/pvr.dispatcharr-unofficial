@@ -1,4 +1,5 @@
 #include "TimerIdentity.h"
+#include "TimeUtil.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -577,4 +578,20 @@ TEST_CASE("The refusal applies to the old title of an edit that changes a rule's
   CHECK(IsSeriesRuleSafeToDeleteFromKodi("Old"));
   // An edit that keeps the identity (same empty title, same tvg_id) replaces nothing, so there is nothing to refuse.
   CHECK_FALSE(ShouldReplaceSeriesRuleOnEdit("", "tvg", 0, "", "tvg", 0));
+}
+
+// End times further apart than a 32-bit time_t holds (one clamped to the floor): the subtraction overflowed
+// (docs/CLOSED_ITEMS.md, "Windows (and 32-bit) parse a pre-1970 (pre-1901) date to a floor that later subtractions
+// overflow").
+TEST_CASE("ComputeRecordingExtendMinutes takes end times at the parse bounds without overflowing", "[TimerIdentity]")
+{
+  const time_t now = 1791072000;
+  int minutes = 0;
+  REQUIRE(ComputeRecordingExtendMinutes(kEarliestRepresentableTime, now, minutes));
+  CHECK(minutes > 0);
+  REQUIRE(ComputeRecordingExtendMinutes(kEarliestRepresentableTime, kLatestRepresentableTime, minutes));
+  CHECK(minutes > 0);
+  CHECK_FALSE(ComputeRecordingExtendMinutes(now, kEarliestRepresentableTime, minutes));
+  REQUIRE(ComputeRecordingExtendMinutes(now, now + 61, minutes));
+  CHECK(minutes == 2);
 }

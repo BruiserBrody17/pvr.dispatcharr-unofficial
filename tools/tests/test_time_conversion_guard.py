@@ -21,10 +21,10 @@ SRC = Path(__file__).resolve().parents[2] / "src"
 # Files whose dates come from the server: they must saturate.
 PARSERS = ["DateTimeFormat.cpp", "XmlTvParser.cpp"]
 
-# Where the plain PortableTimeGm() is called today, and how many times. TimeUtil.h: its definition, the saturating
-# wrapper's lambda and the local-time helper; TimeZoneUtil.cpp: the daylight-saving transitions of the year of an
-# instant the caller already holds as a time_t.
-PLAIN_USES = {"TimeUtil.h": 3, "TimeZoneUtil.cpp": 6}
+# Where the plain PortableTimeGm() is called today, and how many times. TimeUtil.h: its definition and the local-time
+# helper (the saturating conversion stopped calling it on 2026-11-01: it computes the time itself, UtcCivilSeconds());
+# TimeZoneUtil.cpp: the daylight-saving transitions of the year of an instant the caller already holds as a time_t.
+PLAIN_USES = {"TimeUtil.h": 2, "TimeZoneUtil.cpp": 6}
 
 
 def _code(path: Path) -> str:

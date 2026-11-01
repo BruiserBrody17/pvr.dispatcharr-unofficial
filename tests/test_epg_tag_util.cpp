@@ -1,4 +1,5 @@
 #include "EpgTagUtil.h"
+#include "TimeUtil.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <clocale>
@@ -421,4 +422,15 @@ TEST_CASE("BuildXmlTvQuery never asks for a forward window", "[EpgTagUtil]")
   // See its comment: `days` is not a limit on what the account already gets, and a long one outgrows the response cap.
   CHECK(BuildXmlTvQuery(3).find("&days=") == std::string::npos);
   CHECK(BuildXmlTvQuery(0).find("days") == std::string::npos);
+}
+
+// A guide entry whose start was clamped to the floor is not in any catch-up window; the age `now - start` overflowed
+// while the floor was the smallest time_t plus a year, and the window answered true (docs/CLOSED_ITEMS.md, "Windows
+// (and 32-bit) parse a pre-1970 (pre-1901) date to a floor that later subtractions overflow").
+TEST_CASE("IsWithinCatchupWindow refuses a start at the parse floor", "[EpgTagUtil]")
+{
+  const time_t now = 1791072000;
+  CHECK_FALSE(IsWithinCatchupWindow(true, 7, kEarliestRepresentableTime, now));
+  CHECK_FALSE(IsWithinCatchupWindow(true, 0, kEarliestRepresentableTime, now));
+  CHECK_FALSE(IsWithinCatchupWindow(true, 7, kEarliestRepresentableTime, kLatestRepresentableTime));
 }

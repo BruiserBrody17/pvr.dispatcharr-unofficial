@@ -6,6 +6,112 @@
 
 ### Fixed
 
+#### Windows (and 32-bit) parse a pre-1970 (pre-1901) date to a floor that later subtractions overflow
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, reproduced with an injected `gm` under UBSan.**
+`_mkgmtime` returns -1 outside 1970-3000, so since the 2026-10-18 floor fix any date before 1969 on Windows saturates to
+`kEarliestRepresentableTime` (`INT64_MIN` plus a year) instead of -1; on 32-bit the same happens before 1901-12-13. The
+floor leaves room for an offset, not for `now - t` or `end - start`: with a start of 1960 `ClampedDurationSeconds()`
+overflows, `IsWithinCatchupWindow()` answers true and `CatchupSessionDurationMinutes()` a large negative number (also
+`EpgProgramMatch.cpp` and `ComputeRecordingExtendMinutes`). Only a garbage or hostile server timestamp reaches it.
+Related: a date after 3000 on Windows saturates to a value `gmtime_s` cannot format. Fix: a portable int64
+days-from-civil in place of `_mkgmtime`/`timegm`, saturated to `time_t`, or have the parsers answer 0 (unknown) at the
+floor. Tests: a Windows-like `gm` in `test_time_util.cpp` and floor-valued starts in the recording, EPG-tag and
+catch-up-session tests (they fail under UBSan today).
+
+**Fixed 2026-11-01, confirmed by tests (no live check: only a garbage or hostile server timestamp reaches it).**
+`SaturatingTimeGm()` (`TimeUtil.h`) no longer calls the libc: `UtcCivilSeconds()` computes the time in 64 bits from the
+calendar (days-from-civil), so a pre-1970 date parses to its real time on Windows too, and a date beyond `time_t`'s
+range is clamped without relying on a -1 from `_mkgmtime()`/`timegm()`. On a 64-bit `time_t` the bounds are now a
+quarter of its range (`kEarliestRepresentableTime`/`kLatestRepresentableTime`), so the difference of any two clamped
+times fits in 64 bits; a 32-bit `time_t` keeps a year of headroom at each end, and the two remaining callers that
+subtracted in `time_t`, `FindEpgEntryIndexCoveringRecording()`/`FindEpgEntryIndexByStartTime()`
+(`EpgProgramMatch.cpp`) and `ComputeRecordingExtendMinutes()` (`TimerIdentity.h`), now subtract in 64 bits (the
+coverage rule compared without products that could overflow). The related case, a date after 3000 on Windows, is
+fixed the same way: such a date now parses to its real time, and `GmTimeUtc()` formats it through
+`UtcCivilFromSeconds()`, the 64-bit inverse, instead of `gmtime_s()`, which refused it (Microsoft documents every field
+set to -1, which the CRT's `strftime()` rejects through its invalid-parameter handler; not reproduced on Windows here).
+`IsoFromTime()`/`DateStringFromTime()` also clamp to years 0000-9999 and write with `snprintf()` instead of
+`strftime()` (glibc does not pad a year below 1000), since a second or an offset added to a parsed 9999-12-31T23:59:59
+passes 9999 (found by the review of this fix). Tests: `UtcCivilSeconds()` against known dates on both sides of 1970, against `timegm()`
+across 1559-2380 on a 64-bit host, and for out-of-range fields; `UtcCivilFromSeconds()` field for field (weekday and
+day of the year included) against `gmtime_r()` across the same span, or a 32-bit `time_t`'s whole range; dates before
+1970 and after 3000 round-tripping through `TimeFromDateString()`/`DateStringFromTime()`; floor- and ceiling-valued times in the recording,
+EPG-tag, catch-up-session, EPG-match and extend-minutes tests.
+Run against the old `src/` the floor-valued tests fail: under ASan/UBSan all five (UBSan's "signed integer overflow" on
+`now - floor`), and in a 32-bit UBSan build the EPG-match and extend-minutes ones (32-bit `time_t` subtraction).
+
+#### SanitizeRecordingDirectory trims with std::isspace
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading (the locale case not reproduced
+here).** Filed as "Two text-handling gaps: SanitizeRecordingDirectory's std::isspace, and C1 controls in
+SanitizeServerErrorBody"; the C1 half was fixed on 2026-10-31 (`CLOSED_ITEMS.md`, "SanitizeServerErrorBody passes C1
+control characters into kodi.log"). `RecordingDirectory.h` trims with `std::isspace`, which depends on the C locale Kodi
+sets from the user's region; under a Windows code page that counts 0xA0 as a space, a title ending in "à" (UTF-8 `C3
+A0`) loses its last byte and the folder name is invalid UTF-8. It also trims only ASCII whitespace, where the function
+says it mirrors Dispatcharr's `_safe_name()` (check whether that uses Python's Unicode `.strip()`). Fix:
+`StripUnicodeWhitespace()` from `UnicodeText.h`; tests for "Voilà" and a U+3000 edge.
+
+**Fixed 2026-11-01, confirmed by tests and against Dispatcharr's source.** Dispatcharr's `_safe_name()`
+(`apps/channels/tasks.py`, read on `main` 2026-11-01) trims with Python's `s.strip()`, which removes Unicode
+whitespace, so `SanitizeRecordingDirectory()` now trims with `StripUnicodeWhitespace()` (`UnicodeText.h`, Python's
+`str.isspace()` set) in place of `std::isspace()`. Only whole whitespace code points go, so a title ending in "à" keeps
+its last byte under any locale, and a title ending in U+3000 or U+00A0 lands in the same Kodi folder as the one
+Dispatcharr wrote it under. Tests in `tests/test_recording_directory.cpp` (U+3000, U+00A0, U+2003 at the ends, U+2009
+inside, "Voilà"); the Unicode-whitespace cases fail on the old code.
+
+#### GetChannelGroups() falls back to a route that does not exist
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, confirmed by reading.** When `/api/channels/groups/`
+fails, `GetChannelGroups()` retries `kChannelGroupsPathFallback` (`/api/channels/channel-groups/`), which the constant's
+own comment and `API_NOTES.md` say Dispatcharr does not have: its web app answers it with 200 and `index.html`. So in an
+outage the refresh waits out two request timeouts instead of one, a real 403 or 500 from the primary is reported with
+"Failed to parse JSON response" appended, and the access token goes to a route that is not an API. The comment inside
+the function ("Neither path was independently confirmed") is stale. Fix: drop the fallback (or fall back only on a 404
+from the primary).
+
+**Fixed 2026-11-01, confirmed with the glue harness.** The fallback is gone: a failed `/api/channels/groups/` request
+fails the refresh with its own error. The glue scenario `auth_reauth_failed` (in CI) answers the groups request with
+500 (`groups_status`) and fails if `/api/channels/channel-groups/` is requested or the error carries a parse failure; on
+the old code it saw one fallback request and the error "Dispatcharr returned HTTP 500 ... / Dispatcharr returned HTTP
+404".
+
+#### A 401 whose re-authentication fails is reported to the caller as a 401
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, latent, confirmed by reading.** `Request()`'s 401 retry
+calls `EnsureAuthenticated()` without a status pointer, so when the re-login itself fails (a backoff, a 5xx, a transport
+error) `httpStatusOut` still holds the first attempt's 401. Every current caller decides correctly anyway (traced:
+`ClassifyApiKeyLookupFailure()` sends a 401 to generating a key, but `GenerateApiKey()` re-runs `EnsureAuthenticated()`
+and fails the same way; the recording lookup's playlist skip acts only on status 0; the delete and stop paths treat only
+404 specially), but a new caller that takes 401 as a lasting refusal would misread an outage. `CLOSED_ITEMS.md`'s "A 401
+during recurring-rule adoption was recorded as a permanent refusal" fixed one caller, not this. Fix: report the
+re-authentication's own status, or a "no request made" value, instead of the stale 401.
+
+**Fixed 2026-11-01, confirmed with the glue harness.** `Request()` now reports -1 ("never retried, answer unknown",
+the convention `EnsureAuthenticated()` already used) when the re-authentication a 401 triggered fails, instead of the
+first attempt's 401. Every caller was traced: a 404 check (delete, stop, the recurring-rule lookup, the in-progress
+"gone" check) and the playlist skip on status 0 decide as before, as do the live give-up's notice (-1 is "nothing
+known", as 401 was read) and adoption (`ClassifyAdoptionPatchFailure()` retries both). The one change is the API-key
+lookup: `ClassifyApiKeyLookupFailure()` reads -1 as transient and stops, where a 401 went on to `GenerateApiKey()`,
+whose own authentication then failed the same way. The glue scenario `auth_reauth_failed` answers a recording lookup
+401 (`bearer_401`) with the refresh and the login answering 503 (`refresh_status`, `login_status`) and requires -1; the
+old code reported 401. Classifier tests pin -1 in `test_api_key_recovery.cpp` and `test_managed_recurring_rule.cpp`.
+
+#### TrackDetachedThread() joins threads inside a std::remove_if predicate
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, standards conformance, confirmed by reading.** The
+opportunistic prune hands `std::remove_if` a predicate that calls `entry.thread.join()`, and [algorithms.requirements]
+forbids a predicate applying a non-constant function through the iterator. It works on libstdc++, libc++ and MSVC
+because each calls the predicate once per element, in order, before moving that element, which is also what makes the
+later move-assignment onto the slot safe (move-assigning onto a joinable `std::thread` is `std::terminate`). An
+implementation that did otherwise would throw `std::system_error` under the lock, on a path reachable from
+`OnAddonSettingChanged()` ("Nothing stops an exception crossing from a PVR callback into Kodi", below). Fix, with no
+change in behaviour: join the finished entries in a plain loop, then `remove_if` on `!thread.joinable()`.
+
+**Fixed 2026-11-01, confirmed by reading and the glue harness (no change in behaviour).** The finished entries are
+joined in a plain loop, then removed with `std::remove_if` on `!thread.joinable()`, a predicate that modifies nothing.
+The glue harness's PVR scenarios, which schedule background tasks through it, pass under ASan and UBSan.
+
 #### A live read that lands in a gap answers 0 while the buffer is alive, which sets Kodi's end of file
 
 **Opened 2026-10-26, from a read-only review of the HEVC seek-probe fix; LOW; reproduced live with a throwaway build,
