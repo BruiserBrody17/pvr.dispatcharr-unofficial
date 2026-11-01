@@ -66,6 +66,11 @@ without guide data has none; open it from Kodi's Recordings list instead.
    `http://127.0.0.1:9191`).
 6. The account calling these actions must be a Dispatcharr **admin**
    account (`user_level >= 10`).
+7. If you have narrowed **Settings → Network Access → Streams**, it must allow each Kodi device's address **and**
+   loopback (`127.0.0.1`). The buffer reads the stream from inside the container: most channels are checked against
+   the Kodi device's own address (as Kodi sees it on its local network, which is not the same address behind NAT or a
+   VPN), and channels whose stream profile is Redirect against loopback. A refused start shows in Kodi's log as
+   "the stream was refused with HTTP 403".
 
 ## Testing manually
 

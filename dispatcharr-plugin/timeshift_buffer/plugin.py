@@ -19,9 +19,19 @@ conversation that produced this draft for the full reasoning):
 - Confirmed stream_ts (the view behind that URL) is @permission_classes
   ([AllowAny]), gated only by network_access_allowed(request, "STREAMS")
   -- unrestricted by default. A loopback request from inside this plugin's
-  own process needs no API key/token. If you've deliberately narrowed the
-  STREAMS network-access setting to exclude localhost, add it back or this
-  plugin can't reach the proxy.
+  own process needs no API key/token. Which address the STREAMS check
+  judges depends on the start (read in Dispatcharr's source, confirmed
+  live 2026-11-01 on 0.33.0, see docs/CLOSED_ITEMS.md): a proxied channel's request
+  carries X-Real-IP with the viewer's address (see
+  _stream_attribution_headers()), which Dispatcharr trusts from 127.0.0.1
+  (get_client_ip()), so it is judged against the Kodi device; a channel
+  whose stream profile is Redirect (or whose profile lookup fails, see
+  _ffmpeg_input_headers()) or a start with no client_ip sends no
+  X-Real-IP and is judged against loopback. A narrowed STREAMS list
+  therefore has to allow both. The viewer's address is the one the addon
+  saw on its own side of the connection (CURLINFO_LOCAL_IP), so behind NAT
+  or a VPN it is not the address direct playback is judged by. A refused
+  start's ffmpeg exits on a 403, which _buffer_failed_message() names.
 - ffmpeg's own hls muxer does almost all the hard work: -hls_flags
   delete_segments (with -hls_delete_threshold) removes old segment files
   instead of growing forever, and -hls_list_size maintains a
@@ -604,8 +614,15 @@ def _resolve_request_path(request_path: str, storage_path: str):
         return None, None
     channel_uuid = parts[0]
 
-    storage_root = Path(storage_path).resolve()
-    candidate = (storage_root / raw.lstrip("/")).resolve()
+    # A symlink loop under storage_path (left there by something else; the storage is often shared) makes resolve()
+    # raise RuntimeError on Python 3.12 and earlier, and an OSError is possible for other unreadable links; either
+    # used to reach handle_error() as a dropped connection and a traceback per request, before the token check
+    # (2026-10-31 bug sweep). Such a path names no servable file, so it is a 404 like the cases above.
+    try:
+        storage_root = Path(storage_path).resolve()
+        candidate = (storage_root / raw.lstrip("/")).resolve()
+    except (OSError, RuntimeError):
+        return None, None
     if storage_root not in candidate.parents and candidate != storage_root:
         return None, None
     return channel_uuid, candidate
@@ -908,7 +925,24 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         if channel_uuid is None:
             self.send_error(404, "Not found")
             return None, None
-        if not self._check_access_token(channel_uuid):
+        try:
+            authorized = self._check_access_token(channel_uuid)
+        except Exception:
+            # The token lives in Redis, and redis-py's ConnectionError/TimeoutError are not the built-in ones (a
+            # corrupt state raises ValueError): uncaught, every playlist and segment request during an outage ended in
+            # handle_error()'s traceback and a dropped connection instead of a status (2026-10-23 bug sweep). A 503
+            # says "try again", which is what an outage is; the log is throttled the way the reaper's is.
+            log, suppressed = _token_lookup_log_throttle.check()
+            logger = getattr(self.server, "plugin_logger", None)
+            if log and logger:
+                logger.exception(
+                    "timeshift_buffer http: couldn't read the buffer state to check a token, answering 503 "
+                    "(%d similar failure(s) since the last report)",
+                    suppressed,
+                )
+            self.send_error(503, "Service unavailable")
+            return None, None
+        if not authorized:
             self.send_error(403, "Forbidden")
             return None, None
         if target is None or not target.is_file() or not _is_servable_name(target.name):
@@ -1190,16 +1224,32 @@ def _create_http_server(port: int, logger):
     falling back to IPv4 only where that isn't available (a container with
     IPv6 disabled has no `::` to bind -- most Docker setups). Returns
     (server, description of what it bound), or (None, None) if neither
-    worked. A port that's simply taken fails both, and is reported once."""
+    worked. A port that's simply taken fails both, and is reported once
+    per `_bind_failure_log_throttle` interval: every run() retries the bind,
+    so a port held for hours used to add an error line to every plugin call
+    in every worker (2026-10-31 bug sweep)."""
     try:
-        return _BufferHTTPServerV6(("::", port), _BufferRequestHandler), f"[::]:{port} (IPv4 and IPv6)"
+        server = _BufferHTTPServerV6(("::", port), _BufferRequestHandler)
+        _bind_failure_log_throttle.reset()
+        return server, f"[::]:{port} (IPv4 and IPv6)"
     except OSError as exc_v6:
         v6_error = exc_v6
     try:
         server = _BufferHTTPServer(("0.0.0.0", port), _BufferRequestHandler)  # noqa: S104 -- must be reachable from outside the container by design
     except OSError as exc:
-        logger.error("timeshift_buffer: couldn't bind http server on port %d: %s", port, exc)
+        log, suppressed = _bind_failure_log_throttle.check((port, exc.errno))
+        if log:
+            logger.error(
+                "timeshift_buffer: couldn't bind http server on port %d: %s (%d similar failure(s) since the last "
+                "report)",
+                port,
+                exc,
+                suppressed,
+            )
+        else:
+            logger.debug("timeshift_buffer: still couldn't bind http server on port %d: %s", port, exc)
         return None, None
+    _bind_failure_log_throttle.reset()
     logger.info("timeshift_buffer: no dual-stack IPv6 socket available (%s) -- serving IPv4 only", v6_error)
     return server, f"0.0.0.0:{port} (IPv4 only)"
 
@@ -2005,6 +2055,30 @@ class BufferFailedError(RuntimeError):
     see _get_live_manifest()'s own comment on why the distinction matters."""
 
 
+# ffmpeg's HTTP input logs "HTTP error 403 Forbidden" and exits with "Server returned 403 Forbidden (access denied)".
+_FFMPEG_HTTP_403_RE = re.compile(r"\b403 Forbidden\b")
+
+
+def _buffer_failed_message(ffmpeg_log_lines) -> str:
+    """The message for a buffer whose ffmpeg exited before its first segment, from the lines of its ffmpeg.log.
+
+    A 403 is named apart from the usual provider-limit hint: a Kodi device (or loopback) outside a narrowed Streams
+    network-access list looked like a provider-side stream limit (2026-10-24 bug sweep; the module docstring's
+    STREAMS note says which address is judged when). On a Redirect-profile channel ffmpeg follows the proxy's 302, so
+    the 403 can also be the provider's own, which the message has to leave open."""
+    if any(_FFMPEG_HTTP_403_RE.search(line) for line in ffmpeg_log_lines):
+        cause = (
+            "the stream was refused with HTTP 403 -- if Settings -> Network Access -> Streams is narrowed, it must "
+            "allow this Kodi device's address and loopback (127.0.0.1); for a channel whose stream profile is "
+            "Redirect, the provider itself may have refused it"
+        )
+    else:
+        cause = "a provider-side concurrent-stream limit is the most common cause"
+    message = f"ffmpeg exited before producing any segments -- it will not recover on its own ({cause})"
+    log_tail = " | ".join(ffmpeg_log_lines[-5:])
+    return message + (f"; last ffmpeg.log lines: {log_tail}" if log_tail else "")
+
+
 def _remove_channel_files(state: dict, logger):
     # shutil.rmtree rather than a flat glob+unlink+rmdir: simpler, and
     # robust to whatever this directory happens to contain rather than
@@ -2700,18 +2774,13 @@ def _get_live_manifest(state: dict, logger) -> dict:
         # retrying for its full ~15s budget against something that will
         # never succeed.
         if not _is_process_alive(state.get("pid"), state.get("pid_start_ticks")):
-            log_tail = ""
+            lines = []
             try:
                 log_path = channel_dir / "ffmpeg.log"
                 lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-                log_tail = " | ".join(lines[-5:])
             except OSError:
                 pass
-            raise BufferFailedError(
-                "ffmpeg exited before producing any segments -- it will not "
-                "recover on its own (a provider-side concurrent-stream limit "
-                "is the most common cause)" + (f"; last ffmpeg.log lines: {log_tail}" if log_tail else "")
-            )
+            raise BufferFailedError(_buffer_failed_message(lines))
         raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet")
 
     try:
@@ -3209,6 +3278,42 @@ def _should_log_reaper_error(last_logged_at, now: float, interval: float = _REAP
     """Whether a failed reaper tick at monotonic time `now` gets its full log entry: the first one, and
     then at most one per `interval`."""
     return last_logged_at is None or now - last_logged_at >= interval
+
+
+class _LogThrottle:
+    """The reaper's once-per-interval rule for a failure that repeats outside the reaper loop, where no single loop
+    can keep the count: the file server's handler threads share one, and every run() can hit the other. A failure
+    with a different `key` (a new port or errno) is logged at once."""
+
+    def __init__(self, interval: float = _REAPER_ERROR_LOG_INTERVAL_SECONDS, clock=time.monotonic):
+        self._interval = interval
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._key = None
+        self._logged_at = None
+        self._suppressed = 0
+
+    def check(self, key=None):
+        """Returns (log, suppressed): whether this failure gets its full entry, and how many went unlogged before it."""
+        with self._lock:
+            now = self._clock()
+            if key != self._key or _should_log_reaper_error(self._logged_at, now, self._interval):
+                suppressed = self._suppressed
+                self._key, self._logged_at, self._suppressed = key, now, 0
+                return True, suppressed
+            self._suppressed += 1
+            return False, 0
+
+    def reset(self):
+        """After a success, so the next failure is logged at once."""
+        with self._lock:
+            self._key, self._logged_at, self._suppressed = None, None, 0
+
+
+# Defined here, beside the interval they share, and looked up at call time by _resolve_and_authorize() and
+# _create_http_server().
+_token_lookup_log_throttle = _LogThrottle()
+_bind_failure_log_throttle = _LogThrottle()
 
 
 # ffmpeg's stdout and stderr go to <channel dir>/ffmpeg.log, opened in append mode and emptied only by a fresh
