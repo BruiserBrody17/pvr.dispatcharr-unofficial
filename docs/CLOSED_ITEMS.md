@@ -6,6 +6,75 @@
 
 ### Fixed
 
+#### The release gate passes a plugin zip whose files are not the tag's
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; MEDIUM, reproduced in a scratch copy.** Under
+`--expect-release`, `check_release_zip.py`'s `_plugin_contents` checks only that a plugin zip's `plugin.json` version equals its `Plugin` class
+version and the `plugin.json` in the `dispatcharr-plugin/` beside the gate's `tools/`. Nothing compares the zip's
+members or bytes with that directory, or limits which members it may have. `BUILDING.md`'s plugin-only refresh recipe
+zips a working tree with `zip -r` (the release path exports the tag with `git archive`), so an uncommitted edit to
+`plugin.py` at the same version, or an untracked file beside it (an editor backup, notes), ships under the release's
+name and the gate says clean unless a blocklist term is in it. The addon zips' member check (`_outside`) also lets
+`.DS_Store`, `Thumbs.db` and `desktop.ini` through. Repro: a copied `recording_edl/` with one line of `plugin.py`
+changed and a notes file added, zipped and normalised as the workflow does, passed both `check_release_contents` and
+`check_zip`. `CLOSED_ITEMS.md`'s "The release gate passes a stale plugin zip under --expect-release" added the version
+and timestamp rules only. Fix: when the plugin source is there, require the member set to equal its files (less
+`tests/` and `__pycache__/`) byte for byte, reporting extra, missing and differing members; switch the recipe to `git
+archive`; reject those three file names. Test: the dirty-tree zip above must fail.
+
+**Fixed 2026-10-31, confirmed with tests that fail on the old gate and a run over the shipped 0.14.2 and 0.13.2 sets.** Under
+`--expect-release`, once a plugin zip's version matches the gate's tree, `_plugin_differences` compares its files with
+that tree's plugin folder byte for byte (less the top-level `tests/` and every `__pycache__/`, as build.yml's zip step
+leaves them out) and reports extra, missing and differing members. `check_zip` rejects a desktop's folder metadata in
+any zip (`.DS_Store`, `._*`, `__MACOSX/`, `Thumbs.db`, `desktop.ini`). `BUILDING.md`'s plugin-only refresh recipe now
+zips a `git archive` export of the commit and runs that export's gate on the one zip; it leaves `--expect-release` out
+there, since the release's other plugin zip would be held against a commit where that plugin may have moved on (tried
+on `Piers`, where `timeshift_buffer` is 0.8.17 against the release's 0.8.16, and it failed on exactly that). Tests: the
+dirty-tree repro (an edited `plugin.py` and a notes file), a committed file the zip lacks, a nested `tests/` that must
+ship, and each of the five metadata names. The new gate passes the shipped 0.14.2 set (and, on `Omega`, 0.13.2) run with that tag's
+`dispatcharr-plugin/`; the recipe was run as written on `Piers` (clean zip passes; an edit to the export's
+`plugin.py` afterwards fails with "differ(s)" under `--expect-release`).
+
+#### The release gate compares entry timestamps in the central directory only
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced with a hand-patched zip.** The
+one-timestamp rule in the gate's `_layout_problems` reads `info.date_time`, the central directory's copy; each local header's own
+DOS time and date are never compared, though its name and extra-field length are. A zip whose local headers carry
+another time (the build machine's local clock) passes. No real tool writes the two copies from different values
+(CPack/libarchive, Info-ZIP, .NET and Python each write one), so this is a gap against a crafted zip, not an expected
+leak. `CLOSED_ITEMS.md`'s "The release gate does not catch local-clock entry timestamps" fixed the central-directory
+half. Fix: compare the local header's time and date with `info.date_time`'s DOS encoding; one test with a patched zip.
+
+**Fixed 2026-10-31, confirmed with a test that fails on the old gate.** `_layout_problems` compares each local
+header's DOS time and date with `info.date_time` encoded back (`_dos_time_and_date`, exact since zipfile's decoding
+loses nothing). The test patches a byte-written zip's local header three hours and one day on, each still read by
+`zipfile`, and checks a `zipfile`-written entry at an odd second still passes.
+
+#### The release gate crashes on an entry flagged encrypted instead of reporting it
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced.** `archive.read()` raises `RuntimeError`
+for an entry with general-purpose flag bit 0 set, and neither the scan's read nor its `_read` helper catches it (both catch
+`BadZipFile`, `zlib.error`, `NotImplementedError` and `OSError`). The gate exits 1 with a traceback, so it fails closed,
+but the rest of the set goes unchecked in that run and the output names no cause. Fix: catch `RuntimeError` in both and
+report the entry as unreadable (encrypted); a test with a flagged entry.
+
+**Fixed 2026-10-31, confirmed with a test that fails on the old gate.** `check_zip` reports an entry with flag bit 0 as
+encrypted and moves on to the next one, and both reads catch `RuntimeError` (one `READ_ERRORS` tuple now). The test
+flags one of two entries and checks the other's `/home/` path is still reported, then flags a plugin zip's
+`plugin.json`, which `check_release_contents` reports as having no version instead of raising.
+
+#### A PRIVACY_BLOCKLIST naming a missing file falls back to the home blocklist
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, confirmed by reading.** `check_release_zip.py`'s `find_blocklist` refuses a
+`--blocklist` path that does not exist, so that a mistyped one never falls back to another list, but a set
+`PRIVACY_BLOCKLIST` naming a missing file is skipped and `~/.privacy-blocklist.txt` used instead; `BUILDING.md`'s
+release recipe relies on the environment or the home file, not `--blocklist`. A false negative only when the two lists
+differ. Fix: treat a set `PRIVACY_BLOCKLIST` like `--blocklist`, an error when the file is missing; a test.
+
+**Fixed 2026-10-31, confirmed with a test that fails on the old gate.** `find_blocklist` raises `BlocklistError` for a
+set `$PRIVACY_BLOCKLIST` naming no file, as for `--blocklist`, so `main()` exits 2; an empty value still counts as
+unset. The test has a home list present, so the old fallback is what it would have found.
+
 #### timeshift_buffer: string settings are not stripped, so a pasted space breaks storage_path or internal_base_url
 
 **Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before

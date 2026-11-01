@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**28 open, 374 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**24 open, 378 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -19,8 +19,9 @@ confirmed. The open ones came from:
   alive.
 - One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
   lock.
-- Eleven, one MEDIUM, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and
-  checked against `Omega`'s code the same day (all 11 findings held here).
+- Seven, all LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and
+  checked against `Omega`'s code the same day (all 11 findings held here). Four of its eleven, the release gate's, are
+  fixed.
 
 Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
 held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
@@ -34,8 +35,8 @@ held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 4 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 324 |
+| Open: Tooling (tools/) | 0 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 328 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 40 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -366,44 +367,4 @@ handling in `OnAddonSettingChanged()` are the work. Not started.
 
 ### Tooling (tools/)
 
-#### The release gate passes a plugin zip whose files are not the tag's
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; MEDIUM, reproduced in a scratch copy.** Under
-`--expect-release`, `check_release_zip.py`'s `_plugin_contents` checks only that a plugin zip's `plugin.json` version equals its `Plugin` class
-version and the `plugin.json` in the `dispatcharr-plugin/` beside the gate's `tools/`. Nothing compares the zip's
-members or bytes with that directory, or limits which members it may have. `BUILDING.md`'s plugin-only refresh recipe
-zips a working tree with `zip -r` (the release path exports the tag with `git archive`), so an uncommitted edit to
-`plugin.py` at the same version, or an untracked file beside it (an editor backup, notes), ships under the release's
-name and the gate says clean unless a blocklist term is in it. The addon zips' member check (`_outside`) also lets
-`.DS_Store`, `Thumbs.db` and `desktop.ini` through. Repro: a copied `recording_edl/` with one line of `plugin.py`
-changed and a notes file added, zipped and normalised as the workflow does, passed both `check_release_contents` and
-`check_zip`. `CLOSED_ITEMS.md`'s "The release gate passes a stale plugin zip under --expect-release" added the version
-and timestamp rules only. Fix: when the plugin source is there, require the member set to equal its files (less
-`tests/` and `__pycache__/`) byte for byte, reporting extra, missing and differing members; switch the recipe to `git
-archive`; reject those three file names. Test: the dirty-tree zip above must fail.
-
-#### The release gate compares entry timestamps in the central directory only
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced with a hand-patched zip.** The
-one-timestamp rule in the gate's `_layout_problems` reads `info.date_time`, the central directory's copy; each local header's own
-DOS time and date are never compared, though its name and extra-field length are. A zip whose local headers carry
-another time (the build machine's local clock) passes. No real tool writes the two copies from different values
-(CPack/libarchive, Info-ZIP, .NET and Python each write one), so this is a gap against a crafted zip, not an expected
-leak. `CLOSED_ITEMS.md`'s "The release gate does not catch local-clock entry timestamps" fixed the central-directory
-half. Fix: compare the local header's time and date with `info.date_time`'s DOS encoding; one test with a patched zip.
-
-#### The release gate crashes on an entry flagged encrypted instead of reporting it
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced.** `archive.read()` raises `RuntimeError`
-for an entry with general-purpose flag bit 0 set, and neither the scan's read nor its `_read` helper catches it (both catch
-`BadZipFile`, `zlib.error`, `NotImplementedError` and `OSError`). The gate exits 1 with a traceback, so it fails closed,
-but the rest of the set goes unchecked in that run and the output names no cause. Fix: catch `RuntimeError` in both and
-report the entry as unreadable (encrypted); a test with a flagged entry.
-
-#### A PRIVACY_BLOCKLIST naming a missing file falls back to the home blocklist
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, confirmed by reading.** `check_release_zip.py`'s `find_blocklist` refuses a
-`--blocklist` path that does not exist, so that a mistyped one never falls back to another list, but a set
-`PRIVACY_BLOCKLIST` naming a missing file is skipped and `~/.privacy-blocklist.txt` used instead; `BUILDING.md`'s
-release recipe relies on the environment or the home file, not `--blocklist`. A false negative only when the two lists
-differ. Fix: treat a set `PRIVACY_BLOCKLIST` like `--blocklist`, an error when the file is missing; a test.
+None open.
