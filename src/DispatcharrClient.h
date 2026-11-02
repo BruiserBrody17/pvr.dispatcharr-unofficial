@@ -510,7 +510,10 @@ public:
   // method's own .cpp comment for the live-reproduced stall this fixes:
   // riding along on ReadLiveTimeshiftStream()'s own thread means an
   // unbounded call here is an unbounded stall of Kodi's own demuxer read.
-  void SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId);
+  // `bufferToken` is the access token start_buffer handed back, so the plugin can refuse a heartbeat for a buffer that
+  // has since been replaced; empty sends none.
+  void SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId,
+                              const std::string& bufferToken);
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
   // Confirmed live: GET /api/channels/recordings/{id}/ is a real,
@@ -1745,6 +1748,9 @@ private:
   // -1 when nothing is known (the throttle, or the login backoff turning the call away).
   bool RefreshLiveManifest(bool force, std::string& error, bool* fatalOut = nullptr, bool coldStart = false,
                            bool* pluginAnsweredNotReadyOut = nullptr, long* httpStatusOut = nullptr);
+  // The throttled refresh behind GetLiveTimeshiftStreamLength() and GetLiveTimeshiftStreamDurationMs(), which marks the
+  // stream fatal when the plugin answers `fatal` (see the .cpp).
+  void PollLiveManifest();
 
   // Shared give-up-or-retry handling for ReadLiveTimeshiftStream()'s
   // segment-body fetch, called after a failure (a transport-level curl

@@ -4,14 +4,14 @@
 
 ## Status at a glance
 
-**14 open, 395 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**13 open, 396 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
 - One from the Kodi 22 work on `Piers`: what remains of Kodi 22 support.
-- Five, all LOW, from the 2026-10-23 bug-hunting sweep (five read-only reviews by area, each finding checked against
-  the code before it was filed). Twelve of its 17 are fixed or closed; one of the five is what is left of a finding half
+- Four, all LOW, from the 2026-10-23 bug-hunting sweep (five read-only reviews by area, each finding checked against
+  the code before it was filed). Thirteen of its 17 are fixed or closed; one of the four is what is left of a finding half
   fixed on 2026-10-31.
 - One, LOW, from the 2026-10-24 sweep (one reviewer over the whole project). Six of its seven are fixed.
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
@@ -29,14 +29,14 @@ Nothing is left from the 2026-10-18 read-only audit of the whole project (28 fin
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 5 |
+| Open: Fix known, not yet done | 4 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 2 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 344 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 345 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 41 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -47,31 +47,6 @@ Nothing is left from the 2026-10-18 read-only audit of the whole project (28 fin
 None open.
 
 ### Fix known, not yet done
-
-#### The live heartbeat carries no access token, so a resumed viewer can stick to a replacement buffer
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading.** `SendTimeshiftHeartbeat()`
-sends only the channel and viewer id, and the plugin's `_heartbeat()`/`_apply_heartbeat()` add that viewer to whatever
-buffer is current. Since 0.8.15 a stop with an old token is declined. So: viewer A pauses past the idle timeout and is
-reaped, B starts the channel, A resumes and its overdue heartbeat registers it on B's buffer, A then goes fatal on a 403
-and its stop is declined, and when B stops the buffer and its provider slot stay up until the reaper prunes A. Fix: send
-`access_token` with the heartbeat and have `_heartbeat()` skip and answer "replaced" when `_is_stale_access_token()`
-matches, as `get_live_manifest` does. Also reword `CLOSED_ITEMS.md`'s 0.8.15 entry, which says heartbeats carried the
-token in the probe (the heartbeat action's body does not).
-
-**Confirmed live 2026-11-01** (Dispatcharr 0.33.0, `timeshift_buffer` 0.8.16, Kodi 21.3 with the current `Omega`
-build in Server-side mode, behind a proxy on the Kodi machine that could drop all of the addon's traffic). Kodi played a
-channel and paused; with its traffic dropped, the reaper ended the buffer 47 s later; a second viewer then started the
-channel through the plugin's API; Kodi was reconnected and resumed. Within 1.6 s the new buffer counted two viewers: the
-first read after the resume sends the overdue heartbeat before anything else, and the polls Kodi made while paused had
-already been answered "replaced, fatal" but do not mark the stream fatal (`GetLiveTimeshiftStreamLength()` and
-`GetLiveTimeshiftStreamDurationMs()` call `RefreshLiveManifest()` without `fatalOut`). Kodi's playback then ended
-10.2 s after the resume ("giving up after 1 consecutive segment fetch failure(s) (manifest refresh reported fatal=true:
-this caller's buffer was replaced ..."), its stop was declined, and when the second viewer stopped the buffer and its
-provider connection stayed up 22 s more, until the reaper dropped the stale entry. The same sequence driven entirely
-through the plugin's actions gave 42 s. The cost is bounded: one provider connection for up to `idle_timeout_seconds`
-plus a reaper tick after the stale viewer's last heartbeat. A second fix on the addon side: let those paused polls
-pass `fatalOut` and mark the stream fatal, so no heartbeat follows a "replaced" answer.
 
 #### timeshift_buffer: the 1440-minute cap makes manifests heavy
 

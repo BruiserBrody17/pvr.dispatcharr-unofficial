@@ -1381,7 +1381,8 @@ std::string DispatcharrClient::LiveTimeshiftAccessToken() const
   return m_liveTimeshiftStream.accessToken;
 }
 
-void DispatcharrClient::SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId)
+void DispatcharrClient::SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId,
+                                               const std::string& bufferToken)
 {
   // Deliberately does NOT go through EnsureAuthenticated()/Request(), and
   // deliberately does NOT use m_config.timeoutSeconds -- confirmed live
@@ -1429,9 +1430,15 @@ void DispatcharrClient::SendTimeshiftHeartbeat(const std::string& channelUuid, c
   if (token.empty())
     return;
 
+  json params = {{"channel_uuid", channelUuid}, {"viewer_id", viewerId}};
+  // The buffer's start token, as get_live_manifest and stop_buffer send it: without it a viewer whose buffer was reaped
+  // and replaced by another viewer's start joined the replacement, and kept it running after that viewer stopped
+  // (confirmed live, docs/CLOSED_ITEMS.md, "The live heartbeat carries no access token").
+  if (!bufferToken.empty())
+    params["access_token"] = bufferToken;
   json body = {
       {"action", "heartbeat"},
-      {"params", {{"channel_uuid", channelUuid}, {"viewer_id", viewerId}}},
+      {"params", params},
   };
   std::string bodyStr = body.dump();
 
@@ -5013,8 +5020,9 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
       m_liveTimeshiftStream.lastHeartbeatSent = now;
       const std::string heartbeatChannel = m_liveTimeshiftStream.channelUuid;
       const std::string heartbeatViewer = m_liveTimeshiftStream.viewerId;
+      const std::string heartbeatToken = m_liveTimeshiftStream.accessToken;
       stateLock.unlock();
-      SendTimeshiftHeartbeat(heartbeatChannel, heartbeatViewer);
+      SendTimeshiftHeartbeat(heartbeatChannel, heartbeatViewer, heartbeatToken);
       stateLock.lock();
       if (!stillSameStream())
         return -1;
@@ -5538,8 +5546,7 @@ int64_t DispatcharrClient::GetLiveTimeshiftStreamLength()
     if (m_liveTimeshiftStream.fatal)
       return m_liveTimeshiftStream.totalBytes;
   }
-  std::string refreshError;
-  RefreshLiveManifest(/*force=*/false, refreshError); // throttled, cheap to call often
+  PollLiveManifest();
   std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
   return m_liveTimeshiftStream.totalBytes;
 }
@@ -5558,10 +5565,34 @@ int64_t DispatcharrClient::GetLiveTimeshiftStreamDurationMs()
     if (m_liveTimeshiftStream.fatal)
       return m_liveTimeshiftStream.totalDurationMs;
   }
-  std::string refreshError;
-  RefreshLiveManifest(/*force=*/false, refreshError);
+  PollLiveManifest();
   std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
   return m_liveTimeshiftStream.totalDurationMs;
+}
+
+void DispatcharrClient::PollLiveManifest()
+{
+  uint64_t session = 0;
+  {
+    std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
+    session = m_liveSession;
+  }
+  std::string refreshError;
+  bool refreshFatal = false;
+  RefreshLiveManifest(/*force=*/false, refreshError, &refreshFatal); // throttled, cheap to call often
+  if (!refreshFatal)
+    return;
+  // These polls are all a paused viewer sends. Answered fatal (the buffer was reaped, or replaced by another viewer's
+  // start), they used to be dropped, so the resume's first read still sent its overdue heartbeat and registered this
+  // viewer on the replacement (confirmed live, docs/CLOSED_ITEMS.md, "The live heartbeat carries no access token").
+  // Marked fatal here, the resume's first read answers 0 with the usual notice and sends no heartbeat.
+  std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
+  if (!m_liveTimeshiftStream.open || m_liveSession != session || m_liveTimeshiftStream.fatal)
+    return;
+  m_liveTimeshiftStream.fatal = true;
+  kodi::Log(ADDON_LOG_ERROR,
+            "pvr.dispatcharr-unofficial: timeshift buffer reported fatal while the stream was polled, giving up: %s",
+            refreshError.c_str());
 }
 
 int64_t DispatcharrClient::FirstAvailableLiveByteOffset() const

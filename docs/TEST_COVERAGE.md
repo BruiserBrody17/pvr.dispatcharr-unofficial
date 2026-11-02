@@ -2401,6 +2401,13 @@ answering nothing, already tested); the glue scenario `live_read_gap` (in CI) pi
 counts the "is a gap" line so the scenario fails if it is not reached, and no read may answer 0. On the old code it
 answered 0 once per run, at the gap.
 
+A paused viewer's polls answered `fatal` mark the stream fatal, and the heartbeat carries the buffer's token
+(2026-11-02, `docs/CLOSED_ITEMS.md`'s "The live heartbeat carries no access token"). No new pure logic
+(`PollLiveManifest()` is a refresh plus the fatal mark under the session check); the glue scenario
+`live_paused_replaced` (in CI) pins it: the fake records the heartbeat's params, answers the polls of a 10.5 s pause
+`fatal`, then stops, so only the addon's own mark can end the resume, which must answer 0 at once with one notice and
+no overdue heartbeat. On the old code it failed all four checks.
+
 A run of failed live segment fetches is handed back to Kodi in one-second slices instead of being retried inside one
 read for up to 25 s (2026-10-29, `docs/CLOSED_ITEMS.md`'s "A Stop during a run of failed live segment fetches holds
 Kodi's interface for up to 25 s"). The decision, `DecideLiveSegmentRetryStep()` (`SegmentFetchFailure.h`), is unit-tested
@@ -3124,6 +3131,11 @@ once-per-interval rule for failures outside its loop) is tested with a fake cloc
 the provider hint otherwise. The four behaviour tests fail on the previous plugin code; the helper tests have no
 previous version. Not covered here: Dispatcharr's real network-access check and a Redis failure inside a real worker,
 both checked live on 2026-11-01 (see those entries).
+
+2026-11-02 (still the plugin's 0.8.17, `docs/CLOSED_ITEMS.md`'s "The live heartbeat carries no access token"): a
+heartbeat whose `access_token` names a replaced buffer is answered `fatal` and leaves the state as it was, one with the
+current token is recorded, and a replacement written while `get_live_manifest` builds its manifest is left exactly as
+written (the caller is not added). The first and third fail on the previous plugin code.
 
 ## Tools
 

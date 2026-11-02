@@ -3037,6 +3037,33 @@ def test_run_heartbeat_after_the_viewers_own_stop_does_not_re_add_it(monkeypatch
     assert store["s"]["stopped_viewers"] == {"v1": 1000.0}
 
 
+def test_run_heartbeat_with_a_replaced_buffers_token_does_not_join_the_replacement(monkeypatch, tmp_path):
+    # Viewer A's buffer was reaped while it was paused and B started a new one; A's overdue heartbeat carries the old
+    # token. Joining B's buffer would leave it running after B's stop, since A's own stop is declined as stale.
+    initial = {"channel_uuid": _UUID, "access_token": "new", "viewers": ["b"], "viewer_heartbeats": {"b": 5}}
+    store = _shared_state(monkeypatch, initial)
+
+    result, _logger = _run(
+        monkeypatch, "heartbeat", {"channel_uuid": _UUID, "viewer_id": "a", "access_token": "old"}, {}, tmp_path
+    )
+
+    assert result["status"] == "error"
+    assert result["fatal"] is True
+    assert "replaced" in result["message"]
+    assert store["s"] == initial
+
+
+def test_run_heartbeat_with_the_current_token_is_recorded(monkeypatch, tmp_path):
+    store = _shared_state(monkeypatch, {"channel_uuid": _UUID, "access_token": "tok", "viewers": ["a"]})
+
+    result, _logger = _run(
+        monkeypatch, "heartbeat", {"channel_uuid": _UUID, "viewer_id": "a", "access_token": "tok"}, {}, tmp_path
+    )
+
+    assert result["status"] == "ok"
+    assert "a" in store["s"]["viewer_heartbeats"]
+
+
 def test_run_stop_of_an_unlisted_viewer_still_blocks_its_late_heartbeat(monkeypatch, tmp_path):
     # The integration run's `race` case: this viewer's start_buffer was refused while another start held the lock, so
     # it was never listed; its stop and its heartbeat still race.
@@ -3230,6 +3257,29 @@ def test_run_get_live_manifest_does_not_clobber_a_viewer_registered_during_the_b
     assert result["status"] == "ok"
     assert store[_UUID]["viewers"] == ["a", "b"]  # viewer "b" survives this handler's own write-back
     assert store[_UUID]["last_heartbeat"] > 0
+
+
+def test_run_get_live_manifest_does_not_join_a_replacement_started_during_the_build(monkeypatch, tmp_path):
+    # The token matched when the request came in; another viewer's start replaced the buffer while the manifest was
+    # being built. The write-back must not register the caller on the new buffer.
+    store = {_UUID: {"channel_uuid": _UUID, "http_port": 9192, "access_token": "old", "viewers": ["a"]}}
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: copy.deepcopy(store[uuid]) if uuid in store else None
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: store.__setitem__(uuid, s))
+    replacement = {"channel_uuid": _UUID, "http_port": 9193, "access_token": "new", "viewers": ["b"]}
+
+    def replaced_mid_build(_state, _logger):
+        store[_UUID] = copy.deepcopy(replacement)
+        return {"media_sequence": 0, "segments": [], "total_bytes": 0, "total_duration_ms": 0}
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_live_manifest", replaced_mid_build)
+
+    _run(
+        monkeypatch, "get_live_manifest", {"channel_uuid": _UUID, "viewer_id": "a", "access_token": "old"}, {}, tmp_path
+    )
+
+    assert store[_UUID] == replacement
 
 
 def test_run_get_live_manifest_refreshes_the_calling_viewers_own_heartbeat(monkeypatch, tmp_path):

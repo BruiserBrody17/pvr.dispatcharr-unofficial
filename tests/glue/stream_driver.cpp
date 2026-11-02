@@ -658,6 +658,65 @@ static void live_stop_token(DispatcharrClient& cl)
     INFO("stop_buffer params %s", stop.dump().c_str());
 }
 
+static long action_count(const char* action)
+{
+  const auto stats = nlohmann::json::parse(http("/__stats"), nullptr, false);
+  const std::string key = std::string("action ") + action;
+  return stats.is_object() && stats.contains(key) ? stats[key].get<long>() : 0;
+}
+
+// A paused viewer whose buffer was reaped and replaced by another viewer's start (docs/CLOSED_ITEMS.md, "The live
+// heartbeat carries no access token"): the heartbeat must carry the buffer's start token, and once the polls a pause
+// still sends (GetStreamTimes()) are answered fatal, the resume must end the stream at once, with one notice, without
+// sending the overdue heartbeat that registered the viewer on the replacement. The fake stops answering fatal before
+// the resume, so only the addon's own fatal mark can end it.
+static void live_paused_replaced(DispatcharrClient& cl)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  std::vector<uint8_t> buf(1 << 16);
+  if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) <= 0)
+    FAIL("the first read delivered nothing");
+  const auto heartbeat = nlohmann::json::parse(http("/__lastheartbeat"), nullptr, false);
+  if (!heartbeat.is_object())
+    FAIL("no heartbeat seen after the first read: %s", heartbeat.dump().c_str());
+  else if (heartbeat.value("access_token", "") != "tok1")
+    FAIL("the heartbeat carried access_token %s, not the start_buffer token", heartbeat.dump().c_str());
+
+  // Paused: no reads, only the polls, past the 10 s heartbeat interval so the resume's first read would send one.
+  ctl("live_fatal=1");
+  const long start = ms();
+  while (ms() - start < 10500)
+  {
+    cl.GetLiveTimeshiftStreamLength();
+    cl.GetLiveTimeshiftStreamDurationMs();
+    sleep_ms(250);
+  }
+  ctl("live_fatal=0");
+  const long heartbeatsBefore = action_count("heartbeat");
+  const long notifiesBefore = g_notifyCount;
+  const long t0 = ms();
+  const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+  const long took = ms() - t0;
+  const long heartbeatsSent = action_count("heartbeat") - heartbeatsBefore;
+  const long notified = g_notifyCount - notifiesBefore;
+  INFO("paused_replaced: resume read answered %d in %ld ms, %ld heartbeat(s), %ld notice(s)", n, took, heartbeatsSent,
+       notified);
+  if (n != 0)
+    FAIL("the resume read answered %d, not 0: the fatal answers to the polls were ignored", n);
+  if (heartbeatsSent != 0)
+    FAIL("the resume sent %ld heartbeat(s) after the buffer was reported replaced", heartbeatsSent);
+  if (notified != 1)
+    FAIL("the viewer was told %ld time(s), not once", notified);
+  if (took > 1000)
+    FAIL("the resume read took %ld ms to end the stream", took);
+  cl.CloseLiveTimeshiftStream();
+}
+
 // A buffer the server has given up on (the plugin answers `fatal`) must end the stream: Kodi ends a PVR channel only
 // on a 0, and treats -1 as a read to try again, so a fatal stream that answered -1 left the player buffering with no
 // message until someone stopped it (seen live on Kodi 22.0 RC1, docs/CLOSED_ITEMS.md). `tail`: the reader is waiting
@@ -2377,6 +2436,8 @@ int main(int argc, char** argv)
       live_tail_bound(*cl);
     else if (what == "live_stop_token")
       live_stop_token(*cl);
+    else if (what == "live_paused_replaced")
+      live_paused_replaced(*cl);
     else if (what == "live_fatal_ends")
       live_fatal_ends(*cl, arg ? arg : "tail");
     else if (what == "live_tail_ended")

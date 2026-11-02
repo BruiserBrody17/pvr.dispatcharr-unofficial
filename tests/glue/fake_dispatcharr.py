@@ -36,6 +36,7 @@ TOKEN = {"v": "tok1"}
 # refresh token and answers 401 to any other (Dispatcharr 0.33.0 ships rotation off; this is the case if it turns on).
 REFRESH = {"n": 0}
 LAST_STOP = {"params": None}  # the params of the last stop_buffer, for /__laststop
+LAST_HEARTBEAT = {"params": None}  # the params of the last heartbeat, for /__lastheartbeat
 WS_PUSHED = []  # realtime messages pushed through /__ctl?ws_push= (every connected client gets all of them)
 REC_SIZE = 3 * 1024 * 1024 + 5
 # Two completed and two in-progress recordings, each with its own byte pattern, so a driver that holds several
@@ -550,6 +551,8 @@ class H(BaseHTTPRequestHandler):
             return self.J(200, LAST_EPG_QUERY["q"])
         if p == "/__laststop":
             return self.J(200, LAST_STOP["params"])
+        if p == "/__lastheartbeat":
+            return self.J(200, LAST_HEARTBEAT["params"])
         if p == "/__ctl":
             for k, v in q.items():
                 CTL[k] = v[0]
@@ -710,6 +713,8 @@ class H(BaseHTTPRequestHandler):
                     LAST_STOP["params"] = params
                 return self.J(200, {"success": True, "result": {"status": "ok"}})
             if act == "heartbeat":
+                with lock:
+                    LAST_HEARTBEAT["params"] = params
                 if ctl_int("heartbeat_delay_ms"):  # holds the read that sent it, with its state lock released
                     time.sleep(ctl_int("heartbeat_delay_ms") / 1000.0)
                 return self.J(200, {"success": True, "result": {"status": "ok"}})
