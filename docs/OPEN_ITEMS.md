@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**12 open, 391 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**13 open, 391 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -16,22 +16,24 @@ confirmed. The open ones came from:
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
+- One from the 2026-11-02 live test of handing a recording's failed reads back to Kodi: the in-progress tail wait does
+  the same and may end playback early.
 - One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
   lock.
 - One, LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and checked
-  against `Omega`'s code the same day (all 11 findings held here), confirmed live. Nine of its eleven are fixed (the
-  release gate's four, two in `timeshift_buffer`'s file server and three in the addon's request and thread handling)
-  and one was closed without a change once checked live.
+  against `Omega`'s code the same day (all 11 findings held here), confirmed live, now a design question. Nine of its
+  eleven are fixed (the release gate's four, two in `timeshift_buffer`'s file server and three in the addon's request
+  and thread handling) and one was closed without a change once checked live.
 
 Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
 held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 4 |
+| Open: Needs a live check | 1 |
+| Open: Fix known, not yet done | 3 |
 | Open: Architectural / concurrency | 2 |
-| Open: Design decision needed | 2 |
+| Open: Design decision needed | 3 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
@@ -44,7 +46,16 @@ held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 
 ### Needs a live check
 
-None open.
+#### The in-progress tail wait hands back -1 every second, which may end playback before its budget
+
+**Opened 2026-11-02, from the live test above; plausible from Kodi's source, not reproduced.** Kodi reads a recording
+again after a failed read only while its players still hold data (see "A Stop while a recording rides out a transient
+failure" under Design decision needed). The in-progress tail wait answers -1 every second while it waits for the next
+segment (`CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the live one is"), so a recorder that
+stalls for longer than Kodi's queue lasts may end playback after a few seconds instead of after the wait's budget. Its
+live confirmation timed Stops with segments arriving every 4 to 7 s, never a longer stall. Check live: play an
+in-progress recording at its tail, stall its playlist (the proxy can freeze it) for 10, 20 and 40 s, and compare when
+playback ends against the budget, with the build before that change as the control.
 
 ### Fix known, not yet done
 
@@ -80,6 +91,34 @@ Kodi keeps the old state and skips the `GetCapabilities()` re-read, and the latc
 really changes. Fix: allow re-delivering the current observation now and then (Kodi ignores a state equal to the one it
 has), or keep "delivered" apart from "observed".
 
+### Architectural / concurrency
+
+#### Nothing stops an exception crossing from a PVR callback into Kodi
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, hardening, confirmed by reading.** The worker threads
+and detached tasks run under `RunGuardedWorker()`/`RunBackgroundTask()`, but the `CInstancePVRClient` overrides Kodi
+calls on its own threads (`GetTimers`, `GetChannels`, `UpdateTimer` and the rest) and the constructor reached from
+`CreateInstance` in `addon.cpp` are not, and neither the dev-kit thunks nor `CPVRClient::DoAddonCall()` catch anything.
+A `std::bad_alloc` copying the recordings or rules vectors on a 32-bit or low-memory box ends the Kodi process (and
+crosses a CRT boundary on Windows). Fix: a small guard that catches `std::exception` and `...`, logs, and returns
+`PVR_ERROR_FAILED`/`false`/`-1`, around each override, and around `new PVRDispatcharr` returning `ADDON_STATUS_UNKNOWN`.
+
+#### timeshift_buffer: a start parked by another greenlet's blocking work can outlive its start lock
+
+**Opened 2026-10-28, from the review of the start-lock removal fix (`CLOSED_ITEMS.md`, "removals under the 30 s start
+lock let a second start run beside the first"); LOW, plausible from reading, older than that fix.** Dispatcharr's
+workers are gevent-patched (`CLOSED_ITEMS.md`'s gevent note), so a `start_buffer` that yields while holding the channel
+and slot locks (the `_list_buffer_keys()` SCAN, a Redis call) cannot resume while another greenlet on the same worker
+runs a blocking `shutil.rmtree`: a `stop_buffer` or reaper teardown of a large buffer, or another start's deferred
+removal. Past `_START_BUFFER_LOCK_TTL` a start on another worker can take the lock, spawn and write its state; the parked
+start then resumes, `_reap_untracked_ffmpeg()` stops the other's ffmpeg as untracked, and its own state write replaces
+the other's, whose viewer gets 403s. Fix candidates: re-check `GET lock == token` before `_start_ffmpeg()` and before
+`_set_buffer_state()` and answer retryable (a loss after the spawn then has to stop its own ffmpeg), or move the
+blocking removals off the request greenlet (`gevent.threadpool`, or `rmtree` in a subprocess). Reproducing it needs a
+slow removal and a start on the same worker.
+
+### Design decision needed
+
 #### A Stop while a recording rides out a transient failure holds Kodi's interface for up to 20 s
 
 **Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area, each finding checked against
@@ -110,33 +149,22 @@ main thread) was held for 16.7 s on the finished recording and 18.1 s on the in-
 with the budget counted across calls; for a finished recording keep one call's budget but consider a shorter one, and
 say beside `kTransientReadBudget` that a -1 there ends playback.
 
-### Architectural / concurrency
-
-#### Nothing stops an exception crossing from a PVR callback into Kodi
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, hardening, confirmed by reading.** The worker threads
-and detached tasks run under `RunGuardedWorker()`/`RunBackgroundTask()`, but the `CInstancePVRClient` overrides Kodi
-calls on its own threads (`GetTimers`, `GetChannels`, `UpdateTimer` and the rest) and the constructor reached from
-`CreateInstance` in `addon.cpp` are not, and neither the dev-kit thunks nor `CPVRClient::DoAddonCall()` catch anything.
-A `std::bad_alloc` copying the recordings or rules vectors on a 32-bit or low-memory box ends the Kodi process (and
-crosses a CRT boundary on Windows). Fix: a small guard that catches `std::exception` and `...`, logs, and returns
-`PVR_ERROR_FAILED`/`false`/`-1`, around each override, and around `new PVRDispatcharr` returning `ADDON_STATUS_UNKNOWN`.
-
-#### timeshift_buffer: a start parked by another greenlet's blocking work can outlive its start lock
-
-**Opened 2026-10-28, from the review of the start-lock removal fix (`CLOSED_ITEMS.md`, "removals under the 30 s start
-lock let a second start run beside the first"); LOW, plausible from reading, older than that fix.** Dispatcharr's
-workers are gevent-patched (`CLOSED_ITEMS.md`'s gevent note), so a `start_buffer` that yields while holding the channel
-and slot locks (the `_list_buffer_keys()` SCAN, a Redis call) cannot resume while another greenlet on the same worker
-runs a blocking `shutil.rmtree`: a `stop_buffer` or reaper teardown of a large buffer, or another start's deferred
-removal. Past `_START_BUFFER_LOCK_TTL` a start on another worker can take the lock, spawn and write its state; the parked
-start then resumes, `_reap_untracked_ffmpeg()` stops the other's ffmpeg as untracked, and its own state write replaces
-the other's, whose viewer gets 403s. Fix candidates: re-check `GET lock == token` before `_start_ffmpeg()` and before
-`_set_buffer_state()` and answer retryable (a loss after the spawn then has to stop its own ffmpeg), or move the
-blocking removals off the request greenlet (`gevent.threadpool`, or `rmtree` in a subprocess). Reproducing it needs a
-slow removal and a start on the same worker.
-
-### Design decision needed
+**Tried 2026-11-02 and reverted: the retries cannot be handed back to Kodi.** The fix above (slice the in-progress
+loop the way the live path does, the failure count carried on the stream so the delay keeps growing) passed a glue
+scenario: the longest read went from 21.8 s to 2.0 s through 12 s of 503s. Live it ended playback. On Kodi 21.3 with
+a throwaway build of `Omega` plus the change, an instant recording opened from its start and played 20 s, then 25 s of
+503 on its segments through the same proxy: playback ended 14.3 s and 9.2 s into the outage, Kodi logging "eof reading
+from demuxer"; the unchanged build on the same recording played on and advanced 19 s in the 21 s after it. Kodi's
+source says why: a recording's `NextPVRStream()` answers `NEXTSTREAM_NONE`, finished or in progress
+(`InputStreamPVRRecording.cpp`), so after a failed read `CVideoPlayer::Process()` drains its decoders and reads again
+only while the audio or video player still holds data, and with the stream marked not initialised it no longer pauses
+to buffer, so the queue empties. A channel answers `NEXTSTREAM_RETRY` and is simply read again. The 2026-10-02 entry
+"A brief server outage ended playback for good" had measured the same thing, which is why the budget is inside one
+call. The live check above saw an in-progress read retried after a 22 s -1, and a finished one not: what each queue
+held at that moment, not a rule by stream type. The comments now say this (`IsTransientReadFailure()`, and beside
+both `kTransientReadBudget`). What is left is a trade: a shorter budget shortens the hold after a Stop and the outage
+a recording rides out together, or Kodi itself would need to act on a Stop during a read. Left at 20 s until someone
+asks for otherwise.
 
 #### timeshift_buffer: a stop from the last listed viewer ends a buffer another viewer is still reading
 
