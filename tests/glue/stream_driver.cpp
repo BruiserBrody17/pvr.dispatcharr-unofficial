@@ -1856,10 +1856,10 @@ static void ip_blackhole_close(DispatcharrClient& cl, long limitMs)
   ctl("ip_freeze=0");
 }
 
-// The in-progress recording's tail wait in slices, as live_tail_bound does for the live buffer: a reader parked at the
-// tail of a recording that is still being written (a stalled recorder, a viewer who caught up) has to hand control back
-// to Kodi about once a second, because Kodi acts on a stop only between reads. A slice that finds nothing returns -1,
-// 0 comes only once the whole budget is used, and the same stream resumes when the recording grows again.
+// The in-progress recording's tail wait, unlike live_tail_bound's: one read that waits out the whole budget, never a
+// -1, because Kodi reads a recording again after a -1 only while its players still hold data, so -1 slices ended
+// playback a few seconds into a recorder stall (confirmed live, docs/CLOSED_ITEMS.md, "The in-progress tail wait hands
+// back -1 every second"). 0 comes once the budget is used, and the same stream resumes when the recording grows again.
 static void ip_tail_bound(DispatcharrClient& cl)
 {
   ctl("ip_reset=3");
@@ -1895,17 +1895,18 @@ static void ip_tail_bound(DispatcharrClient& cl)
       waitBeforeFirstZero = tailWaitMs;
     }
   }
-  INFO("ip tail bound: max read at the tail %ld ms, %ld retries (-1) before the first 0, waited %ld ms in all, "
+  INFO("ip tail bound: max read at the tail %ld ms, %ld -1 answers before the first 0, waited %ld ms in all, "
        "bytes before the tail %ld",
        maxTailReadMs, minusOnes, waitBeforeFirstZero, bytes);
   if (!sawZero)
     FAIL("no read ever returned 0 in 30 s: the budget never ended");
-  if (maxTailReadMs > 1800)
-    FAIL("one read at the tail blocked for %ld ms; Kodi cannot act on a stop for that long", maxTailReadMs);
+  if (minusOnes > 0)
+    FAIL("%ld reads at the tail returned -1; Kodi ends a recording's playback once its queue drains after one",
+         minusOnes);
   if (waitBeforeFirstZero >= 0 && waitBeforeFirstZero < 2000)
     FAIL("the stream gave up (0) after only %ld ms at the tail; the budget must not shrink", waitBeforeFirstZero);
-  if (minusOnes < 1)
-    FAIL("no -1 was returned while waiting, so the wait was not handed back in slices");
+  if (maxTailReadMs > 25000)
+    FAIL("one read at the tail blocked for %ld ms, past the wait's own bound", maxTailReadMs);
   if (!(cl.OpenRecordedStreamCount() > 0))
     FAIL("the stream closed itself while waiting at the tail");
 
@@ -1966,7 +1967,7 @@ static bool open_stream(DispatcharrClient& cl, int recId, OpenStream& st)
 }
 
 // Reads `want` bytes from the stream's own position and checks each against its recording's pattern. A -1 is
-// retried (a wait at the tail of a growing recording is handed back in slices), a 0 before `want` is a failure.
+// retried (a close or seek racing the read can still answer one), a 0 before `want` is a failure.
 static int64_t read_verified(DispatcharrClient& cl, OpenStream& st, int64_t want)
 {
   std::vector<uint8_t> buf(32768 + 3);

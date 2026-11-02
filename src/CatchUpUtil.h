@@ -156,6 +156,8 @@ inline int64_t ComputeShortGiveUpPosition(bool likelySeekProbe, bool caughtUp, i
 // channel change waited out the rest of the read, and a Player.Open sent in that window was dropped. The wait now
 // ends after kLiveTailWaitSliceMs with -1, which the demuxer retries (a 0 would end playback; only a budget that is
 // really used up still returns it), and the budget is counted across the calls of one episode at the same position.
+// Live only: Kodi retries a channel's -1 indefinitely but a recording's only while its players hold data, so an
+// in-progress recording's tail waits in one read (ReadInProgressRecordingStreamImpl()).
 constexpr int64_t kLiveTailWaitSliceMs = 1000;
 
 // A read at the same position that arrives later than this after the previous one is a new episode: Kodi retries a -1

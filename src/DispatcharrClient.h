@@ -1833,8 +1833,6 @@ private:
     // mechanism.
     std::chrono::steady_clock::time_point lastSeekTime{};
     int64_t lastShortGiveUpPosition = -1;
-    // Where the current wait at the tail began (see TailWaitEpisode, CatchUpUtil.h).
-    dispatcharr::TailWaitEpisode tailWait;
     void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
     // Whole-segment cache for ReadInProgressRecordingStreamImpl() -- required,
     // not just an optimisation: unlike the completed-recording `/file/`

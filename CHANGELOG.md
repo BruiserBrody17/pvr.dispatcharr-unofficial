@@ -44,6 +44,11 @@ compare against.
   buffer, which kept it and its provider connection running after they stopped. The addon now ends the stream with the
   usual "Play the channel again" message without contacting the new buffer, and sends the buffer's token with its
   heartbeat, which `timeshift_buffer` 0.8.17 checks.
+- **Watching a recording that is still in progress at its live edge: a pause in the recording no longer ends
+  playback after a few seconds.** Since 0.13.0, if the recording stopped growing for more than a few seconds (the
+  provider stalled, say, and on Kodi 22 sometimes just the wait for its next piece), playback ended. It now waits for
+  the recording to grow again, as it did before 0.13.0; a Stop pressed during such a wait can again take up to about
+  three segment lengths.
 
 ## `timeshift_buffer` [0.8.17] - Unreleased
 
