@@ -17,7 +17,7 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One from the 2026-11-02 live test of handing a recording's failed reads back to Kodi: the in-progress tail wait does
-  the same and may end playback early.
+  the same, and a live check the same day found it ends playback 7 to 9 s into a recorder stall.
 - One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
   lock.
 - One, LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and checked
@@ -30,8 +30,8 @@ held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 3 |
+| Open: Needs a live check | 0 |
+| Open: Fix known, not yet done | 4 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 3 |
 | Open: Release, CI and manual testing | 0 |
@@ -46,18 +46,34 @@ held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 
 ### Needs a live check
 
-#### The in-progress tail wait hands back -1 every second, which may end playback before its budget
-
-**Opened 2026-11-02, from the live test above; plausible from Kodi's source, not reproduced.** Kodi reads a recording
-again after a failed read only while its players still hold data (see "A Stop while a recording rides out a transient
-failure" under Design decision needed). The in-progress tail wait answers -1 every second while it waits for the next
-segment (`CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the live one is"), so a recorder that
-stalls for longer than Kodi's queue lasts may end playback after a few seconds instead of after the wait's budget. Its
-live confirmation timed Stops with segments arriving every 4 to 7 s, never a longer stall. Check live: play an
-in-progress recording at its tail, stall its playlist (the proxy can freeze it) for 10, 20 and 40 s, and compare when
-playback ends against the budget, with the build before that change as the control.
+None open.
 
 ### Fix known, not yet done
+
+#### The in-progress tail wait hands back -1 every second, which ends playback a few seconds into a recorder stall
+
+**Opened 2026-11-02, from the recording read-retry live test; confirmed live the same day.** After a read that brings
+no data, `CVideoPlayer::Process` asks the input stream for a next stream. A recording's
+`CInputStreamPVRRecording::NextPVRStream()` answers `NEXTSTREAM_NONE`, so Kodi reads again only while its audio or video
+player still holds data, then logs "VideoPlayer: eof" and ends. A live channel answers `NEXTSTREAM_RETRY` and is read
+again indefinitely, so the live tail wait is not affected. Since 2026-10-11 the in-progress tail wait answers -1 every
+second while it waits for the next segment (`CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the
+live one is"), so a recorder that stalls for longer than Kodi has queued ends playback.
+
+**Live, 2026-11-02** (Kodi 21.3 on the Linux test VM, the real server with an instant recording running; segments of
+about 4 s, so a tail budget of about 12.3 s. A proxy on the Kodi machine answered the recording's playlist with its last
+copy for 10, 20 or 40 s while the player sat at the tail. Two throwaway builds of `Omega`: the current code, and the same
+with only this slicing taken out.) The build without the slicing played through all three stalls: one read blocked for
+the whole budget and returned 0, Kodi read again (why a 0 here is followed by another read was not traced), and
+playback carried on once the playlist moved, at 40 s after three budgets in a row. The current build ended playback 7.1,
+9.1 and 7.9 s into stalls of 10, 10 and 20 s, each time after a -1 ("VideoPlayer: eof, waiting for queues to empty").
+
+**Fix:** go back to one blocking wait at the in-progress tail, keeping the seek probe's single attempt and the
+finished-recording EOF, and change the glue scenario `ip_tail_bound`, which asserts the slicing. The cost is what the
+slicing bought: a Stop with the reader parked at the tail waits for the rest of that read, about one segment period
+normally and up to the budget with a stalled recorder (before the slicing, the 2026-10-11 check measured 0.3 to 5.8 s,
+median about 2.5 s, worst 8.5 s). Keeping both would need to know how much Kodi still has queued, which the addon
+cannot see. A behaviour change: it waits for the go-ahead.
 
 #### timeshift_buffer: the 1440-minute cap makes manifests heavy
 
