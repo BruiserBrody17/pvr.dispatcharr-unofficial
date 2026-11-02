@@ -79,10 +79,14 @@ constexpr int SegmentFetchRetryDelayMs(int consecutiveFailures)
 // Django's answer to a transient database or I/O error; 500 added 2026-10-05, the fifteenth hardening sweep: a
 // three-second blip of 500s ended a recording read for good once PermanentReadFailureTracker existed), is
 // retried for a while before the read reports failure (added 2026-10-02, found by the manual-testing pass --
-// docs/OPEN_ITEMS.md). A failed read ends recorded playback outright -- unlike a live stream, Kodi does not
-// keep retrying one -- so the first refused connection used to end it, measured live at about eight seconds
-// into an outage, once Kodi's read-ahead had drained. Any other status (a 4xx, a size disagreement) is not a
-// transient failure and still fails at once.
+// docs/OPEN_ITEMS.md). A failed read ends recorded playback once Kodi's queue drains -- unlike a live channel,
+// whose NextStream() answers "retry", a recording (finished or in progress) answers "none", so after a failed read
+// Kodi reads again only while its players still hold data -- so the first refused connection used to end it,
+// measured live at about eight seconds into an outage. The retries therefore stay inside one Read() call, where
+// Kodi's player waits as for a slow stream instead of draining its queue: handing them back in one-second slices,
+// as the live read does, ended an in-progress recording 9 and 14 s into a 25 s outage that the in-call budget rode
+// out (measured live 2026-11-02). The cost is that a Stop during an outage waits for the read in progress. Any
+// other status (a 4xx, a size disagreement) is not a transient failure and still fails at once.
 constexpr bool IsTransientReadFailure(bool transferOk, long httpCode)
 {
   return !transferOk || httpCode == 500 || httpCode == 502 || httpCode == 503 || httpCode == 504;
