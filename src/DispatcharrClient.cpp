@@ -3554,7 +3554,8 @@ int DispatcharrClient::ReadInProgressRecordingStreamImpl(InProgressRecordingStre
     if (st.contentGone)
       return 0;
     // `attempt` counts only the 401 key recovery below; a transient failure (server unreachable, a gateway error)
-    // retries within a budget instead of failing the read -- see dispatcharr::IsTransientReadFailure().
+    // retries within a budget, inside this one call, instead of failing the read -- see
+    // dispatcharr::IsTransientReadFailure() for why it is not handed back in slices as the tail wait above is.
     constexpr std::chrono::milliseconds kTransientReadBudget{20000};
     const auto readStart = std::chrono::steady_clock::now();
     int transientFailures = 0;
@@ -4091,7 +4092,8 @@ int DispatcharrClient::ReadRecordingStreamImpl(RecordingStreamState& st, uint8_t
 
   // See OpenRecordingStream(): the API key can be invalidated mid-playback
   // by another install regenerating it, so retry once after a self-heal.
-  // `attempt` counts only the 401 key recovery below; a transient failure retries within the budget instead.
+  // `attempt` counts only the 401 key recovery below; a transient failure retries within the budget instead, inside
+  // this one call (see dispatcharr::IsTransientReadFailure() for why).
   constexpr std::chrono::milliseconds kTransientReadBudget{20000};
   const auto readStart = std::chrono::steady_clock::now();
   int transientFailures = 0;
