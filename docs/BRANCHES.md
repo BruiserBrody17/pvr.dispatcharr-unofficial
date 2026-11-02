@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`5f4b867`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`925c7b7`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -173,6 +173,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `a68be4b` | `d2dc3d6` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro and the plugin's `CHANGELOG.md` line by hand) | The live heartbeat sends the buffer's token, `timeshift_buffer` 0.8.17 declines a replaced buffer's token on a heartbeat or manifest write-back, and a length or duration poll that gets a fatal answer ends the resume; with the `live_paused_replaced` glue scenario |
 | `55713ed` | `b517ebb` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and intro by hand) | Comments on why a recording's read retries stay inside one call, the recording Stop item made a design question, and the new live-check item for the in-progress tail wait |
 | `5f4b867` | `d2922a3` (`git cherry-pick -x`) | The live check of the heartbeat fix's plugin half, docs only |
+| `925c7b7` | `16d8932` (by hand, for `OPEN_ITEMS.md`'s counts) | The live check of the in-progress tail wait under a recorder stall, docs only |
 
 ## Dependencies that differ by Kodi release
 
