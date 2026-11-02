@@ -32,7 +32,7 @@ plus a reaper tick after the stale viewer's last heartbeat. A second fix on the 
 pass `fatalOut` and mark the stream fatal, so no heartbeat follows a "replaced" answer.
 
 **Fixed 2026-11-02 (`timeshift_buffer` 0.8.17 and the addon), confirmed by regression tests that fail on the old code
-and, for the addon half, live.** Both fixes the live check named. Plugin: `_heartbeat()` checks the caller's `access_token`
+and live, each half on its own.** Both fixes the live check named. Plugin: `_heartbeat()` checks the caller's `access_token`
 with `_is_stale_access_token()` inside the atomic update and answers `fatal` ("replaced") without writing, and
 `get_live_manifest`'s write-back checks it again, so a replacement that starts while the manifest is built does not
 get the caller registered on it either. Addon: `SendTimeshiftHeartbeat()` sends the buffer's start token, and
@@ -52,9 +52,18 @@ reaper ended the paused viewer's buffer 44 s after the cut; the second viewer st
 polls marked the stream fatal ("reported fatal while the stream was polled"), and the replacement buffer kept one
 viewer through the resume and after it (two within 1.6 s before). Kodi showed the notice and its playback ended
 10.1 s after the resume, the same as before: Kodi plays out what it queued before the pause, so the changelog says
-the stream ends, not how soon. The second viewer's stop ended the buffer at once (22 s before). Not checked live: the
-plugin half (0.8.17 is not on the lab server), and a resume within half a second of reconnecting, before a poll lands,
-where only the plugin half applies.
+the stream ends, not how soon. The second viewer's stop ended the buffer at once (22 s before). **Checked live
+2026-11-02, plugin half** (`timeshift_buffer` 0.8.17 deployed to every worker of the lab's Dispatcharr 0.33.0 and driven
+through the plugin's actions, with the same sequence on 0.8.16 first as the control). Viewer A started a buffer and
+stopped it, viewer B started a new one, and A sent a heartbeat with its old token. 0.8.16 answered `ok` and counted two
+viewers, and when B stopped the buffer stayed up 36 s more, until the reaper pruned A; 0.8.17 answered `fatal`
+("replaced"), kept one viewer, and B's stop ended the buffer at once. On both, a heartbeat with the current token and one
+with no token (what the released addon sends) were recorded as before. A real Kodi 21.3 with the released 0.13.0 addon
+then played a channel in Server-side mode against 0.8.17, paused 20 s, resumed and stopped: one viewer throughout, the
+buffer's idle time never above 0 s, and the buffer gone 3 s after Stop. The lab server was put back on 0.8.16. Not
+checked live: a resume within half a second of reconnecting, before a poll lands, driven through Kodi (the case only the
+plugin half covers; the plugin action it reaches is the one driven above), and a replacement that starts while a
+manifest is built, which only the unit test reaches.
 
 #### A search-mode series rule costs terms times text length per recording
 
