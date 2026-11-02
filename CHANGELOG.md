@@ -39,6 +39,11 @@ compare against.
   each rule against every upcoming recording, and a rule like that against a long programme description could take
   seconds per recording. A repeated term is now looked up once, and a rule too costly to check against a recording is
   left unlinked from it, as a regular-expression rule is.
+- **Server-side timeshift: resuming a long pause after Dispatcharr ended the buffer no longer keeps another viewer's
+  buffer running**: if someone else had started the same channel meanwhile, the resumed viewer was counted on their new
+  buffer, which kept it and its provider connection running after they stopped. The addon now ends the stream with the
+  usual "Play the channel again" message without contacting the new buffer, and sends the buffer's token with its
+  heartbeat, which `timeshift_buffer` 0.8.17 checks.
 
 ## `timeshift_buffer` [0.8.17] - Unreleased
 
@@ -61,6 +66,12 @@ Dispatcharr restart for every worker to pick it up.
   "503 Service Unavailable" instead of dropping the connection, a symlink loop in the storage path is a plain 404, and
   neither logs a traceback per request any more. A buffer port that is already taken is logged as an error once every
   five minutes, not on every plugin call.
+- **A buffer no longer keeps running after its last viewer stops because of a viewer it had replaced**: a viewer whose
+  buffer ended during a long pause, while someone else started the same channel, could be counted on the new buffer
+  when it resumed, so the provider connection stayed open for up to the idle timeout after the other viewer stopped.
+  A heartbeat carrying an older buffer's token is now refused, as a manifest request already was, and a buffer that
+  replaces another while a manifest is being built no longer picks up that request's viewer. The heartbeat check needs
+  the addon release after 0.13.2 (Kodi 21) or 0.14.2 (Kodi 22), which sends the token with it.
 
 ## [0.13.2] - 2026-10-31
 

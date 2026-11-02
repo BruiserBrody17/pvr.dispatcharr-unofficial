@@ -3171,6 +3171,11 @@ def _is_stale_access_token(state: dict, supplied) -> bool:
     return not secrets.compare_digest(supplied.encode(), expected.encode())
 
 
+_REPLACED_BUFFER_MESSAGE = (
+    "this caller's buffer was replaced by a newer one for the same channel -- call start_buffer again"
+)
+
+
 # How long a viewer's own stop_buffer keeps that viewer's late heartbeats from re-adding it (_apply_heartbeat()). A
 # heartbeat already in flight when Kodi stops the channel lands within a second or two; the rest is margin for retries.
 # A viewer that comes back calls start_buffer, which clears the mark at once.
@@ -4304,11 +4309,23 @@ class Plugin:
         # only ever touches the heartbeat/viewer fields, never the rest of
         # state (a pruned-but-still-watching viewer is re-added there).
         viewer_id = _resolve_viewer_id(params)
+        # A viewer whose buffer was reaped and replaced by another viewer's start must not join the replacement: its
+        # stop is then declined as stale, so the replacement and its provider slot outlived its own last viewer until
+        # the reaper pruned the stray entry (confirmed live, docs/CLOSED_ITEMS.md, "The live heartbeat carries no
+        # access token"). Checked inside the atomic update so a replacement landing mid-request is caught too.
+        supplied_token = params.get("access_token")
         outcome, _state = _update_buffer_state(
-            channel_uuid, lambda current: _apply_heartbeat(current, _shared_now(), viewer_id)
+            channel_uuid,
+            lambda current: (
+                None
+                if _is_stale_access_token(current, supplied_token)
+                else _apply_heartbeat(current, _shared_now(), viewer_id)
+            ),
         )
         if outcome == "absent":
             return {"status": "error", "message": "no buffer running for this channel"}
+        if outcome == "declined":
+            return {"status": "error", "fatal": True, "message": _REPLACED_BUFFER_MESSAGE}
         if outcome != "written":
             return {"status": "error", "message": "could not record the heartbeat (buffer state busy) -- retry"}
         return {"status": "ok", "message": f"Heartbeat refreshed for channel {channel_uuid}"}
@@ -4357,15 +4374,9 @@ class Plugin:
         # Deliberately no teardown here, unlike the dead-buffer branch
         # below: the buffer now tracked for this channel is a healthy one
         # belonging to a different viewer, not this caller's.
-        if _is_stale_access_token(state, params.get("access_token")):
-            return {
-                "status": "error",
-                "fatal": True,
-                "message": (
-                    "this caller's buffer was replaced by a newer one for the same channel -- "
-                    "call start_buffer again"
-                ),
-            }
+        supplied_token = params.get("access_token")
+        if _is_stale_access_token(state, supplied_token):
+            return {"status": "error", "fatal": True, "message": _REPLACED_BUFFER_MESSAGE}
 
         try:
             manifest = _get_live_manifest(state, logger)
@@ -4410,7 +4421,16 @@ class Plugin:
         # heartbeat, undoing the teardown. The manifest itself was
         # already built successfully and is still returned to the caller
         # either way; only the write-back is skipped.
-        _update_buffer_state(channel_uuid, lambda fresh_state: _apply_heartbeat(fresh_state, _shared_now(), viewer_id))
+        # The token is checked again here, as in _heartbeat(): a replacement that started while the manifest was being
+        # built must not get this caller registered on it.
+        _update_buffer_state(
+            channel_uuid,
+            lambda fresh_state: (
+                None
+                if _is_stale_access_token(fresh_state, supplied_token)
+                else _apply_heartbeat(fresh_state, _shared_now(), viewer_id)
+            ),
+        )
 
         return {
             "status": "ok",

@@ -6,6 +6,56 @@
 
 ### Fixed
 
+#### The live heartbeat carries no access token, so a resumed viewer can stick to a replacement buffer
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading.** `SendTimeshiftHeartbeat()`
+sends only the channel and viewer id, and the plugin's `_heartbeat()`/`_apply_heartbeat()` add that viewer to whatever
+buffer is current. Since 0.8.15 a stop with an old token is declined. So: viewer A pauses past the idle timeout and is
+reaped, B starts the channel, A resumes and its overdue heartbeat registers it on B's buffer, A then goes fatal on a 403
+and its stop is declined, and when B stops the buffer and its provider slot stay up until the reaper prunes A. Fix: send
+`access_token` with the heartbeat and have `_heartbeat()` skip and answer "replaced" when `_is_stale_access_token()`
+matches, as `get_live_manifest` does. Also reword `CLOSED_ITEMS.md`'s 0.8.15 entry, which says heartbeats carried the
+token in the probe (the heartbeat action's body does not).
+
+**Confirmed live 2026-11-01** (Dispatcharr 0.33.0, `timeshift_buffer` 0.8.16, Kodi 21.3 with the current `Omega`
+build in Server-side mode, behind a proxy on the Kodi machine that could drop all of the addon's traffic). Kodi played a
+channel and paused; with its traffic dropped, the reaper ended the buffer 47 s later; a second viewer then started the
+channel through the plugin's API; Kodi was reconnected and resumed. Within 1.6 s the new buffer counted two viewers: the
+first read after the resume sends the overdue heartbeat before anything else, and the polls Kodi made while paused had
+already been answered "replaced, fatal" but do not mark the stream fatal (`GetLiveTimeshiftStreamLength()` and
+`GetLiveTimeshiftStreamDurationMs()` call `RefreshLiveManifest()` without `fatalOut`). Kodi's playback then ended
+10.2 s after the resume ("giving up after 1 consecutive segment fetch failure(s) (manifest refresh reported fatal=true:
+this caller's buffer was replaced ..."), its stop was declined, and when the second viewer stopped the buffer and its
+provider connection stayed up 22 s more, until the reaper dropped the stale entry. The same sequence driven entirely
+through the plugin's actions gave 42 s. The cost is bounded: one provider connection for up to `idle_timeout_seconds`
+plus a reaper tick after the stale viewer's last heartbeat. A second fix on the addon side: let those paused polls
+pass `fatalOut` and mark the stream fatal, so no heartbeat follows a "replaced" answer.
+
+**Fixed 2026-11-02 (`timeshift_buffer` 0.8.17 and the addon), confirmed by regression tests that fail on the old code
+and, for the addon half, live.** Both fixes the live check named. Plugin: `_heartbeat()` checks the caller's `access_token`
+with `_is_stale_access_token()` inside the atomic update and answers `fatal` ("replaced") without writing, and
+`get_live_manifest`'s write-back checks it again, so a replacement that starts while the manifest is built does not
+get the caller registered on it either. Addon: `SendTimeshiftHeartbeat()` sends the buffer's start token, and
+`GetLiveTimeshiftStreamLength()`/`GetLiveTimeshiftStreamDurationMs()` refresh through `PollLiveManifest()`, which marks
+the stream fatal on a `fatal` answer (for the session it was asked for), so after a pause whose polls were answered
+"replaced" the resume's first read answers 0 with the usual notice and sends no overdue heartbeat. How soon Kodi's
+picture then stops is not measured: in the live check most of the 10.2 s may have been Kodi playing out what it had
+queued before the pause, which this does not change. Either half closes the stray
+registration with the other side old; an older plugin ignores the heartbeat's token. Tests: three in the plugin's
+`tests/test_timeshift_buffer.py` (`test_run_heartbeat_with_a_replaced_buffers_token_does_not_join_the_replacement`,
+`..._with_the_current_token_is_recorded`, `test_run_get_live_manifest_does_not_join_a_replacement_started_during_the_build`)
+and the glue scenario `live_paused_replaced` (in CI), which on the old code fails four ways: no token on the heartbeat,
+the resume read answering data, one overdue heartbeat, and no notice. The `CLOSED_ITEMS.md` 0.8.15 entry's line that
+the heartbeats carried the token is corrected. **Checked live 2026-11-02, addon half** (Kodi 21.3 with a throwaway build of `Omega` plus the change, Server-side
+mode, `timeshift_buffer` 0.8.16 on the server, so without the plugin half; the same proxy and sequence as above). The
+reaper ended the paused viewer's buffer 44 s after the cut; the second viewer started; once reconnected, the paused
+polls marked the stream fatal ("reported fatal while the stream was polled"), and the replacement buffer kept one
+viewer through the resume and after it (two within 1.6 s before). Kodi showed the notice and its playback ended
+10.1 s after the resume, the same as before: Kodi plays out what it queued before the pause, so the changelog says
+the stream ends, not how soon. The second viewer's stop ended the buffer at once (22 s before). Not checked live: the
+plugin half (0.8.17 is not on the lab server), and a resume within half a second of reconnecting, before a poll lands,
+where only the plugin half applies.
+
 #### A search-mode series rule costs terms times text length per recording
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, measured.** `SeriesRuleTextMatch.cpp`: `Leaf()` rescans
@@ -1233,8 +1283,8 @@ and the glue scenario `live_stop_token` (in CI).
 `Omega`'s build, whose stop code is the same as here, in Server-side mode): a `stop_buffer` for the playing channel
 with a made-up `access_token` answered "this caller's buffer was already replaced; nothing stopped", and playback went
 on. A throwaway probe plugin that wrapped `_is_stale_access_token()` in every worker (recording only whether a token
-came and matched) saw every call from the addon carry the buffer's token, heartbeats and playlist requests included,
-up to the stop on Close; that stop removed the state and the directory within about 2.5 s and left no tombstone. The
+came and matched) saw the addon's manifest and playlist requests carry the buffer's token up to the stop on Close (not its
+heartbeats: the heartbeat action's body had none until 2026-11-02, "The live heartbeat carries no access token" above); that stop removed the state and the directory within about 2.5 s and left no tombstone. The
 race itself, with the probe making the plugin's next removal of a tombstone wait 45 s: buffer A stopped, its directory
 renamed and its state marked stopping; 35 s later a `start_buffer` for the same channel started buffer B beside the
 tombstone; when A's removal finished 46 s after the stop, only the tombstone went, B's state (its own pid and
