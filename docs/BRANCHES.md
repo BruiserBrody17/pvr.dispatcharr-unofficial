@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`2533613`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`55713ed`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -170,6 +170,8 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `7372d63` | `a231242` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | Five LOW fixes: 64-bit date conversion without the libc and four-digit date formatting, Unicode trimming of recording folder names, no channel-groups fallback route, -1 for a 401 whose re-login failed, and the `TrackDetachedThread()` join; the `auth_reauth_failed` glue scenario applied unchanged. |
 | `c025297` | `c472413` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | A work bound on series-rule text matching: each distinct term searched for once per call, operands after a settled result skipped, and `kUnsupported` past `kMaxSeriesMatchWork` |
 | `2533613` | `50d563c` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and intro by hand) | The live checks of the heartbeat, recording Stop and spring-gap items, docs only |
+| `a68be4b` | `d2dc3d6` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro and the plugin's `CHANGELOG.md` line by hand) | The live heartbeat sends the buffer's token, `timeshift_buffer` 0.8.17 declines a replaced buffer's token on a heartbeat or manifest write-back, and a length or duration poll that gets a fatal answer ends the resume; with the `live_paused_replaced` glue scenario |
+| `55713ed` | `b517ebb` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and intro by hand) | Comments on why a recording's read retries stay inside one call, the recording Stop item made a design question, and the new live-check item for the in-progress tail wait |
 
 ## Dependencies that differ by Kodi release
 

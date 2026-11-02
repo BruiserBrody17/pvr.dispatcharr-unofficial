@@ -71,7 +71,7 @@ Dispatcharr restart for every worker to pick it up.
   when it resumed, so the provider connection stayed open for up to the idle timeout after the other viewer stopped.
   A heartbeat carrying an older buffer's token is now refused, as a manifest request already was, and a buffer that
   replaces another while a manifest is being built no longer picks up that request's viewer. The heartbeat check needs
-  the addon release after 0.14.2, which sends the token with it.
+  the addon release after 0.14.2 (Kodi 22) or 0.13.2 (Kodi 21), which sends the token with it.
 
 ## [0.14.2] - 2026-10-31
 
