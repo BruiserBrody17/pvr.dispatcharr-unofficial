@@ -333,6 +333,12 @@ harness gained `ip_tail_bound` (a frozen in-progress tail: same four measurement
 one 4535 ms read and no `-1`), in CI's glue run. Checked live against a recording in progress, Stop latency at the tail 0.27 to 5.80 s before
 and 0.28 to 1.37 s after (`docs/CLOSED_ITEMS.md`).
 
+2026-11-02: reverted for the in-progress recording, which waits at the tail in one read again: Kodi reads a recording
+again after a -1 only while its players hold data, so the slices ended playback a few seconds into a recorder stall
+(confirmed live). `ip_tail_bound` now fails on any -1 at the tail and checks that one read waits out the budget (4535
+ms) before the 0; on the sliced code it fails with four -1 answers. No unit test changes: the pure helpers it used
+still serve the live tail.
+
 2026-10-13: the live tail wait on a stalled buffer (`ComputeLiveTailWaitBudgetMs()`, `ComputeTailWaitSleepMs()`, `kLiveStallWaitBudgetMs`, `CatchUpUtil.h`, `tests/test_catch_up_util.cpp`): the 70 s budget only while the plugin answers, the ordinary budget when a refresh failed or for a seek probe or when it is already longer, and the refresh pause slowing to one per slice past the ordinary budget. The wiring is the glue harness's live tail scenarios: `live_tail_bound` (20 s of frozen buffer, no 0, slices under 1.8 s, a clean resume), `live_tail_ended` (the wait stops within four seconds of the plugin reporting the ffmpeg ended, in CI) and `live_tail_giveup` (the first 0 between 60 and 90 s, by hand, about 70 s). With the budget collapsed to the ordinary one a unit case and two glue checks fail. What no test reaches is Kodi's own tolerance of a minute of `-1` slices and the failover itself, measured live (`docs/TIMESHIFT.md`, "Upstream failover on a buffered channel: measured").
 
 2026-10-25: what a live read answers once it gives up at the tail (`LiveTailGiveUpResult()`, `CatchUpUtil.h`,

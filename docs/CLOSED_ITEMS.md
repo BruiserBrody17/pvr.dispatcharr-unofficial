@@ -6,6 +6,52 @@
 
 ### Fixed
 
+#### The in-progress tail wait hands back -1 every second, which ends playback a few seconds into a recorder stall
+
+**Opened 2026-11-02, from the recording read-retry live test; confirmed live the same day.** After a read that brings
+no data, `CVideoPlayer::Process` asks the input stream for a next stream. A recording's
+`CInputStreamPVRRecording::NextPVRStream()` answers `NEXTSTREAM_NONE`, so Kodi reads again only while its audio or video
+player still holds data, then logs "VideoPlayer: eof" and ends. A live channel answers `NEXTSTREAM_RETRY` and is read
+again indefinitely, so the live tail wait is not affected. Since 2026-10-11 the in-progress tail wait answers -1 every
+second while it waits for the next segment (`CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the
+live one is"), so a recorder that stalls for longer than Kodi has queued ends playback.
+
+**Live, 2026-11-02** (Kodi 21.3 on the Linux test VM, the real server with an instant recording running; segments of
+about 4 s, so a tail budget of about 12.3 s. A proxy on the Kodi machine answered the recording's playlist with its last
+copy for 10, 20 or 40 s while the player sat at the tail. Two throwaway builds of `Omega`: the current code, and the same
+with only this slicing taken out.) The build without the slicing played through all three stalls: one read blocked for
+the whole budget and returned 0, Kodi read again (why a 0 here is followed by another read was not traced), and
+playback carried on once the playlist moved, at 40 s after three budgets in a row. Only this server's segment
+length (about 4 s) was tried; a recording with shorter segments has a shorter budget and was not. The current build ended playback 7.1,
+9.1 and 7.9 s into stalls of 10, 10 and 20 s, each time after a -1 ("VideoPlayer: eof, waiting for queues to empty").
+
+**Fixed 2026-11-02, confirmed by the glue harness, in substance live on Kodi 21.3 and live on Kodi 22.0 RC1.**
+`ReadInProgressRecordingStream()` waits at the tail in one read again: the one-second slice and the -1
+hand-back are gone, and with them the stream's `TailWaitEpisode`, which nothing else used. The seek probe's single
+attempt, the wall-clock bound and the finished-recording EOF are unchanged, and the live tail keeps its slices. The cost
+is the one the slicing removed: a Stop with the reader parked at the tail waits for the rest of that read, about one
+segment period normally and up to the budget with a stalled recorder. The glue scenario `ip_tail_bound` now asserts
+the opposite of what it did: no -1 at the tail, one read waiting out the budget (4535 ms against the fake's segments,
+the figure the pre-slicing code gave on 2026-10-11), and the stream resuming; on the old code it fails with four -1
+answers. The live check's control build was this change in substance (the same two removals, with the unused
+bookkeeping left in) and played through 10, 20 and 40 s stalls, so the fixed build itself was not run on Kodi 21.3
+(it was on Kodi 22, below). `CatchUpUtil.h` now says the slices are for the live tail only, and why. Kodi's `CVideoPlayer::Process()` treats a
+read answering -1 and one answering 0 alike (no packet, then whether its players hold data), so what differs is how often it gets to
+look: every second with the slices, once per budget with one read, while the players carry on with what they hold.
+Why that leaves playback running after a 0 was not traced further.
+
+**Live on Kodi 22.0 RC1, 2026-11-02** (the same VM, server, proxy and segment length, with the CI Linux builds of
+`Piers` before and after the same change there; that code differs from this branch's only in the function's name). The sliced build ended playback twice in two tries: once 3.5 s after the
+player first reached the tail with no stall at all (three -1 answers in a row while the next segment was due), once 5.4 s
+into a 10 s stall. The fixed build played through stalls of 10, 20 and 40 s (at 40 s three reads used the whole budget,
+about 12.7 s each) and carried on once the playlist moved, 17 to 19 s of playback in the next 20 s. With it, a Stop at
+the tail, once with the playlist moving and once 6 s into a stall, left the player gone 0.68 s after `Player.Stop`;
+whether the reader was in a long wait at that moment was not established (the stream was closed on the reader thread
+0.1 s after Kodi's `CloseFile`), so two Stops do not show that Kodi 22 avoids the cost above. Opening a finished
+recording 3 s into a stall had it playing 3.7 s after `Player.Open`; seeks back about 80 s and then forward, the last one past
+the tail, kept playing; and a 3-minute recording left playing at its tail ended cleanly when the server removed its
+HLS directory, 4 s short of the length Kodi showed.
+
 #### The live heartbeat carries no access token, so a resumed viewer can stick to a replacement buffer
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading.** `SendTimeshiftHeartbeat()`
@@ -2143,6 +2189,9 @@ The decision between them was put on hold on 2026-10-13 (the workaround is not i
 #### Slice the in-progress recording's tail wait the way the live one is
 
 **Opened 2026-10-11 from the stalled-stream review; fixed and confirmed live the same day.** The live tail wait returns -1 every second (`kLiveTailWaitSliceMs`, `TailWaitEpisode`, `DecideTailWaitOutcome()` in `CatchUpUtil.h`) so that Kodi, which acts on a close or a channel change only between reads, is not left waiting out the budget. `ReadInProgressRecordingStream()` had the same wait as one blocking loop, so a Stop with the reader parked at the tail of a recording still being written waited for the next segment (about one segment period, up to the whole budget with a stalled recorder). The loop now uses the same slice check and the same episode bookkeeping: a call that has waited a second and found nothing returns -1 (Kodi's demuxer retries it after checking whether it was asked to stop), the budget is counted across the calls at one position, and the answer once the budget is used up (0), the seek probe's single attempt and the finished-recording EOF are unchanged. No new pure logic was needed; the decisions it uses are the ones already unit-tested. **Measured:** the glue harness's new `ip_tail_bound` scenario (a frozen in-progress tail; in CI's glue run) shows the longest read at the tail going from 4535 ms with no `-1` to 1008 ms with 4 of them before the first 0, the total wait before giving up unchanged, and the stream resuming when segments arrive; the scenario fails on the pre-change code. **Live**, on the Linux test VM against the real server with an instant recording running (segments arriving every 4 to 7 s), the player parked at the tail by a seek to the end and then stopped, alternating the two builds on the same recording: the time from `Player.Stop` until the player was gone was 0.27 to 5.80 s over 12 stops (median about 2.5 s) before, and 0.28 to 1.37 s over 9 stops (median about 1.0 s) after; an earlier baseline set had a worst of 8.5 s. The fixed build logged the new "handing the read back" lines (145 over the session) and its ffmpeg start-up messages after each open matched the baseline's in kind and rate (about 100 against 120 per open). Not tested on a phone or with a channel change instead of a Stop; the close mechanism is the same as the live path's, which was confirmed on both (the close-latency entry).
+
+**Reverted 2026-11-02.** Kodi ends a recording's playback after a -1 once its queue is empty, so the slices ended
+playback a few seconds into a recorder stall; see "The in-progress tail wait hands back -1 every second" above.
 
 #### One stated stalled-stream rule per read path, with one threshold
 

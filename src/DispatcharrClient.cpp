@@ -3214,10 +3214,11 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
 
     const int64_t catchUpBudgetMs = ComputeCatchUpWallClockBudgetMs(catchUpAttempts, kCatchUpSleepMs);
     auto catchUpStart = std::chrono::steady_clock::now();
-    // Taken in slices of kLiveTailWaitSliceMs, each ending in a -1 that Kodi retries, exactly as in
-    // ReadLiveTimeshiftStream() (see its comment): a stop or channel change lands between reads, and the budget is
-    // counted from where this episode at this position began.
-    m_inProgressRecordingStream.tailWait.Enter(m_inProgressRecordingStream.position, catchUpStart);
+    // One blocking wait, not the live tail's -1 slices. After a read that brings nothing, Kodi reads a recording again
+    // only while its players still hold data (CInputStreamPVRRecording::NextPVRStream() answers NEXTSTREAM_NONE, where
+    // a channel answers NEXTSTREAM_RETRY), so a -1 every second ended playback 7 to 9 s into a recorder stall that this
+    // wait rides out (confirmed live, docs/CLOSED_ITEMS.md, "The in-progress tail wait hands back -1 every second").
+    // The price is that a Stop with the reader parked here waits for the rest of this read.
     int attemptsUsed = 0;
     for (int attempt = 0;
          attempt < catchUpAttempts && m_inProgressRecordingStream.position >= m_inProgressRecordingStream.totalBytes;
@@ -3238,10 +3239,6 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - catchUpStart),
               catchUpBudgetMs))
         break; // the server is not answering promptly -- see kMaxCatchUpWallClockMs
-      // This call has used its slice: hand control back to Kodi (the -1 below) rather than wait on.
-      if (HasTailWaitSliceElapsed(
-              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - catchUpStart)))
-        break;
       if (attempt + 1 < catchUpAttempts)
       {
         stateLock.unlock();
@@ -3253,25 +3250,6 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
     }
 
     bool caughtUp = m_inProgressRecordingStream.position < m_inProgressRecordingStream.totalBytes;
-    if (!caughtUp && !m_inProgressRecordingStream.finished)
-    {
-      // Nothing yet. Either the whole budget is used (give up, as before) or this was only a slice of it: -1, which
-      // Kodi's demuxer retries at once after checking whether it has been asked to stop, and which does not touch
-      // lastShortGiveUpPosition (this is not a give-up).
-      const auto afterWait = std::chrono::steady_clock::now();
-      if (DecideTailWaitOutcome(likelySeekProbe, m_inProgressRecordingStream.tailWait.WaitedMs(afterWait),
-                                catchUpAttempts * kCatchUpSleepMs) == TailWaitOutcome::kRetry)
-      {
-        m_inProgressRecordingStream.tailWait.Touch(afterWait);
-        kodi::Log(ADDON_LOG_DEBUG,
-                  "pvr.dispatcharr-unofficial: ReadInProgressRecordingStream: waited %lldms of ~%dms at the tail, "
-                  "handing the read back (-1) so a stop can land",
-                  static_cast<long long>(m_inProgressRecordingStream.tailWait.WaitedMs(afterWait)),
-                  catchUpAttempts * kCatchUpSleepMs);
-        return -1;
-      }
-    }
-    m_inProgressRecordingStream.tailWait.Reset();
     m_inProgressRecordingStream.lastShortGiveUpPosition =
         ComputeShortGiveUpPosition(likelySeekProbe, caughtUp, m_inProgressRecordingStream.position);
 
@@ -3342,7 +3320,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
       return 0;
     // `attempt` counts only the 401 key recovery below; a transient failure (server unreachable, a gateway error)
     // retries within a budget, inside this one call, instead of failing the read -- see
-    // dispatcharr::IsTransientReadFailure() for why it is not handed back in slices as the tail wait above is.
+    // dispatcharr::IsTransientReadFailure() for why it is not handed back in slices (nor is the tail wait above).
     constexpr std::chrono::milliseconds kTransientReadBudget{20000};
     const auto readStart = std::chrono::steady_clock::now();
     int transientFailures = 0;

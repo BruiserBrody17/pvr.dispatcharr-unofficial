@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**13 open, 391 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**12 open, 392 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -16,8 +16,6 @@ confirmed. The open ones came from:
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
-- One from the 2026-11-02 live test of handing a recording's failed reads back to Kodi: the in-progress tail wait does
-  the same, and a live check the same day found it ends playback 7 to 9 s into a recorder stall.
 - One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
   lock.
 - One, LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and checked
@@ -31,14 +29,14 @@ held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 4 |
+| Open: Fix known, not yet done | 3 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 3 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 340 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 341 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 41 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -49,31 +47,6 @@ held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
 None open.
 
 ### Fix known, not yet done
-
-#### The in-progress tail wait hands back -1 every second, which ends playback a few seconds into a recorder stall
-
-**Opened 2026-11-02, from the recording read-retry live test; confirmed live the same day.** After a read that brings
-no data, `CVideoPlayer::Process` asks the input stream for a next stream. A recording's
-`CInputStreamPVRRecording::NextPVRStream()` answers `NEXTSTREAM_NONE`, so Kodi reads again only while its audio or video
-player still holds data, then logs "VideoPlayer: eof" and ends. A live channel answers `NEXTSTREAM_RETRY` and is read
-again indefinitely, so the live tail wait is not affected. Since 2026-10-11 the in-progress tail wait answers -1 every
-second while it waits for the next segment (`CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the
-live one is"), so a recorder that stalls for longer than Kodi has queued ends playback.
-
-**Live, 2026-11-02** (Kodi 21.3 on the Linux test VM, the real server with an instant recording running; segments of
-about 4 s, so a tail budget of about 12.3 s. A proxy on the Kodi machine answered the recording's playlist with its last
-copy for 10, 20 or 40 s while the player sat at the tail. Two throwaway builds of `Omega`: the current code, and the same
-with only this slicing taken out.) The build without the slicing played through all three stalls: one read blocked for
-the whole budget and returned 0, Kodi read again (why a 0 here is followed by another read was not traced), and
-playback carried on once the playlist moved, at 40 s after three budgets in a row. The current build ended playback 7.1,
-9.1 and 7.9 s into stalls of 10, 10 and 20 s, each time after a -1 ("VideoPlayer: eof, waiting for queues to empty").
-
-**Fix:** go back to one blocking wait at the in-progress tail, keeping the seek probe's single attempt and the
-finished-recording EOF, and change the glue scenario `ip_tail_bound`, which asserts the slicing. The cost is what the
-slicing bought: a Stop with the reader parked at the tail waits for the rest of that read, about one segment period
-normally and up to the budget with a stalled recorder (before the slicing, the 2026-10-11 check measured 0.3 to 5.8 s,
-median about 2.5 s, worst 8.5 s). Keeping both would need to know how much Kodi still has queued, which the addon
-cannot see. A behaviour change: it waits for the go-ahead.
 
 #### timeshift_buffer: the 1440-minute cap makes manifests heavy
 
@@ -180,7 +153,8 @@ call. The live check above saw an in-progress read retried after a 22 s -1, and 
 held at that moment, not a rule by stream type. The comments now say this (`IsTransientReadFailure()`, and beside
 both `kTransientReadBudget`). What is left is a trade: a shorter budget shortens the hold after a Stop and the outage
 a recording rides out together, or Kodi itself would need to act on a Stop during a read. Left at 20 s until someone
-asks for otherwise.
+asks for otherwise. The in-progress tail wait cited above as answering -1 was reverted to one read on 2026-11-02 for
+the same reason (`CLOSED_ITEMS.md`, "The in-progress tail wait hands back -1 every second").
 
 #### timeshift_buffer: a stop from the last listed viewer ends a buffer another viewer is still reading
 
