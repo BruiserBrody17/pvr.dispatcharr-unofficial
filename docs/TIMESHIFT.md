@@ -3424,7 +3424,7 @@ further.
 
 | Path | Stalled means | Tolerated for | Answer |
 |---|---|---|---|
-| In-progress recording, `ReadInProgressRecordingStream()` | Reader at the tail of a recording that has not finished | The same budget formula and one-second slices as live (a slice that finds nothing returns -1), each attempt a manifest refresh | -1 per slice, 0 when the budget is used up |
+| In-progress recording, `ReadInProgressRecordingStream()` | Reader at the tail of a recording that has not finished | The same budget formula as live, waited in one read (not sliced since 2026-11-02: Kodi ends a recording's playback after a -1 once its queue is empty), each attempt a manifest refresh | 0 when the budget is used up |
 | | Segment fetch fails transiently (unreachable, 500/502/503/504) | 20 s inside one call (`kTransientReadBudget`), plus a request in flight | -1 |
 | | 401 | One API-key regeneration, then the read is retried | - |
 | | Permanent failure (403, an unexplained 404, a size disagreement) | Five failures over at least 3 s (`PermanentReadFailureTracker`) | -1 until then, then 0 for good |
@@ -3472,7 +3472,8 @@ Every wait is bounded, by a count times a request timeout at worst; none is unbo
 1. **The in-progress recording's tail wait was not sliced (fixed the same day).** It is now taken in the same one-second
    slices as the live one, so a Stop at the tail of a recording still being written no longer waits out the budget
    (`docs/CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the live one is": Stop took up to 5.8 s
-   before, 1.4 s after).
+   before, 1.4 s after). Reverted 2026-11-02: the slices ended playback a few seconds into a recorder stall
+   (`docs/CLOSED_ITEMS.md`, "The in-progress tail wait hands back -1 every second").
 2. **The open-time loops had no wall-clock cap (fixed 2026-10-11) and cannot be cancelled, by design of Kodi.** The live first-manifest
    loop was thirty tries each as long as the request timeout, about fifteen minutes against a server that accepts the
    connection and then goes silent after `start_buffer` succeeded; both cold-start loops now end once their own healthy wait
