@@ -362,6 +362,8 @@ private:
   std::mutex m_connectionReportMutex;
   void OnConnectionObserved(dispatcharr::ConnectionReport report);
   void ScheduleConnectionReport();
+  // RequestResend() on the latch, then a delivery: for the points where Kodi may have dropped the last report.
+  void ResendConnectionReport();
   void ReportConnectionToKodi();
   // A DVR padding edit that couldn't be pushed to Dispatcharr yet, per side.
   // While either is set, RetryDeferredServerSyncs() resends it instead of

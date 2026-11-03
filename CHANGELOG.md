@@ -14,6 +14,12 @@ compare against.
 
 ### Fixed
 
+- **Kodi no longer keeps showing an out-of-date connection state for Dispatcharr** when the connection changed while
+  Kodi wasn't listening (during a PVR restart): the addon now repeats its connection state on wake and every
+  recording refresh interval, so Kodi catches up.
+- **A server whose account details don't include the account's access level no longer stays "unreachable" in Kodi
+  for the whole session** after a start with the server down. Recording, deleting and renaming then stay offered, and
+  Dispatcharr's own permission checks decide.
 - **No more password logins every other token refresh on a server that rotates its login tokens**: if Dispatcharr is
   set to hand out a new refresh token with each refresh (it is not by default), the addon kept the old one, so every
   second refresh was refused and it logged in with the password again, which could run into the server's login limit.

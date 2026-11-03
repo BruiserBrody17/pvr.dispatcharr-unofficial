@@ -4,15 +4,14 @@
 
 ## Status at a glance
 
-**12 open, 392 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**10 open, 394 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
-- Four, all LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
-  (all 17 findings held here). Thirteen of its 17 are fixed or closed; one of the four is what is left of a finding half
+- Three, all LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
+  (all 17 findings held here). Fourteen of its 17 are fixed or closed; one of the three is what is left of a finding half
   fixed on 2026-10-31.
-- One, LOW, from the 2026-10-24 sweep (one reviewer over the whole project). Six of its seven are fixed.
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
@@ -24,19 +23,20 @@ confirmed. The open ones came from:
   and thread handling) and one was closed without a change once checked live.
 
 Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
-held here), or from the 2026-10-19 live check of four audit fixes on `Piers`.
+held here), from the 2026-10-19 live check of four audit fixes on `Piers`, or from the 2026-10-24 sweep (one reviewer
+over the whole project, seven findings).
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 3 |
+| Open: Fix known, not yet done | 1 |
 | Open: Architectural / concurrency | 2 |
 | Open: Design decision needed | 3 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 341 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 343 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 41 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -57,28 +57,6 @@ fixed on 2026-10-31 (`CLOSED_ITEMS.md`, "timeshift_buffer: segment_seconds has n
 5.9 MB of JSON, and holds the single per-worker `_manifest_cache_lock` throughout, serialising every channel's
 `get_live_manifest` in that worker; the 16-entry cache was sized for the default. Fix: a lower cap, a byte-based cache
 limit, or the stat sweep outside the lock.
-
-#### CONNECTED is held back with no limit while the DVR access level is unknown
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible.** `TakePending(report, m_dvrAccessChecked)`
-delivers `CONNECTED` only once `SyncDvrAccessFromDispatcharr()` has succeeded, which needs a numeric `user_level` from
-`/api/accounts/users/me/`. A server or proxy that omits it, after a start that reported `UNREACHABLE`, leaves Kodi
-showing the client unreachable and never re-reading `GetCapabilities()`; playback is unaffected. Every Dispatcharr seen
-so far sends the field. Fix: treat a parse failure (as opposed to a network failure) as checked and fail open, or
-deliver `CONNECTED` after a few failed reads; testable in `ConnectionReport`.
-
-#### A connection state Kodi ignores while its PVR manager is stopped is marked delivered and never re-sent
-
-**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
-it was filed); LOW, confirmed by reading the addon and Kodi 22's source, not reproduced.**
-`ConnectionReportLatch::TakePending()` records the state as delivered before `ReportConnectionToKodi()` calls
-`ConnectionStateChange()`, which returns nothing. Kodi drops the callback while the client's calls are blocked
-(`CPVRClient::HandleAddonCallback()`, "Ignoring callback from PVR client", when `m_bBlockAddonCalls` is set by
-`CPVRClient::Stop()` during a PVR manager restart: a PVR addon enabled, disabled or updated, a database reset). If the
-addon's report thread delivers in that window (for example the held-back CONNECTED after a start with the server down),
-Kodi keeps the old state and skips the `GetCapabilities()` re-read, and the latch never tries again until the state
-really changes. Fix: allow re-delivering the current observation now and then (Kodi ignores a state equal to the one it
-has), or keep "delivered" apart from "observed".
 
 ### Architectural / concurrency
 
