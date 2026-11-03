@@ -10,6 +10,7 @@
 #include "EpgProgramMatch.h"
 #include "EdlDecision.h"
 #include "EpgTagUtil.h"
+#include "ExceptionGuard.h"
 #include "RealtimeUpdateParser.h"
 #include "RecordingParser.h"
 #include "RecordingDirectory.h"
@@ -46,6 +47,23 @@ using namespace dispatcharr;
 
 namespace
 {
+
+// The handler of every PVR override's function-try-block: logs what escaped, then the override answers the failure
+// value Kodi already handles (PVR_ERROR_FAILED, false, -1). Kodi's thunks catch nothing, so this is the last point in
+// the addon's own code an exception can be stopped (ExceptionGuard.h); a thunk that allocates after the override has
+// returned, such as the stream-property copy, is outside it. Never throws: a log line that cannot be written is
+// dropped.
+void LogEscapedException(const char* call) noexcept
+{
+  try
+  {
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: %s failed with an exception: %s", call,
+              DescribeCurrentException());
+  }
+  catch (...)
+  {
+  }
+}
 
 // Shared by the destructor for each of the three background threads below:
 // set the stop flag under its mutex, wake it, then join.
@@ -642,6 +660,24 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
       m_apiKeyOwnerHost(ComputeApiKeyOwnerServer(m_lastAppliedConfig)),
       m_apiKeyOwnerUsername(m_lastAppliedConfig.username), m_client(LoadConfigFromSettings())
 {
+  // A constructor that throws gets no destructor call, and its members are then destroyed with whatever it had started
+  // still running: a detached task (the startup login schedules a connection report) left joinable in
+  // m_detachedThreads is std::terminate, and every worker holds `this`. So everything after the members is
+  // Initialise(), and a failure there stops what it started before the exception goes on to CreateInstance()
+  // (addon.cpp), which tells Kodi the instance could not be created.
+  try
+  {
+    Initialise();
+  }
+  catch (...)
+  {
+    Shutdown();
+    throw;
+  }
+}
+
+void PVRDispatcharr::Initialise()
+{
   // Before the first request, so the startup login is observed too.
   m_client.SetConnectionObserver([this](dispatcharr::ConnectionReport report) { OnConnectionObserved(report); });
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
@@ -951,6 +987,11 @@ void PVRDispatcharr::ReportConnectionToKodi()
 }
 
 PVRDispatcharr::~PVRDispatcharr()
+{
+  Shutdown();
+}
+
+void PVRDispatcharr::Shutdown()
 {
   {
     std::lock_guard<std::mutex> lock(m_shutdownMutex);
@@ -2094,6 +2135,7 @@ void PVRDispatcharr::StartRealtimeUpdateThread()
 // ---------------------------------------------------------------------
 
 PVR_ERROR PVRDispatcharr::GetCapabilities(kodi::addon::PVRCapabilities& capabilities)
+try
 {
   capabilities.SetSupportsTV(true);
   capabilities.SetSupportsRadio(true);
@@ -2137,30 +2179,54 @@ PVR_ERROR PVRDispatcharr::GetCapabilities(kodi::addon::PVRCapabilities& capabili
   capabilities.SetHandlesInputStream(true);
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetBackendName(std::string& name)
+try
 {
   name = "Dispatcharr";
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetBackendVersion(std::string& version)
+try
 {
   // Real Dispatcharr server version, fetched once at startup -- see
   // m_backendVersion's own comment and GetServerVersion().
   version = m_backendVersion;
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetBackendHostname(std::string& hostname)
+try
 {
   // The host as configured, without the scheme, port or IPv6 brackets GetConnectionString() adds. Only returned to
   // Kodi's PVR information screen, never logged: a hostname can identify a deployment.
   hostname = kodi::addon::GetSettingString("host", "127.0.0.1");
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetConnectionString(std::string& connection)
+try
 {
   // FormatHostForUrl() brackets an IPv6 literal, so "[::1]:9191" reads as
   // host and port instead of "::1:9191".
@@ -2168,8 +2234,14 @@ PVR_ERROR PVRDispatcharr::GetConnectionString(std::string& connection)
                std::to_string(kodi::addon::GetSettingInt("port", 9191));
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::OnSystemWake()
+try
 {
   // See m_wakeRealtimeUpdateThread's own comment. A no-op if the thread
   // isn't running (enable_realtime_updates off) or isn't currently in its
@@ -2232,6 +2304,11 @@ PVR_ERROR PVRDispatcharr::OnSystemWake()
   // that window (ConnectionReportLatch::RequestResend()). Kodi 21 does not block them there, so this changes nothing.
   ResendConnectionReport();
   return PVR_ERROR_NO_ERROR;
+}
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
 }
 
 // ---------------------------------------------------------------------
@@ -2982,6 +3059,7 @@ void PVRDispatcharr::SaveRecordingEpgLinksIfDirty()
 // ---------------------------------------------------------------------
 
 PVR_ERROR PVRDispatcharr::GetChannelGroupsAmount(int& amount)
+try
 {
   EnsureChannelsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
@@ -2998,8 +3076,14 @@ PVR_ERROR PVRDispatcharr::GetChannelGroupsAmount(int& amount)
                             dispatcharr::FilterChannelGroupsByKind(m_groups, m_channels, true).size());
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetChannelGroups(bool radio, kodi::addon::PVRChannelGroupsResultSet& results)
+try
 {
   EnsureChannelsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
@@ -3016,9 +3100,15 @@ PVR_ERROR PVRDispatcharr::GetChannelGroups(bool radio, kodi::addon::PVRChannelGr
   }
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetChannelGroupMembers(const kodi::addon::PVRChannelGroup& group,
                                                  kodi::addon::PVRChannelGroupMembersResultSet& results)
+try
 {
   EnsureChannelsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
@@ -3050,12 +3140,18 @@ PVR_ERROR PVRDispatcharr::GetChannelGroupMembers(const kodi::addon::PVRChannelGr
   }
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 // ---------------------------------------------------------------------
 // Channels
 // ---------------------------------------------------------------------
 
 PVR_ERROR PVRDispatcharr::GetChannelsAmount(int& amount)
+try
 {
   EnsureChannelsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
@@ -3066,8 +3162,14 @@ PVR_ERROR PVRDispatcharr::GetChannelsAmount(int& amount)
   amount = static_cast<int>(m_channels.size());
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetChannels(bool radio, kodi::addon::PVRChannelsResultSet& results)
+try
 {
   EnsureChannelsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
@@ -3107,9 +3209,15 @@ PVR_ERROR PVRDispatcharr::GetChannels(bool radio, kodi::addon::PVRChannelsResult
   }
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChannel& channel,
                                                      std::vector<kodi::addon::PVRStreamProperty>& properties)
+try
 {
   // Read once into a local, not twice from the atomic member (fixed
   // 2026-09-27, a 61st-pass audit, fixing a real, confirmed gap found
@@ -3180,8 +3288,14 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
   }
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 bool PVRDispatcharr::OpenLiveStream(const kodi::addon::PVRChannel& channel)
+try
 {
   // Only ever actually called for a server-side-timeshift channel -- see
   // GetChannelStreamProperties(), which is the only mode that leaves STREAMURL
@@ -3214,43 +3328,99 @@ bool PVRDispatcharr::OpenLiveStream(const kodi::addon::PVRChannel& channel)
   }
   return true;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  // Kodi does not call CloseLiveStream() after a failed open, so a buffer started before the throw would keep its
+  // viewer registered (and the provider connection) until the plugin's reaper ends it.
+  try
+  {
+    m_client.CloseLiveTimeshiftStream();
+  }
+  catch (...)
+  {
+  }
+  return false;
+}
 
 void PVRDispatcharr::CloseLiveStream()
+try
 {
   m_client.CloseLiveTimeshiftStream();
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+}
 
 int PVRDispatcharr::ReadLiveStream(unsigned char* buffer, unsigned int size)
+try
 {
   return m_client.ReadLiveTimeshiftStream(buffer, size);
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return -1;
+}
 
 int64_t PVRDispatcharr::SeekLiveStream(int64_t position, int whence)
+try
 {
   return m_client.SeekLiveTimeshiftStream(position, whence);
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return -1;
+}
 
 int64_t PVRDispatcharr::LengthLiveStream()
+try
 {
   return m_client.GetLiveTimeshiftStreamLength();
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return -1;
+}
 
 bool PVRDispatcharr::CanPauseStream()
+try
 {
   return m_client.IsLiveTimeshiftStreamOpen() || m_client.IsInProgressRecordingStreamOpen();
+}
+catch (...)
+{
+  LogEscapedException(__func__);
+  return false;
 }
 
 bool PVRDispatcharr::CanSeekStream()
+try
 {
   return m_client.IsLiveTimeshiftStreamOpen() || m_client.IsInProgressRecordingStreamOpen();
+}
+catch (...)
+{
+  LogEscapedException(__func__);
+  return false;
 }
 
 bool PVRDispatcharr::IsRealTimeStream()
+try
 {
   return m_client.IsLiveTimeshiftStreamOpen() || m_client.IsInProgressRecordingStreamOpen();
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return false;
+}
 
 PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
+try
 {
   // Same self-heal persistence gap as ReadRecordedStream()/
   // LengthRecordedStream() (see their own comment): both branches below
@@ -3344,8 +3514,14 @@ PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
   }
   return PVR_ERROR_NOT_IMPLEMENTED;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetStreamReadChunkSize(int& chunksize)
+try
 {
   // See the declaration comment in PVRDispatcharr.h -- without this, ffmpeg
   // reads 4KB at a time from our HTTP-backed live-timeshift/recording
@@ -3356,6 +3532,11 @@ PVR_ERROR PVRDispatcharr::GetStreamReadChunkSize(int& chunksize)
   chunksize = 256 * 1024;
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 // ---------------------------------------------------------------------
 // EPG
@@ -3363,6 +3544,7 @@ PVR_ERROR PVRDispatcharr::GetStreamReadChunkSize(int& chunksize)
 
 PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid, time_t start, time_t end,
                                            kodi::addon::PVREPGTagsResultSet& results)
+try
 {
   EnsureChannelsLoaded();
   // Never EnsureEpgLoaded() here: the guide is fetched only by the background
@@ -3516,8 +3698,14 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid, time_t start, time_t 
   }
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool& isPlayable)
+try
 {
   isPlayable = false;
   std::lock_guard<std::mutex> lock(m_dataMutex);
@@ -3539,9 +3727,15 @@ PVR_ERROR PVRDispatcharr::IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bo
   isPlayable = dispatcharr::IsWithinCatchupWindow(catchupEnabled, ch->catchupDays, tag.GetStartTime(), time(nullptr));
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
                                                     std::vector<kodi::addon::PVRStreamProperty>& properties)
+try
 {
   std::string channelUuid;
   bool channelCatchupEnabled = false;
@@ -3682,12 +3876,18 @@ PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag
   // mechanism for it.
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 // ---------------------------------------------------------------------
 // Recordings
 // ---------------------------------------------------------------------
 
 PVR_ERROR PVRDispatcharr::GetRecordingsAmount(bool deleted, int& amount)
+try
 {
   if (deleted)
   {
@@ -3745,8 +3945,14 @@ PVR_ERROR PVRDispatcharr::GetRecordingsAmount(bool deleted, int& amount)
       std::count_if(m_cachedRecordings.begin(), m_cachedRecordings.end(), dispatcharr::IsListedAsRecording));
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordingsResultSet& results)
+try
 {
   if (deleted)
     return PVR_ERROR_NO_ERROR;
@@ -3859,6 +4065,11 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
   }
   SaveRecordingEpgLinksIfDirty();
   return PVR_ERROR_NO_ERROR;
+}
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
 }
 
 bool PVRDispatcharr::FindRecordingById(int id, dispatcharr::Recording& recordingOut, long* httpStatusOut)
@@ -3994,6 +4205,7 @@ void PVRDispatcharr::ReassertApiKeySetting()
 
 PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRecording& /*recording*/,
                                                        std::vector<kodi::addon::PVRStreamProperty>& /*properties*/)
+try
 {
   // Confirmed against a real failed playback (a live kodi.log showed
   // Kodi's generic CCurlFile opening a populated STREAMURL directly,
@@ -4016,8 +4228,14 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
   // PVRClient.cpp). That answer comes from the stream OpenRecordedStream() actually opened.
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::DeleteRecording(const kodi::addon::PVRRecording& recording)
+try
 {
   int id = std::atoi(recording.GetRecordingId().c_str());
   std::string error;
@@ -4041,8 +4259,14 @@ PVR_ERROR PVRDispatcharr::DeleteRecording(const kodi::addon::PVRRecording& recor
   InvalidateAndTriggerRecordingUpdate();
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::RenameRecording(const kodi::addon::PVRRecording& recording)
+try
 {
   int id = std::atoi(recording.GetRecordingId().c_str());
   std::string error;
@@ -4083,9 +4307,15 @@ PVR_ERROR PVRDispatcharr::RenameRecording(const kodi::addon::PVRRecording& recor
   InvalidateAndTriggerRecordingUpdate();
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetRecordingEdl(const kodi::addon::PVRRecording& recording,
                                           std::vector<kodi::addon::PVREDLEntry>& edl)
+try
 {
   int id = std::atoi(recording.GetRecordingId().c_str());
 
@@ -4137,8 +4367,14 @@ PVR_ERROR PVRDispatcharr::GetRecordingEdl(const kodi::addon::PVRRecording& recor
   }
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recording)
+try
 {
   int id = std::atoi(recording.GetRecordingId().c_str());
   std::string error;
@@ -4259,8 +4495,24 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   PersistApiKeyIfChanged(keyBefore);
   return true;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  // Kodi does not call CloseRecordedStream() after a failed open. Kodi 21 holds one recorded stream at a time, so
+  // whatever is open now is what this call opened; both closes do nothing when their stream is not open.
+  try
+  {
+    m_client.CloseInProgressRecordingStream();
+    m_client.CloseRecordingStream();
+  }
+  catch (...)
+  {
+  }
+  return false;
+}
 
 void PVRDispatcharr::CloseRecordedStream()
+try
 {
   kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: CloseRecordedStream: isInProgressStreamOpen=%d",
             m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
@@ -4269,8 +4521,13 @@ void PVRDispatcharr::CloseRecordedStream()
   else
     m_client.CloseRecordingStream();
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+}
 
 int PVRDispatcharr::ReadRecordedStream(unsigned char* buffer, unsigned int size)
+try
 {
   // Same self-heal persistence as the completed-recording branch below --
   // including updating m_lastAppliedConfig.apiKey first, for the same
@@ -4291,8 +4548,14 @@ int PVRDispatcharr::ReadRecordedStream(unsigned char* buffer, unsigned int size)
   PersistApiKeyIfChanged(keyBefore);
   return result;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return -1;
+}
 
 int64_t PVRDispatcharr::SeekRecordedStream(int64_t position, int whence)
+try
 {
   // Same self-heal persistence gap as ReadRecordedStream()/
   // LengthRecordedStream() above (see their own comment) --
@@ -4311,8 +4574,14 @@ int64_t PVRDispatcharr::SeekRecordedStream(int64_t position, int whence)
   }
   return m_client.SeekRecordingStream(position, whence);
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return -1;
+}
 
 int64_t PVRDispatcharr::LengthRecordedStream()
+try
 {
   // Same self-heal persistence gap as ReadRecordedStream() above --
   // GetInProgressRecordingStreamLength() also calls
@@ -4324,12 +4593,18 @@ int64_t PVRDispatcharr::LengthRecordedStream()
   PersistApiKeyIfChanged(keyBefore);
   return result;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return -1;
+}
 
 // ---------------------------------------------------------------------
 // Timers
 // ---------------------------------------------------------------------
 
 PVR_ERROR PVRDispatcharr::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& types)
+try
 {
   kodi::addon::PVRTimerType oneTime;
   oneTime.SetId(kTimerTypeOneTime);
@@ -4421,8 +4696,14 @@ PVR_ERROR PVRDispatcharr::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& 
 
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetTimersAmount(int& amount)
+try
 {
   EnsureRecordingsLoaded();
   EnsureTimerRulesLoaded();
@@ -4466,8 +4747,14 @@ PVR_ERROR PVRDispatcharr::GetTimersAmount(int& amount)
   amount = scheduled + static_cast<int>(m_cachedTimerRules.size()) + static_cast<int>(m_cachedRecurringRules.size());
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
+try
 {
   EnsureRecordingsLoaded();
   EnsureTimerRulesLoaded();
@@ -4766,6 +5053,11 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
   SaveRecordingEpgLinksIfDirty();
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 bool PVRDispatcharr::ComputeRecurringRuleFields(const kodi::addon::PVRTimer& timer, std::vector<int>& daysOfWeekOut,
                                                 int& startSecondsOut, int& endSecondsOut, time_t& startDateOut,
@@ -4837,6 +5129,7 @@ bool PVRDispatcharr::ComputeRecurringRuleFields(const kodi::addon::PVRTimer& tim
 }
 
 PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
+try
 {
   std::string error;
   bool ok;
@@ -5020,8 +5313,14 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
   }
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
+try
 {
   // The kind/id decoding itself lives in dispatcharr::DecodeTimerClientIndex()
   // (TimerIdentity.h) so it's unit-testable standalone -- see that
@@ -5704,8 +6003,14 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
   }
   return PVR_ERROR_NO_ERROR;
 }
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
+}
 
 PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool forceDelete)
+try
 {
   // See UpdateTimer()'s own comment on DecodeTimerClientIndex(). The
   // recurring-rule flag is only ever set on a recurring rule's own parent
@@ -5906,4 +6211,9 @@ PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool f
     return PVR_ERROR_SERVER_ERROR;
   }
   return PVR_ERROR_NO_ERROR;
+}
+catch (...)
+{
+  LogEscapedException(__func__);
+  return PVR_ERROR_FAILED;
 }

@@ -45,6 +45,8 @@ struct Collected
 extern std::atomic<const char*> g_logGate, g_logWatch;
 extern std::atomic<bool> g_logGateHit, g_logGateOpen;
 extern std::atomic<int> g_logWatchCount;
+extern std::atomic<const char*> g_throwOnSetting;
+extern std::atomic<bool> g_throwInRecordingTransfer;
 
 static int g_port;
 static std::atomic<int> g_fail{0};
@@ -395,6 +397,34 @@ int main(int argc, char** argv)
   KODI_ADDON_INSTANCE_STRUCT* inst = MakePvrInstanceStruct();
   long c0 = ms();
   PVRDispatcharr* pvr;
+  if (what == "escaped_exception_ctor")
+  {
+    // The constructor throws after the startup login has scheduled a connection report on a detached thread: reading
+    // recurring_rule_timezone (the zone sync, after the API key) throws std::bad_alloc. The exception must reach the
+    // caller, as it reaches CreateInstance() (addon.cpp), with that thread joined. Before Initialise()/Shutdown() the
+    // members were destroyed with the thread still joinable, which is std::terminate (no RESULT line).
+    g_throwOnSetting = "recurring_rule_timezone";
+    bool threw = false;
+    try
+    {
+      kodi::addon::IInstanceInfo info(inst);
+      pvr = new PVRDispatcharr(info);
+    }
+    catch (const std::bad_alloc&)
+    {
+      threw = true;
+    }
+    g_throwOnSetting = nullptr;
+    INFO("constructor %s after %ld ms", threw ? "threw" : "returned", ms() - c0);
+    if (!threw)
+    {
+      FAIL("the constructor did not throw, so the scenario did not run");
+      delete pvr;
+    }
+    curl_global_cleanup();
+    printf("RESULT fails=%d\n", g_fail.load());
+    return g_fail.load() ? 1 : 0;
+  }
   {
     kodi::addon::IInstanceInfo info(inst);
     pvr = new PVRDispatcharr(info);
@@ -1074,6 +1104,30 @@ int main(int argc, char** argv)
     // One evaluation is not enough to move every rule: the first start seen is the table's, whatever it settles on.
     if (first >= 0 && ((first % 86400) + 86400) % 86400 != kTableTimeOfDay)
       FAIL("the offset was adopted on a single evaluation (the first start seen was already the server's)");
+  }
+  else if (what == "escaped_exception")
+  {
+    // An exception from inside an override (here std::bad_alloc from Kodi's recording transfer) must not reach Kodi:
+    // the call answers PVR_ERROR_FAILED, the log names the override, and nothing is left held (the next call works).
+    g_logWatch = "GetRecordings failed with an exception";
+    g_throwInRecordingTransfer = true;
+    PVR_ERROR err = PVR_ERROR_NO_ERROR;
+    {
+      Collected c;
+      err = A()->GetRecordings(I(), (PVR_HANDLE)&c, false);
+    }
+    g_throwInRecordingTransfer = false;
+    INFO("GetRecordings with a throwing transfer answered %d", (int)err);
+    if (err != PVR_ERROR_FAILED)
+      FAIL("GetRecordings answered %d with a throwing transfer, expected PVR_ERROR_FAILED", (int)err);
+    if (g_logWatchCount < 1)
+      FAIL("no log line named GetRecordings as having failed with an exception");
+    Collected c;
+    err = A()->GetRecordings(I(), (PVR_HANDLE)&c, false);
+    INFO("then %d with %zu recording(s)", (int)err, c.recordings.size());
+    if (err != PVR_ERROR_NO_ERROR || c.recordings.empty())
+      FAIL("GetRecordings did not work again after the exception (answered %d, %zu recordings)", (int)err,
+           c.recordings.size());
   }
   else if (what == "connection_state")
   {

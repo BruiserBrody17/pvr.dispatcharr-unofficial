@@ -1,3 +1,4 @@
+#include "ExceptionGuard.h"
 #include "PVRDispatcharr.h"
 
 #include <kodi/AddonBase.h>
@@ -16,10 +17,22 @@ public:
     if (instance.IsType(ADDON_INSTANCE_PVR))
     {
       kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: creating PVR client instance");
-      auto* pvr = new PVRDispatcharr(instance);
+      // Kodi's thunk catches nothing (ExceptionGuard.h); the constructor has already stopped whatever it started.
+      PVRDispatcharr* pvr = nullptr;
+      try
       {
+        pvr = new PVRDispatcharr(instance);
         std::lock_guard<std::mutex> lock(m_instancesMutex);
         m_instances.push_back(pvr);
+      }
+      catch (...)
+      {
+        LogEscaped("creating the PVR client instance");
+        delete pvr;
+        // hdl is Kodi's instance->hdl, which CInstancePVRClient's constructor already set to the object just freed;
+        // the dev-kit thunk reads it (and may delete it) unless it is null.
+        hdl = nullptr;
+        return ADDON_STATUS_UNKNOWN;
       }
       hdl = pvr;
       return ADDON_STATUS_OK;
@@ -66,7 +79,18 @@ public:
     ADDON_STATUS status = ADDON_STATUS_OK;
     for (auto* pvr : m_instances)
     {
-      ADDON_STATUS thisStatus = pvr->OnAddonSettingChanged(settingName, settingValue);
+      ADDON_STATUS thisStatus = ADDON_STATUS_OK;
+      // Each instance on its own, so one that throws does not keep the change from the others. Kodi shows nothing for
+      // ADDON_STATUS_UNKNOWN from a setting change (CAddonDll::TransferSettings()), so this only logs.
+      try
+      {
+        thisStatus = pvr->OnAddonSettingChanged(settingName, settingValue);
+      }
+      catch (...)
+      {
+        LogEscaped("applying a setting change");
+        thisStatus = ADDON_STATUS_UNKNOWN;
+      }
       if (thisStatus != ADDON_STATUS_OK)
         status = thisStatus;
     }
@@ -74,6 +98,18 @@ public:
   }
 
 private:
+  static void LogEscaped(const char* what) noexcept
+  {
+    try
+    {
+      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: %s failed with an exception: %s", what,
+                dispatcharr::DescribeCurrentException());
+    }
+    catch (...)
+    {
+    }
+  }
+
   std::mutex m_instancesMutex;
   std::vector<PVRDispatcharr*> m_instances;
 };

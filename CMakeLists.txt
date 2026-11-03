@@ -160,6 +160,7 @@ set(DISPATCHARR_HEADERS
     src/RecurringRuleEdit.h
     src/ManagedRecurringRule.h
     src/DvrAccess.h
+    src/ExceptionGuard.h
     src/RecordingEpgLinks.h
     src/WebSocketFrame.h
     src/SeriesRuleMatching.h
