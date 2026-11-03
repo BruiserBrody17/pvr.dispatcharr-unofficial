@@ -553,6 +553,10 @@ private:
   // Moves the list out under its mutex and joins every entry outside it (join() can block on a network call); the
   // destructor calls it before and after it stops the worker threads.
   void JoinDetachedThreads();
+  // The constructor's work after the members, and the destructor's teardown; split so a constructor that throws can
+  // stop what it had started (see the constructor).
+  void Initialise();
+  void Shutdown();
   struct DetachedThreadEntry
   {
     std::thread thread;

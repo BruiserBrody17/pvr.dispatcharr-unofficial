@@ -96,6 +96,7 @@ add_executable(pvr_dispatcharr_tests
   test_web_socket_handshake.cpp
   test_auth_backoff.cpp
   test_connection_report.cpp
+  test_exception_guard.cpp
   test_stream_seek.cpp
   test_segment_append_offsets.cpp
   test_pending_title_lookup.cpp

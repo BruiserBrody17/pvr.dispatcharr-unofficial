@@ -14,6 +14,9 @@ compare against.
 
 ### Fixed
 
+- **Hardening: running out of memory inside the addon no longer takes Kodi down with it.** The failing request is
+  logged and answered as an error (an empty list, a failed recording action, a channel that won't play), and Kodi
+  keeps running.
 - **Kodi no longer keeps showing an out-of-date connection state for Dispatcharr** when the connection changed while
   Kodi wasn't listening (during a PVR restart, or on Kodi 22 while the device slept): the addon now repeats its connection state
   on wake and every recording refresh interval, so Kodi catches up.

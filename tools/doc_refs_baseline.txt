@@ -12,6 +12,7 @@ docs/BUILDING.md|function|add_internal
 docs/BUILDING.md|function|find_library
 docs/BUILDING.md|function|target_link_libraries
 docs/CATCHUP.md|setting|tv_archive_duration
+docs/CLOSED_ITEMS.md|function|ADDONBASE_CreateInstance
 docs/CLOSED_ITEMS.md|function|AbortDemux
 docs/CLOSED_ITEMS.md|function|CanExtract
 docs/CLOSED_ITEMS.md|function|CloseFile
@@ -75,6 +76,7 @@ docs/CLOSED_ITEMS.md|setting|channel_client_wait_period
 docs/CLOSED_ITEMS.md|setting|channel_init_grace_period
 docs/CLOSED_ITEMS.md|setting|channel_shutdown_delay
 docs/CLOSED_ITEMS.md|setting|dvr_settings
+docs/CLOSED_ITEMS.md|setting|escaped_exception_ctor
 docs/CLOSED_ITEMS.md|setting|m_lowspeedtime
 docs/CLOSED_ITEMS.md|setting|new_client_behind_seconds
 docs/CLOSED_ITEMS.md|setting|redis_chunk_ttl
@@ -140,6 +142,8 @@ docs/TEST_COVERAGE.md|function|add_internal
 docs/TEST_COVERAGE.md|function|gmtime_r
 docs/TEST_COVERAGE.md|function|source_time
 docs/TEST_COVERAGE.md|setting|dvr_settings
+docs/TEST_COVERAGE.md|setting|escaped_exception
+docs/TEST_COVERAGE.md|setting|escaped_exception_ctor
 docs/TIMESHIFT.md|function|CallChannelMenuHook
 docs/TIMESHIFT.md|function|CheckDependencies
 docs/TIMESHIFT.md|function|CloseFile

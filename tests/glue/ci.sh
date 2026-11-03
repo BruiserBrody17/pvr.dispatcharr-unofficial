@@ -74,6 +74,8 @@ run "PVR: owner stamps, new key on a recording open" BIN=pvr_harness T=120 CTL="
 run "PVR: M3U refresh event"       BIN=pvr_harness T=60 -- refresh_events
 run "PVR: server offset vs table"   BIN=pvr_harness T=60 -- offset_cross_check
 run "PVR surface: threads"       BIN=pvr_harness T=180 -- surface 6000
+run "PVR: an exception inside an override" BIN=pvr_harness T=60 -- escaped_exception
+run "PVR: an exception in the constructor" BIN=pvr_harness T=60 -- escaped_exception_ctor
 run "PVR: connection, healthy"    BIN=pvr_harness T=60 -- connection_state 4000 connected
 run "PVR: connection, rejected"   BIN=pvr_harness T=60 CTL="login_status=401" -- connection_state 4000 denied
 run "PVR: connection, throttled"  BIN=pvr_harness T=60 CTL="login_status=429" -- connection_state 4000 ""
