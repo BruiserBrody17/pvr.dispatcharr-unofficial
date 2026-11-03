@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <map>
 #include <mutex>
 #include <string>
@@ -78,8 +79,15 @@ static char* get_addon_path(const KODI_ADDON_BACKEND_HDL)
 {
   return dupstr(g_userPath);
 }
+// A Kodi call that throws, for the escaped_exception scenarios: reading the setting named by g_throwOnSetting, or a
+// recording transfer while g_throwInRecordingTransfer is set, throws std::bad_alloc (Kodi allocates in both).
+std::atomic<const char*> g_throwOnSetting{nullptr};
+std::atomic<bool> g_throwInRecordingTransfer{false};
 static bool lookup(const char* id, std::string& out)
 {
+  const char* throwOn = g_throwOnSetting.load();
+  if (throwOn && strcmp(id, throwOn) == 0)
+    throw std::bad_alloc();
   std::lock_guard<std::mutex> g(g_setMu);
   auto it = g_settings.find(id);
   if (it == g_settings.end())
@@ -305,6 +313,8 @@ static void t_epg(void*, const PVR_HANDLE h, const EPG_TAG* c)
 }
 static void t_rec(void*, const PVR_HANDLE h, const PVR_RECORDING* c)
 {
+  if (g_throwInRecordingTransfer)
+    throw std::bad_alloc();
   auto* r = (Collected*)h;
   std::lock_guard<std::mutex> g(r->mu);
   r->recordings.push_back(*c);

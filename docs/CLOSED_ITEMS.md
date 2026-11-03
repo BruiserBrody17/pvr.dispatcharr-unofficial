@@ -6,6 +6,60 @@
 
 ### Fixed
 
+#### Nothing stops an exception crossing from a PVR callback into Kodi
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, hardening, confirmed by reading.** The worker threads
+and detached tasks run under `RunGuardedWorker()`/`RunBackgroundTask()`, but the `CInstancePVRClient` overrides Kodi
+calls on its own threads (`GetTimers`, `GetChannels`, `UpdateTimer` and the rest) and the constructor reached from
+`CreateInstance` in `addon.cpp` are not, and neither the dev-kit thunks nor `CPVRClient::DoAddonCall()` catch anything.
+A `std::bad_alloc` copying the recordings or rules vectors on a 32-bit or low-memory box ends the Kodi process (and
+crosses a CRT boundary on Windows). Fix: a small guard that catches `std::exception` and `...`, logs, and returns
+`PVR_ERROR_FAILED`/`false`/`-1`, around each override, and around `new PVRDispatcharr` returning `ADDON_STATUS_UNKNOWN`.
+
+**Fixed 2026-11-02, confirmed by the glue harness; smoke-tested live on Kodi 22.0 RC1** (nothing seen so far throws
+there, the case is a `std::bad_alloc` on a box short of memory, so the live pass checks only that nothing else
+changed). Every `CInstancePVRClient` override in `PVRDispatcharr.cpp` (45 of them) is
+now a function-try-block, so the bodies are unchanged. Its handler logs the override's name and what escaped
+(`DescribeCurrentException()`, `ExceptionGuard.h`, which allocates nothing) and answers the failure value Kodi already
+handles: `PVR_ERROR_FAILED`, `false` or `-1`, or nothing for the two `Close*` calls. The two `Open*` handlers also
+close what the call had opened before the throw, since Kodi does not call `Close*` after a failed open.
+`CreateInstance()` (`addon.cpp`) catches a throwing constructor, clears `hdl` and answers `ADDON_STATUS_UNKNOWN`:
+`hdl` is Kodi's `instance->hdl`, which `CInstancePVRClient`'s constructor had already set to the freed object, and the
+dev-kit's `ADDONBASE_CreateInstance()` reads it (and may delete it) when it is not null; this path is checked by
+reading, since the glue harness does not build `addon.cpp`. `SetSetting()` catches per instance and answers
+`ADDON_STATUS_UNKNOWN`, which Kodi does not show (`CAddonDll::TransferSettings()`). Catching in `CreateInstance()` alone would not
+have been enough: a constructor that throws gets no destructor, and its members were then destroyed with the startup
+login's connection-report thread still joinable in `m_detachedThreads`, which is `std::terminate`. So the constructor
+now runs everything after its members in `Initialise()`, and on an exception calls `Shutdown()` (the destructor's
+teardown, now shared) before rethrowing. The destructor itself stays unguarded: it is `noexcept`, and only a failed
+`join()` could throw there. Catch2 covers `DescribeCurrentException()` (`tests/test_exception_guard.cpp`). Two glue
+scenarios, both in CI: `escaped_exception` makes Kodi's recording transfer throw `std::bad_alloc` inside
+`GetRecordings()` (it must answer `PVR_ERROR_FAILED`, log the override's name, and work on the next call), and
+`escaped_exception_ctor` makes the settings read of `recurring_rule_timezone` throw during the constructor, after the
+startup login (the exception must reach the caller). Without the guards each one ends in `std::terminate` (exit 134);
+the constructor one does so even with the overrides guarded, because of the thread. What the guard does not make
+clean, accepted as better than ending Kodi: a failure in the properties Kodi reads while creating the client
+(`GetCapabilities()`, the backend name, version, hostname and connection string) leaves Kodi treating the client as not
+ready, so it never destroys that instance and a later restart of it builds a second one beside it; an exception on every
+`ReadLiveStream()` keeps live playback waiting, logging about five lines a second, until Stop, since Kodi reads a live
+-1 again; and the thunks still allocate after some overrides return (the stream properties, the timer types), outside
+the guard. An independent review (`pvr-behavior-reviewer`) found the `hdl` and the half-opened streams before merge.
+
+**Live smoke pass, 2026-11-02** (Kodi 22.0 RC1 on the Linux test VM, this branch's CI Linux build, the real server,
+Server-side mode, debug logging on): start-up loaded the channels, guide, recordings and timers with no "failed with an
+exception" line; Channel B in Server-side mode opened in 4.2 s, paused, resumed, stopped in 3.3 s and reopened; disabling
+the addon during that playback (the destructor, now `Shutdown()`) ended the player in 1.5 s, Kodi stayed responsive, and
+enabling it created a new instance that reported connected; a finished recording played and closed (`openStreams` back
+to 0); an instant recording played while recording, was stopped while watched, and Kodi 22's thumbnail loader opened and
+closed two more streams of it (`openStreams` 2, then 1); quitting Kodi with it still playing took 3.2 s, closed it
+(`openStreams` 0) and ended with "Application stopped". The disposable recording was deleted (404 on re-GET).
+
+**Ported to `Omega` (2026-11-02)** with `git cherry-pick -x` and a hand port of the recorded-stream overrides: `Omega`
+has 42 overrides (no `IsRecordedStreamRealTime()`, and no stream id on the recorded-stream calls), all wrapped. Kodi 21
+holds one recorded stream at a time, so the `OpenRecordedStream()` handler there closes both the in-progress and the
+finished-recording stream, each of which does nothing when not open. Both glue scenarios and the rest of `ci.sh` pass
+against the Kodi 21 dev-kit headers under ASan + UBSan; the live smoke pass above was not repeated on Kodi 21.
+
 #### A connection state Kodi ignores while its PVR manager is stopped is marked delivered and never re-sent
 
 **Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
