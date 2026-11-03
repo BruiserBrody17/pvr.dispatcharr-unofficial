@@ -28,6 +28,8 @@ extern std::mutex g_notifyMu;
 extern std::vector<std::string> g_notifyMessages;
 extern std::vector<int> g_connCalls;
 extern std::vector<std::string> g_connMessages;
+extern std::atomic<bool> g_connDrop;
+extern std::atomic<int> g_connDropped;
 extern AddonInstance_PVR g_pvr;
 struct Collected
 {
@@ -388,6 +390,8 @@ int main(int argc, char** argv)
     // occurrence it materialized; the constructor's zone sync then selects the same zone in the setting.
     ctl("seed_offset_check=1");
   }
+  if (what == "connection_resend")
+    g_connDrop = true;
   KODI_ADDON_INSTANCE_STRUCT* inst = MakePvrInstanceStruct();
   long c0 = ms();
   PVRDispatcharr* pvr;
@@ -1115,6 +1119,31 @@ int main(int argc, char** argv)
         if (!m.empty())
           FAIL("a report carried the message '%s'; an empty one makes Kodi use its own localized text", m.c_str());
     }
+  }
+  else if (what == "connection_resend")
+  {
+    // Kodi drops a ConnectionStateChange() made while the client's calls are blocked (a system sleep, a PVR manager
+    // restart), and the call returns nothing. The stub drops every report until the startup CONNECTED has been
+    // attempted, then a wake (the end of a sleep) must bring it to Kodi: before the fix the latch counted the dropped
+    // one as delivered and never sent it again.
+    long began = ms();
+    while (ms() - began < dur && g_connDropped.load() == 0)
+      sleep_ms(50);
+    if (g_connDropped.load() == 0)
+      FAIL("the addon never tried to report the connection, so nothing was dropped");
+    sleep_ms(500);
+    g_connDrop = false;
+    if (!ConnSnapshot().empty())
+      FAIL("a report reached Kodi while the stub was dropping them");
+    A()->OnSystemWake(I());
+    began = ms();
+    std::vector<std::string> got;
+    while (ms() - began < dur && (got = ConnSnapshot()).empty())
+      sleep_ms(50);
+    INFO("dropped %d report(s), then after the wake [%s] in %ld ms", g_connDropped.load(), Joined(got).c_str(),
+         ms() - began);
+    if (got != std::vector<std::string>{"connected"})
+      FAIL("after the wake the addon reported [%s] to Kodi, expected [connected]", Joined(got).c_str());
   }
   else if (what == "dvr_access")
   {

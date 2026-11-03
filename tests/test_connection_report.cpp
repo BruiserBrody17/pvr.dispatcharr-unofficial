@@ -436,3 +436,72 @@ TEST_CASE("A held connected, then an outage, delivers nothing for the link that 
   CHECK(latch.TakePending(out, false));
   CHECK(out == ConnectionReport::kUnreachable);
 }
+
+// ---------------------------------------------------------------------
+// RequestResend: a delivery Kodi may have dropped
+// ---------------------------------------------------------------------
+
+TEST_CASE("A resend hands out the state already delivered once more", "[ConnectionReport]")
+{
+  // Kodi drops a ConnectionStateChange() made while the client's calls are blocked (a PVR manager restart, a system
+  // sleep) and the call returns nothing, so the addon cannot tell; sending the same state again is harmless (Kodi
+  // ignores a state equal to the one it holds) and repairs the dropped one.
+  ConnectionReportLatch latch;
+  ConnectionReport out = ConnectionReport::kNone;
+  bool resent = true;
+  latch.Observe(ConnectionReport::kConnected);
+  REQUIRE(latch.TakePending(out, true, &resent));
+  CHECK(out == ConnectionReport::kConnected);
+  CHECK_FALSE(resent);
+  CHECK_FALSE(latch.TakePending(out, true));
+  latch.RequestResend();
+  out = ConnectionReport::kNone;
+  REQUIRE(latch.TakePending(out, true, &resent));
+  CHECK(out == ConnectionReport::kConnected);
+  CHECK(resent);
+  // Once, not on every later call.
+  CHECK_FALSE(latch.TakePending(out, true));
+}
+
+TEST_CASE("A resend of a lost connection is still delivered as lost", "[ConnectionReport]")
+{
+  ConnectionReportLatch latch;
+  ConnectionReport out = ConnectionReport::kNone;
+  latch.Observe(ConnectionReport::kConnected);
+  latch.TakePending(out, true);
+  latch.Observe(ConnectionReport::kUnreachable);
+  REQUIRE(latch.TakePending(out, true));
+  REQUIRE(out == ConnectionReport::kDisconnected);
+  latch.RequestResend();
+  REQUIRE(latch.TakePending(out, true));
+  CHECK(out == ConnectionReport::kDisconnected);
+}
+
+TEST_CASE("A resend before anything was delivered delivers nothing early", "[ConnectionReport]")
+{
+  ConnectionReportLatch latch;
+  ConnectionReport out = ConnectionReport::kNone;
+  latch.RequestResend();
+  CHECK_FALSE(latch.TakePending(out, true));
+  // A held connected stays held: the resend does not bypass the wait for the access level.
+  latch.Observe(ConnectionReport::kConnected);
+  latch.RequestResend();
+  CHECK_FALSE(latch.TakePending(out, false));
+  CHECK(latch.TakePending(out, true));
+  CHECK(out == ConnectionReport::kConnected);
+}
+
+TEST_CASE("A change after a resend request is delivered as a change, and uses up the request", "[ConnectionReport]")
+{
+  ConnectionReportLatch latch;
+  ConnectionReport out = ConnectionReport::kNone;
+  bool resent = true;
+  latch.Observe(ConnectionReport::kAccessDenied);
+  latch.TakePending(out, true);
+  latch.RequestResend();
+  latch.Observe(ConnectionReport::kConnected);
+  REQUIRE(latch.TakePending(out, true, &resent));
+  CHECK(out == ConnectionReport::kConnected);
+  CHECK_FALSE(resent);
+  CHECK_FALSE(latch.TakePending(out, true));
+}

@@ -36,8 +36,15 @@ inline bool CanManageDvr(DvrAccess access)
 
 // Reads `user_level` and `custom_properties.dvr_access` from a
 // `GET /api/accounts/users/me/` response. False when the response carries no
-// usable `user_level` (an access level cannot be derived without it), in which
-// case the caller keeps its current value rather than guessing.
+// usable `user_level` (an access level cannot be derived without it), leaving
+// `out` untouched; DvrAccessFromAnsweredUserJson() decides what that means.
 bool ParseDvrAccessFromUserJson(const nlohmann::json& user, DvrAccess& out);
+
+// The access level to act on once `GET /api/accounts/users/me/` has answered. An answer with no usable `user_level`
+// fails open to kManage, as a failed request does, but unlike a failed request it settles the question (levelKnown
+// false says which): asking the same server again gets the same answer, and the connection report waits for the level
+// to be settled (ConnectionReport.h), so retrying it would keep Kodi showing the server as unreachable for the whole
+// session. Every Dispatcharr seen so far sends the field; a proxy or a fork that strips it is the case this covers.
+DvrAccess DvrAccessFromAnsweredUserJson(const nlohmann::json& user, bool& levelKnown);
 
 } // namespace dispatcharr

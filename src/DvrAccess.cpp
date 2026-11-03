@@ -31,4 +31,11 @@ bool ParseDvrAccessFromUserJson(const nlohmann::json& user, DvrAccess& out)
   return true;
 }
 
+DvrAccess DvrAccessFromAnsweredUserJson(const nlohmann::json& user, bool& levelKnown)
+{
+  DvrAccess access = DvrAccess::kManage;
+  levelKnown = ParseDvrAccessFromUserJson(user, access);
+  return levelKnown ? access : DvrAccess::kManage;
+}
+
 } // namespace dispatcharr

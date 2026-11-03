@@ -83,18 +83,29 @@ public:
   // when a delivery is worth scheduling.
   bool Observe(ConnectionReport report);
 
-  // The state to deliver, if it differs from the last one delivered; marks it delivered. An unreachable server is
+  // The state to deliver, if it differs from the last one delivered (or RequestResend() asked for it again); marks it
+  // delivered. An unreachable server is
   // delivered as kDisconnected when the link had been delivered as connected (or already as disconnected, which then
   // delivers nothing more). kConnected is held back while
   // connectedReady is false: Kodi re-reads the addon's capabilities on CONNECTED, so it must not be reported before
   // the account's DVR access level is known, or the re-read would see the same fail-open answer it already has. A held
-  // kConnected stays pending until a later call passes connectedReady = true.
-  bool TakePending(ConnectionReport& out, bool connectedReady);
+  // kConnected stays pending until a later call passes connectedReady = true. resent, when given, says whether the
+  // state is one already delivered and handed out again because RequestResend() asked for it.
+  bool TakePending(ConnectionReport& out, bool connectedReady, bool* resent = nullptr);
+
+  // Lets the next TakePending() hand out the state already delivered once more. "Delivered" can only mean "sent":
+  // ConnectionStateChange() returns nothing, and Kodi drops the callback while the client's calls are blocked
+  // (CPVRClient::HandleAddonCallback(), "Ignoring callback from PVR client", during a PVR manager restart, and on Kodi
+  // 22 a system sleep), so a state sent in that window never reaches Kodi and nothing would send it again until the
+  // state really changed. Kodi ignores a state equal to the one it holds (cb_connection_state_change()), so sending it
+  // again costs nothing when the first one landed.
+  void RequestResend();
 
 private:
   std::mutex m_mutex;
   ConnectionReport m_observed = ConnectionReport::kNone;
   ConnectionReport m_delivered = ConnectionReport::kNone;
+  bool m_resendRequested = false;
 };
 
 } // namespace dispatcharr

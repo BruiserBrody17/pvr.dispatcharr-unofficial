@@ -502,9 +502,13 @@ bool PVRDispatcharr::SyncDvrAccessFromDispatcharr()
   // reaches Kodi: the connection report is held until the level is known, and Kodi
   // re-reads GetCapabilities() when the state becomes CONNECTED (confirmed live
   // 2026-10-13: Record, Edit and Delete left the menus with no restart).
+  //
+  // An answer without a usable level settles it too, failing open (DvrAccessFromAnsweredUserJson()): retrying gets the
+  // same answer, and the held report would leave Kodi showing the server as unreachable for the whole session.
   DvrAccess access = DvrAccess::kManage;
+  bool levelKnown = true;
   std::string accessError;
-  if (!m_client.GetCurrentUserDvrAccess(access, accessError))
+  if (!m_client.GetCurrentUserDvrAccess(access, levelKnown, accessError))
   {
     if (m_debugLogging)
     {
@@ -512,6 +516,12 @@ bool PVRDispatcharr::SyncDvrAccessFromDispatcharr()
                 accessError.c_str());
     }
     return false;
+  }
+  if (!levelKnown)
+  {
+    kodi::Log(ADDON_LOG_WARNING,
+              "pvr.dispatcharr-unofficial: Dispatcharr's account details carry no user_level -- recording, deleting "
+              "and renaming stay offered, and Dispatcharr's own permission checks decide");
   }
   const bool canManage = dispatcharr::CanManageDvr(access);
   m_dvrManageAllowed = canManage;
@@ -887,13 +897,20 @@ void PVRDispatcharr::ScheduleConnectionReport()
   TrackDetachedThread([this]() { ReportConnectionToKodi(); });
 }
 
+void PVRDispatcharr::ResendConnectionReport()
+{
+  m_connectionLatch.RequestResend();
+  ScheduleConnectionReport();
+}
+
 void PVRDispatcharr::ReportConnectionToKodi()
 {
   // One reporter at a time, so a slow call cannot be overtaken by a later one; each loop pass delivers the newest
   // state, not the one this thread was started for.
   std::lock_guard<std::mutex> reportLock(m_connectionReportMutex);
   dispatcharr::ConnectionReport report = dispatcharr::ConnectionReport::kNone;
-  while (!m_shuttingDown && m_connectionLatch.TakePending(report, m_dvrAccessChecked))
+  bool resent = false;
+  while (!m_shuttingDown && m_connectionLatch.TakePending(report, m_dvrAccessChecked, &resent))
   {
     PVR_CONNECTION_STATE state = PVR_CONNECTION_STATE_UNKNOWN;
     switch (report)
@@ -918,12 +935,16 @@ void PVRDispatcharr::ReportConnectionToKodi()
     }
     std::string connection;
     GetConnectionString(connection);
-    kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: telling Kodi the connection is now %s",
-              state == PVR_CONNECTION_STATE_CONNECTED         ? "connected"
-              : state == PVR_CONNECTION_STATE_ACCESS_DENIED   ? "access denied"
-              : state == PVR_CONNECTION_STATE_DISCONNECTED    ? "lost"
-              : state == PVR_CONNECTION_STATE_SERVER_MISMATCH ? "not Dispatcharr (server mismatch)"
-                                                              : "unreachable");
+    const char* stateName = state == PVR_CONNECTION_STATE_CONNECTED         ? "connected"
+                            : state == PVR_CONNECTION_STATE_ACCESS_DENIED   ? "access denied"
+                            : state == PVR_CONNECTION_STATE_DISCONNECTED    ? "lost"
+                            : state == PVR_CONNECTION_STATE_SERVER_MISMATCH ? "not Dispatcharr (server mismatch)"
+                                                                            : "unreachable";
+    // A resend goes out every refresh interval and changes nothing when Kodi already has the state.
+    if (!resent)
+      kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: telling Kodi the connection is now %s", stateName);
+    else if (m_debugLogging)
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: telling Kodi again the connection is %s", stateName);
     // An empty message makes Kodi use its own localized text for the state.
     ConnectionStateChange(connection, state, "");
   }
@@ -1425,8 +1446,14 @@ void PVRDispatcharr::StartRecordingRefreshThread()
                                  if (m_recordingRefreshIntervalChanged.exchange(false))
                                    continue; // re-enter wait_for() immediately with the now-current interval
                                }
+                               // The first pass runs at start, where the constructor has just reported.
+                               const bool resendConnection = !firstIteration;
                                firstIteration = false;
                                lock.unlock();
+                               // A report Kodi dropped while the client's calls were blocked (a PVR manager restart
+                               // that left this instance running) reaches it here, a refresh interval later.
+                               if (resendConnection)
+                                 ResendConnectionReport();
                                RenewRecurringRules();
                                // Timers before recordings -- see HandleRealtimeUpdateMessage()'s
                                // own comment on why the order matters here, not just at
@@ -2201,6 +2228,9 @@ PVR_ERROR PVRDispatcharr::OnSystemWake()
     m_epgDurableFailureCount = 0;
   }
   m_client.InvalidateAccessToken();
+  // Kodi 22 blocks the client's calls between OnSystemSleep() and this call, and drops a connection report made in
+  // that window (ConnectionReportLatch::RequestResend()). Kodi 21 does not block them there, so this changes nothing.
+  ResendConnectionReport();
   return PVR_ERROR_NO_ERROR;
 }
 

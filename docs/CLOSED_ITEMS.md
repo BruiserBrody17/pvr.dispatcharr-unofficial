@@ -6,6 +6,85 @@
 
 ### Fixed
 
+#### A connection state Kodi ignores while its PVR manager is stopped is marked delivered and never re-sent
+
+**Opened 2026-10-24, from the 2026-10-24 bug-hunting sweep (one reviewer, each finding checked against the code before
+it was filed); LOW, confirmed by reading the addon and Kodi 22's source, not reproduced.**
+`ConnectionReportLatch::TakePending()` records the state as delivered before `ReportConnectionToKodi()` calls
+`ConnectionStateChange()`, which returns nothing. Kodi drops the callback while the client's calls are blocked
+(`CPVRClient::HandleAddonCallback()`, "Ignoring callback from PVR client", when `m_bBlockAddonCalls` is set by
+`CPVRClient::Stop()` during a PVR manager restart: a PVR addon enabled, disabled or updated, a database reset). If the
+addon's report thread delivers in that window (for example the held-back CONNECTED after a start with the server down),
+Kodi keeps the old state and skips the `GetCapabilities()` re-read, and the latch never tries again until the state
+really changes. Fix: allow re-delivering the current observation now and then (Kodi ignores a state equal to the one it
+has), or keep "delivered" apart from "observed".
+
+**Fixed 2026-11-02, confirmed by the glue harness and live on Kodi 22.0 RC1.** Checked first in Kodi 22's source (the RC1 tree
+`KODI_COMMIT` pins): `CPVRClient::Stop()` and `OnSystemSleep()` set `m_bBlockAddonCalls` (in Kodi 21 only `Stop()`
+does; its `OnSystemSleep()` is a plain addon call), `HandleAddonCallback()` then
+drops the callback with only a log line, and `cb_connection_state_change()` returns at once when the state equals the
+one Kodi holds, before logging or notifying. So the latch cannot learn whether a delivery landed, but sending the same
+state again costs nothing when it did. `ConnectionReportLatch::RequestResend()` lets the next `TakePending()` hand out
+the delivered state once more (still mapped to "lost" after the link was up, and a held `CONNECTED` stays held until
+the access level is known). `PVRDispatcharr::ResendConnectionReport()` asks for it from `OnSystemWake()` (Kodi 22
+unblocks the client's calls just before that call; on Kodi 21 it is a no-op) and on every recording-refresh tick after the first
+(`recording_refresh_minutes`, 5 by default), which covers a PVR manager restart that left the instance running. A
+resend is logged only with debug logging on. Catch2 covers the latch (`tests/test_connection_report.cpp`: a resend
+hands the state out once, a lost connection stays lost, nothing is sent before anything was delivered, and a change
+after the request uses it up). The glue harness's new `connection_resend` scenario has the stub drop every report
+until the startup `CONNECTED` has been attempted, then calls `OnSystemWake()`: Kodi must then get `connected`. On the
+code before the fix it got nothing in 10 s. In CI.
+
+**Live, 2026-11-02** (Kodi 22.0 RC1 on the Linux test VM, the CI Linux builds of this change and of `Piers` before it,
+the addon pointed at a forwarder on the Kodi machine, `recording_refresh_minutes` 1, Kodi's PVR component logging on).
+Kodi's sleep and wake were driven without suspending the machine: Kodi matches logind's `PrepareForSleep` signal by
+interface only, so `dbus-send --system --type=signal /org/freedesktop/login1 org.freedesktop.login1.Manager.PrepareForSleep
+boolean:true` (then `false`) runs its sleep and resume jobs, with the Flatpak launched with `--socket=system-bus` for the
+test so its D-Bus proxy passes the signal. Kodi started with nothing listening (it logged the state going from unknown to
+unreachable), was put to sleep, and the forwarder was started: the addon's retry logged in and reported connected, and
+Kodi logged "Ignoring callback" for `cb_connection_state_change`, keeping "unreachable" (so were the resends of the
+1-minute tick during the sleep). With this change, the wake's resend reached Kodi 6 ms after "OnWake: Running resume
+jobs" and Kodi logged the state going from unreachable to connected. With the `Piers` build, the same sequence left
+Kodi on unreachable for the 150 s watched after the wake, with nothing more sent. With a healthy server, four minutes of
+ticks and a sleep and wake logged one debug "telling Kodi again" line each and no state change in Kodi. The PVR manager
+restart path (`CPVRClient::Stop()`) was not driven; it blocks the same way and is repaired by the tick.
+
+**Ported to `Omega` (2026-11-02)** with `git cherry-pick -x`; the source and test files applied unchanged. On Kodi 21 only
+`CPVRClient::Stop()` blocks the client's calls (its `OnSystemSleep()` does not), so there the only dropped report is
+the PVR manager restart's, repaired by the tick, and the wake's resend repeats a state Kodi already holds. The
+`connection_resend` scenario and the rest of `ci.sh` pass against the Kodi 21 dev-kit headers under ASan + UBSan; the
+live checks above ran on Kodi 22 and were not repeated on Kodi 21.
+
+#### CONNECTED is held back with no limit while the DVR access level is unknown
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible.** `TakePending(report, m_dvrAccessChecked)`
+delivers `CONNECTED` only once `SyncDvrAccessFromDispatcharr()` has succeeded, which needs a numeric `user_level` from
+`/api/accounts/users/me/`. A server or proxy that omits it, after a start that reported `UNREACHABLE`, leaves Kodi
+showing the client unreachable and never re-reading `GetCapabilities()`; playback is unaffected. Every Dispatcharr seen
+so far sends the field. Fix: treat a parse failure (as opposed to a network failure) as checked and fail open, or
+deliver `CONNECTED` after a few failed reads; testable in `ConnectionReport`.
+
+**Fixed 2026-11-02, confirmed by the glue harness and live on Kodi 22.0 RC1.** An answer
+from `/api/accounts/users/me/` with no usable `user_level` now settles the access level instead of being retried:
+`DvrAccessFromAnsweredUserJson()` (`DvrAccess.h`) fails it open to "manage", the same answer a failed read gives,
+and `GetCurrentUserDvrAccess()` returns false only when the request itself failed, so `m_dvrAccessChecked` is set and
+the held `CONNECTED` is delivered. A failed request is still retried, as before. The addon logs a warning that
+recording, deleting and renaming stay offered and Dispatcharr's own checks decide. Left as it was, on purpose: a
+`/me` request that keeps failing with a status (a proxy rule answering 403, a route answering 404) is still retried
+and still holds `CONNECTED`, since a 404 is also what a reverse proxy answers for the seconds its backend is replaced,
+and settling on it would fix the fail-open level for the session; no deployment answering that route with an error
+has been seen. `IsCurrentUserAdmin()` reads the same answer and still refuses one with no level, so on such a server
+`m_adminStatusChecked` never settles and each background cycle repeats one `GET /me`, which is harmless. Catch2 covers the helper
+(`tests/test_dvr_access.cpp`); the glue harness's new `connection_state` run with `CTL="me_no_level=1"` (the fake
+then leaves `user_level` out) expects `connected`, and on the code before the fix it reported nothing in 4 s. In CI.
+Live (no Dispatcharr seen so far omits the field, so through an HTTP proxy on the Kodi machine that removed it from
+`/api/accounts/users/me/`): Kodi 22.0 RC1 started with the proxy down (unreachable), the proxy came up, and on the
+background thread's retry the addon logged the warning once and reported connected; Kodi logged the state going from
+unreachable to connected, and `PVR.GetClients` showed timers still offered.
+
+**Ported to `Omega` (2026-11-02)** with `git cherry-pick -x`, together with the entry above; the `me_no_level` run
+passes against the Kodi 21 dev-kit headers. The live check above ran on Kodi 22 only.
+
 #### The in-progress tail wait hands back -1 every second, which ends playback a few seconds into a recorder stall
 
 **Opened 2026-11-02, from the recording read-retry live test; confirmed live the same day.** After a read that brings

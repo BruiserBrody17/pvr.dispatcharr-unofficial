@@ -63,3 +63,31 @@ TEST_CASE("ParseDvrAccessFromUserJson refuses a response it cannot derive a leve
   CHECK_FALSE(ParseDvrAccessFromUserJson(json(), out));
   CHECK(out == DvrAccess::kView);
 }
+
+TEST_CASE("An answer with no usable level settles the access level, failing open to manage", "[DvrAccess]")
+{
+  // Retrying would get the same answer, and the connection report waits for the level to be settled.
+  bool known = true;
+  CHECK(DvrAccessFromAnsweredUserJson(json::object(), known) == DvrAccess::kManage);
+  CHECK_FALSE(known);
+  known = true;
+  CHECK(DvrAccessFromAnsweredUserJson(json{{"user_level", "ten"}, {"custom_properties", {{"dvr_access", "none"}}}},
+                                      known) == DvrAccess::kManage);
+  CHECK_FALSE(known);
+  known = true;
+  CHECK(DvrAccessFromAnsweredUserJson(json(), known) == DvrAccess::kManage);
+  CHECK_FALSE(known);
+}
+
+TEST_CASE("An answer with a level gives that level", "[DvrAccess]")
+{
+  bool known = false;
+  CHECK(DvrAccessFromAnsweredUserJson(json{{"user_level", 1}}, known) == DvrAccess::kView);
+  CHECK(known);
+  known = false;
+  CHECK(DvrAccessFromAnsweredUserJson(json{{"user_level", 0}}, known) == DvrAccess::kNone);
+  CHECK(known);
+  known = false;
+  CHECK(DvrAccessFromAnsweredUserJson(json{{"user_level", 10}}, known) == DvrAccess::kManage);
+  CHECK(known);
+}
