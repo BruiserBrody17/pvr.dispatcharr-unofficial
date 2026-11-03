@@ -6,6 +6,45 @@
 
 ### Fixed
 
+#### timeshift_buffer: the 1440-minute cap makes manifests heavy
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, measured.** Filed as "timeshift_buffer:
+segment_seconds has no upper limit, and the 1440-minute cap makes manifests heavy"; the `segment_seconds` half was
+fixed on 2026-10-31 (`CLOSED_ITEMS.md`, "timeshift_buffer: segment_seconds has no upper limit"). At the new
+`_MAX_BUFFER_MINUTES` with 2 s segments a cold manifest build takes 3.2 s on local disk (137 ms at the default), returns
+5.9 MB of JSON, and holds the single per-worker `_manifest_cache_lock` throughout, serialising every channel's
+`get_live_manifest` in that worker; the 16-entry cache was sized for the default. Fix: a lower cap, a byte-based cache
+limit, or the stat sweep outside the lock.
+
+**Fixed 2026-11-03 in `timeshift_buffer` 0.8.17 with a cap on the listed segments, confirmed with tests that fail on
+the old code.** The cost follows the segment count, not the minutes (a day of 1-second segments is twice the measured
+case), so `_MAX_VISIBLE_SEGMENTS` (7200) caps what `_compute_segment_counts()` lists: 4 hours at the default 2-second
+segments, and a day still fits with 12-second ones. A longer setting shortens the window to the cap and `_start_ffmpeg()`
+logs a warning saying how many minutes it buffers; the help text says so. Measured again on the same disk with a warm
+page cache (a synthetic playlist of 188-byte segments): a cold build took 574 ms at 43,200 segments and 185 ms at 7200,
+an unchanged-playlist call 31 ms and 7 ms, the answer 6.1 MB and 1.0 MB of JSON, and a cached entry is about 1.7 MB at
+the cap (0.44 MB at the default), so the 16-entry cache is bounded at about 28 MB. The other two candidates were not
+taken: a byte-based cache limit would bound only the memory, and moving the stat sweep out of `_manifest_cache_lock`
+would not help in a real deployment, where the workers are gevent greenlets and a `stat()` does not yield, so a long
+sweep holds the whole worker either way. Not done: answering only the segments newer than the caller's last one (the
+addon asks up to twice a second and takes only the new ones), which would need the addon to send its last sequence and
+the plugin to return the oldest one separately, since the addon prunes by the first listed segment.
+
+**Confirmed live 2026-11-03** against Dispatcharr 0.33.0 (four workers), with the settings applied to one real 1080p
+channel only, through a throwaway probe plugin that merged them into `start_buffer`'s settings for calls from the test
+VM (the server's saved settings and other clients untouched), and ffmpeg's arguments read from `/proc/<pid>/cmdline`.
+**Control, 0.8.16:** 1440 minutes of 2 s segments ran ffmpeg with `-hls_list_size 43200`. **This branch, deployed to all
+four workers:** the same settings ran it with 7200, logged the warning once ("buffering 240 minutes") and the start line
+said `buffer=240min ... visible=7200`; 1440 minutes of 12 s segments ran `-hls_time 12 -hls_list_size 7200` with no
+warning and `buffer=1440min`. **Kodi 21.3, Server-side mode, the released 0.13.2 addon:** with 2 s segments it played
+4.9 s after the open, ran at real time across a 20 s pause and resume, and a seek to live played on 5 s behind it; with
+12 s segments it played 20.2 s after the open (5.8 s on an earlier open of the same channel), 9 to 14 s behind live,
+through a 60 s pause and two minutes after a seek to live with no stall over 3 s, ending 22 s behind live. The same 2 s
+seek on the older 0.13.0 addon ended playback at the tail, "VideoPlayer: next stream" after a seek-probe give-up: the
+end-of-file flag fixed after 0.13.0 ("Server-side mode: an HEVC channel's opening seek probe leaves Kodi at end of
+file"), not this change. Not run live: a buffer actually filled to the cap (four hours), so the 1 MB answer and the
+build time at 7200 are the local measurements above.
+
 #### Nothing stops an exception crossing from a PVR callback into Kodi
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, hardening, confirmed by reading.** The worker threads
@@ -643,7 +682,7 @@ directory was removed afterwards.
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, confirmed by reading.** Filed as part (1) of
 "timeshift_buffer: segment_seconds has no upper limit, and the 1440-minute cap makes manifests heavy" (part (2), the
-heavy manifests, is still in `OPEN_ITEMS.md`). `segment_seconds` is read with `minimum=1` only, missed by the 2026-10-18
+heavy manifests, was fixed on 2026-11-03: "timeshift_buffer: the 1440-minute cap makes manifests heavy"). `segment_seconds` is read with `minimum=1` only, missed by the 2026-10-18
 caps: a typo such as 3600 means no segment ever closes, every open fails the addon's cold start with "live playlist not
 found", and one `.ts` file grows until the buffer stops. Cap it (60, and no more than `buffer_minutes*60`) and say so in
 the help text.

@@ -665,6 +665,19 @@ def test_compute_segment_counts_floors_at_one_when_segment_longer_than_buffer():
     assert wrap == 2
 
 
+def test_compute_segment_counts_caps_the_listed_segments():
+    """The 2026-10-23 sweep: a day of 2-second segments listed 43,200, every one in each manifest answer. The cap
+    shortens the window rather than the segments; a day still fits once the segments are long enough."""
+    cap = timeshift_buffer_plugin._MAX_VISIBLE_SEGMENTS
+    assert cap == 7200
+    assert timeshift_buffer_plugin._compute_segment_counts(1440, 2) == (cap, cap * 2)
+    assert timeshift_buffer_plugin._compute_segment_counts(241, 2) == (cap, cap * 2)
+    assert timeshift_buffer_plugin._compute_segment_counts(240, 2) == (7200, 14400)
+    assert timeshift_buffer_plugin._compute_segment_counts(1440, 12) == (7200, 14400)
+    assert timeshift_buffer_plugin._compute_segment_counts(1440, 20) == (4320, 8640)
+    assert timeshift_buffer_plugin._compute_segment_counts(1440, 1) == (cap, cap * 2)
+
+
 # ---------------------------------------------------------------------
 # _build_ffmpeg_command
 # ---------------------------------------------------------------------
@@ -6879,11 +6892,12 @@ def test_start_ffmpeg_caps_buffer_minutes_at_a_day(tmp_path, monkeypatch):
     monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: None)
 
     timeshift_buffer_plugin._start_ffmpeg(
-        _UUID, {}, {"storage_path": str(tmp_path), "buffer_minutes": 10**7, "segment_seconds": 2}, _FakeLogger()
+        _UUID, {}, {"storage_path": str(tmp_path), "buffer_minutes": 10**7, "segment_seconds": 20}, _FakeLogger()
     )
 
+    # 20-second segments, so the day is what binds here and not _MAX_VISIBLE_SEGMENTS.
     cmd = commands[0]
-    assert cmd[cmd.index("-hls_list_size") + 1] == str(24 * 60 * 60 // 2)
+    assert cmd[cmd.index("-hls_list_size") + 1] == str(24 * 60 * 60 // 20)
 
 
 def test_start_ffmpeg_caps_segment_seconds_inside_the_addons_cold_start(tmp_path, monkeypatch):
@@ -6900,6 +6914,37 @@ def test_start_ffmpeg_caps_segment_seconds_inside_the_addons_cold_start(tmp_path
     cmd = commands[0]
     assert cmd[cmd.index("-hls_time") + 1] == "20"
     assert cmd[cmd.index("-hls_list_size") + 1] == "3"
+
+
+def test_start_ffmpeg_caps_the_listed_segments_and_says_so(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: commands.append(cmd) or _FakeProc()
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: None)
+    logger = _FakeLogger()
+
+    timeshift_buffer_plugin._start_ffmpeg(
+        _UUID, {}, {"storage_path": str(tmp_path), "buffer_minutes": 1440, "segment_seconds": 2}, logger
+    )
+
+    cmd = commands[0]
+    assert cmd[cmd.index("-hls_list_size") + 1] == "7200"
+    warnings = [message for level, message in logger.calls if level == "warning"]
+    assert len(warnings) == 1
+    assert "more than 7200 segments; buffering 240 minutes" in warnings[0]
+
+
+def test_start_ffmpeg_does_not_warn_at_exactly_the_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: None)
+    logger = _FakeLogger()
+
+    timeshift_buffer_plugin._start_ffmpeg(
+        _UUID, {}, {"storage_path": str(tmp_path), "buffer_minutes": 1440, "segment_seconds": 12}, logger
+    )
+
+    assert not [c for c in logger.calls if c[0] == "warning"]
 
 
 def test_scrub_action_caps_the_idle_timeout(monkeypatch, tmp_path):

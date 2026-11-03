@@ -4,14 +4,13 @@
 
 ## Status at a glance
 
-**9 open, 395 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**8 open, 396 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
-- Two, both LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
-  (all 17 findings held here). Fifteen of its 17 are fixed or closed; one of the two is what is left of a finding half
-  fixed on 2026-10-31.
+- One, LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
+  (all 17 findings held here). Sixteen of its 17 are fixed or closed.
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
@@ -29,14 +28,14 @@ over the whole project, seven findings).
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
-| Open: Fix known, not yet done | 1 |
+| Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 1 |
 | Open: Design decision needed | 3 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 344 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 345 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 41 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -48,15 +47,7 @@ None open.
 
 ### Fix known, not yet done
 
-#### timeshift_buffer: the 1440-minute cap makes manifests heavy
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, measured.** Filed as "timeshift_buffer:
-segment_seconds has no upper limit, and the 1440-minute cap makes manifests heavy"; the `segment_seconds` half was
-fixed on 2026-10-31 (`CLOSED_ITEMS.md`, "timeshift_buffer: segment_seconds has no upper limit"). At the new
-`_MAX_BUFFER_MINUTES` with 2 s segments a cold manifest build takes 3.2 s on local disk (137 ms at the default), returns
-5.9 MB of JSON, and holds the single per-worker `_manifest_cache_lock` throughout, serialising every channel's
-`get_live_manifest` in that worker; the 16-entry cache was sized for the default. Fix: a lower cap, a byte-based cache
-limit, or the stat sweep outside the lock.
+None open.
 
 ### Architectural / concurrency
 

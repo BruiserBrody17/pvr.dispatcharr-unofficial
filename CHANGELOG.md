@@ -85,6 +85,10 @@ Dispatcharr restart for every worker to pick it up.
   A heartbeat carrying an older buffer's token is now refused, as a manifest request already was, and a buffer that
   replaces another while a manifest is being built no longer picks up that request's viewer. The heartbeat check needs
   the addon release after 0.13.2 (Kodi 21) or 0.14.2 (Kodi 22), which sends the token with it.
+- **A long buffer no longer makes every manifest request slow and large**: a day of 2-second segments was about 6 MB
+  per request, asked for up to twice a second per viewer. The buffer now lists at most 7200 segments, 4 hours at the
+  default segment length; a longer Buffer length is shortened to that, with a warning in Dispatcharr's log. A day still
+  fits with a Segment length of 12 seconds or more.
 
 ## [0.13.2] - 2026-10-31
 

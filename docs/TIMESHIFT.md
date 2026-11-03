@@ -2766,7 +2766,8 @@ coincidentally landing in this range.
 
 **Update: ruled out.** `timeshift_buffer`'s own source
 (`dispatcharr-plugin/timeshift_buffer/plugin.py`) computes
-`visible_segments = max(1, (buffer_minutes * 60) // segment_seconds)`,
+`visible_segments = max(1, (buffer_minutes * 60) // segment_seconds)`
+(capped at `_MAX_VISIBLE_SEGMENTS` since 2026-11-03, which applies only from 240 minutes up),
 so `visible_segments * segment_seconds` always reduces to just
 `buffer_minutes * 60` -- the buffer's *full* rewindable window in
 seconds, not some smaller derived quantity. For that to land anywhere

@@ -173,6 +173,13 @@ _MAX_IDLE_TIMEOUT_SECONDS = _BUFFER_STATE_TTL // 2
 # "not ready" (kColdStartExtendedAttempts in DispatcharrClient.cpp), so the cap leaves about 10 s for ffmpeg's start,
 # the provider connection and the keyframe. Lower it if that budget shrinks. Never more than the shortest buffer.
 _MAX_SEGMENT_SECONDS = 20
+# The most segments the playlist lists (2026-10-23 sweep): every get_live_manifest call answers with all of them, and
+# the addon asks up to twice a second per viewer, so the cost follows the segment count, not the minutes. A day of
+# 2-second segments (43,200) took 3.2 s for a worker's first manifest on local disk (0.6 s with the files in the page
+# cache) and was 6 MB of JSON per answer; 7200 is 4 hours at the default segment length (1 MB, 0.2 s with the files
+# cached), and a day still fits with 12-second segments. Moving the stat sweep out of _manifest_cache_lock would not
+# help: the workers are gevent greenlets and a stat() does not yield, so a long sweep holds the whole worker either way.
+_MAX_VISIBLE_SEGMENTS = 7200
 
 _HTTP_THREAD_NAME = "timeshift_buffer_http"
 _REAPER_THREAD_NAME = "timeshift_buffer_reaper"
@@ -1582,9 +1589,11 @@ def _compute_segment_counts(buffer_minutes: int, segment_seconds: int) -> tuple[
 
     visible_segments floors at 1 (max(1, ...)) so a segment_seconds
     larger than the whole configured buffer window still produces a
-    playable single-segment playlist rather than 0. Note the invariant
+    playable single-segment playlist rather than 0, and is capped at
+    _MAX_VISIBLE_SEGMENTS, which shortens the window instead (see that
+    constant). Note the invariant
     `visible_segments * segment_seconds == buffer_minutes * 60` for any
-    input where segment_seconds evenly divides the window -- an actual
+    input under that cap where segment_seconds evenly divides the window -- an actual
     real-world debugging aid: this exact formula was cited in
     docs/TIMESHIFT.md to rule out a suspected ~89s audio-sync-error
     correlation, by showing no realistic buffer_minutes/segment_seconds
@@ -1602,7 +1611,7 @@ def _compute_segment_counts(buffer_minutes: int, segment_seconds: int) -> tuple[
     still applies here), just via a size margin here instead of a
     request-count hold.
     """
-    visible_segments = max(1, (buffer_minutes * 60) // segment_seconds)
+    visible_segments = min(max(1, (buffer_minutes * 60) // segment_seconds), _MAX_VISIBLE_SEGMENTS)
     wrap_segments = visible_segments * 2
     return visible_segments, wrap_segments
 
@@ -1774,6 +1783,15 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
     http_port = _int_setting(settings_dict, "http_port", 9192, minimum=1, maximum=65535)
 
     visible_segments, wrap_segments = _compute_segment_counts(buffer_minutes, segment_seconds)
+    if visible_segments == _MAX_VISIBLE_SEGMENTS and visible_segments * segment_seconds < buffer_minutes * 60:
+        logger.warning(
+            "timeshift_buffer: a %d-minute buffer of %ds segments is more than %d segments; buffering %d minutes "
+            "(a longer segment length allows more)",
+            buffer_minutes,
+            segment_seconds,
+            _MAX_VISIBLE_SEGMENTS,
+            visible_segments * segment_seconds // 60,
+        )
 
     channel_dir = _channel_dir(storage_path, channel_uuid)
     # Before the directory is cleared (which would remove the owner file): an ffmpeg a lost Redis
@@ -1825,7 +1843,7 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
         "timeshift_buffer: started ffmpeg pid=%s for channel %s (buffer=%dmin, segment=%ds, visible=%d, wrap=%d)",
         proc.pid,
         channel_uuid,
-        buffer_minutes,
+        min(buffer_minutes, visible_segments * segment_seconds // 60),
         segment_seconds,
         visible_segments,
         wrap_segments,
@@ -2603,7 +2621,8 @@ _manifest_cache_lock = threading.Lock()
 # (about 400 KB at the defaults), and it is only removed in the worker that tears the buffer down
 # (_delete_buffer_state()), so in every other worker an entry for a channel nobody watches any more stayed
 # for the life of the process: 100 channels surfed was about 40 MB per worker (found by the twelfth
-# hardening sweep). A dropped entry only means a cold rebuild on that channel's next call, which is what a
+# hardening sweep); about 1.7 MB at _MAX_VISIBLE_SEGMENTS, which bounds the cache at about 28 MB. A dropped
+# entry only means a cold rebuild on that channel's next call, which is what a
 # worker that never served it does anyway. Well above max_concurrent_buffers (default 4), so a busy server
 # never evicts a buffer that is in use.
 _MANIFEST_CACHE_MAX_ENTRIES = 16
@@ -3633,7 +3652,9 @@ class Plugin:
                 "How far back a viewer can rewind. Drives both "
                 "hls_list_size (what the playlist advertises) and "
                 "hls_delete_threshold (when old segment files are deleted). "
-                "At most 1440 (a day)."
+                "At most 1440 (a day), and at most 7200 segments: past 240 "
+                "minutes at the default 2-second segments the buffer stops "
+                "there, and a day needs 12-second segments."
             ),
         },
         {
