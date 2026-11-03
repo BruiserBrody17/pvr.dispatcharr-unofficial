@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`52b19f0`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`d1991fb`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -177,6 +177,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `66040e9` | `ccf20ce` (by hand on a branch: cherry-picks with the stream's member and helper names, `OPEN_ITEMS.md`'s counts and the closed entry's function name by hand; the `CHANGELOG.md` line without the Kodi 22 clause) | The in-progress tail wait waits in one read again (the one-second slices ended a recording's playback a few seconds into a recorder stall), with `ip_tail_bound` asserting it |
 | `8da329a` | `04b0aa4` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand, the `CHANGELOG.md` line without the Kodi 22 sleep clause) | The connection state repeated to Kodi on wake and on each recording-refresh tick, and an account answer with no level settling the access level. On Kodi 21 only a PVR manager restart drops a report |
 | `52b19f0` | `23f7433` (`git cherry-pick -x`, without `[skip ci]`; the recorded-stream signatures, which carry no stream id on `Omega`, the `OpenRecordedStream()` handler and `OPEN_ITEMS.md`'s counts by hand), then `757c5fc` | Every PVR callback, the instance's create and `SetSetting` catch an escaping exception (42 overrides on `Omega`). `757c5fc` corrects the handlers' comments for Kodi 21, which closes a stream after a failed open when the player tears it down |
+| `d1991fb` | `ca22083` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro and the plugin's `CHANGELOG.md` context line by hand) | `timeshift_buffer` lists at most 7200 segments (`_MAX_VISIBLE_SEGMENTS`), with a warning when the buffer length is shortened to it, and the live check of the cap |
 
 ## Dependencies that differ by Kodi release
 
