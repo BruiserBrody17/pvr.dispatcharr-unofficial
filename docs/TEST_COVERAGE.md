@@ -881,7 +881,7 @@ byte-size-based one).
 `LiveEdgeMargin` also gained `FirstAvailableLiveSegmentIndex()` and `LiveManifestParser`
 `OldestLiveManifestSequence()` (added 2026-09-30, fixing a real bug reproduced live -- see
 `docs/TIMESHIFT.md`'s "Resuming after the plugin's rolling buffer has moved on"):
-`timeshift_buffer` lists `buffer_minutes` of segments but ffmpeg's `-segment_wrap` recycles
+`timeshift_buffer` lists `buffer_minutes` of segments (at most `_MAX_VISIBLE_SEGMENTS` since 2026-11-03) but ffmpeg's `-segment_wrap` recycles
 filenames at twice that, and this addon's append-only address space kept listing segments the
 plugin had let go of, so a position left behind the window (a long pause) read a recycled
 file and the `Content-Range` cross-check ended the whole stream. The manifest's lowest
@@ -3150,6 +3150,13 @@ both checked live on 2026-11-01 (see those entries).
 heartbeat whose `access_token` names a replaced buffer is answered `fatal` and leaves the state as it was, one with the
 current token is recorded, and a replacement written while `get_live_manifest` builds its manifest is left exactly as
 written (the caller is not added). The first and third fail on the previous plugin code.
+
+2026-11-03 (still the plugin's 0.8.17, `docs/CLOSED_ITEMS.md`'s "timeshift_buffer: the 1440-minute cap makes manifests
+heavy"): `_compute_segment_counts()` stops at `_MAX_VISIBLE_SEGMENTS` (7200) for a day of 2- and 1-second segments and
+for 241 minutes of 2-second ones, and not for exactly 7200 or a day of 20-second segments; a `_start_ffmpeg()` case
+with 1440 minutes of 2-second segments spawns `-hls_list_size 7200` and logs one warning naming the 240 minutes it
+buffers, and one at exactly the cap logs none. The day cap's own `_start_ffmpeg()` case moved to 20-second segments so
+the day still binds there. The first two fail on the previous plugin code.
 
 ## Tools
 
