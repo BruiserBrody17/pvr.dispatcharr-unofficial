@@ -347,9 +347,17 @@ static void t_trigger_epg(void*, unsigned int)
 std::mutex g_connMu;
 std::vector<int> g_connCalls;
 std::vector<std::string> g_connMessages;
+// While set, a report is dropped (counted, not recorded), as Kodi drops one while the client's calls are blocked.
+std::atomic<bool> g_connDrop{false};
+std::atomic<int> g_connDropped{0};
 static void t_conn(void*, const char*, PVR_CONNECTION_STATE state, const char* message)
 {
   std::lock_guard<std::mutex> lock(g_connMu);
+  if (g_connDrop)
+  {
+    ++g_connDropped;
+    return;
+  }
   g_connCalls.push_back(static_cast<int>(state));
   g_connMessages.push_back(message ? message : "");
 }

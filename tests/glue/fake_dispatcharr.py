@@ -217,15 +217,16 @@ def pvr_route(h, method, p, q, body):
         if ctl_int("me_status"):
             return h.J(ctl_int("me_status"), {"detail": "boom"})
         # user_level 1 with no custom_properties.dvr_access is Dispatcharr's view-only default.
-        return h.J(
-            200,
-            {
-                "id": 1,
-                "username": "u",
-                "user_level": ctl_int("user_level", 10),
-                "custom_properties": {"catchup_enabled": True},
-            },
-        )
+        me = {
+            "id": 1,
+            "username": "u",
+            "user_level": ctl_int("user_level", 10),
+            "custom_properties": {"catchup_enabled": True},
+        }
+        # A proxy or fork that strips the level: the addon must still report CONNECTED.
+        if ctl_int("me_no_level"):
+            del me["user_level"]
+        return h.J(200, me)
     if p == "/api/core/timezones/":
         return h.J(200, {"timezones": ["UTC", "Europe/London", "Asia/Tokyo"]})
     if p == "/api/core/settings/":

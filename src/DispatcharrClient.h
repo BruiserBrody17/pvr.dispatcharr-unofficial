@@ -984,8 +984,9 @@ public:
   // spuriously hiding catch-up entirely just because this one read
   // failed.
   // The account's DVR access level (see DvrAccess.h), from the same
-  // /api/accounts/users/me/ response IsCurrentUserAdmin() reads.
-  bool GetCurrentUserDvrAccess(dispatcharr::DvrAccess& accessOut, std::string& error);
+  // /api/accounts/users/me/ response IsCurrentUserAdmin() reads. False only when the request failed; an answer with no
+  // usable user_level is a success with levelKnownOut false and the fail-open level (DvrAccessFromAnsweredUserJson()).
+  bool GetCurrentUserDvrAccess(dispatcharr::DvrAccess& accessOut, bool& levelKnownOut, std::string& error);
   bool IsCatchupEnabledGlobally(bool& enabledOut, std::string& error);
 
   // GET /api/accounts/users/me/ -- same endpoint IsCurrentUserAdmin()

@@ -75,7 +75,7 @@ bool ConnectionReportLatch::Observe(ConnectionReport report)
   return changed;
 }
 
-bool ConnectionReportLatch::TakePending(ConnectionReport& out, bool connectedReady)
+bool ConnectionReportLatch::TakePending(ConnectionReport& out, bool connectedReady, bool* resent)
 {
   std::lock_guard<std::mutex> lock(m_mutex);
   if (m_observed == ConnectionReport::kNone)
@@ -84,13 +84,23 @@ bool ConnectionReportLatch::TakePending(ConnectionReport& out, bool connectedRea
   if (target == ConnectionReport::kUnreachable &&
       (m_delivered == ConnectionReport::kConnected || m_delivered == ConnectionReport::kDisconnected))
     target = ConnectionReport::kDisconnected;
-  if (target == m_delivered)
+  const bool again = target == m_delivered;
+  if (again && !m_resendRequested)
     return false;
   if (target == ConnectionReport::kConnected && !connectedReady)
     return false;
   out = target;
   m_delivered = target;
+  m_resendRequested = false;
+  if (resent)
+    *resent = again;
   return true;
+}
+
+void ConnectionReportLatch::RequestResend()
+{
+  std::lock_guard<std::mutex> lock(m_mutex);
+  m_resendRequested = true;
 }
 
 } // namespace dispatcharr

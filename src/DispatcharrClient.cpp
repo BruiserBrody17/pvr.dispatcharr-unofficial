@@ -2374,18 +2374,14 @@ bool DispatcharrClient::IsCurrentUserAdmin(bool& isAdminOut, std::string& error)
   return true;
 }
 
-bool DispatcharrClient::GetCurrentUserDvrAccess(DvrAccess& accessOut, std::string& error)
+bool DispatcharrClient::GetCurrentUserDvrAccess(DvrAccess& accessOut, bool& levelKnownOut, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
   json response;
   if (!Request("GET", kCurrentUserPath, json(), response, error))
     return false;
-  if (!ParseDvrAccessFromUserJson(response, accessOut))
-  {
-    error = "user/me response has no usable user_level value";
-    return false;
-  }
+  accessOut = DvrAccessFromAnsweredUserJson(response, levelKnownOut);
   return true;
 }
 

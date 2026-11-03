@@ -82,6 +82,8 @@ run "PVR: connection, proxy error at login" BIN=pvr_harness T=60 CTL="login_stat
 run "PVR: connection, no such route at login" BIN=pvr_harness T=60 CTL="login_status=404" -- connection_state 4000 mismatch
 run "PVR: connection, no POST at login" BIN=pvr_harness T=60 CTL="login_status=405" -- connection_state 4000 mismatch
 run "PVR: connection, login answers without a token" BIN=pvr_harness T=60 CTL="login_status=200" -- connection_state 4000 mismatch
+run "PVR: connection, account details without a level" BIN=pvr_harness T=60 CTL="me_no_level=1" -- connection_state 4000 connected
+run "PVR: connection, report dropped by Kodi, sent again on wake" BIN=pvr_harness T=60 -- connection_resend 10000
 run "PVR: view-only account, known at start" BIN=pvr_harness T=60 CTL="user_level=1" -- dvr_access 8000
 run "PVR: view-only account, learned late" BIN=pvr_harness T=150 CTL="user_level=1&api_down=1" -- dvr_access 120000 late
 run "PVR: connection report scheduled during destroy" BIN=pvr_harness T=60 CTL="me_status=500" -- dtor_late_report
