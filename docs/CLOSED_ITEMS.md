@@ -366,7 +366,7 @@ forbids a predicate applying a non-constant function through the iterator. It wo
 because each calls the predicate once per element, in order, before moving that element, which is also what makes the
 later move-assignment onto the slot safe (move-assigning onto a joinable `std::thread` is `std::terminate`). An
 implementation that did otherwise would throw `std::system_error` under the lock, on a path reachable from
-`OnAddonSettingChanged()` ("Nothing stops an exception crossing from a PVR callback into Kodi", below). Fix, with no
+`OnAddonSettingChanged()` ("Nothing stops an exception crossing from a PVR callback into Kodi", above). Fix, with no
 change in behaviour: join the finished entries in a plain loop, then `remove_if` on `!thread.joinable()`.
 
 **Fixed 2026-11-01, confirmed by reading and the glue harness (no change in behaviour).** The finished entries are
