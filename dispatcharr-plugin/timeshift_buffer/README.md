@@ -20,6 +20,9 @@ Each buffered channel writes a rolling window of the stream to the **Buffer stor
 rewind, about 4.5 GB, plus as much again that `ffmpeg` keeps on disk before deleting old segments, so a viewer still
 reading one is not cut off), deleted as soon as the last viewer stops; lower the setting to shrink it (15 minutes is about
 a quarter of that, and rewind depth shrinks to match).
+The buffer is at most 1440 minutes and at most 7200 segments, so past 4 hours at the default 2-second **Segment length**,
+raise that too (a day needs 12 seconds); otherwise the buffer stops at 7200 segments and Dispatcharr's log says so.
+Longer segments make a channel slower to start and start it further behind live (about three segments).
 The buffer is one `ffmpeg` that copies the stream without re-encoding.
 
 If Dispatcharr is also recording that channel, the recording and the buffer share the channel's one connection to your
