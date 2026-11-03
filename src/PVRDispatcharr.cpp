@@ -3331,8 +3331,8 @@ try
 catch (...)
 {
   LogEscapedException(__func__);
-  // Kodi does not call CloseLiveStream() after a failed open, so a buffer started before the throw would keep its
-  // viewer registered (and the provider connection) until the plugin's reaper ends it.
+  // Kodi 21 calls CloseLiveStream() after a failed open only when the player tears the input stream down, so close
+  // now: a buffer started before the throw keeps its viewer registered (and the provider connection) until then.
   try
   {
     m_client.CloseLiveTimeshiftStream();
@@ -4498,8 +4498,9 @@ try
 catch (...)
 {
   LogEscapedException(__func__);
-  // Kodi does not call CloseRecordedStream() after a failed open. Kodi 21 holds one recorded stream at a time, so
-  // whatever is open now is what this call opened; both closes do nothing when their stream is not open.
+  // Kodi 21 calls CloseRecordedStream() after a failed open only when the player tears the input stream down, so
+  // close now. It holds one recorded stream at a time and closes the last one before each open, so whatever is open
+  // now is what this call opened; both closes do nothing when their stream is not open.
   try
   {
     m_client.CloseInProgressRecordingStream();

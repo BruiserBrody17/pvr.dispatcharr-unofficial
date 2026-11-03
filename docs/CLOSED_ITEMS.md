@@ -57,7 +57,9 @@ closed two more streams of it (`openStreams` 2, then 1); quitting Kodi with it s
 **Ported to `Omega` (2026-11-02)** with `git cherry-pick -x` and a hand port of the recorded-stream overrides: `Omega`
 has 42 overrides (no `IsRecordedStreamRealTime()`, and no stream id on the recorded-stream calls), all wrapped. Kodi 21
 holds one recorded stream at a time, so the `OpenRecordedStream()` handler there closes both the in-progress and the
-finished-recording stream, each of which does nothing when not open. Both glue scenarios and the rest of `ci.sh` pass
+finished-recording stream, each of which does nothing when not open. Kodi 21 does call `Close*` after a failed open,
+but only when the player tears the input stream down (its `CInputStreamPVRBase::Close()` has no open check; Kodi 22's
+skips a stream that never opened), so the handlers' early close holds there too and Kodi's later one finds nothing. Both glue scenarios and the rest of `ci.sh` pass
 against the Kodi 21 dev-kit headers under ASan + UBSan; the live smoke pass above was not repeated on Kodi 21.
 
 #### A connection state Kodi ignores while its PVR manager is stopped is marked delivered and never re-sent
@@ -381,7 +383,7 @@ forbids a predicate applying a non-constant function through the iterator. It wo
 because each calls the predicate once per element, in order, before moving that element, which is also what makes the
 later move-assignment onto the slot safe (move-assigning onto a joinable `std::thread` is `std::terminate`). An
 implementation that did otherwise would throw `std::system_error` under the lock, on a path reachable from
-`OnAddonSettingChanged()` ("Nothing stops an exception crossing from a PVR callback into Kodi", below). Fix, with no
+`OnAddonSettingChanged()` ("Nothing stops an exception crossing from a PVR callback into Kodi", above). Fix, with no
 change in behaviour: join the finished entries in a plain loop, then `remove_if` on `!thread.joinable()`.
 
 **Fixed 2026-11-01, confirmed by reading and the glue harness (no change in behaviour).** The finished entries are

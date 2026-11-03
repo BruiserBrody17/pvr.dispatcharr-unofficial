@@ -1176,10 +1176,10 @@ int main(int argc, char** argv)
   }
   else if (what == "connection_resend")
   {
-    // Kodi drops a ConnectionStateChange() made while the client's calls are blocked (a system sleep, a PVR manager
-    // restart), and the call returns nothing. The stub drops every report until the startup CONNECTED has been
-    // attempted, then a wake (the end of a sleep) must bring it to Kodi: before the fix the latch counted the dropped
-    // one as delivered and never sent it again.
+    // Kodi drops a ConnectionStateChange() made while the client's calls are blocked (on Kodi 21 a PVR manager
+    // restart; Kodi 22 also blocks them during a system sleep), and the call returns nothing. The stub drops every
+    // report until the startup CONNECTED has been attempted, then a wake (the end of a sleep) must bring it to Kodi:
+    // before the fix the latch counted the dropped one as delivered and never sent it again.
     long began = ms();
     while (ms() - began < dur && g_connDropped.load() == 0)
       sleep_ms(50);
