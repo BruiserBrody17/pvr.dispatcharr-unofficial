@@ -9108,6 +9108,59 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 ### Closed without a change (refuted, explained or harmless)
 
+#### A Stop while a recording rides out a transient failure holds Kodi's interface for up to 20 s
+
+**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading, not reproduced.** `ReadRecordingStream()` and
+`ReadInProgressRecordingStream()` retry a transient failure (a refused connection, 500/502/503/504) inside one read
+for up to `kTransientReadBudget` (20 s, plus up to one request timeout against a server that never answers), and only
+`m_abortRequests` at teardown cuts the loop short. Kodi acts on a Stop only between reads, so a Stop during an outage
+holds its interface that long: the mechanism `CLOSED_ITEMS.md`'s "A Stop during a run of failed live segment fetches
+holds Kodi's interface for up to 25 s" measured and fixed on the live path, not carried over here. Two comments
+disagree on whether that fix applies: `IsTransientReadFailure()`'s (`SegmentFetchFailure.h`) says Kodi does not keep
+retrying a failed recorded read, while the in-progress tail wait already answers -1 so a stop can land, confirmed live
+(`CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the live one is"). Fix: if -1 is retried on a
+recorded stream, as the tail wait suggests, slice both retry loops the way the live path does, with the budget counted
+across calls; if not, say so beside `kTransientReadBudget` and consider a shorter budget for a finished recording's
+small ranged reads. Correct whichever comment is wrong. Needs a live Stop-latency check before and after.
+
+**Checked live 2026-11-01, before any change** (Kodi 21.3 with the current `Omega` build, behind a proxy on the Kodi
+machine that answered recording reads with 503 while a flag file existed; a finished recording, and a disposable
+recording made through the API and played while it recorded). Both comments are right, each for one path. **A finished
+recording:** one read retried a 503 every 2 s from 2.1 s to 21.9 s, answered -1, and Kodi read no further: playback
+ended, so a -1 there is final and slicing that loop would end playback at the first slice. **An in-progress
+recording:** the read of one segment gave up after about 22 s and Kodi called the read again three more times (at
+26.8, 48.7 and 70.5 s); when the 84 s outage ended, playback carried on. **A Stop pressed during the retry**, about 5 s
+into the outage: `Player.Stop` returned in 0.3 s, but Kodi's interface (an `XBMC.GetInfoLabels` call, which needs its
+main thread) was held for 16.7 s on the finished recording and 18.1 s on the in-progress one, and the player was gone
+17.4 s and 18.8 s after the Stop, which is the rest of the 20 s budget. Without a Stop the interface stayed responsive
+(0.4 s), since the reads run on Kodi's own reading thread. So: slice the in-progress loop the way the live path does,
+with the budget counted across calls; for a finished recording keep one call's budget but consider a shorter one, and
+say beside `kTransientReadBudget` that a -1 there ends playback.
+
+**Tried 2026-11-02 and reverted: the retries cannot be handed back to Kodi.** The fix above (slice the in-progress
+loop the way the live path does, the failure count carried on the stream so the delay keeps growing) passed a glue
+scenario: the longest read went from 21.8 s to 2.0 s through 12 s of 503s. Live it ended playback. On Kodi 21.3 with
+a throwaway build of `Omega` plus the change, an instant recording opened from its start and played 20 s, then 25 s of
+503 on its segments through the same proxy: playback ended 14.3 s and 9.2 s into the outage, Kodi logging "eof reading
+from demuxer"; the unchanged build on the same recording played on and advanced 19 s in the 21 s after it. Kodi's
+source says why: a recording's `NextPVRStream()` answers `NEXTSTREAM_NONE`, finished or in progress
+(`InputStreamPVRRecording.cpp`), so after a failed read `CVideoPlayer::Process()` drains its decoders and reads again
+only while the audio or video player still holds data, and with the stream marked not initialised it no longer pauses
+to buffer, so the queue empties. A channel answers `NEXTSTREAM_RETRY` and is simply read again. The 2026-10-02 entry
+"A brief server outage ended playback for good" had measured the same thing, which is why the budget is inside one
+call. The live check above saw an in-progress read retried after a 22 s -1, and a finished one not: what each queue
+held at that moment, not a rule by stream type. The comments now say this (`IsTransientReadFailure()`, and beside
+both `kTransientReadBudget`). What is left is a trade: a shorter budget shortens the hold after a Stop and the outage
+a recording rides out together, or Kodi itself would need to act on a Stop during a read. Left at 20 s until someone
+asks for otherwise. The in-progress tail wait cited above as answering -1 was reverted to one read on 2026-11-02 for
+the same reason (`CLOSED_ITEMS.md`, "The in-progress tail wait hands back -1 every second").
+
+**Closed without a change 2026-11-04, by the maintainer's decision: the budget stays at 20 s.** A shorter budget
+shortens the hold after a Stop only by shortening, by as much, the outage a recording rides out without ending
+playback, and the second matters more. Reopen if a user reports the hold after a Stop, or if Kodi starts acting on a
+Stop during a read.
+
 #### A recurring rule starting inside a spring-forward gap on its first day is shown ending before it starts
 
 **Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep; LOW, reproduced with a Catch2 case built against the real
