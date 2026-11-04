@@ -3158,6 +3158,23 @@ with 1440 minutes of 2-second segments spawns `-hls_list_size 7200` and logs one
 buffers, and one at exactly the cap logs none. The day cap's own `_start_ffmpeg()` case moved to 20-second segments so
 the day still binds there. The first two fail on the previous plugin code.
 
+2026-11-03 (still the plugin's 0.8.17, `docs/CLOSED_ITEMS.md`'s "timeshift_buffer: a start parked by another
+greenlet's blocking work can outlive its start lock"): `_renew_start_buffer_lock()` extends a lock it still holds by
+script, reports one taken by someone else or expired as lost without touching it, falls back to GET-then-EXPIRE when
+Redis refuses scripts (a `NoPermissionError` subclass, bytes from Redis) and lets a connection error through. Through
+`run()`: a start that lost either lock (the channel's or the slot's) before the spawn answers retryable with nothing
+spawned, stopped or written and both locks released; one that lost either after the spawn stops its own ffmpeg (by pid
+and start ticks) and writes no state; one whose renewal raises after the spawn stops its ffmpeg and raises; and one
+still holding both renews them in order before the spawn and before the state write. `_start_ffmpeg()` has written its
+owner file by its first `_shared_now()` call. The `start_locks` fixture and the tests' own run helper gained a renewal stub
+(the fixture answers from its held set, the helper yes by default). All nine fail on the previous plugin code. From the branch's review:
+`_start_ffmpeg()` reads the attribution headers before the reap and the clear; a reap that stopped something and finds
+the locks gone raises `_StartLocksLost` with nothing spawned and the directory as it was, and through `run()` that is
+a retryable answer with nothing written; a reap that stopped nothing does not ask; `_write_owner_file()` leaves a file
+naming another running ffmpeg and warns, and replaces one naming a dead ffmpeg or its own. Five of those six fail on
+the first version of the fix (the sixth pins what did not change). Not covered: real gevent parking, checked live instead on
+2026-11-03 (that entry).
+
 ## Tools
 
 ### `tools/tests/`
