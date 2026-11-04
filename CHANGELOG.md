@@ -89,6 +89,11 @@ Dispatcharr restart for every worker to pick it up.
   per request, asked for up to twice a second per viewer. The buffer now lists at most 7200 segments, 4 hours at the
   default segment length; a longer Buffer length is shortened to that, with a warning in Dispatcharr's log. A day still
   fits with a Segment length of 12 seconds or more.
+- **A start held up by other work on a busy Dispatcharr worker can no longer stop another viewer's buffer**: if
+  a start was delayed for more than 30 seconds (for example, while the same worker deleted a large buffer), another
+  start of the same channel could begin meanwhile, and the delayed one then stopped it and took its place, so that
+  viewer's playback failed. The delayed start now checks that it is still the one starting the channel before it
+  starts or registers anything, and otherwise asks the addon to try again.
 
 ## [0.13.2] - 2026-10-31
 
