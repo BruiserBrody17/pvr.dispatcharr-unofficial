@@ -4,37 +4,35 @@
 
 ## Status at a glance
 
-**7 open, 397 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**6 open, 398 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
 - One, LOW, from the 2026-10-23 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code the same day
   (all 17 findings held here). Sixteen of its 17 are fixed or closed.
-- One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
+- One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, documented and deferred.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
-- One, LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and checked
-  against `Omega`'s code the same day (all 11 findings held here), confirmed live, now a design question. Nine of its
-  eleven are fixed (the release gate's four, two in `timeshift_buffer`'s file server and three in the addon's request
-  and thread handling) and one was closed without a change once checked live.
 
 Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
-held here), from the 2026-10-19 live check of four audit fixes on `Piers`, or from the 2026-10-24 sweep (one reviewer
-over the whole project, seven findings).
+held here), from the 2026-10-19 live check of four audit fixes on `Piers`, from the 2026-10-24 sweep (one reviewer
+over the whole project, seven findings), or from the 2026-10-31 sweep, made on `Piers` and checked against `Omega`'s
+code (all 11 findings held here; nine fixed, two closed without a change, the last on 2026-11-04 by keeping a
+recording's 20 s retry budget).
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 3 |
+| Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
-| Open: Known gaps, deliberately deferred | 2 |
+| Open: Known gaps, deliberately deferred | 3 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 346 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 41 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 42 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
 ## Open
@@ -53,54 +51,6 @@ None open.
 
 ### Design decision needed
 
-#### A Stop while a recording rides out a transient failure holds Kodi's interface for up to 20 s
-
-**Opened 2026-10-31, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading, not reproduced.** `ReadRecordingStream()` and
-`ReadInProgressRecordingStream()` retry a transient failure (a refused connection, 500/502/503/504) inside one read
-for up to `kTransientReadBudget` (20 s, plus up to one request timeout against a server that never answers), and only
-`m_abortRequests` at teardown cuts the loop short. Kodi acts on a Stop only between reads, so a Stop during an outage
-holds its interface that long: the mechanism `CLOSED_ITEMS.md`'s "A Stop during a run of failed live segment fetches
-holds Kodi's interface for up to 25 s" measured and fixed on the live path, not carried over here. Two comments
-disagree on whether that fix applies: `IsTransientReadFailure()`'s (`SegmentFetchFailure.h`) says Kodi does not keep
-retrying a failed recorded read, while the in-progress tail wait already answers -1 so a stop can land, confirmed live
-(`CLOSED_ITEMS.md`, "Slice the in-progress recording's tail wait the way the live one is"). Fix: if -1 is retried on a
-recorded stream, as the tail wait suggests, slice both retry loops the way the live path does, with the budget counted
-across calls; if not, say so beside `kTransientReadBudget` and consider a shorter budget for a finished recording's
-small ranged reads. Correct whichever comment is wrong. Needs a live Stop-latency check before and after.
-
-**Checked live 2026-11-01, before any change** (Kodi 21.3 with the current `Omega` build, behind a proxy on the Kodi
-machine that answered recording reads with 503 while a flag file existed; a finished recording, and a disposable
-recording made through the API and played while it recorded). Both comments are right, each for one path. **A finished
-recording:** one read retried a 503 every 2 s from 2.1 s to 21.9 s, answered -1, and Kodi read no further: playback
-ended, so a -1 there is final and slicing that loop would end playback at the first slice. **An in-progress
-recording:** the read of one segment gave up after about 22 s and Kodi called the read again three more times (at
-26.8, 48.7 and 70.5 s); when the 84 s outage ended, playback carried on. **A Stop pressed during the retry**, about 5 s
-into the outage: `Player.Stop` returned in 0.3 s, but Kodi's interface (an `XBMC.GetInfoLabels` call, which needs its
-main thread) was held for 16.7 s on the finished recording and 18.1 s on the in-progress one, and the player was gone
-17.4 s and 18.8 s after the Stop, which is the rest of the 20 s budget. Without a Stop the interface stayed responsive
-(0.4 s), since the reads run on Kodi's own reading thread. So: slice the in-progress loop the way the live path does,
-with the budget counted across calls; for a finished recording keep one call's budget but consider a shorter one, and
-say beside `kTransientReadBudget` that a -1 there ends playback.
-
-**Tried 2026-11-02 and reverted: the retries cannot be handed back to Kodi.** The fix above (slice the in-progress
-loop the way the live path does, the failure count carried on the stream so the delay keeps growing) passed a glue
-scenario: the longest read went from 21.8 s to 2.0 s through 12 s of 503s. Live it ended playback. On Kodi 21.3 with
-a throwaway build of `Omega` plus the change, an instant recording opened from its start and played 20 s, then 25 s of
-503 on its segments through the same proxy: playback ended 14.3 s and 9.2 s into the outage, Kodi logging "eof reading
-from demuxer"; the unchanged build on the same recording played on and advanced 19 s in the 21 s after it. Kodi's
-source says why: a recording's `NextPVRStream()` answers `NEXTSTREAM_NONE`, finished or in progress
-(`InputStreamPVRRecording.cpp`), so after a failed read `CVideoPlayer::Process()` drains its decoders and reads again
-only while the audio or video player still holds data, and with the stream marked not initialised it no longer pauses
-to buffer, so the queue empties. A channel answers `NEXTSTREAM_RETRY` and is simply read again. The 2026-10-02 entry
-"A brief server outage ended playback for good" had measured the same thing, which is why the budget is inside one
-call. The live check above saw an in-progress read retried after a 22 s -1, and a finished one not: what each queue
-held at that moment, not a rule by stream type. The comments now say this (`IsTransientReadFailure()`, and beside
-both `kTransientReadBudget`). What is left is a trade: a shorter budget shortens the hold after a Stop and the outage
-a recording rides out together, or Kodi itself would need to act on a Stop during a read. Left at 20 s until someone
-asks for otherwise. The in-progress tail wait cited above as answering -1 was reverted to one read on 2026-11-02 for
-the same reason (`CLOSED_ITEMS.md`, "The in-progress tail wait hands back -1 every second").
-
 #### timeshift_buffer: a stop from the last listed viewer ends a buffer another viewer is still reading
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible.** 0.8.15 stopped the reaper ending a buffer
@@ -109,25 +59,6 @@ for 30 s or more while its segment reads work, the reaper drops A from the list,
 the buffer down under A (`abort_if=viewers` only). Choices: let the empty-list case defer to the reaper's buffer-wide
 idle check (costing up to the idle timeout plus a tick of provider slot), or have segment fetches carry the viewer id so
 they refresh per-viewer stamps.
-
-#### Server-side mode freezes the picture after a stream switch that changes codec (and Kodi 21 does in every mode)
-
-**Opened 2026-10-24 from the Dispatcharr 0.33.0 stream-switch re-test; checked live 2026-10-25 and turned into a design
-question.** Three disposable channels on the lab, each with a synthetic first stream that stops sending 20 s after it
-connects and a synthetic second stream (no provider involved): 720p H.264 then 1080p HEVC, the reverse, and H.264 both
-times as the control. Dispatcharr switched at about 45 s every time. The control played on in every mode. With a codec
-change, watched for 120 s with screenshots compared at 50, 80 and 110 s: on Kodi 22.0-RC1, Off and Local mode switched
-decoder (H.264 1280 ↔ HEVC 1920) and played on in both directions; on Kodi 21.3, Off and Local mode froze the picture on
-the old stream's last frame while sound and the player time went on (Kodi kept feeding the new stream to the old
-decoder, logging `[h264] no frame!` over and over), which is Kodi's demuxer not acting on the PMT's new stream type for
-the same PID; and in Server-side mode both Kodi versions froze in both directions, the decoder never changed and the
-player time reset to 0 every few seconds from then on (the symptom first seen on 2026-10-24 with a real channel). So
-Server-side is the case on the addon's own path: the buffer's ffmpeg (`-c copy -f hls`) keeps writing segments for the
-codec it opened with. Options: watch the buffer's ffmpeg for a codec or stream-layout change on its input and restart it
-(a fresh segmenter; the addon then has to treat the new segments like a buffer restart), or re-mux each segment's codec
-parameters some other way; or accept it and document it (on Kodi 21 nothing on the addon side helps in Off or Local
-mode). Real channels change codec on a switch only when their streams come from different sources, so how often this
-bites is unknown.
 
 ### Release, CI and manual testing
 
@@ -181,6 +112,30 @@ assumption: partially hardened, not fully" section lists what else assumes that 
 rule tag). Worth doing only if someone runs two Dispatcharr servers, or wants two accounts (admin for the companion
 plugins, non-admin otherwise) against one server from one Kodi; the migration step and the per-instance settings
 handling in `OnAddonSettingChanged()` are the work. Not started.
+
+#### Server-side mode freezes the picture after a stream switch that changes codec (and Kodi 21 does in every mode)
+
+**Opened 2026-10-24 from the Dispatcharr 0.33.0 stream-switch re-test; checked live 2026-10-25 and turned into a design
+question.** Three disposable channels on the lab, each with a synthetic first stream that stops sending 20 s after it
+connects and a synthetic second stream (no provider involved): 720p H.264 then 1080p HEVC, the reverse, and H.264 both
+times as the control. Dispatcharr switched at about 45 s every time. The control played on in every mode. With a codec
+change, watched for 120 s with screenshots compared at 50, 80 and 110 s: on Kodi 22.0-RC1, Off and Local mode switched
+decoder (H.264 1280 ↔ HEVC 1920) and played on in both directions; on Kodi 21.3, Off and Local mode froze the picture on
+the old stream's last frame while sound and the player time went on (Kodi kept feeding the new stream to the old
+decoder, logging `[h264] no frame!` over and over), which is Kodi's demuxer not acting on the PMT's new stream type for
+the same PID; and in Server-side mode both Kodi versions froze in both directions, the decoder never changed and the
+player time reset to 0 every few seconds from then on (the symptom first seen on 2026-10-24 with a real channel). So
+Server-side is the case on the addon's own path: the buffer's ffmpeg (`-c copy -f hls`) keeps writing segments for the
+codec it opened with. Options: watch the buffer's ffmpeg for a codec or stream-layout change on its input and restart it
+(a fresh segmenter; the addon then has to treat the new segments like a buffer restart), or re-mux each segment's codec
+parameters some other way; or accept it and document it (on Kodi 21 nothing on the addon side helps in Off or Local
+mode). Real channels change codec on a switch only when their streams come from different sources, so how often this
+bites is unknown.
+
+**Deferred 2026-11-04, by the maintainer's decision: documented, not fixed for now.** The user-facing account is
+`TROUBLESHOOTING.md`'s "The picture freezes after a channel switches streams, while playback keeps running" (backup
+streams in the same video format; Off or Local mode on Kodi 22). Pick up the ffmpeg restart above if users report it on
+real channels.
 
 ### Tooling (tools/)
 
