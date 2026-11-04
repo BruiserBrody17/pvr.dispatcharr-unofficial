@@ -148,7 +148,8 @@ _REDIS_START_BUFFER_LOCK_PREFIX = _REDIS_PREFIX + "start_lock:"
 # process killed mid-request), not a normal-case wait, so erring long
 # here costs nothing in practice but erring short would reopen the exact
 # race this lock exists to close if a legitimately-slow _start_ffmpeg()
-# call ever outlived a too-short TTL.
+# call ever outlived a too-short TTL. A start parked past it anyway (a gevent
+# worker busy elsewhere) finds out at _renew_start_buffer_lock().
 _START_BUFFER_LOCK_TTL = 30
 # Reserved lock name (not a channel uuid) for the section of start_buffer that counts the running buffers and
 # registers the new one, so max_concurrent_buffers holds across channels.
@@ -517,6 +518,41 @@ def _release_start_buffer_lock(channel_uuid: str, token: str) -> None:
     current_str = current.decode() if isinstance(current, bytes) else current
     if current_str == token:
         client.delete(key)
+
+
+_RENEW_LOCK_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+"""
+
+
+def _renew_start_buffer_lock(channel_uuid: str, token: str) -> bool:
+    """Whether this caller still holds the lock, and if so a fresh _START_BUFFER_LOCK_TTL on it. A start checks this
+    before it spawns ffmpeg and before it writes its state: Dispatcharr's workers are gevent greenlets, and another
+    greenlet's blocking work on the same worker (a teardown's `rmtree` of a large buffer) can park this one at any
+    Redis call past the TTL. A start on another worker can then take the lock and start its own buffer, and the parked
+    one resuming would stop that ffmpeg as untracked and write its state over the other's. Renewing, not only
+    checking, gives the step that follows a full TTL of its own, so only a second park of that length inside it can
+    still lose the lock; _start_ffmpeg() checks again after the one wait it can make. A lock that merely expired, with
+    nobody holding it now, counts as lost: a whole start may have come and gone meanwhile."""
+    client = _redis()
+    key = _start_buffer_lock_key(channel_uuid)
+    eval_fn = getattr(client, "eval", None)
+    if eval_fn is not None:
+        try:
+            return bool(eval_fn(_RENEW_LOCK_SCRIPT, 1, key, token, _START_BUFFER_LOCK_TTL))
+        except Exception as exc:
+            if not _is_redis_response_error(exc):
+                raise
+            # This Redis refuses scripts: the same two-step fallback as the release, with the same narrow window.
+    current = client.get(key)
+    current_str = current.decode() if isinstance(current, bytes) else current
+    if current_str != token:
+        return False
+    client.expire(key, _START_BUFFER_LOCK_TTL)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1689,6 +1725,19 @@ def _write_owner_file(channel_dir: Path, pid, start_ticks, started_at: float, lo
     try:
         tmp = channel_dir / (_OWNER_FILE_NAME + ".tmp")
         tmp.write_text(json.dumps({"pid": pid, "pid_start_ticks": start_ticks, "started_at": started_at}))
+        # Never over another live ffmpeg's: under gevent Popen itself can park this greenlet between the spawn and
+        # this write, long enough for a later start to clear the directory and spawn its own; that start's file is
+        # what lets its ffmpeg be found should its state be lost, and this one stops its ffmpeg at the next lock check.
+        other = _live_owner(channel_dir)
+        if other is not None and (other["pid"], other["pid_start_ticks"]) != (pid, start_ticks):
+            tmp.unlink(missing_ok=True)
+            logger.warning(
+                "timeshift_buffer: %s already names another running ffmpeg (pid %s) -- not replacing it with pid %s",
+                channel_dir / _OWNER_FILE_NAME,
+                other["pid"],
+                pid,
+            )
+            return
         os.replace(tmp, channel_dir / _OWNER_FILE_NAME)
     except OSError:
         # Best effort: without it this buffer is only as recoverable as before.
@@ -1775,7 +1824,11 @@ def _clear_channel_dir(channel_dir: Path, logger):
         logger.info("timeshift_buffer: cleared leftover files from %s before starting a new buffer", channel_dir)
 
 
-def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) -> dict:
+class _StartLocksLost(Exception):
+    """Raised by _start_ffmpeg() when its caller's `still_held` check says the start locks are gone."""
+
+
+def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger, still_held=None) -> dict:
     storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
     segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1, maximum=_MAX_SEGMENT_SECONDS)
     buffer_minutes = _int_setting(settings_dict, "buffer_minutes", 60, minimum=1, maximum=_MAX_BUFFER_MINUTES)
@@ -1794,9 +1847,15 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
         )
 
     channel_dir = _channel_dir(storage_path, channel_uuid)
+    # Before the reap and the clear: it can query Dispatcharr's database, which may yield to another greenlet, and
+    # from the clear to the spawn nothing should (_renew_start_buffer_lock()).
+    attribution_headers = _ffmpeg_input_headers(channel_uuid, params, logger)
     # Before the directory is cleared (which would remove the owner file): an ffmpeg a lost Redis
     # state left running here would otherwise keep writing beside the new one.
-    _reap_untracked_ffmpeg(channel_dir, logger)
+    # Stopping one waits on it (_stop_ffmpeg()'s sleep, a yield under gevent), so the locks are checked again after
+    # that, before this directory -- by then possibly a later start's -- is cleared.
+    if _reap_untracked_ffmpeg(channel_dir, logger) and still_held is not None and not still_held():
+        raise _StartLocksLost()
     _clear_channel_dir(channel_dir, logger)
     channel_dir.mkdir(parents=True, exist_ok=True)
     playlist_path = channel_dir / "live.m3u8"
@@ -1811,7 +1870,6 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
     # The actual argv assembly lives in _build_ffmpeg_command() above so
     # it's unit-testable standalone -- see that function's own docstring
     # for why -reset_timestamps 1 is deliberately not included.
-    attribution_headers = _ffmpeg_input_headers(channel_uuid, params, logger)
     cmd = _build_ffmpeg_command(
         _proxy_url(channel_uuid, base_url),
         attribution_headers,
@@ -1833,11 +1891,14 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
         start_new_session=True,  # own process group, so SIGTERM below doesn't touch the plugin's own process
     )
 
-    started_at = _shared_now()
     pid_start_ticks = _proc_start_ticks(proc.pid)
     # The local clock, not the shared one: the owner file's age is compared with time.time() by the orphan scrub
-    # (_is_untracked_orphan()), and with Redis on another host the two clocks differ by that host's skew.
+    # (_is_untracked_orphan()), and with Redis on another host the two clocks differ by that host's skew. Written
+    # before the first Redis call after the spawn, which can park this greenlet (_renew_start_buffer_lock()): a later
+    # start that clears this directory meanwhile then finds this ffmpeg named here. A park inside Popen itself comes
+    # before this write; _write_owner_file() then leaves the later start's file alone.
     _write_owner_file(channel_dir, proc.pid, pid_start_ticks, time.time(), logger)
+    started_at = _shared_now()
 
     logger.info(
         "timeshift_buffer: started ffmpeg pid=%s for channel %s (buffer=%dmin, segment=%ds, visible=%d, wrap=%d)",
@@ -4023,11 +4084,11 @@ class Plugin:
                     "message": "Another start_buffer call for this channel is already in progress -- retry in a moment",
                 }
             try:
-                return self._start_buffer_locked(channel_uuid, params, settings_dict, logger)
+                return self._start_buffer_locked(channel_uuid, lock_token, params, settings_dict, logger)
             finally:
                 _release_start_buffer_lock(channel_uuid, lock_token)
 
-    def _start_buffer_locked(self, channel_uuid, params, settings_dict, logger):
+    def _start_buffer_locked(self, channel_uuid, lock_token, params, settings_dict, logger):
         """The actual classify-then-spawn logic, unchanged from before
         the locking fix above -- split out specifically so it stays
         directly unit-testable (existing tests call it via
@@ -4200,8 +4261,21 @@ class Plugin:
                     "message": f"Already at max_concurrent_buffers ({max_concurrent})",
                 }
 
+            # Both locks again before anything is stopped, cleared or spawned (_renew_start_buffer_lock()): a start
+            # parked past its locks must not stop the ffmpeg a later start has meanwhile spawned here.
+            if not self._still_holds_start_locks(channel_uuid, lock_token, slot_token):
+                return self._start_locks_lost(channel_uuid, logger)
+
             try:
-                state = _start_ffmpeg(channel_uuid, params, settings_dict, logger)
+                state = _start_ffmpeg(
+                    channel_uuid,
+                    params,
+                    settings_dict,
+                    logger,
+                    still_held=lambda: self._still_holds_start_locks(channel_uuid, lock_token, slot_token),
+                )
+            except _StartLocksLost:
+                return self._start_locks_lost(channel_uuid, logger)
             except FileNotFoundError:
                 return {"status": "error", "message": "ffmpeg not found in this container"}
             except Exception as exc:
@@ -4215,6 +4289,17 @@ class Plugin:
             # token_urlsafe() output is already safe to place directly in a
             # URL query string (no escaping needed).
             state["access_token"] = secrets.token_urlsafe(24)
+            # And again before the state write, which would otherwise replace a later start's state; losing them here
+            # stops this call's own ffmpeg and leaves the directory, which may be the later start's by now. An error
+            # asking is treated the same way, as the state write would most likely have failed too.
+            try:
+                held = self._still_holds_start_locks(channel_uuid, lock_token, slot_token)
+            except Exception:
+                _stop_ffmpeg(state, logger)
+                raise
+            if not held:
+                _stop_ffmpeg(state, logger)
+                return self._start_locks_lost(channel_uuid, logger)
             _set_buffer_state(channel_uuid, state)
             return {
                 "status": "ok",
@@ -4227,6 +4312,27 @@ class Plugin:
             }
         finally:
             _release_start_buffer_lock(_START_SLOT_LOCK_ID, slot_token)
+
+    @staticmethod
+    def _still_holds_start_locks(channel_uuid, lock_token, slot_token) -> bool:
+        # Both renewed, not short-circuited: the slot lock lost alone still lets another channel's start count past it.
+        channel_held = _renew_start_buffer_lock(channel_uuid, lock_token)
+        slot_held = _renew_start_buffer_lock(_START_SLOT_LOCK_ID, slot_token)
+        return channel_held and slot_held
+
+    @staticmethod
+    def _start_locks_lost(channel_uuid, logger):
+        logger.warning(
+            "timeshift_buffer: start_buffer for %s held its start lock past %ds (this worker was busy elsewhere) "
+            "-- not starting, another start may have taken over",
+            channel_uuid,
+            _START_BUFFER_LOCK_TTL,
+        )
+        return {
+            "status": "error",
+            "retryable": True,
+            "message": "This start took too long and lost its lock to another -- retry in a moment",
+        }
 
     def _stop_buffer(self, params, settings_dict, logger):
         channel_uuid = self._resolve_channel_uuid(params, settings_dict)

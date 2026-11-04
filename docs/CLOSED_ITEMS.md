@@ -6,6 +6,69 @@
 
 ### Fixed
 
+#### timeshift_buffer: a start parked by another greenlet's blocking work can outlive its start lock
+
+**Opened 2026-10-28, from the review of the start-lock removal fix (`CLOSED_ITEMS.md`, "removals under the 30 s start
+lock let a second start run beside the first"); LOW, plausible from reading, older than that fix.** Dispatcharr's
+workers are gevent-patched (`CLOSED_ITEMS.md`'s gevent note), so a `start_buffer` that yields while holding the channel
+and slot locks (the `_list_buffer_keys()` SCAN, a Redis call) cannot resume while another greenlet on the same worker
+runs a blocking `shutil.rmtree`: a `stop_buffer` or reaper teardown of a large buffer, or another start's deferred
+removal. Past `_START_BUFFER_LOCK_TTL` a start on another worker can take the lock, spawn and write its state; the parked
+start then resumes, `_reap_untracked_ffmpeg()` stops the other's ffmpeg as untracked, and its own state write replaces
+the other's, whose viewer gets 403s. Fix candidates: re-check `GET lock == token` before `_start_ffmpeg()` and before
+`_set_buffer_state()` and answer retryable (a loss after the spawn then has to stop its own ffmpeg), or move the
+blocking removals off the request greenlet (`gevent.threadpool`, or `rmtree` in a subprocess). Reproducing it needs a
+slow removal and a start on the same worker.
+
+**Fixed 2026-11-03 in `timeshift_buffer` 0.8.17 with the first candidate, confirmed with tests that fail on the old
+code and live the same day (below).** `_renew_start_buffer_lock()` asks Redis, in one script (`_RENEW_LOCK_SCRIPT`, the same
+compare-first shape as the release, with the same two-step fallback for a Redis that refuses scripts), whether the
+caller still holds a lock, and if so gives it a fresh `_START_BUFFER_LOCK_TTL`. `_start_buffer_locked()` asks it for
+both the channel lock and the start-slot lock twice: after the count and before `_start_ffmpeg()` (so before
+`_reap_untracked_ffmpeg()` can stop anything), and before `_set_buffer_state()`. A lock lost at the first check
+answers retryable with nothing stopped, cleared or spawned; lost at the second, the call stops its own ffmpeg, leaves
+the directory (which may be the later start's by then) and answers retryable; an error asking at the second stops its
+own ffmpeg and raises, as the state write would most likely have failed too. Renewing, not only reading, is what makes
+the check hold: once it answers yes, the step after it has a full TTL of its own, so only a second park that long
+inside that step can still lose the lock. A lock that merely
+expired with nobody holding it counts as lost, since a whole start may have come and gone meanwhile. Both locks are
+renewed every time, not short-circuited, because the slot lock lost alone lets another channel's start count past
+it. Inside `_start_ffmpeg()` the window from the first check to the spawn is closed as well (found by the
+branch's independent review): the attribution headers, which can query Dispatcharr's database, are read before the
+reap and the clear; a reap that stopped an untracked ffmpeg (a wait, so a yield) asks for the locks again before the
+clear, through a `still_held` callable, and lost answers retryable with the directory untouched (`_StartLocksLost`);
+from the clear to the spawn nothing yields. After the spawn the owner file is written before the first Redis call, and
+`_write_owner_file()` never replaces one naming another running ffmpeg: gevent's `Popen` can itself park the start
+before that write, and a later start's file is what finds its ffmpeg should its state be lost. The second candidate (the blocking removals off the request greenlet) was not taken: it removes only
+this plugin's own blocking work, and anything else blocking the worker parks a start the same way. Left as is: the
+dead-buffer and stale-config branches before the count, which already act only on the instance they read
+(`_delete_buffer_state_if_instance()`, `_teardown_buffer()`'s instance check). Fifteen new tests, eighteen cases
+(`docs/TEST_COVERAGE.md`).
+
+**Confirmed live 2026-11-03** against Dispatcharr 0.33.0 (four workers) and Kodi 21.3 with the 0.13.0 addon in
+Server-side mode, on one real 1080p channel. A throwaway probe plugin wrapped three of the module's functions in every
+worker so that one call, armed through a Redis key and only from the right caller, slept 40 s: `_list_buffer_keys()`
+from `_start_buffer_locked()` (a stall under both locks before the spawn), and `_shared_now()` or `_proc_start_ticks()`
+from `_start_ffmpeg()` (after the spawn, after or before the owner file). The sleep is gevent's, so it parks the request
+the way another greenlet's blocking work would. Each run: a `start_buffer` through the API with a made-up viewer at 0 s,
+the stall, Kodi opening the same channel at 23 s (its retries took the locks at about 30.5 s), the stalled call waking
+at 40 s, then 30 s of watching `Player.Time`, the ffmpeg processes (from `/proc`), the owner file and the state.
+**Control, the `Piers` tip without the change:** stalled before the spawn, the woken call logged "found an ffmpeg ...
+with no tracked buffer ... stopping it" for Kodi's ffmpeg, started its own and wrote its state over Kodi's; Kodi's next
+segment read was a 403 and playback ended with "This channel's timeshift buffer can't be read from Dispatcharr any
+more". Stalled after the spawn, it was worse: Kodi's start had moved the stalled call's directory aside without finding
+its ffmpeg (no owner file yet), the woken call then wrote the owner file and the state over Kodi's, and two ffmpegs ran,
+Kodi's tracked by nothing; Kodi's playback ended and that ffmpeg had to be ended through Dispatcharr's own stop endpoint.
+**This change:** in all three placements the woken call logged "held its start lock past 30s" and answered retryable,
+one ffmpeg (Kodi's) was left, named by the state and the owner file, and Kodi played on throughout (`Player.Time`
+advancing about 5 s per 5.7 s sample). Stalled after the owner file, Kodi's start stopped the stalled call's ffmpeg
+through that file; stalled before it (the park inside `Popen`), the woken call logged "already names another running
+ffmpeg ... not replacing it" and stopped its own ffmpeg. In that run Kodi's start was served by the same worker as the
+stalled call. A plain open (one ffmpeg, no warning) and a second viewer's start (reattached, same ffmpeg, two viewers)
+behaved as before. Seen in passing, not new: when a stalled call's ffmpeg is still writing into a directory a later
+start moved aside, that start's deferred removal logs "couldn't fully clean up" and leaves the tombstone to the reaper's
+tombstone scrub. Not run live: a stall at a real blocking `rmtree`, which the probe's sleep stands in for.
+
 #### timeshift_buffer: the 1440-minute cap makes manifests heavy
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, measured.** Filed as "timeshift_buffer:
@@ -1077,7 +1140,7 @@ take whatever the next start put there. The dead branch now deletes the state fi
 the dead instance. The optional lock-token re-check before `Popen` was not added: the start's own work under the lock
 is now the classification, a rename, at most one ffmpeg stop (about 2 s) and the spawn, but on Dispatcharr's
 gevent-patched workers another greenlet's blocking `rmtree` can still hold a start past the TTL; that older, separate
-path is its own open item ("a start parked by another greenlet's blocking work can outlive its start lock"). The
+path was its own item ("a start parked by another greenlet's blocking work can outlive its start lock", fixed 2026-11-03). The
 reproducer,
 `test_a_start_during_a_dead_buffers_removal_reattaches_instead_of_starting_a_second_ffmpeg`, expires the locks inside
 the removal and runs a second `start_buffer` there: on the old plugin it spawned a second ffmpeg, now it reattaches to

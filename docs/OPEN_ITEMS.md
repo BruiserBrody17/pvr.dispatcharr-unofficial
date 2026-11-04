@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**8 open, 396 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**7 open, 397 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -14,8 +14,6 @@ confirmed. The open ones came from:
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, now a design question.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
-- One from the 2026-10-28 review of the start-lock removal fix: a start parked on a gevent worker can still outlive its
-  lock.
 - One, LOW, from the 2026-10-31 bug-hunting sweep (five read-only reviews by area), made on `Piers` and checked
   against `Omega`'s code the same day (all 11 findings held here), confirmed live, now a design question. Nine of its
   eleven are fixed (the release gate's four, two in `timeshift_buffer`'s file server and three in the addon's request
@@ -29,13 +27,13 @@ over the whole project, seven findings).
 |---|---|
 | Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 0 |
-| Open: Architectural / concurrency | 1 |
+| Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 3 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 345 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 346 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 41 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -51,19 +49,7 @@ None open.
 
 ### Architectural / concurrency
 
-#### timeshift_buffer: a start parked by another greenlet's blocking work can outlive its start lock
-
-**Opened 2026-10-28, from the review of the start-lock removal fix (`CLOSED_ITEMS.md`, "removals under the 30 s start
-lock let a second start run beside the first"); LOW, plausible from reading, older than that fix.** Dispatcharr's
-workers are gevent-patched (`CLOSED_ITEMS.md`'s gevent note), so a `start_buffer` that yields while holding the channel
-and slot locks (the `_list_buffer_keys()` SCAN, a Redis call) cannot resume while another greenlet on the same worker
-runs a blocking `shutil.rmtree`: a `stop_buffer` or reaper teardown of a large buffer, or another start's deferred
-removal. Past `_START_BUFFER_LOCK_TTL` a start on another worker can take the lock, spawn and write its state; the parked
-start then resumes, `_reap_untracked_ffmpeg()` stops the other's ffmpeg as untracked, and its own state write replaces
-the other's, whose viewer gets 403s. Fix candidates: re-check `GET lock == token` before `_start_ffmpeg()` and before
-`_set_buffer_state()` and answer retryable (a loss after the spawn then has to stop its own ffmpeg), or move the
-blocking removals off the request greenlet (`gevent.threadpool`, or `rmtree` in a subprocess). Reproducing it needs a
-slow removal and a start on the same worker.
+None open.
 
 ### Design decision needed
 

@@ -2171,12 +2171,16 @@ class _StartLocks:
         self.held.discard(channel_uuid)
         self.log.append(("release", channel_uuid))
 
+    def renew(self, channel_uuid, token):
+        return channel_uuid in self.held and token == "token-" + channel_uuid
+
 
 @pytest.fixture()
 def start_locks(monkeypatch):
     locks = _StartLocks()
     monkeypatch.setattr(timeshift_buffer_plugin, "_acquire_start_buffer_lock", locks.acquire)
     monkeypatch.setattr(timeshift_buffer_plugin, "_release_start_buffer_lock", locks.release)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_renew_start_buffer_lock", locks.renew)
     return locks
 
 
@@ -2580,7 +2584,9 @@ def test_resolve_channel_uuid_canonicalizes_a_non_canonical_but_equivalent_value
 _OTHER_UUID = "22222222-2222-2222-2222-222222222222"
 
 
-def _run(monkeypatch, action, params, settings_overrides, tmp_path, *, acquire_lock=None, release_lock=None):
+def _run(
+    monkeypatch, action, params, settings_overrides, tmp_path, *, acquire_lock=None, release_lock=None, renew_lock=None
+):
     monkeypatch.setattr(timeshift_buffer_plugin, "_ensure_http_server_running", lambda *a, **k: None)
     monkeypatch.setattr(timeshift_buffer_plugin, "_ensure_reaper_running", lambda *a, **k: None)
     # start_buffer's own per-channel lock (see _acquire_start_buffer_lock()'s
@@ -2599,6 +2605,9 @@ def _run(monkeypatch, action, params, settings_overrides, tmp_path, *, acquire_l
     )
     monkeypatch.setattr(
         timeshift_buffer_plugin, "_release_start_buffer_lock", release_lock or (lambda channel_uuid, token: None)
+    )
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_renew_start_buffer_lock", renew_lock or (lambda channel_uuid, token: True)
     )
     settings_dict = {"storage_path": str(tmp_path), **settings_overrides}
     logger = _FakeLogger()
@@ -5750,7 +5759,7 @@ def test_a_stale_config_teardown_does_not_retake_the_start_lock_it_already_holds
 
     with contextlib.suppress(RuntimeError):
         timeshift_buffer_plugin.Plugin()._start_buffer_locked(
-            _UUID, {}, {"http_port": 9192, "storage_path": "/new"}, _FakeLogger()
+            _UUID, "token-" + _UUID, {}, {"http_port": 9192, "storage_path": "/new"}, _FakeLogger()
         )
 
     assert steps == ["stop", "remove", "delete"]
@@ -6449,7 +6458,7 @@ def test_a_start_for_another_channel_during_a_start_cannot_pass_the_count(monkey
     monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: registered.append(uuid))
     inner = []
 
-    def start_ffmpeg(channel_uuid, params, settings, logger):
+    def start_ffmpeg(channel_uuid, params, settings, logger, still_held=None):
         if channel_uuid == _UUID:  # the first start is mid-spawn: a second channel's start arrives now
             inner.append(
                 _run(
@@ -7386,3 +7395,340 @@ def test_an_orphan_whose_ffmpeg_cannot_be_stopped_is_skipped_and_the_scrub_goes_
     assert stuck.is_dir()
     assert start_locks.held == set()
     assert any(level == "exception" for level, _ in logger.calls)
+
+
+# ---------------------------------------------------------------------
+# A start parked past its start lock (another greenlet's blocking work on the same gevent worker) must not stop a
+# later start's ffmpeg or write over its state: _renew_start_buffer_lock() before the spawn and before the state write.
+# ---------------------------------------------------------------------
+
+
+class _RenewingLockClient(_FakeReaperRedisClient):
+    """A fake Redis whose eval() runs the compare-and-expire the renewal script does."""
+
+    def __init__(self):
+        super().__init__()
+        self.scripts = []
+
+    def eval(self, script, numkeys, *args):
+        self.scripts.append(script)
+        key, token, ttl = args
+        if self.store.get(key) == token:
+            self.expire_calls.append((key, ttl))
+            return 1
+        return 0
+
+
+def test_renew_start_buffer_lock_extends_a_lock_still_held(monkeypatch):
+    client = _RenewingLockClient()
+    key = timeshift_buffer_plugin._start_buffer_lock_key(_UUID)
+    client.store[key] = "mine"
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+
+    assert timeshift_buffer_plugin._renew_start_buffer_lock(_UUID, "mine") is True
+    assert client.expire_calls == [(key, timeshift_buffer_plugin._START_BUFFER_LOCK_TTL)]
+    assert len(client.scripts) == 1
+
+
+@pytest.mark.parametrize("holder", ["the-next-start", None])
+def test_renew_start_buffer_lock_reports_a_lock_taken_or_expired_as_lost(monkeypatch, holder):
+    client = _RenewingLockClient()
+    key = timeshift_buffer_plugin._start_buffer_lock_key(_UUID)
+    if holder:
+        client.store[key] = holder
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+
+    assert timeshift_buffer_plugin._renew_start_buffer_lock(_UUID, "mine") is False
+    assert client.expire_calls == []
+    assert client.store.get(key) == holder
+
+
+def test_renew_start_buffer_lock_falls_back_when_redis_refuses_scripts(monkeypatch):
+    class ResponseError(Exception):
+        pass
+
+    class NoPermissionError(ResponseError):
+        pass
+
+    class _NoScripts(_FakeReaperRedisClient):
+        def eval(self, *args):
+            raise NoPermissionError("NOPERM")
+
+    client = _NoScripts()
+    key = timeshift_buffer_plugin._start_buffer_lock_key(_UUID)
+    client.store[key] = b"mine"
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+
+    assert timeshift_buffer_plugin._renew_start_buffer_lock(_UUID, "mine") is True
+    assert client.expire_calls == [(key, timeshift_buffer_plugin._START_BUFFER_LOCK_TTL)]
+
+    client.store[key] = b"other"
+    client.expire_calls.clear()
+    assert timeshift_buffer_plugin._renew_start_buffer_lock(_UUID, "mine") is False
+    assert client.expire_calls == []
+
+
+def test_renew_start_buffer_lock_propagates_a_connection_error(monkeypatch):
+    class _Down(_FakeReaperRedisClient):
+        def eval(self, *args):
+            raise ConnectionError("redis is down")
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: _Down())
+    with pytest.raises(ConnectionError):
+        timeshift_buffer_plugin._renew_start_buffer_lock(_UUID, "mine")
+
+
+def _fresh_start_spies(monkeypatch):
+    """A fresh start with nothing running; returns the lists the spawn, the stop and the state write append to."""
+    calls = {"spawned": [], "stopped": [], "written": []}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1000.0)
+
+    def start_ffmpeg(channel_uuid, params, settings, logger, still_held=None):
+        calls["spawned"].append(channel_uuid)
+        return {"http_port": 9192, "playlist_route": "/x", "pid": 4242, "pid_start_ticks": 77}
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_start_ffmpeg", start_ffmpeg)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_ffmpeg", lambda s, logger: calls["stopped"].append(dict(s)))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: calls["written"].append(uuid))
+    return calls
+
+
+@pytest.mark.parametrize("lost", [_UUID, timeshift_buffer_plugin._START_SLOT_LOCK_ID])
+def test_a_start_that_lost_a_lock_before_spawning_stops_and_spawns_nothing(monkeypatch, tmp_path, start_locks, lost):
+    calls = _fresh_start_spies(monkeypatch)
+    renewals = []
+
+    def renew(channel_uuid, token):
+        renewals.append(channel_uuid)
+        return channel_uuid != lost
+
+    result, logger = _run(
+        monkeypatch,
+        "start_buffer",
+        {"channel_uuid": _UUID},
+        {},
+        tmp_path,
+        acquire_lock=start_locks.acquire,
+        release_lock=start_locks.release,
+        renew_lock=renew,
+    )
+
+    assert result["status"] == "error" and result["retryable"] is True
+    assert calls == {"spawned": [], "stopped": [], "written": []}
+    # both renewed even when the first is already lost: the other one is still worth keeping until the release
+    assert sorted(renewals) == sorted([_UUID, timeshift_buffer_plugin._START_SLOT_LOCK_ID])
+    assert start_locks.held == set()
+    assert any(level == "warning" and "start lock" in msg for level, msg in logger.calls)
+
+
+@pytest.mark.parametrize("lost", [_UUID, timeshift_buffer_plugin._START_SLOT_LOCK_ID])
+def test_a_start_that_lost_a_lock_after_spawning_stops_its_own_ffmpeg_and_writes_no_state(
+    monkeypatch, tmp_path, start_locks, lost
+):
+    calls = _fresh_start_spies(monkeypatch)
+
+    def renew(channel_uuid, token):
+        # held at the check before the spawn, gone by the one before the state write
+        return channel_uuid != lost or not calls["spawned"]
+
+    result, _logger = _run(
+        monkeypatch,
+        "start_buffer",
+        {"channel_uuid": _UUID},
+        {},
+        tmp_path,
+        acquire_lock=start_locks.acquire,
+        release_lock=start_locks.release,
+        renew_lock=renew,
+    )
+
+    assert result["status"] == "error" and result["retryable"] is True
+    assert calls["spawned"] == [_UUID]
+    assert [(s["pid"], s["pid_start_ticks"]) for s in calls["stopped"]] == [(4242, 77)]
+    assert calls["written"] == []
+    assert start_locks.held == set()
+
+
+def test_a_start_that_cannot_ask_after_spawning_stops_its_own_ffmpeg(monkeypatch, tmp_path, start_locks):
+    calls = _fresh_start_spies(monkeypatch)
+
+    def renew(channel_uuid, token):
+        if calls["spawned"]:
+            raise ConnectionError("redis is down")
+        return True
+
+    with pytest.raises(ConnectionError):
+        _run(
+            monkeypatch,
+            "start_buffer",
+            {"channel_uuid": _UUID},
+            {},
+            tmp_path,
+            acquire_lock=start_locks.acquire,
+            release_lock=start_locks.release,
+            renew_lock=renew,
+        )
+
+    assert len(calls["stopped"]) == 1 and calls["written"] == []
+
+
+def test_a_start_still_holding_its_locks_renews_both_before_the_spawn_and_before_the_state_write(
+    monkeypatch, tmp_path, start_locks
+):
+    calls = _fresh_start_spies(monkeypatch)
+    order = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: order.append("write"))
+
+    def renew(channel_uuid, token):
+        order.append(("spawned" if calls["spawned"] else "before", channel_uuid))
+        return start_locks.renew(channel_uuid, token)
+
+    result, _logger = _run(
+        monkeypatch,
+        "start_buffer",
+        {"channel_uuid": _UUID},
+        {},
+        tmp_path,
+        acquire_lock=start_locks.acquire,
+        release_lock=start_locks.release,
+        renew_lock=renew,
+    )
+
+    slot = timeshift_buffer_plugin._START_SLOT_LOCK_ID
+    assert result["status"] == "ok"
+    assert order == [("before", _UUID), ("before", slot), ("spawned", _UUID), ("spawned", slot), "write"]
+    assert calls["stopped"] == []
+
+
+def test_start_ffmpeg_writes_the_owner_file_before_its_first_redis_call(tmp_path, monkeypatch):
+    """The first Redis call after the spawn can park this greenlet; a later start that clears the directory
+    meanwhile must find this ffmpeg named in the owner file, not have this file land on top of its own after."""
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+    monkeypatch.setattr(timeshift_buffer_plugin, "_proc_start_ticks", lambda pid: 987654)
+    owner_at_first_redis_call = []
+
+    def shared_now():
+        if not owner_at_first_redis_call:
+            owner_at_first_redis_call.append(timeshift_buffer_plugin._read_owner_file(tmp_path / _UUID))
+        return 5000.0
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", shared_now)
+
+    timeshift_buffer_plugin._start_ffmpeg(_UUID, {}, {"storage_path": str(tmp_path)}, _FakeLogger())
+
+    assert owner_at_first_redis_call[0] is not None and owner_at_first_redis_call[0]["pid"] == 4242
+
+
+def test_start_ffmpeg_reads_the_attribution_headers_before_the_reap_and_the_clear(tmp_path, monkeypatch):
+    """The headers can query Dispatcharr's database, which may yield; from the clear to the spawn nothing should."""
+    order = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: order.append("spawn") or _FakeProc()
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_proc_start_ticks", lambda pid: 1)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1.0)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_input_headers", lambda *a: order.append("headers") or None)
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_reap_untracked_ffmpeg", lambda d, logger: order.append("reap") or False
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_clear_channel_dir", lambda d, logger: order.append("clear"))
+
+    timeshift_buffer_plugin._start_ffmpeg(_UUID, {}, {"storage_path": str(tmp_path)}, _FakeLogger())
+
+    assert order == ["headers", "reap", "clear", "spawn"]
+
+
+def test_a_start_whose_reap_waited_past_its_locks_clears_and_spawns_nothing(tmp_path, monkeypatch):
+    """Stopping an untracked ffmpeg waits on it, a yield under gevent: the locks are checked again after it, and
+    lost, the directory (by then possibly a later start's) is left as it is."""
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    (channel_dir / "live.m3u8").write_text("a later start's playlist")
+    spawned = []
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: spawned.append(1))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_input_headers", lambda *a: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_reap_untracked_ffmpeg", lambda d, logger: True)
+
+    with pytest.raises(timeshift_buffer_plugin._StartLocksLost):
+        timeshift_buffer_plugin._start_ffmpeg(
+            _UUID, {}, {"storage_path": str(tmp_path)}, _FakeLogger(), still_held=lambda: False
+        )
+
+    assert spawned == []
+    assert (channel_dir / "live.m3u8").read_text() == "a later start's playlist"
+
+
+def test_a_reap_that_stopped_nothing_does_not_ask_for_the_locks_again(tmp_path, monkeypatch):
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+    monkeypatch.setattr(timeshift_buffer_plugin, "_proc_start_ticks", lambda pid: 1)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1.0)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_input_headers", lambda *a: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_reap_untracked_ffmpeg", lambda d, logger: False)
+    asked = []
+
+    timeshift_buffer_plugin._start_ffmpeg(
+        _UUID, {}, {"storage_path": str(tmp_path)}, _FakeLogger(), still_held=lambda: asked.append(1) or False
+    )
+
+    assert asked == []
+
+
+def test_a_start_whose_reap_waited_past_its_locks_answers_retryable(monkeypatch, tmp_path, start_locks):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [])
+    spawned, written = [], []
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: spawned.append(1))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_input_headers", lambda *a: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: written.append(uuid))
+    reaped = []
+
+    def reap(channel_dir, logger):
+        reaped.append(1)
+        return True
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_reap_untracked_ffmpeg", reap)
+
+    result, _logger = _run(
+        monkeypatch,
+        "start_buffer",
+        {"channel_uuid": _UUID},
+        {},
+        tmp_path,
+        acquire_lock=start_locks.acquire,
+        release_lock=start_locks.release,
+        renew_lock=lambda channel_uuid, token: not reaped,  # held until the reap's wait
+    )
+
+    assert result["status"] == "error" and result["retryable"] is True
+    assert spawned == [] and written == []
+    assert start_locks.held == set()
+
+
+def test_an_owner_file_naming_another_running_ffmpeg_is_not_replaced(tmp_path, monkeypatch):
+    """Popen can park a start before its owner file is written; a later start's file must survive it."""
+    _write_owner(tmp_path, pid=5555, ticks=888, started_at=1.0)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, ticks=None: pid == 5555)
+    logger = _FakeLogger()
+
+    timeshift_buffer_plugin._write_owner_file(tmp_path, 4242, 777, 2.0, logger)
+
+    assert timeshift_buffer_plugin._read_owner_file(tmp_path)["pid"] == 5555
+    assert not list(tmp_path.glob("*.tmp"))
+    assert any(level == "warning" and "another running ffmpeg" in msg for level, msg in logger.calls)
+
+
+def test_an_owner_file_naming_a_dead_ffmpeg_or_the_same_one_is_replaced(tmp_path, monkeypatch):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, ticks=None: pid == 4242)
+
+    _write_owner(tmp_path, pid=5555, ticks=888, started_at=1.0)  # no longer running
+    timeshift_buffer_plugin._write_owner_file(tmp_path, 4242, 777, 2.0, _FakeLogger())
+    assert timeshift_buffer_plugin._read_owner_file(tmp_path) == {
+        "pid": 4242,
+        "pid_start_ticks": 777,
+        "started_at": 2.0,
+    }
+
+    timeshift_buffer_plugin._write_owner_file(tmp_path, 4242, 777, 3.0, _FakeLogger())  # its own, rewritten
+    assert timeshift_buffer_plugin._read_owner_file(tmp_path)["started_at"] == 3.0
