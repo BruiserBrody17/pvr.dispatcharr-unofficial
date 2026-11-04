@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`cd7d678`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`2d6c580`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -179,6 +179,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `52b19f0` | `23f7433` (`git cherry-pick -x`, without `[skip ci]`; the recorded-stream signatures, which carry no stream id on `Omega`, the `OpenRecordedStream()` handler and `OPEN_ITEMS.md`'s counts by hand), then `757c5fc` | Every PVR callback, the instance's create and `SetSetting` catch an escaping exception (42 overrides on `Omega`). `757c5fc` corrects the handlers' comments for Kodi 21, which closes a stream after a failed open when the player tears it down |
 | `d1991fb` | `ca22083` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro and the plugin's `CHANGELOG.md` context line by hand) | `timeshift_buffer` lists at most 7200 segments (`_MAX_VISIBLE_SEGMENTS`), with a warning when the buffer length is shortened to it, and the live check of the cap |
 | `cd7d678` | `077e620` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | A `timeshift_buffer` start renews its channel and slot locks before the spawn, after a reap that stopped something and before the state write, and answers retryable if either was lost; the owner file is written before the first Redis call after the spawn and never replaces another running ffmpeg's. With the live check of the fix |
+| `2d6c580` | `51c9fdb` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and intro by hand, `CLOSED_ITEMS.md` from `Omega`'s own text, whose function names differ) | The recording retry budget kept at 20 s (closed without a change) and the codec-changing stream switch deferred as documented. |
 
 ## Dependencies that differ by Kodi release
 
