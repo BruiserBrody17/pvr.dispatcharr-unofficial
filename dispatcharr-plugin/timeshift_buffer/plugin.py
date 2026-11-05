@@ -75,7 +75,9 @@ conversation that produced this draft for the full reasoning):
   live .m3u8 on an interval for as long as playback continues and simply
   stops once it doesn't, so the request stream to this server already *is*
   the liveness signal, with nothing extra required from whatever's playing
-  the stream.
+  the stream. A fetch that also carries a viewer_id query param (since
+  0.8.17; the addon's segment reads send one from the release after
+  0.14.2 / 0.13.2) refreshes that viewer's own last-seen time as well.
 
 Verified live end-to-end against a real Dispatcharr instance and a real
 pvr.dispatcharr-unofficial build: buffer capture, this plugin's own HTTP serving,
@@ -701,6 +703,51 @@ def _redact_token_query_param(text: str) -> str:
     return _TOKEN_QUERY_PARAM_RE.sub("token=REDACTED", text)
 
 
+# Longer than any id a client of this plugin generates (the addon's are 16 hex digits); keeps a token holder from
+# writing an arbitrarily long key into the buffer's state through a request path.
+_MAX_REQUEST_VIEWER_ID_LENGTH = 128
+
+
+def _viewer_id_from_request_path(request_path: str):
+    """The `viewer_id` query param of a file-server request, or None when there is none or it is not usable (empty,
+    longer than _MAX_REQUEST_VIEWER_ID_LENGTH). A read that carries one refreshes that viewer's own heartbeat
+    (_touch_heartbeat()), so a viewer whose API heartbeats fail while its segment reads work stays listed, and
+    stop_buffer from another viewer does not find an empty list and end the buffer under it (0.8.17)."""
+    try:
+        values = parse_qs(urlparse(request_path).query).get("viewer_id")
+    except ValueError:
+        return None
+    if not values:
+        return None
+    viewer_id = _resolve_viewer_id({"viewer_id": values[0]})
+    if viewer_id is None or len(viewer_id) > _MAX_REQUEST_VIEWER_ID_LENGTH:
+        return None
+    return viewer_id
+
+
+# Anyone holding a buffer's URL token can name any id on a read, where the heartbeat action, which can also add one,
+# needs a Dispatcharr login (2026-11-04 review). Reads refresh a listed viewer whatever the count, but add a new one
+# only below this many, so they cannot grow the state (re-serialised on every write) without bound.
+_MAX_VIEWERS_ADDED_BY_READS = 32
+
+
+def _apply_read_heartbeat(state: dict, now: float, viewer_id, supplied_token):
+    """The state write for one served file-server request (_touch_heartbeat()), or None to write nothing.
+
+    None when the request's token names a buffer this state has replaced since _check_access_token() let the request
+    through: the token is checked with one read and the write re-reads, so another worker's teardown and start can
+    land in between, and the read would otherwise register its viewer on the replacement (the same check the heartbeat
+    and get_live_manifest actions make inside their atomic update). Otherwise _apply_heartbeat() with the request's
+    viewer_id, except that an id not already listed is added only while fewer than _MAX_VIEWERS_ADDED_BY_READS are;
+    past that the read refreshes only the buffer-wide stamp."""
+    if _is_stale_access_token(state, supplied_token):
+        return None
+    viewers = state.get("viewers", [])
+    if viewer_id and viewer_id not in viewers and len(viewers) >= _MAX_VIEWERS_ADDED_BY_READS:
+        viewer_id = None
+    return _apply_heartbeat(state, now, viewer_id)
+
+
 # Only the playlist and its segments are ever served. The channel directory also holds ffmpeg.log
 # (unbounded) and ffmpeg.owner.json, which no client has any use for -- a token holder could read
 # the log, and ask for it concurrently, since the token is the only access control here.
@@ -885,8 +932,17 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         # this request stream IS the liveness signal, not just a proxy for
         # one. Best-effort: a Redis hiccup here shouldn't fail the actual
         # file response.
+        #
+        # A fetch that names its viewer (this plugin since 0.8.17; the addon's segment reads in the release after
+        # 0.14.2 / 0.13.2) refreshes that viewer's own stamp too, through the same _apply_heartbeat() the heartbeat
+        # action uses: a stopped viewer's in-flight read does not add it back, and one the reaper pruned is re-added
+        # (_apply_read_heartbeat()).
+        viewer_id = _viewer_id_from_request_path(self.path)
+        token = parse_qs(urlparse(self.path).query).get("token", [None])[0]
         try:
-            _update_buffer_state(channel_uuid, lambda state: _apply_heartbeat(state, _shared_now()))
+            _update_buffer_state(
+                channel_uuid, lambda state: _apply_read_heartbeat(state, _shared_now(), viewer_id, token)
+            )
         except Exception:
             logger = getattr(self.server, "plugin_logger", None)
             if logger:
@@ -3168,8 +3224,9 @@ def _drop_stale_viewers(state, stale):
 
 def _stale_viewers(state, uuid, idle_timeout, tracker):
     """{viewer_id: last heartbeat value} for each viewer of `state` whose own heartbeat has not changed for longer
-    than `idle_timeout` seconds on the tracker's clock. Needed because last_heartbeat (refreshed by ANY successful file
-    fetch, see _touch_heartbeat) is buffer-wide, not per-viewer: a viewer that crashes hard enough never to call
+    than `idle_timeout` seconds on the tracker's clock. A viewer's own stamp moves on its heartbeat action and on each
+    file fetch that names it (_touch_heartbeat); a fetch that names no viewer refreshes only last_heartbeat, which is
+    buffer-wide, not per-viewer. Needed because of that: a viewer that crashes hard enough never to call
     stop_buffer would otherwise stay in state["viewers"] forever, kept "alive" by other viewers' fetches, and block
     stop_buffer's reference count from reaching zero once the real viewers stop. A viewer with no recorded heartbeat
     (state from before the field existed, or a start_buffer that raced this instant) is treated as fresh and is not
@@ -3505,6 +3562,9 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_trac
                         # one on an expired token) while its segment reads keep working is still watching, and the
                         # addon relies on those reads alone to keep the buffer alive (DispatcharrClient.h,
                         # SendTimeshiftHeartbeat()). Ending it here stopped such a buffer mid-playback (0.8.15).
+                        # Since 0.8.17 reads that name their viewer keep its own stamp fresh, so such a viewer is not
+                        # pruned while it reads; this still covers one that is paused (it fetches nothing) and a client
+                        # whose reads name nobody.
                         _update_buffer_state(
                             uuid, lambda fresh, gone=stale: fresh if _drop_stale_viewers(fresh, gone) else None
                         )
@@ -3831,9 +3891,10 @@ class Plugin:
                 "(optional). The buffer-wide timeout is refreshed by any file fetch regardless -- "
                 "pass viewer_id to also refresh that specific viewer's own last-seen time, which is "
                 "what lets stop_buffer tell a still-watching viewer apart from one that crashed "
-                "without ever calling stop_buffer (see plugin.py's _stale_viewers). A client "
-                "with viewer_id lifecycle (start_buffer/stop_buffer) should call this on an interval "
-                "well under idle_timeout_seconds."
+                "without ever calling stop_buffer (see plugin.py's _stale_viewers). A file fetch "
+                "with a viewer_id query param refreshes it too. A client with viewer_id lifecycle "
+                "(start_buffer/stop_buffer) should call this on an interval well under "
+                "idle_timeout_seconds, and while paused, when it fetches nothing."
             ),
         },
         {
@@ -4409,6 +4470,12 @@ class Plugin:
                 }
             # Last viewer gone -- but a start_buffer can attach a new one before
             # the stopping marker lands, so the teardown re-checks atomically.
+            # "Gone" is only as good as the list: a viewer whose API heartbeats
+            # failed for longer than the idle timeout was pruned by the reaper
+            # even though it still read segments, and this ended the buffer
+            # under it (2026-10-23 bug sweep). Its reads now refresh its own
+            # stamp when they carry its viewer_id (_touch_heartbeat(), 0.8.17),
+            # so it stays listed; a client whose reads do not is still exposed.
             if _teardown_buffer(state, logger, abort_if=lambda fresh: bool(fresh.get("viewers"))) is False:
                 return {
                     "status": "ok",

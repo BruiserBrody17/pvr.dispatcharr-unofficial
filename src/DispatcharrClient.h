@@ -492,14 +492,16 @@ public:
   // The current live buffer's access token, read under m_liveStateMutex (empty before start_buffer has answered).
   std::string LiveTimeshiftAccessToken() const;
   // Refreshes this specific viewer's own last-seen time on the plugin side
-  // (plugin.py's heartbeat action, viewer_id param), separate from the
-  // buffer-wide liveness that ordinary segment fetches already provide.
+  // (plugin.py's heartbeat action, viewer_id param). Segment reads refresh
+  // it too since they carry the viewer id (BuildTimeshiftSegmentUrl(),
+  // timeshift_buffer 0.8.17), so this is what keeps a viewer listed while it
+  // reads nothing: paused, or waiting at the live edge.
   // Needed so a viewer that later crashes without calling
   // StopTimeshiftBuffer() can be told apart, by the plugin, from one still
   // genuinely watching -- otherwise a stale viewer_id left behind by a
   // crash blocks the reference count from ever reaching zero for the
   // viewers who really do stop cleanly afterwards (see plugin.py's
-  // _prune_stale_viewers and docs/TIMESHIFT.md). Called periodically from
+  // _stale_viewers and docs/TIMESHIFT.md). Called periodically from
   // ReadLiveTimeshiftStream() while a stream is open, not on every read.
   // Best-effort: a failure here is logged, not surfaced to the caller --
   // losing one heartbeat isn't worth interrupting playback over, since the

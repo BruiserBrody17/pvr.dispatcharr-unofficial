@@ -4,19 +4,18 @@
 
 ## Status at a glance
 
-**7 open, 403 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**6 open, 404 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
 - One from the Kodi 22 work on `Piers`: what remains of Kodi 22 support.
-- One, LOW, from the 2026-10-23 bug-hunting sweep (five read-only reviews by area, each finding checked against
-  the code before it was filed). Sixteen of its 17 are fixed or closed.
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, documented and deferred.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 
-Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-24 sweep
+Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-23 sweep
+(five read-only reviews by area, 17 findings, the last fixed on 2026-11-04), from the 2026-10-24 sweep
 (one reviewer over the whole project, seven findings) or from the 2026-10-31 sweep (eleven findings: nine fixed, two
 closed without a change, the last on 2026-11-04 by keeping a recording's 20 s retry budget).
 
@@ -25,12 +24,12 @@ closed without a change, the last on 2026-11-04 by keeping a recording's 20 s re
 | Open: Needs a live check | 0 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 1 |
+| Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 3 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 351 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 352 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 42 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -50,14 +49,7 @@ None open.
 
 ### Design decision needed
 
-#### timeshift_buffer: a stop from the last listed viewer ends a buffer another viewer is still reading
-
-**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible.** 0.8.15 stopped the reaper ending a buffer
-whose viewers went stale while its segments are still read; `stop_buffer` has the same gap. If viewer A's API calls fail
-for 30 s or more while its segment reads work, the reaper drops A from the list, and when B stops, the empty list tears
-the buffer down under A (`abort_if=viewers` only). Choices: let the empty-list case defer to the reaper's buffer-wide
-idle check (costing up to the idle timeout plus a tick of provider slot), or have segment fetches carry the viewer id so
-they refresh per-viewer stamps.
+None open.
 
 ### Release, CI and manual testing
 
