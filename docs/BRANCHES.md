@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`2d6c580`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`93bded6`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -180,6 +180,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `d1991fb` | `ca22083` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro and the plugin's `CHANGELOG.md` context line by hand) | `timeshift_buffer` lists at most 7200 segments (`_MAX_VISIBLE_SEGMENTS`), with a warning when the buffer length is shortened to it, and the live check of the cap |
 | `cd7d678` | `077e620` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | A `timeshift_buffer` start renews its channel and slot locks before the spawn, after a reap that stopped something and before the state write, and answers retryable if either was lost; the owner file is written before the first Redis call after the spawn and never replaces another running ffmpeg's. With the live check of the fix |
 | `2d6c580` | `51c9fdb` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and intro by hand, `CLOSED_ITEMS.md` from `Omega`'s own text, whose function names differ) | The recording retry budget kept at 20 s (closed without a change) and the codec-changing stream switch deferred as documented. |
+| `93bded6` | `7a5919c` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | Live segment reads name their viewer, so another viewer's Stop cannot end a buffer still being read (`timeshift_buffer` 0.8.17 plus the addon). The segment URL line and the file-server touch are the same on both; `Omega`'s glue suite passes against Kodi 21's headers, and the live check had already run on Kodi 21.3. |
 
 ## Dependencies that differ by Kodi release
 
