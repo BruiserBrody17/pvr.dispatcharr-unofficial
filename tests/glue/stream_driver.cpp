@@ -634,6 +634,14 @@ static void live_stop_token(DispatcharrClient& cl)
     FAIL("stop_buffer carried no viewer_id: %s", stop.dump().c_str());
   else
     INFO("stop_buffer params %s", stop.dump().c_str());
+  // The segment reads name the same viewer, so the plugin's file server keeps that viewer listed while its heartbeat
+  // calls fail (timeshift_buffer 0.8.17; docs/CLOSED_ITEMS.md, "a stop from the last listed viewer ends a buffer
+  // another viewer is still reading").
+  const auto seg = nlohmann::json::parse(http("/__lastsegviewer"), nullptr, false);
+  const std::string segViewer =
+      seg.is_object() && seg["viewer_id"].is_string() ? seg["viewer_id"].get<std::string>() : "";
+  if (stop.is_object() && segViewer != stop.value("viewer_id", ""))
+    FAIL("the segment read carried viewer_id '%s', not the stop_buffer one", segViewer.c_str());
 }
 
 static long action_count(const char* action)

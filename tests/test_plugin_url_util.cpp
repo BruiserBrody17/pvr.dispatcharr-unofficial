@@ -61,6 +61,32 @@ TEST_CASE("BuildTimeshiftSegmentBaseUrl brackets an IPv6 host literal", "[Plugin
         "http://[2001:db8::1]:9192/segments/abc/");
 }
 
+// ---------------------------------------------------------------------
+// BuildTimeshiftSegmentUrl
+// ---------------------------------------------------------------------
+
+TEST_CASE("BuildTimeshiftSegmentUrl carries the token and this viewer's id", "[PluginUrlUtil]")
+{
+  // The viewer id is what lets the file server refresh this viewer's own heartbeat on a read; without it a viewer
+  // whose heartbeat calls fail is dropped from the list and another viewer's Stop ends the buffer under it.
+  CHECK(BuildTimeshiftSegmentUrl("http://host:9192/abc/", "seg_00042.ts", "tok-en_1", "0123456789abcdef", false) ==
+        "http://host:9192/abc/seg_00042.ts?token=tok-en_1&viewer_id=0123456789abcdef");
+}
+
+TEST_CASE("BuildTimeshiftSegmentUrl redacts only the token", "[PluginUrlUtil]")
+{
+  const std::string url =
+      BuildTimeshiftSegmentUrl("http://host:9192/abc/", "seg_00042.ts", "secret", "0123456789abcdef", true);
+  CHECK(url == "http://host:9192/abc/seg_00042.ts?token=REDACTED&viewer_id=0123456789abcdef");
+  CHECK(url.find("secret") == std::string::npos);
+}
+
+TEST_CASE("BuildTimeshiftSegmentUrl leaves viewer_id out when there is no viewer id", "[PluginUrlUtil]")
+{
+  CHECK(BuildTimeshiftSegmentUrl("http://host:9192/abc/", "seg_00042.ts", "tok", "", false) ==
+        "http://host:9192/abc/seg_00042.ts?token=tok");
+}
+
 // IsTimeshiftFileServerReachable
 TEST_CASE("IsTimeshiftFileServerReachable counts any HTTP answer, including the token-less 403", "[PluginUrlUtil]")
 {

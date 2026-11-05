@@ -37,6 +37,15 @@ std::string BuildTimeshiftSegmentBaseUrl(const std::string& host, int httpPort, 
   return "http://" + FormatHostForUrl(host) + ":" + std::to_string(httpPort) + segmentRoutePrefix;
 }
 
+std::string BuildTimeshiftSegmentUrl(const std::string& segmentBaseUrl, const std::string& filename,
+                                     const std::string& accessToken, const std::string& viewerId, bool redactToken)
+{
+  std::string url = segmentBaseUrl + filename + "?token=" + (redactToken ? std::string("REDACTED") : accessToken);
+  if (!viewerId.empty())
+    url += "&viewer_id=" + viewerId;
+  return url;
+}
+
 bool IsTimeshiftFileServerReachable(bool transferOk, long httpCode)
 {
   return transferOk && httpCode > 0;

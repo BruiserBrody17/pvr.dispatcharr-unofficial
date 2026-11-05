@@ -1858,6 +1858,21 @@ just doesn't participate in per-viewer pruning, same as it never
 participated in reference counting to begin with -- no regression for
 that case, since the buffer-wide heartbeat mechanism is untouched.
 
+**Changed in `timeshift_buffer` 0.8.17 (2026-11-04): the addon's segment reads now name their viewer.** The
+2026-10-23 bug sweep found the gap the 0.8.15 change above left in `stop_buffer`: a viewer whose API heartbeats fail for
+longer than the idle timeout while its segment reads keep working is pruned from `viewers`, and another viewer's
+`stop_buffer` then finds the list empty and ends the buffer under it. "Plain HTTP GETs that carry no `viewer_id`" was a
+choice of the URL, not a limit of HTTP: `ReadLiveTimeshiftStream()` now appends `&viewer_id=<id>` to each segment URL
+(`BuildTimeshiftSegmentUrl()`, `PluginUrlUtil.h`), and the file server's `_touch_heartbeat()` passes it to the same
+`_apply_heartbeat()` the `heartbeat` action uses (`_viewer_id_from_request_path()`; ids longer than 128 characters are
+ignored). `_apply_read_heartbeat()` adds two limits from the branch's review, since a read needs only the buffer's URL
+token where the action needs a Dispatcharr login: a read whose token names a buffer replaced since it was authorized
+writes nothing (the check the action makes inside its atomic update), and reads add a new viewer only while fewer than
+32 are listed. So a viewer is kept listed by its reads alone, a stopped viewer's in-flight read does not add it back (the
+0.8.16 stop mark), and a pruned one is re-added by its next read. The API heartbeat is still what keeps a *paused*
+viewer listed, since a pause fetches nothing. A client whose reads carry no `viewer_id` (an older addon, any other
+client) behaves as before, and an older plugin ignores the extra query param.
+
 **Update (2026-09-27, a 68th-pass audit): a non-string `viewer_id` broke
 both halves of this, confirmed by direct reproduction against the
 plugin module, not reproduced live.** `viewer_id` is caller-supplied

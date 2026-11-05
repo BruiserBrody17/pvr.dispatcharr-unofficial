@@ -24,7 +24,7 @@ run "live (close at the tail)"   TMO=30 T=120 -- live_tail_close
 run "live (tail wait in slices)"  TMO=30 T=120 -- live_tail_bound
 run "live (stalled buffer, ffmpeg gone)" TMO=30 T=120 -- live_tail_ended
 run "live (seek probe at the tail)"   TMO=30 T=120 -- live_seek_probe
-run "live (stop sends the buffer token)" TMO=30 T=120 -- live_stop_token
+run "live (stop sends the buffer token, reads name the viewer)" TMO=30 T=120 -- live_stop_token
 run "live (paused viewer whose buffer was replaced)" TMO=30 T=120 -- live_paused_replaced
 run "live (buffer dies at the tail)" TMO=30 T=120 -- live_fatal_ends tail
 run "live (buffer dies behind the tail)" TMO=30 T=120 -- live_fatal_ends behind

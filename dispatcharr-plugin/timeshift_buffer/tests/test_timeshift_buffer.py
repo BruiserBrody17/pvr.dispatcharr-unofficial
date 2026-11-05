@@ -7732,3 +7732,157 @@ def test_an_owner_file_naming_a_dead_ffmpeg_or_the_same_one_is_replaced(tmp_path
 
     timeshift_buffer_plugin._write_owner_file(tmp_path, 4242, 777, 3.0, _FakeLogger())  # its own, rewritten
     assert timeshift_buffer_plugin._read_owner_file(tmp_path)["started_at"] == 3.0
+
+
+# ---------------------------------------------------------------------
+# File-server reads that name their viewer (0.8.17)
+# ---------------------------------------------------------------------
+
+
+def test_viewer_id_from_request_path_reads_the_query_param():
+    path = f"/{_UUID}/seg_00042.ts?token=abc&viewer_id=0123456789abcdef"
+    assert timeshift_buffer_plugin._viewer_id_from_request_path(path) == "0123456789abcdef"
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["", "?token=abc", "?token=abc&viewer_id=", "?viewer_id=" + "a" * 129],
+)
+def test_viewer_id_from_request_path_is_none_without_a_usable_id(query):
+    assert timeshift_buffer_plugin._viewer_id_from_request_path(f"/{_UUID}/seg_00042.ts{query}") is None
+
+
+def test_viewer_id_from_request_path_takes_the_first_of_repeated_params_and_decodes_it():
+    path = f"/{_UUID}/live.m3u8?viewer_id=a%20b&viewer_id=other"
+    assert timeshift_buffer_plugin._viewer_id_from_request_path(path) == "a b"
+    assert timeshift_buffer_plugin._viewer_id_from_request_path("?viewer_id=" + "a" * 128) == "a" * 128
+
+
+def _state_store(monkeypatch, initial):
+    """An in-memory stand-in for the buffer state in Redis, behind _update_buffer_state()'s own get and CAS."""
+    store = {uuid: copy.deepcopy(state) for uuid, state in initial.items()}
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: copy.deepcopy(store[uuid]) if uuid in store else None
+    )
+    monkeypatch.setattr(
+        timeshift_buffer_plugin,
+        "_cas_buffer_state",
+        lambda uuid, expected, updated: store.update({uuid: copy.deepcopy(updated)}) or True,
+    )
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: store.update({uuid: copy.deepcopy(s)})
+    )
+    return store
+
+
+def _touch_as_request(path):
+    handler = types.SimpleNamespace(path=path, server=types.SimpleNamespace(plugin_logger=_FakeLogger()))
+    timeshift_buffer_plugin._BufferRequestHandler._touch_heartbeat(handler, _UUID)
+
+
+def test_a_read_that_names_its_viewer_refreshes_that_viewers_own_stamp(monkeypatch):
+    store = _state_store(
+        monkeypatch,
+        {_UUID: {"channel_uuid": _UUID, "viewers": ["A", "B"], "viewer_heartbeats": {"A": 1.0, "B": 1.0}}},
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 50.0)
+    _touch_as_request(f"/{_UUID}/seg_00042.ts?token=t&viewer_id=A")
+    assert store[_UUID]["last_heartbeat"] == 50.0
+    assert store[_UUID]["viewer_heartbeats"] == {"A": 50.0, "B": 1.0}
+
+
+def test_a_read_that_names_no_viewer_refreshes_only_the_buffer_wide_stamp(monkeypatch):
+    store = _state_store(
+        monkeypatch, {_UUID: {"channel_uuid": _UUID, "viewers": ["A"], "viewer_heartbeats": {"A": 1.0}}}
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 50.0)
+    _touch_as_request(f"/{_UUID}/seg_00042.ts?token=t")
+    assert store[_UUID]["last_heartbeat"] == 50.0
+    assert store[_UUID]["viewer_heartbeats"] == {"A": 1.0}
+
+
+def test_a_read_from_a_viewer_that_just_stopped_does_not_add_it_back(monkeypatch):
+    """An in-flight segment read after the viewer's own stop_buffer goes through the same stop mark as a late
+    heartbeat (0.8.16): otherwise the stop would not be the last one and the buffer would outlive its viewers."""
+    store = _state_store(
+        monkeypatch,
+        {_UUID: {"channel_uuid": _UUID, "viewers": ["B"], "viewer_heartbeats": {"B": 1.0}, "stopped_viewers": {}}},
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 50.0)
+    timeshift_buffer_plugin._record_stopped_viewer(store[_UUID], "A", 45.0)
+    _touch_as_request(f"/{_UUID}/seg_00042.ts?token=t&viewer_id=A")
+    assert store[_UUID]["viewers"] == ["B"]
+
+
+def test_a_viewer_whose_heartbeats_fail_but_whose_reads_work_survives_another_viewers_stop(monkeypatch, tmp_path):
+    """The 2026-10-23 bug sweep's finding: viewer A's heartbeat calls fail for longer than the idle timeout while its
+    segment reads keep working. The reaper dropped A from the list (only its heartbeat moved its stamp), and B's
+    stop_buffer then found the list empty and ended the buffer under A. A's reads now name A, so its stamp moves."""
+    store = _state_store(
+        monkeypatch,
+        {
+            _UUID: {
+                "channel_uuid": _UUID,
+                "viewers": ["A", "B"],
+                "viewer_heartbeats": {"A": 1000.0, "B": 1000.0},
+                "last_heartbeat": 1000.0,
+            }
+        },
+    )
+    shared = [1000.0]
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: shared[0])
+    clock = _FakeMonotonic()
+    tracker = timeshift_buffer_plugin._IdleTracker(clock=clock)
+    for _tick in range(5):  # one reaper tick every 15 s for 75 s, idle timeout 30 s
+        stale = timeshift_buffer_plugin._stale_viewers(store[_UUID], _UUID, 30, tracker)
+        # the reaper's own write-back (_reaper_loop()), so a viewer judged stale really leaves the list
+        timeshift_buffer_plugin._update_buffer_state(
+            _UUID, lambda f, g=stale: f if timeshift_buffer_plugin._drop_stale_viewers(f, g) else None
+        )
+        clock.now += 15.0
+        shared[0] += 15.0
+        _touch_as_request(f"/{_UUID}/seg_00042.ts?token=t&viewer_id=A")  # A reads; its heartbeat calls fail
+        timeshift_buffer_plugin._update_buffer_state(
+            _UUID, lambda s: timeshift_buffer_plugin._apply_heartbeat(s, shared[0], "B")
+        )
+    teardown_calls = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger, **kw: teardown_calls.append(s))
+
+    result, _logger = _run(monkeypatch, "stop_buffer", {"channel_uuid": _UUID, "viewer_id": "B"}, {}, tmp_path)
+
+    assert teardown_calls == []
+    assert result["remaining_viewers"] == 1
+    assert store[_UUID]["viewers"] == ["A"]
+
+
+def test_a_read_carrying_a_replaced_buffers_token_writes_nothing():
+    """The token is checked with one read and the write re-reads: a replacement landing in between must not get the
+    old buffer's viewer registered (the check heartbeat and get_live_manifest make inside their atomic update)."""
+    state = {"channel_uuid": _UUID, "access_token": "new", "viewers": ["B"], "viewer_heartbeats": {"B": 1.0}}
+    assert timeshift_buffer_plugin._apply_read_heartbeat(state, 50.0, "A", "old") is None
+    assert timeshift_buffer_plugin._apply_read_heartbeat(state, 50.0, "A", "new")["viewers"] == ["B", "A"]
+
+
+def test_reads_add_new_viewers_only_below_the_cap_but_refresh_listed_ones_above_it():
+    cap = timeshift_buffer_plugin._MAX_VIEWERS_ADDED_BY_READS
+    listed = [f"v{i}" for i in range(cap)]
+    state = {"viewers": list(listed), "viewer_heartbeats": {v: 1.0 for v in listed}}
+    timeshift_buffer_plugin._apply_read_heartbeat(state, 50.0, "intruder", None)
+    assert "intruder" not in state["viewers"] and len(state["viewers"]) == cap
+    assert state["last_heartbeat"] == 50.0  # still a read: the buffer-wide stamp moves
+    timeshift_buffer_plugin._apply_read_heartbeat(state, 60.0, "v3", None)
+    assert state["viewer_heartbeats"]["v3"] == 60.0
+    state["viewers"].pop()
+    timeshift_buffer_plugin._apply_read_heartbeat(state, 70.0, "newcomer", None)
+    assert state["viewers"][-1] == "newcomer"
+
+
+def test_a_read_through_the_file_server_checks_its_token_inside_the_update(monkeypatch):
+    store = _state_store(
+        monkeypatch,
+        {_UUID: {"channel_uuid": _UUID, "access_token": "new", "viewers": ["B"], "viewer_heartbeats": {"B": 1.0}}},
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 50.0)
+    _touch_as_request(f"/{_UUID}/seg_00042.ts?token=old&viewer_id=A")
+    assert store[_UUID]["viewers"] == ["B"]
+    assert "last_heartbeat" not in store[_UUID]

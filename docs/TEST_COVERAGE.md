@@ -963,6 +963,12 @@ result comes back on a 1 MiB thread stack, which crashed with the copy (see `Rec
 
 ### `PluginUrlUtil`
 
+2026-11-04: `BuildTimeshiftSegmentUrl()` builds the live segment URL with the buffer's token and `&viewer_id=<id>`
+(`docs/CLOSED_ITEMS.md`'s "timeshift_buffer: a stop from the last listed viewer ends a buffer another viewer is still
+reading"). Unit-tested: the token and the id are both carried, the redacted form replaces only the token, and an empty id
+adds no param. The glue scenario `live_stop_token` (in CI) also checks that a segment read carried the same `viewer_id`
+as the `stop_buffer` call (the fake records it, `/__lastsegviewer`).
+
 2026-10-30: `IsDispatcharrOutOfReach()` and `BuildLiveFileServerLostMessage()` pick the notice for a live stream that
 gives up mid-session with its file server failing the probe: "Can't reach the Dispatcharr server" only when the give-up's
 refresh got no response or a 5xx (its token refresh's, when the token had lapsed), the port wording otherwise (nothing
@@ -3137,6 +3143,18 @@ a retryable answer with nothing written; a reap that stopped nothing does not as
 naming another running ffmpeg and warns, and replaces one naming a dead ffmpeg or its own. Five of those six fail on
 the first version of the fix (the sixth pins what did not change). Not covered: real gevent parking, checked live instead on
 2026-11-03 (that entry).
+
+2026-11-04 (still the plugin's 0.8.17, `docs/CLOSED_ITEMS.md`'s "timeshift_buffer: a stop from the last listed viewer
+ends a buffer another viewer is still reading"): `_viewer_id_from_request_path()` reads a file-server request's
+`viewer_id` param (the first of several, percent-decoded) and ignores an empty one or one over 128 characters;
+`_touch_heartbeat()` refreshes the named viewer's own stamp as well as the buffer-wide one, only the buffer-wide one
+for a request that names nobody, and does not add back a viewer stopped moments ago. `_apply_read_heartbeat()` writes
+nothing for a request whose token names a replaced buffer (also through `_touch_heartbeat()`), and adds a new viewer
+only below `_MAX_VIEWERS_ADDED_BY_READS` (32) while still refreshing listed ones. The sweep's scenario end to end:
+viewers A and B, five reaper ticks over 75 s, each applying the reaper's own prune write-back, in which only B's
+heartbeat action lands and A only reads segments, then B stops; A stays listed and the buffer is not torn down. The
+scenario, the stamp test and the replaced-token read fail on the previous plugin code (the scenario at its teardown
+check).
 
 ## Tools
 

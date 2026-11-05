@@ -32,6 +32,16 @@ std::string BuildTimeshiftPlaylistUrl(const std::string& host, int httpPort, con
 // both that read path and the playlist URL above assemble the same way.
 std::string BuildTimeshiftSegmentBaseUrl(const std::string& host, int httpPort, const std::string& segmentRoutePrefix);
 
+// ReadLiveTimeshiftStream()'s segment URL: the base above, the segment's filename, "?token=" and the buffer's access
+// token, then "&viewer_id=" and this viewer's id when it has one. The file server refreshes that viewer's own heartbeat
+// on each read that carries it (timeshift_buffer 0.8.17): before, only the API heartbeat did, so a viewer whose
+// heartbeat calls failed for longer than the idle timeout while its segment reads worked was dropped from the buffer's
+// viewer list, and another viewer's Stop then found the list empty and ended the buffer under it. Neither value is
+// escaped: the token is the plugin's secrets.token_urlsafe() and the id GenerateViewerId()'s 16 hex digits. With
+// `redactToken` the token's place says "REDACTED", for the log.
+std::string BuildTimeshiftSegmentUrl(const std::string& segmentBaseUrl, const std::string& filename,
+                                     const std::string& accessToken, const std::string& viewerId, bool redactToken);
+
 // Whether a probe of the timeshift_buffer plugin's file server (a request to its segment base URL, sent with no token)
 // proved the port reachable. Any HTTP answer does, including the 404 the file server gives the bare channel prefix the
 // probe asks for (confirmed live; it refuses a path shorter than "/<channel>/<file>" before it looks for a token): the
