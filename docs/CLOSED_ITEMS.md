@@ -6,6 +6,40 @@
 
 ### Fixed
 
+#### timeshift_buffer: a stop from the last listed viewer ends a buffer another viewer is still reading
+
+**Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible.** 0.8.15 stopped the reaper ending a buffer
+whose viewers went stale while its segments are still read; `stop_buffer` has the same gap. If viewer A's API calls fail
+for 30 s or more while its segment reads work, the reaper drops A from the list, and when B stops, the empty list tears
+the buffer down under A (`abort_if=viewers` only). Choices: let the empty-list case defer to the reaper's buffer-wide
+idle check (costing up to the idle timeout plus a tick of provider slot), or have segment fetches carry the viewer id so
+they refresh per-viewer stamps.
+
+**Fixed 2026-11-04 (`timeshift_buffer` 0.8.17 and the addon release after 0.14.2 / 0.13.2), the second choice: segment
+reads carry the viewer id.** The addon appends `&viewer_id=<id>` to each live segment URL (`BuildTimeshiftSegmentUrl()`,
+`PluginUrlUtil.h`), and the file server's `_touch_heartbeat()` refreshes that viewer's own stamp through
+`_apply_heartbeat()` (`_viewer_id_from_request_path()`, `_apply_read_heartbeat()`), so a viewer whose reads work stays
+listed whatever happens to its API calls, a stopped viewer's in-flight read does not add it back, and a pruned one is
+re-added by its next read. From the branch's review: a read whose token names a buffer replaced since it was authorized
+writes nothing, and reads add a new viewer only while fewer than 32 are listed (a read needs only the URL token). A
+paused viewer reads nothing, so it still depends on its API heartbeat. An
+older addon behaves as before; an older plugin ignores the param. The first choice (let the reaper end the buffer when a
+stop empties the list) was not taken: it held every last viewer's provider connection for up to the idle timeout plus a
+reaper tick after a normal Stop. Covered by Catch2 (`test_plugin_url_util.cpp`), pytest (the sweep's scenario end to
+end, failing on the previous plugin code) and the glue scenario `live_stop_token` (`TEST_COVERAGE.md`).
+
+**Confirmed live 2026-11-04** on Kodi 21.3 (a throwaway build of `Omega` plus the addon change) against Dispatcharr
+0.33.0 running this branch's plugin in all four workers (checked with a probe plugin, then the released 0.8.16 put
+back). Viewer A was Kodi on Channel B, through a proxy on the Kodi machine that answered 503 to every plugin `run/`
+call while a flag file existed and passed segment reads through; viewer B was a script attached to the same buffer,
+heart-beating every 10 s. A played 20 s, paused 75 s and resumed, so it was reading well behind live; then A's `run/`
+calls failed for 70 s and B stopped 55 s in. **Before** (the installed `Omega` build, its reads naming no viewer):
+`list_buffers` went from 2 viewers to 1 at 39 s, B's stop answered "Buffer stopped", A's picture froze within a second
+and its player ended. **After** (the same run with the change): 2 viewers throughout, B's stop answered "viewer
+removed; buffer still active for other viewers" (1 remaining), and A played on through the outage and for 50 s after
+it, advancing the whole time; its own Stop then ended the buffer. All 823 of A's segment reads in that run carried its
+id, against none of 494 before.
+
 #### timeshift_buffer: a start parked by another greenlet's blocking work can outlive its start lock
 
 **Opened 2026-10-28, from the review of the start-lock removal fix (`CLOSED_ITEMS.md`, "removals under the 30 s start

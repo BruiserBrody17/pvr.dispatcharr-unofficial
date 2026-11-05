@@ -14,6 +14,9 @@ compare against.
 
 ### Fixed
 
+- **Server-side timeshift: each segment read now names this device's viewer**, so the `timeshift_buffer` plugin
+  (0.8.17 or later) keeps a playing device on the buffer's viewer list while its heartbeat calls fail, and another
+  device's Stop on the same channel no longer ends the buffer under it.
 - **Hardening: running out of memory inside the addon no longer takes Kodi down with it.** The failing request is
   logged and answered as an error (an empty list, a failed recording action, a channel that won't play), and Kodi
   keeps running.
@@ -94,6 +97,11 @@ Dispatcharr restart for every worker to pick it up.
   start of the same channel could begin meanwhile, and the delayed one then stopped it and took its place, so that
   viewer's playback failed. The delayed start now checks that it is still the one starting the channel before it
   starts or registers anything, and otherwise asks the addon to try again.
+- **Another viewer pressing Stop no longer ends a buffer you are still watching** in the rare case where your device's
+  heartbeat calls to Dispatcharr had been failing for more than the idle timeout while playback carried on: the buffer
+  dropped you from its viewer list, so the other viewer's Stop looked like the last one. The buffer's file server now
+  counts each segment read that names its viewer as that viewer's heartbeat. Needs the addon release after 0.14.2
+  (Kodi 22) or 0.13.2 (Kodi 21), whose segment reads name the viewer.
 
 ## [0.13.2] - 2026-10-31
 

@@ -4948,15 +4948,19 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
   std::string range = std::to_string(offsetInSegment) + "-" + std::to_string(rangeEnd);
   // ?token=... is required by the plugin's own file server (see
   // StartTimeshiftBuffer()/CallTimeshiftPluginAction()'s own comment for
-  // where accessToken comes from and why it needs no URL-escaping).
-  std::string url = m_liveTimeshiftStream.segmentBaseUrl + segFilename + "?token=" + m_liveTimeshiftStream.accessToken;
+  // where accessToken comes from); &viewer_id=... keeps this viewer listed
+  // while its reads work (BuildTimeshiftSegmentUrl(), PluginUrlUtil.h).
+  std::string url = BuildTimeshiftSegmentUrl(m_liveTimeshiftStream.segmentBaseUrl, segFilename,
+                                             m_liveTimeshiftStream.accessToken, m_liveTimeshiftStream.viewerId, false);
   // Logged in place of `url` below -- that token grants unauthenticated
   // read access to this buffer's segments on the plugin's own exposed
   // port for the buffer's whole lifetime (see _check_access_token in
   // timeshift_buffer/plugin.py), and this project routinely asks testers
   // to share kodi.log; a real gap found via a project-wide review, not
   // itself independently reproduced.
-  std::string redactedUrl = m_liveTimeshiftStream.segmentBaseUrl + segFilename + "?token=REDACTED";
+  std::string redactedUrl =
+      BuildTimeshiftSegmentUrl(m_liveTimeshiftStream.segmentBaseUrl, segFilename, m_liveTimeshiftStream.accessToken,
+                               m_liveTimeshiftStream.viewerId, true);
 
   // The persistent handle is in use from here to the end of the transfer, so Close waits on this mutex before
   // freeing it (lock order: the curl mutex before the state mutex).
