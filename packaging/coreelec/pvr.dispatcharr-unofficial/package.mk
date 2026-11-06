@@ -18,8 +18,8 @@
 # a "-suffix" in an addon version as a revision; tools/tests/test_version_sync.py checks that the two agree.
 
 PKG_NAME="pvr.dispatcharr-unofficial"
-PKG_VERSION="0.14.2-Piers"
-PKG_SHA256="fa59cdbf8bcefd551a9bc6a938df143cc7cf41db66dcaef0e6fe37ef25ab64a2"
+PKG_VERSION="0.14.3-Piers"
+PKG_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
 PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL-2.0-or-later"
