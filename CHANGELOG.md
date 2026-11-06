@@ -10,7 +10,11 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased] -- addon
+## [0.13.3] - 2026-11-06
+
+For Kodi 21; Kodi 22 users want `0.14.3` (tag `0.14.3-Piers`), which has the same fixes. It bundles `timeshift_buffer`
+`0.8.17` (below), which needs redeploying to Dispatcharr for its fixes, and `recording_edl` `0.2.3` as it was in
+`0.13.2`. It carries the same eight downloads as `0.13.2`.
 
 ### Fixed
 
@@ -61,7 +65,7 @@ compare against.
   provider stalled, say), playback ended. It now waits for the recording to grow again, as it did before 0.13.0; a
   Stop pressed during such a wait can again take up to about three segment lengths.
 
-## `timeshift_buffer` [0.8.17] - Unreleased
+## `timeshift_buffer` [0.8.17] - 2026-11-06
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
 Dispatcharr restart for every worker to pick it up.
@@ -87,7 +91,7 @@ Dispatcharr restart for every worker to pick it up.
   when it resumed, so the provider connection stayed open for up to the idle timeout after the other viewer stopped.
   A heartbeat carrying an older buffer's token is now refused, as a manifest request already was, and a buffer that
   replaces another while a manifest is being built no longer picks up that request's viewer. The heartbeat check needs
-  the addon release after 0.13.2 (Kodi 21) or 0.14.2 (Kodi 22), which sends the token with it.
+  addon 0.13.3 (Kodi 21) or 0.14.3 (Kodi 22) or later, which sends the token with it.
 - **A long buffer no longer makes every manifest request slow and large**: a day of 2-second segments was about 6 MB
   per request, asked for up to twice a second per viewer. The buffer now lists at most 7200 segments, 4 hours at the
   default segment length; a longer Buffer length is shortened to that, with a warning in Dispatcharr's log. A day still
@@ -100,8 +104,8 @@ Dispatcharr restart for every worker to pick it up.
 - **Another viewer pressing Stop no longer ends a buffer you are still watching** in the rare case where your device's
   heartbeat calls to Dispatcharr had been failing for more than the idle timeout while playback carried on: the buffer
   dropped you from its viewer list, so the other viewer's Stop looked like the last one. The buffer's file server now
-  counts each segment read that names its viewer as that viewer's heartbeat. Needs the addon release after 0.14.2
-  (Kodi 22) or 0.13.2 (Kodi 21), whose segment reads name the viewer.
+  counts each segment read that names its viewer as that viewer's heartbeat. Needs addon 0.14.3
+  (Kodi 22) or 0.13.3 (Kodi 21) or later, whose segment reads name the viewer.
 
 ## [0.13.2] - 2026-10-31
 
