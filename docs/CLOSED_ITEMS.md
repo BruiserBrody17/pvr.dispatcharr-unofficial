@@ -29,7 +29,7 @@ reaper tick after a normal Stop. Covered by Catch2 (`test_plugin_url_util.cpp`),
 end, failing on the previous plugin code) and the glue scenario `live_stop_token` (`TEST_COVERAGE.md`).
 
 **Confirmed live 2026-11-04** on Kodi 21.3 (a throwaway build of `Omega` plus the addon change) against Dispatcharr
-0.33.0 running this branch's plugin in all four workers (checked with a probe plugin, then the released 0.8.16 put
+0.33.0 running this branch's plugin in every worker (checked with a probe plugin, then the released 0.8.16 put
 back). Viewer A was Kodi on Channel B, through a proxy on the Kodi machine that answered 503 to every plugin `run/`
 call while a flag file existed and passed segment reads through; viewer B was a script attached to the same buffer,
 heart-beating every 10 s. A played 20 s, paused 75 s and resumed, so it was reading well behind live; then A's `run/`
@@ -79,7 +79,7 @@ dead-buffer and stale-config branches before the count, which already act only o
 (`_delete_buffer_state_if_instance()`, `_teardown_buffer()`'s instance check). Fifteen new tests, eighteen cases
 (`docs/TEST_COVERAGE.md`).
 
-**Confirmed live 2026-11-03** against Dispatcharr 0.33.0 (four workers) and Kodi 21.3 with the 0.13.0 addon in
+**Confirmed live 2026-11-03** against Dispatcharr 0.33.0 and Kodi 21.3 with the 0.13.0 addon in
 Server-side mode, on one real 1080p channel. A throwaway probe plugin wrapped three of the module's functions in every
 worker so that one call, armed through a Redis key and only from the right caller, slept 40 s: `_list_buffer_keys()`
 from `_start_buffer_locked()` (a stall under both locks before the spawn), and `_shared_now()` or `_proc_start_ticks()`
@@ -127,11 +127,11 @@ sweep holds the whole worker either way. Not done: answering only the segments n
 addon asks up to twice a second and takes only the new ones), which would need the addon to send its last sequence and
 the plugin to return the oldest one separately, since the addon prunes by the first listed segment.
 
-**Confirmed live 2026-11-03** against Dispatcharr 0.33.0 (four workers), with the settings applied to one real 1080p
+**Confirmed live 2026-11-03** against Dispatcharr 0.33.0, with the settings applied to one real 1080p
 channel only, through a throwaway probe plugin that merged them into `start_buffer`'s settings for calls from the test
 VM (the server's saved settings and other clients untouched), and ffmpeg's arguments read from `/proc/<pid>/cmdline`.
-**Control, 0.8.16:** 1440 minutes of 2 s segments ran ffmpeg with `-hls_list_size 43200`. **This branch, deployed to all
-four workers:** the same settings ran it with 7200, logged the warning once ("buffering 240 minutes") and the start line
+**Control, 0.8.16:** 1440 minutes of 2 s segments ran ffmpeg with `-hls_list_size 43200`. **This branch, deployed to every
+worker:** the same settings ran it with 7200, logged the warning once ("buffering 240 minutes") and the start line
 said `buffer=240min ... visible=7200`; 1440 minutes of 12 s segments ran `-hls_time 12 -hls_list_size 7200` with no
 warning and `buffer=1440min`. **Kodi 21.3, Server-side mode, the released 0.13.2 addon:** with 2 s segments it played
 4.9 s after the open, ran at real time across a 20 s pause and resume, and a seek to live played on 5 s behind it; with
@@ -601,13 +601,13 @@ lookup that works, so a second outage within 300 s of the last report waits out 
 `test_a_buffer_state_that_cannot_be_read_is_503_logged_once` (a non-built-in connection error and a `ValueError`, three
 requests each) pins it. The addon treats the 503 like the dropped connection it replaces: both reach
 `HandleLiveTimeshiftSegmentFetchFailure()`'s give-up rule (checked by reading, in the branch's review).
-**Live check (2026-11-01, Dispatcharr 0.33.0 with four workers, Kodi 21.3 on Linux, Server-side mode):** rather than
+**Live check (2026-11-01, Dispatcharr 0.33.0, Kodi 21.3 on Linux, Server-side mode):** rather than
 stop Redis (a real outage takes the live proxy down too), a throwaway probe
 plugin wrapped the module's `_get_buffer_state()` in every worker to raise redis-py's `ConnectionError` while a Redis
 flag key existed, and wrapped the file server's `plugin_logger` to record what it logged. With Channel B playing, the
 flag was set for 70 s: the next 18 segment requests were answered 503 (`kodi.log`: "segment body fetch returned
 unexpected HTTP 503"), the addon gave up after 18 failures 31 s in and showed its "can't be read from Dispatcharr any
-more" notice, and the plugin logged exactly one "answering 503" traceback per worker (four for the 18 requests) and
+more" notice, and the plugin logged exactly one "answering 503" traceback per worker across the 18 requests and
 no "error while serving" traceback. Once the flag expired, playing the channel again started at once.
 
 #### timeshift_buffer: a symlink loop under storage_path drops a file-server request with a traceback
@@ -1130,7 +1130,7 @@ would put the provider's URL, often with the provider's own credentials in it, o
 local user can read. What being anonymous costs a Redirect channel's buffer (the account's stream limit and M3U profile
 allowlist no longer apply; Network Access's STREAMS rule judges the plugin's own address) is in `TIMESHIFT.md`.
 
-**Live check (2026-10-28, Dispatcharr 0.33.0, its four workers, the container's own ffmpeg, Lavf 62).** A throwaway
+**Live check (2026-10-28, Dispatcharr 0.33.0, the container's own ffmpeg, Lavf 62).** A throwaway
 probe plugin listened on the container's loopback and recorded, for each request, whether an `Authorization` header
 came and the `X-Real-IP` value, never the token itself; a disposable stream pointed at it and a disposable channel used
 the Redirect profile. `start_buffer` was called through the plugin API with the lab account as `username` and a
@@ -1180,7 +1180,7 @@ reproducer,
 the removal and runs a second `start_buffer` there: on the old plugin it spawned a second ffmpeg, now it reattaches to
 the first. Nine new tests, eleven cases, all failing on the old plugin (`docs/TEST_COVERAGE.md`).
 
-**Live check (2026-10-28, Dispatcharr 0.33.0, its four workers).** The branch's plugin zip (CI's own `zip` command) was
+**Live check (2026-10-28, Dispatcharr 0.33.0).** The branch's plugin zip (CI's own `zip` command) was
 imported and spread to every worker with parallel `reload/` and `run()` bursts. A throwaway probe plugin confirmed each
 worker's module and reaper thread were the new code, replaced the module's `shutil` with a shim that recorded, for every
 `rmtree`, whether the channel's start lock and the slot lock existed in Redis at that moment (and could sleep once on
@@ -1640,7 +1640,7 @@ handler error through the plugin logger with its traceback, instead of socketser
 (Dispatcharr 0.32.0, the merged plugin in every worker): with two made-up buffer directories an hour old under
 `storage_path`, one with no Redis state and one whose state was not JSON, one `scrub_orphaned_buffers` removed the first
 and kept the second; a throwaway probe plugin made both and removed the second and its key afterwards. (2) checked
-live the same day: ten segment downloads reset by the client after 32 KB, spread over the four workers' file servers
+live the same day: ten segment downloads reset by the client after 32 KB, spread over the workers' file servers
 (each worker binds the port with `SO_REUSEPORT`), each gave exactly one "client went away mid-response
 (ConnectionResetError)" debug line through the plugin logger (the probe wrapped it) and no traceback-level call.
 
@@ -1689,7 +1689,7 @@ them from the environment or a prompt.
 **Fixed 2026-10-21.** `kodi_provision_windows.sh` pipes the password into the remote `autologon.ps1`, which reads it
 with `[Console]::In.ReadLine()`; only the user name is still an argument. Checked on a Windows test machine with a
 throwaway script of the same shape (`powershell -File` over SSH, a line piped in): a password holding `"` and `$`
-arrived intact. Not run through `sshpass` (the lab's SSH accepts keys only), which leaves its child's stdin alone, and
+arrived intact. Not run through `sshpass`, which leaves its child's stdin alone, and
 `--enable-autologon` itself was not re-run. `kodi_smoke_test.py` takes the Kodi webserver password from
 `KODI_JSONRPC_PASSWORD` and Dispatcharr's from `DISPATCHARR_PASSWORD`, asks at the terminal when one is unset, and
 refuses `--password`/`--dispatcharr-password` with that advice; `--https` and `--dispatcharr-https` switch either
