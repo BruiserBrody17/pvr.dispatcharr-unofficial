@@ -179,7 +179,7 @@ clean, accepted as better than ending Kodi: a failure in the properties Kodi rea
 ready, so it never destroys that instance and a later restart of it builds a second one beside it; an exception on every
 `ReadLiveStream()` keeps live playback waiting, logging about five lines a second, until Stop, since Kodi reads a live
 -1 again; and the thunks still allocate after some overrides return (the stream properties, the timer types), outside
-the guard. An independent review (`pvr-behavior-reviewer`) found the `hdl` and the half-opened streams before merge.
+the guard. An independent review found the `hdl` and the half-opened streams before merge.
 
 **Live smoke pass, 2026-11-02** (Kodi 22.0 RC1 on the Linux test VM, this branch's CI Linux build, the real server,
 Server-side mode, debug logging on): start-up loaded the channels, guide, recordings and timers with no "failed with an
@@ -584,8 +584,8 @@ lookup that works, so a second outage within 300 s of the last report waits out 
 `test_a_buffer_state_that_cannot_be_read_is_503_logged_once` (a non-built-in connection error and a `ValueError`, three
 requests each) pins it. The addon treats the 503 like the dropped connection it replaces: both reach
 `HandleLiveTimeshiftSegmentFetchFailure()`'s give-up rule (checked by reading, in the branch's review).
-**Live check (2026-11-01, Dispatcharr 0.33.0 with four workers, Kodi 21.3 on Linux, Server-side mode):** Redis cannot
-be stopped from outside that deployment (and a real outage takes the live proxy down too), so a throwaway probe
+**Live check (2026-11-01, Dispatcharr 0.33.0 with four workers, Kodi 21.3 on Linux, Server-side mode):** rather than
+stop Redis (a real outage takes the live proxy down too), a throwaway probe
 plugin wrapped the module's `_get_buffer_state()` in every worker to raise redis-py's `ConnectionError` while a Redis
 flag key existed, and wrapped the file server's `plugin_logger` to record what it logged. With Channel B playing, the
 flag was set for 70 s: the next 18 segment requests were answered 503 (`kodi.log`: "segment body fetch returned
@@ -1714,7 +1714,7 @@ and breaks on a `"` in the password; send it over stdin. `tools/kodi_smoke_test.
 in the process list) and only speaks plain HTTP; take them from the environment or a prompt.
 
 **Fixed 2026-10-21.** `kodi_provision_windows.sh` pipes the password into the remote `autologon.ps1`, which reads it
-with `[Console]::In.ReadLine()`; only the user name is still an argument. Checked on the Windows runner VM with a
+with `[Console]::In.ReadLine()`; only the user name is still an argument. Checked on a Windows test machine with a
 throwaway script of the same shape (`powershell -File` over SSH, a line piped in): a password holding `"` and `$`
 arrived intact. Not run through `sshpass` (the lab's SSH accepts keys only), which leaves its child's stdin alone, and
 `--enable-autologon` itself was not re-run. `kodi_smoke_test.py` takes the Kodi webserver password from
@@ -9282,11 +9282,12 @@ Which window Dispatcharr itself records depends on whether its scheduler compare
 wall clock (zoneinfo); check that live before deciding what the display should match.
 
 **Closed without a change 2026-11-01, checked live: the display matches what Dispatcharr itself schedules.** A
-disposable rule on an existing channel, 02:30 to 03:15 on the lab zone's next spring-forward day only (start and end
-date that day; with an end date Dispatcharr creates every occurrence up to it, not just the next 14 days). Dispatcharr
+disposable rule on an existing channel, 02:30 to 03:15 on the next spring-forward day of a zone whose clocks go from
+02:00 to 03:00, only (start and end date that day; with an end date Dispatcharr creates every occurrence up to it, not
+just the next 14 days). Dispatcharr
 0.33.0 stored its occurrence ending 15 minutes before it starts: its scheduler compares the two times by wall clock
 (`ZoneInfo`, not pytz), so it rolls nothing over either, and stores 02:30 under the offset before the change. Kodi 21.3
-with the current `Omega` build, in the same zone, showed the rule as running from 3:30 AM to 3:15 AM local time and the
+with the current `Omega` build, set to that zone, showed the rule as running from 03:30 to 03:15 local time and the
 occurrence at exactly the server's two instants. The suggested fix (roll the end over to the next day once both instants
 are resolved) would show a window of 23 h 45 min, which matches neither the server nor the rule, so the display stays
 as it is: it shows what will be recorded. The server's side is `OPEN_ITEMS.md`'s upstream note "Dispatcharr schedules a
