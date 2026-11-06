@@ -83,7 +83,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`6ebbd19`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`c3f0366`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -182,6 +182,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `2d6c580` | `51c9fdb` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and intro by hand, `CLOSED_ITEMS.md` from `Omega`'s own text, whose function names differ) | The recording retry budget kept at 20 s (closed without a change) and the codec-changing stream switch deferred as documented. |
 | `93bded6` | `7a5919c` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | Live segment reads name their viewer, so another viewer's Stop cannot end a buffer still being read (`timeshift_buffer` 0.8.17 plus the addon). The segment URL line and the file-server touch are the same on both; `Omega`'s glue suite passes against Kodi 21's headers, and the live check had already run on Kodi 21.3. |
 | `6ebbd19` | `8a4acca` (`git cherry-pick -x`) | Generic wording for the spring-gap check's zone and three lab details, docs only |
+| `c3f0366` | `740dc4d` (`git cherry-pick -x`) | The live server's worker count and SSH setup dropped from the live-check records, docs only |
 
 ## Dependencies that differ by Kodi release
 
