@@ -65,8 +65,8 @@ inside a spring-forward gap on its first day is shown ending before it starts");
 `sync_recurring_rule_impl()` (`apps/channels/tasks.py`) builds both times with `timezone.make_aware(datetime.combine(
 ...), tz)` on a `ZoneInfo` and rolls the end over only `if end_dt <= start_dt`. Two aware datetimes sharing one
 `tzinfo` compare by wall clock, so a 02:30 that does not exist is still "before" 03:15 and nothing rolls over; stored,
-02:30 takes the offset before the change. A disposable rule from 02:30 to 03:15 on the lab zone's next spring-forward
-day (clocks from 02:00 to 03:00) got an occurrence stored ending 15 minutes before it starts. What the recorder then
+02:30 takes the offset before the change. A disposable rule from 02:30 to 03:15 on the next spring-forward day of a
+zone whose clocks go from 02:00 to 03:00 got an occurrence stored ending 15 minutes before it starts. What the recorder then
 does with it
 was not run (it is months away). Not this addon's bug, and only a rule whose start falls in the skipped hour on a
 change day. Worth reporting to Dispatcharr: compare in UTC, or normalise the start out of the gap first.
