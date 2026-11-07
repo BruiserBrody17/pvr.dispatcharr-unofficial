@@ -53,7 +53,7 @@ cleanly. The plugins are shared code: a plugin fix is made once and lands on bot
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`2617019`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`209fc1a`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -80,6 +80,10 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `fc1a677`, `b4eba68` | not ported: `Omega` release line | `0.13.1` and its CoreELEC checksum. The tag suffix it brought to `Omega` (`RELEASE_TAG_SUFFIX`, `PKG_VERSION`, the `BUILDING.md` note) is what `Piers` already had. |
 | `64d0c41` | already on `Piers` as `b1ab0ed` | A port from `Piers`; see the table below. |
 | `2617019` | already on `Piers` as `873c98d` | A port from `Piers`; see the table below. |
+| `bbed9f0`, `956dd2a`, `8889482`, `83ea1a7`, `1f17183`, `34bc486`, `58b4b7a`, `3d8f7c8`, `eed9bd1`, `3451c4c`, `3c406af`, `27e4bf5`, `03b3307`, `8ea5aa1`, `bfc16ba`, `842e346`, `9d01709`, `552d704`, `40dd79f`, `d2c3c6b`, `7a9c511`, `2783b59`, `30edae9`, `eda478c`, `a7ec36a`, `34e0c75`, `a2988aa`, `1877892`, `0ca28db`, `10d7bd7`, `42556c6`, `6fc5360`, `06130d3`, `26f9231`, `c262f64`, `a920e11`, `5dbe8ef`, `08e0aa2`, `56eec11`, `674835e`, `98b99aa`, `2ed5972`, `27aa589`, `af68f04` | already on `Piers` | Ports from `Piers`; see the table below. |
+| `583cfe1`, `c2e2576` | not ported: `Omega` release line | `0.13.2` and its CoreELEC checksum; `Piers` has its own `0.14.2` (`75a1ca8`, `8f6ae77`). |
+| `e292c44`, `4a2aaa3`, `caca234`, `ce1ed11`, `f27ba96`, `dd8190a`, `f40c6d2`, `a231242`, `c472413`, `50d563c`, `d2dc3d6`, `b517ebb`, `d2922a3`, `16d8932`, `ccf20ce`, `04b0aa4`, `23f7433`, `757c5fc`, `ca22083`, `077e620`, `51c9fdb`, `7a5919c`, `8a4acca`, `740dc4d` | already on `Piers` | Ports from `Piers`; see the table below. |
+| `43a8b7f`, `209fc1a` | not ported: `Omega` release line | `0.13.3` and its CoreELEC checksum; `Piers` has its own `0.14.3` (`07eaf96`, `fb36f8b`). |
 
 ### Ported to Omega
 
