@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addons>
-<addon id="pvr.dispatcharr-unofficial" version="0.13.2" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
+<addon id="pvr.dispatcharr-unofficial" version="0.13.3" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
   <requires>
     
 <import addon="kodi.binary.global.main" minversion="2.0.0" version="2.0.2" />
@@ -12,7 +12,7 @@
   </requires>
   <extension point="kodi.pvrclient" library_android="libpvr.dispatcharr-unofficial.so" />
   <extension point="xbmc.addon.metadata">
-    <path>0.13.2-Omega/addon-pvr.dispatcharr-unofficial-0.13.2-android-aarch64.zip</path>
+    <path>0.13.3-Omega/addon-pvr.dispatcharr-unofficial-0.13.3-android-aarch64.zip</path>
     <summary lang="en_GB">Unofficial Kodi Live TV and DVR client for Dispatcharr</summary>
     <description lang="en_GB">
       Connects Kodi's Live TV / PVR features directly to a self-hosted
@@ -27,7 +27,7 @@
     <source>https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial</source>
   </extension>
 </addon>
-<addon id="pvr.dispatcharr-unofficial" version="0.13.2" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
+<addon id="pvr.dispatcharr-unofficial" version="0.13.3" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
   <requires>
     
 <import addon="kodi.binary.global.main" minversion="2.0.0" version="2.0.2" />
@@ -39,7 +39,7 @@
   </requires>
   <extension point="kodi.pvrclient" library_android="libpvr.dispatcharr-unofficial.so" />
   <extension point="xbmc.addon.metadata">
-    <path>0.13.2-Omega/addon-pvr.dispatcharr-unofficial-0.13.2-android-armv7.zip</path>
+    <path>0.13.3-Omega/addon-pvr.dispatcharr-unofficial-0.13.3-android-armv7.zip</path>
     <summary lang="en_GB">Unofficial Kodi Live TV and DVR client for Dispatcharr</summary>
     <description lang="en_GB">
       Connects Kodi's Live TV / PVR features directly to a self-hosted
@@ -54,7 +54,7 @@
     <source>https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial</source>
   </extension>
 </addon>
-<addon id="pvr.dispatcharr-unofficial" version="0.13.2.1" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
+<addon id="pvr.dispatcharr-unofficial" version="0.13.3.1" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
   <requires>
     <import addon="kodi.binary.global.main" minversion="2.0.0" version="2.0.2" />
     <import addon="kodi.binary.global.general" minversion="1.0.4" version="1.0.5" />
@@ -63,9 +63,9 @@
     
     <import addon="inputstream.ffmpegdirect" version="3.0.0" optional="true" />
   </requires>
-  <extension point="kodi.pvrclient" library_linux="pvr.dispatcharr-unofficial.so.0.13.2" />
+  <extension point="kodi.pvrclient" library_linux="pvr.dispatcharr-unofficial.so.0.13.3" />
   <extension point="xbmc.addon.metadata">
-    <path>0.13.2-Omega/addon-pvr.dispatcharr-unofficial-0.13.2-coreelec-armv7.zip</path>
+    <path>0.13.3-Omega/addon-pvr.dispatcharr-unofficial-0.13.3-coreelec-armv7.zip</path>
     <summary lang="en_GB">Unofficial Kodi Live TV and DVR client for Dispatcharr</summary>
     <description lang="en_GB">
       Connects Kodi's Live TV / PVR features directly to a self-hosted
@@ -80,7 +80,7 @@
     <source>https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial</source>
   </extension>
 </addon>
-<addon id="pvr.dispatcharr-unofficial" version="0.13.2" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
+<addon id="pvr.dispatcharr-unofficial" version="0.13.3" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
   <requires>
     
 <import addon="kodi.binary.global.main" minversion="2.0.0" version="2.0.2" />
@@ -90,9 +90,9 @@
     
     <import addon="inputstream.ffmpegdirect" version="3.0.0" optional="true" />
   </requires>
-  <extension point="kodi.pvrclient" library_linux="pvr.dispatcharr-unofficial.so.0.13.2" />
+  <extension point="kodi.pvrclient" library_linux="pvr.dispatcharr-unofficial.so.0.13.3" />
   <extension point="xbmc.addon.metadata">
-    <path>0.13.2-Omega/addon-pvr.dispatcharr-unofficial-0.13.2-linux.zip</path>
+    <path>0.13.3-Omega/addon-pvr.dispatcharr-unofficial-0.13.3-linux.zip</path>
     <summary lang="en_GB">Unofficial Kodi Live TV and DVR client for Dispatcharr</summary>
     <description lang="en_GB">
       Connects Kodi's Live TV / PVR features directly to a self-hosted
@@ -107,7 +107,7 @@
     <source>https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial</source>
   </extension>
 </addon>
-<addon id="pvr.dispatcharr-unofficial" version="0.13.2" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
+<addon id="pvr.dispatcharr-unofficial" version="0.13.3" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
   <requires>
     
 <import addon="kodi.binary.global.main" minversion="2.0.0" version="2.0.2" />
@@ -117,9 +117,9 @@
     
     <import addon="inputstream.ffmpegdirect" version="3.0.0" optional="true" />
   </requires>
-  <extension point="kodi.pvrclient" library_osx="pvr.dispatcharr-unofficial.0.13.2.dylib" />
+  <extension point="kodi.pvrclient" library_osx="pvr.dispatcharr-unofficial.0.13.3.dylib" />
   <extension point="xbmc.addon.metadata">
-    <path>0.13.2-Omega/addon-pvr.dispatcharr-unofficial-0.13.2-osx-arm64.zip</path>
+    <path>0.13.3-Omega/addon-pvr.dispatcharr-unofficial-0.13.3-osx-arm64.zip</path>
     <summary lang="en_GB">Unofficial Kodi Live TV and DVR client for Dispatcharr</summary>
     <description lang="en_GB">
       Connects Kodi's Live TV / PVR features directly to a self-hosted
@@ -134,7 +134,7 @@
     <source>https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial</source>
   </extension>
 </addon>
-<addon id="pvr.dispatcharr-unofficial" version="0.13.2" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
+<addon id="pvr.dispatcharr-unofficial" version="0.13.3" name="Dispatcharr PVR Client (Unofficial)" provider-name="BruiserBrody17">
   <requires>
     
 <import addon="kodi.binary.global.main" minversion="2.0.0" version="2.0.2" />
@@ -146,7 +146,7 @@
   </requires>
   <extension point="kodi.pvrclient" library_windows="pvr.dispatcharr-unofficial.dll" />
   <extension point="xbmc.addon.metadata">
-    <path>0.13.2-Omega/addon-pvr.dispatcharr-unofficial-0.13.2-windows-x86_64.zip</path>
+    <path>0.13.3-Omega/addon-pvr.dispatcharr-unofficial-0.13.3-windows-x86_64.zip</path>
     <summary lang="en_GB">Unofficial Kodi Live TV and DVR client for Dispatcharr</summary>
     <description lang="en_GB">
       Connects Kodi's Live TV / PVR features directly to a self-hosted
