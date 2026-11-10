@@ -87,7 +87,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`02e684e`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`c81eb77`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -190,6 +190,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `07eaf96`, `fb36f8b` | not ported: `Piers` release line | `0.14.3` and its CoreELEC checksum; `Omega` has its own `0.13.3` (`43a8b7f`, `209fc1a`). |
 | `d17266b` | `85e32a6` (`git cherry-pick -x`, without `[skip ci]`; `CHANGELOG.md`'s release heading by hand) | Every usable audio track buffered, teletext channels start, the audio map's spelling probed per ffmpeg (`timeshift_buffer` 0.8.18) |
 | `02e684e` | `d6d74be` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | The live checks the audio-track mapping still needs, as an open item |
+| `c81eb77` | `1f584ec` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and intro by hand, and nine of the eleven entries) | Files the 2026-11-10 bug sweep's findings as open items; nine hold on `Omega`, and the two left out are `Piers` only (an in-progress recording's segment cache with two streams of it open, and this file's table of what differs) |
 
 ## Dependencies that differ by Kodi release
 
