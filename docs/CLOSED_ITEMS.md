@@ -6,6 +6,110 @@
 
 ### Fixed
 
+#### The release gate skips its release checks for an empty `--expect-release`, and an empty `--blocklist` falls back to another list
+
+**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced by running the gate.** `main` in `tools/check_release_zip.py` runs the
+release-set and content checks only `if version`, and `find_blocklist` honours its explicit path only `if explicit`, so
+an empty string counts as the option not having been given. Seven of a release's eight zips with `--expect-release
+9.9.9` fail ("release asset missing"); the same seven with `--expect-release ""` print "7 zip(s) clean". An empty value
+is what an unset shell variable expands to (`--expect-release "$VERSION"`), which is how a release would meet it.
+`--blocklist ""` likewise goes on to `$PRIVACY_BLOCKLIST` or the home-directory list, the fallback that
+`find_blocklist`'s own docstring says a mistyped path must not get. Fix: test `is not None`, and exit 2 on an empty
+value for either option and on a version that is not three dot-separated numbers, with a test for each in
+`tools/tests/test_check_release_zip.py`.
+
+**Fixed 2026-11-10, confirmed with tests that fail on the old gate.** `find_blocklist` and `main` test for an option
+that was given (`is not None`), not a truthy one. `--blocklist ""` is an error (exit 2) rather than a fall back to
+`$PRIVACY_BLOCKLIST` or the home list, and `--expect-release` must be three dot-separated numbers (`RELEASE_VERSION`),
+so an empty value, a tag name (`0.14.0-Piers`) or a stray space exits 2 before any zip is read. Tests in
+`tools/tests/test_check_release_zip.py`: seven of a release's eight zips fail with `--expect-release 9.9.9` and exit 2
+with each of five bad values, and an empty `--blocklist` is refused with a real `$PRIVACY_BLOCKLIST` set. The new gate
+passes the shipped 0.13.3 set (`--require-blocklist --expect-release 0.13.3`, with that tag's `dispatcharr-plugin/`).
+
+#### The CI path filter answers "skip" for a changed file whose name git quotes
+
+**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced by giving the filter the name as git prints it.** `changed_files` in
+`tools/ci_build_needed.py` reads `git diff --name-only --no-renames` line by line. Git prints a path that holds a
+non-ASCII byte, a double quote, a backslash or a control character C-quoted, with a leading `"` (`core.quotepath`), so
+the patterns in `needs_build` and `needs_plugins`, which are anchored at the start of the path, do not match it, and a
+push that changes only such a file skips the compile-and-package jobs. No tracked file has such a name today, so
+nothing has been skipped. Fix: `git -c core.quotepath=off diff -z --name-only --no-renames`, split on NUL, with a test
+in `tools/tests/test_ci_build_needed.py` that feeds a name git would have quoted.
+
+**Fixed 2026-11-10, confirmed with tests that fail on the old code.** `changed_files` runs `git -c core.quotepath=off
+diff -z --name-only --no-renames` and splits on NUL, and `_git` decodes git's output as UTF-8 with `surrogateescape`, so
+a name that is not UTF-8 is read rather than raising (only its ASCII start is matched). Tests in
+`tools/tests/test_ci_build_needed.py`: five names git quotes (non-ASCII under `src/` and under `dispatcharr-plugin/`, a
+double quote, a backslash, a tab), each committed to a temporary repository with `core.quotepath` set on, through
+`changed_files` and through the script's own output; and a name that is the byte 0xff, which git quoted before and which
+a strict decode of the raw names would now raise on.
+
+#### The release gate checks the last of several same-named zip entries, and Kodi reads the first
+
+**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, the gate's side reproduced with crafted zips, Kodi's side read in its source (its
+zip manager's entry lookup returns the first match), not run.** The gate reads `addon.xml` and the library through
+`archive.getinfo`, which answers the last entry of a name, and `_plugin_differences` builds a dict keyed by name, which
+keeps the last too. A zip whose first `addon.xml` carries another version and whose first library is another
+architecture's passes when correct copies follow them (the reverse order fails, as it should). So does a zip with an
+`ADDON.XML` beside its `addon.xml`, which are one file on a case-insensitive file system, and one whose stored entry
+name has a blocklist term after a NUL byte: Python's `zipfile` cuts `filename` at the NUL and the name checks read
+that. Related: `tools/normalize_zip.py` and `tools/scrub_zip_paths.py` read each entry's data by `info.filename`, so
+both write the last copy's data into every entry of a repeated name. The project's own builds never write a repeated
+name; what does not hold is the gate's promise that what it checked is what gets installed, for a zip assembled by
+hand. Fix: fail on a repeated name (compared without case), on `orig_filename != filename` and on a control character
+in a name; have the two rewriting tools read by the `ZipInfo` object, not by name.
+
+**Fixed 2026-11-10, confirmed with tests that fail on the old code.** `check_zip` runs `_name_problems`, which fails a
+name repeated within a zip (compared without case and without a trailing `/`, so `lib` beside `LIB/` counts), a name
+holding a control character (a NUL, which `zipfile` cut the name at, a newline, DEL) and a name `zipfile` reads
+differently from how it is stored. A repeated name fails the whole run even where the `--expect-release` content checks,
+which still read the last copy, see only the right one; a test pins exactly that. `tools/normalize_zip.py` and
+`tools/scrub_zip_paths.py` read each entry by its `ZipInfo`, so each copy of a repeated name keeps its own data (a test
+for each). The sweep's crafted-zip probes (kept outside the repo) were rerun against the new gate: every probe filed
+under this item now fails it. The new gate passes the shipped 0.13.3 set (`--require-blocklist --expect-release 0.13.3`,
+with that tag's `dispatcharr-plugin/`).
+
+#### The release gate does not scan bytes inside an entry's data span that decompression never returns
+
+**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with crafted zips.** Since `CLOSED_ITEMS.md`'s "The release gate does not
+scan bytes outside a member's decompressed data" the gate accounts for every byte of the archive by span (local header,
+name, extra field and `compress_size` bytes of data for each entry) and scans each entry's decompressed data. Bytes
+inside an entry's `compress_size` that the decompressor never returns are in neither: plain text after the end of the
+deflate stream, a deflate stream that goes on past `file_size` (`zipfile` stops reading there), and a stored entry
+whose `compress_size` is larger than its `file_size`. A blocklist term placed in any of the three passes. As with the
+earlier item, no tool the project builds with writes such an entry; the gate is the one place meant not to rely on
+that. Fix: inflate each deflated entry with `zlib.decompressobj(-15)` and require the stream to end, with nothing left
+over, at exactly `file_size` bytes; require `compress_size == file_size` for a stored one.
+
+**Fixed 2026-11-10, confirmed with tests that fail on the old gate.** `_data_span_problem` reads each entry's
+`compress_size` bytes from the archive: a stored entry must have `compress_size == file_size`, and a deflated one must
+inflate (`zlib.decompressobj(-15)`, output capped at one byte over the size) to exactly `file_size` bytes with the
+stream ending and nothing after it. Tests: the three crafted entries (text after the stream's end, a stream running on
+past `file_size`, a stored entry longer than its file), each written byte by byte, read back clean by `zipfile` and
+missed by the content scan alone; an exact stored and deflated entry and an empty deflated file (what `normalize_zip.py`
+writes for one) pass. The sweep's crafted-zip probes (kept outside the repo) were rerun against the new gate: every
+probe filed under this item now fails it. The new gate passes the shipped 0.13.3 set (`--require-blocklist
+--expect-release 0.13.3`, with that tag's `dispatcharr-plugin/`).
+
+#### The release gate passes a zip entry compressed with a method Kodi does not read
+
+**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, the gate's side reproduced with crafted zips, Kodi's side read in its source
+(`xbmc/filesystem/ZipFile.cpp` opens only stored and deflated entries), not run.** Python's `zipfile` reads bzip2 and
+LZMA entries, so a release zip whose `addon.xml` is compressed with either passes every check, and Kodi would then fail
+to install it. No tool the project builds with chooses those methods. Fix: fail any entry whose `compress_type` is not
+stored (0) or deflated (8).
+
+**Fixed 2026-11-10, confirmed with tests that fail on the old gate.** `check_zip` fails an entry whose `compress_type`
+is not stored or deflated (`KODI_COMPRESS_TYPES`). Tests: an `addon.xml` compressed with bzip2 and with LZMA. The
+sweep's crafted-zip probes (kept outside the repo) were rerun against the new gate: every probe filed under this item
+now fails it. The new gate passes the shipped 0.13.3 set (`--require-blocklist --expect-release 0.13.3`, with that tag's
+`dispatcharr-plugin/`).
+
 #### timeshift_buffer: a stop from the last listed viewer ends a buffer another viewer is still reading
 
 **Opened 2026-10-23, from the 2026-10-23 bug-hunting sweep; LOW, plausible.** 0.8.15 stopped the reaper ending a buffer
@@ -6958,8 +7062,8 @@ other worker re-imports it the next time it serves `GET /api/plugins/plugins/` (
 reload token), and Dispatcharr calls no `stop()` on the copy it drops there. So reproducing the leak needs that
 GET *and* a `run/` call to start the new copy's listener -- `run/` calls alone, which the first attempt
 used, left the count flat and proved nothing. With both, on 0.6.6 the listener count on the plugin port
-went 7 -> 10 -> 13 -> 16 across three reloads (one more per worker that didn't handle the request, four
-workers). On 0.6.7, after a container restart, the identical loop held at 4 -> 4 -> 4 -> 4. See `docs/TIMESHIFT.md`.
+went 7 -> 10 -> 13 -> 16 across three reloads (one more per worker that didn't handle the request).
+On 0.6.7, after a container restart, the identical loop held at 4 -> 4 -> 4 -> 4. See `docs/TIMESHIFT.md`.
 
 #### timeshift_buffer Redis viewer/heartbeat writes are unguarded read-modify-write
 

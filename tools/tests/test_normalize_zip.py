@@ -7,6 +7,7 @@ import shutil
 import stat
 import struct
 import subprocess
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -148,3 +149,17 @@ def test_check_passes_a_zip_made_with_the_flags_the_plugin_packaging_uses(tmp_pa
         ["zip", "-X", "-q", "-r", str(out), "plugin"], cwd=tmp_path, env=dict(os.environ, TZ="Asia/Tokyo"), check=True
     )
     assert not normalize_zip.has_extended_timestamps(str(out))  # `zip -X` already writes none
+
+
+def test_each_copy_of_a_repeated_name_keeps_its_own_data(tmp_path):
+    # the 2026-11-10 sweep's finding: the rewrite read each entry by name, so every copy got the last copy's data (the
+    # gate now fails such a zip, but the rewrite must not change what it would have shown)
+    path = tmp_path / "a.zip"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # zipfile warns about the repeated name and writes it anyway
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("addon/addon.xml", b"first")
+            z.writestr("addon/addon.xml", b"second")
+        normalize_zip.normalize(str(path), _COMMIT)
+    with zipfile.ZipFile(path) as z:
+        assert [z.read(info) for info in z.infolist()] == [b"first", b"second"]
