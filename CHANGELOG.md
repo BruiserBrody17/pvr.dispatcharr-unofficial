@@ -10,6 +10,22 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## `timeshift_buffer` [0.8.18] - Unreleased
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **Every audio track of a channel now reaches Kodi in Server-side mode**, so another audio language can be selected
+  during timeshift; only the first was buffered before. Reported, with a first version of the fix, in issue #1.
+  Checked with addon 0.13.3 (Kodi 21) and 0.14.3 (Kodi 22); with an older addon, switching tracks at the live edge
+  could end playback.
+- **A channel carrying teletext now starts in Server-side mode**: the buffer failed before its first segment. Subtitle
+  and teletext tracks are still not available in Server-side mode.
+- A source that sends several video renditions at once is now buffered with its first one rather than its largest
+  (the others were never shown). Use a stream profile that picks one rendition if the first is not the one you want.
+
 ## [0.14.3] - 2026-11-06
 
 For Kodi 22 only, and still built against Kodi 22.0 RC1, so it is a pre-release like `0.14.2`; Kodi 21 users want

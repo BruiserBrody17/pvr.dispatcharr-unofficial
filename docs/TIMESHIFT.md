@@ -3620,6 +3620,104 @@ whole concern, the on-demand route trades a large piece of new code (a third str
 if pause and rewind into the recording is the wish, delegating to the recording (with a handover at its end, see the open
 item) is the route that delivers it. Neither was built.
 
+## Every audio track, not just the first (0.8.18)
+
+*2026-11-09. Reported in issue #1, with a `-map 0` fix the reporter had run on their own
+server.*
+
+The buffer's ffmpeg had no `-map`, so ffmpeg's default stream selection applied: one video stream and one audio
+stream (the one with the most channels), whatever else the proxy sent. Dispatcharr's default FFmpeg stream profile is
+`-map 0 -c copy`, so a channel's other audio languages did reach the proxy; the buffer dropped them, and in
+Server-side mode Kodi only ever offered the first. Reproduced locally with a generated two-language stream: the old
+argv wrote video and the first language, `-map 0` wrote both.
+
+The buffer now maps `-map 0:v:0?` plus every usable audio stream (`0:a:u?` or `0:a:u:?`, see the audio item). Any
+explicit `-map` turns ffmpeg's default selection off for every stream type, so each type had to be chosen on its own.
+Each choice below was measured against generated MPEG-TS sources run through the plugin's own argv (DVB subtitle and
+teletext streams made with ffmpeg's raw `dvbsub`/`dvbtxt` demuxers from a few hand-written bytes, see the tests), with
+ffmpeg 6.1 locally and again with ffmpeg 8.1.2 inside Dispatcharr 0.33.0's container (a throwaway plugin ran the
+same matrix there):
+
+- **Audio: every usable audio stream.** The stream specifier `u` (usable: codec known and, for audio, a sample rate)
+  matters. A TS whose programme map lists a second audio track that never carries a packet (made by stripping that PID
+  from a generated file) stops ffmpeg before its first segment with any mapping that includes the track (`-map 0`,
+  `-map 0:a?`): `[hls] sample rate not set`, "Could not write header". The default selection never picked that track,
+  so 0.8.17 started normally, and such a channel would have stopped working in Server-side mode.
+  **No one spelling works on both ffmpeg versions**, found only when the container's ffmpeg was tried: ffmpeg 8.1
+  refuses `0:a:u?` ("Trailing garbage after stream specifier: u?", every start fails) and takes `0:a:u:?`; ffmpeg 6.1
+  takes `0:a:u?` and reads `0:a:u:?` as an invalid specifier, which it skips with exit 0, mapping no audio at all.
+  Plain `0:a:u` parses on both but fails a channel with no audio ("matches no streams"). So `_usable_audio_map()` runs
+  ffmpeg once per worker process over a two-stream `lavfi` input with each spelling and keeps the first whose "Stream
+  mapping" lists both streams (a one-stream input is not enough: with its only `-map` skipped, ffmpeg 6.1 falls back
+  to its default pick and maps the stream anyway). If neither works the buffer runs 0.8.17's argv plus `-sn` (one
+  audio track, but a teletext channel still starts). A probe that could not run (a timeout, a fork failure; the second
+  review's point: a busy worker can let the 5 s timeout fire first under gevent) is not kept, so that start gets the
+  fallback and the next probes again, rather than the worker buffering one track until it restarts. In the container
+  the matrix also ran a video-only source: `0:a:u:?` starts it, where plain `0:a:u` "matches no streams". The probe runs
+  before the channel directory is cleared, since it yields under gevent, and the start locks are re-checked after it.
+  ffmpeg 8.1 also writes a harmless `Parsed 'usable only'` line to `ffmpeg.log` at every start.
+- **Subtitles: not mapped.** The `hls` muxer does not put subtitle streams into the TS segments; it hands them to a
+  separate WebVTT muxer, which accepts only WebVTT. A mapped DVB subtitle or teletext stream fails the start: "Exactly
+  one WebVTT stream is needed", "Could not write header". A first version of this change mapped `0:s:u?` and failed
+  every channel carrying DVB subtitles (found by the branch's review). The same failure explains a bug that was already
+  in 0.8.17: ffmpeg's default selection picks a teletext stream for any output that takes subtitles (teletext is
+  neither a text nor a bitmap format), so a channel with a teletext PID never started in Server-side mode. Not mapping
+  subtitles fixes that too. Subtitles could only reach Server-side mode by moving the buffer off the `hls` muxer, which
+  is there for the continuity counters ("Packet corrupt", above).
+- **Video: `0:v:0?`, the first video stream, without `:u`.** For video, `u` needs a picture size, which the probe only
+  learns from a keyframe. A source cut mid-GOP, with no keyframe within the probe's 5 s, probes as 0x0; `0:v:u?` then
+  dropped the video and the segments were audio only, with no error. ffmpeg copies such a stream fine (0.8.17 did).
+  Only the first: a source with several renditions in one TS (Dispatcharr's FFmpeg profile, `-map 0`, on an HLS master
+  playlist; `docs/CLOSED_ITEMS.md`, "A channel that is slow to start") would otherwise be buffered whole, three
+  renditions taking about twice the disk of one. Kodi plays the first video stream when none is flagged default
+  (`PredicateVideoFilter` in `VideoPlayer.cpp`), and MPEG-TS has no default flag, so the others would only cost disk and
+  read bandwidth. The cost: ffmpeg's default selection, which 0.8.17 used, took the largest rendition, and the first
+  may be a smaller one. A single-rendition profile avoids the question, and the slow start that page describes.
+- **Not `-map 0`**: besides the audio and subtitle failures above, it copies data streams (timed ID3, SCTE-35, unknown
+  private PIDs) Kodi does nothing with. A generated binary data track muxed without error, so that one was not seen
+  failing.
+- **The `?`**: a radio channel with no video, or a stream with no usable audio, still starts.
+
+It also sets `-max_interleave_delta 100K`, as Dispatcharr's own FFmpeg profiles now do (`docs/CLOSED_ITEMS.md`,
+"Slow starts"): there, with `-map 0`, a stream that never sent a packet held the output back about 10 s. Locally
+neither a track that stopped after 0.3 s nor a never-sent one (which `:u` now drops anyway) showed a holdback, with or
+without the flag, so it is there for a mapped audio track that goes quiet in the real world, on Dispatcharr's evidence
+rather than ours.
+
+**Checked live (2026-11-09, Dispatcharr 0.33.0, its container's ffmpeg 8.1.2, Kodi 21.3 on Linux, addon 0.13.3,
+Server-side mode).** Each worker's probe picked `0:a:u:?`. Disposable channels pointed at generated sources served at
+their real-time rate from the Kodi test machine (two languages; plus DVB subtitles; plus teletext; two renditions;
+radio with two languages):
+
+- Two languages: both reached the segments and Kodi listed both. `Player.SetAudioStream` switched each way at the live
+  edge, after a 30 s pause and after three skip-backs across segment splices; playback kept advancing 14 s after every
+  switch, with no "Packet corrupt". Kodi re-seeks to the current time on a switch (one `SeekLiveTimeshiftStream` per
+  switch, clamped to the tail at the live edge). On 0.8.17 the same channel gave Kodi one track.
+- Kodi's first pick on a channel it had not played before was the first track; on a channel played before it took the
+  track last selected there (Kodi's per-item settings).
+- DVB subtitles and teletext: both start and play with both languages. On 0.8.17 the teletext channel's buffer failed
+  ("webvtt muxer supports only codec webvtt", no segment) and Kodi never started playing it, which confirms that bug.
+- Two renditions: the first (smaller) one is buffered and played, as intended.
+- Radio: plays with both languages. A 2 x 64 kb/s source never played in either version: Dispatcharr's own proxy sent
+  no byte in 50 s to a direct client either (it stays "connecting" until some initial amount has arrived); at
+  2 x 320 kb/s the proxy started after 16 s and the buffer and Kodi then worked.
+- Cold start on two real channels (`start_buffer` to the first listed segment, three runs each): 3.0 to 4.5 s on
+  0.8.18 against 3.2 to 4.3 s on 0.8.17. The first start on a worker also pays for the probe, once.
+- With the older addon 0.13.0 the first switch, made at the live edge, ended playback about 12 s later: Kodi caught up
+  to the tail with one segment queued, and during the next tail wait it logged "VideoPlayer: next stream, wait for old
+  streams to be finished" and stopped. The same sequence did not end playback with 0.13.3, which changed its tail
+  waits since. One run each, so this says what to use, not why.
+
+**Kodi 22 (same day, Kodi 22.0 RC1 on Linux, addon 0.14.3, the plugin at its probe-retry and `-sn` commit).** The
+same channels and script: both languages offered (Kodi 22 names them `en`/`es`), first pick the first track,
+switches each way at the live edge, after a 30 s pause and after three skip-backs, each still playing 14 s later; 49
+`SeekLiveTimeshiftStream` calls (13 of them real jumps back), no "Packet corrupt", no early end. DVB subtitles,
+teletext, the two-rendition source (first rendition) and radio all played with the expected streams.
+
+Not checked live: a real broadcast channel with several audio tracks (none of the lab's channels has one that
+Dispatcharr's stream stats record), a channel with a declared but never-sent audio track, and a mid-GOP start long
+enough to hide the picture size (each covered by the real-ffmpeg tests and the container matrix only).
+
 ## The plugin's moving parts
 
 *(moved from `dispatcharr-plugin/timeshift_buffer/README.md`, which now keeps only the user-facing summary)*
@@ -3649,5 +3747,4 @@ request, and the others keep the plugin instance they already had, old code and 
 reloads there. A throwaway probe plugin that reported each worker's pid, its reaper threads and the version of the
 module each thread came from found one worker still running, and leading with, the previous version's reaper about a
 quarter of an hour after the import. Sending `reload/` as a burst of parallel requests (more than there are workers),
-then one burst of parallel `run()` calls so each worker's new copy stops its predecessor's threads, reached all four
-workers in that check; a restart is still the step that needs no checking.
+then one burst of parallel `run()` calls so each worker's new copy stops its predecessor's threads, reached every worker in that check; a restart is still the step that needs no checking.
