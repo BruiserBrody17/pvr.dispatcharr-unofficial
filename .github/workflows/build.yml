@@ -123,8 +123,9 @@ jobs:
       # guard on the hls-muxer "Packet corrupt" fix (timeshift_buffer 0.8.0). The test skips when ffmpeg
       # is absent, and the stock runner images are not known to ship it, so without this the guard
       # could silently never run (found by the 2026-10-04 second hardening sweep). REQUIRE_FFMPEG makes
-      # the test fail instead of skip if the install ever stops working. `sudo` only where it exists:
-      # the runner's container runs as root without it.
+      # the test fail instead of skip if the install ever stops working. The stream-mapping tests
+      # (timeshift_buffer 0.8.18) need it too, with the ffprobe this package ships. `sudo` only where
+      # it exists: the runner's container runs as root without it.
       - name: Install ffmpeg
         run: |
           SUDO=""
