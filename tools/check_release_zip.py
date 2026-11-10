@@ -12,7 +12,11 @@ CoreELEC), so no platform gets a weaker gate than another. Per zip it checks:
   byte of the file outside its entries, central directory and end record (prepended data or a gap between entries,
   which every unzipper skips and an entry-by-entry scan never reads), no directory entry carrying data, no local
   header naming its entry differently from the central directory or carrying another time, no encrypted entry, no
-  absolute, `..` or drive-letter entry names, no symlink pointing outside the zip, no archive inside the zip (its
+  absolute, `..` or drive-letter entry names, no entry name repeated (compared without case: zipfile reads the last
+  copy and Kodi the first) or holding a control character (zipfile cuts a name at a NUL), no compression method but
+  stored or deflated (the two Kodi reads), no byte of an entry's data that decompression does not return (after a
+  deflate stream's end, past the file's size, or a stored entry longer than its file), no symlink pointing outside the
+  zip, no archive inside the zip (its
   contents would go unchecked), no debug-symbol or log members (`.pdb`, anything in a `.dSYM` bundle, `.debug`,
   `.map`, `.log`), no desktop folder metadata (`.DS_Store`, `._*`, `__MACOSX/`, `Thumbs.db`, `desktop.ini`);
 - every member's bytes, as plain text and as UTF-16 (Windows binaries keep wide strings), for build-machine paths
@@ -27,9 +31,10 @@ CoreELEC), so no platform gets a weaker gate than another. Per zip it checks:
 - ELF members: no `.debug_*`, `.zdebug_*` or `.symtab` section (an unstripped library carries the build machine's
   source paths, which is how the hand-built Android libraries once shipped them).
 
-`--expect-release VERSION` additionally fails unless the given zips are exactly the release's asset set, so a
-platform cannot be left out of a release by forgetting a step, and checks what is inside them, so a stale or
-mixed-up zip renamed to the new release's name does not pass:
+An empty `--blocklist` or `--expect-release` (an unset shell variable) is an error, as is a VERSION that is not three
+dot-separated numbers. `--expect-release VERSION` additionally fails unless the given zips are exactly the release's
+asset set, so a platform cannot be left out of a release by forgetting a step, and checks what is inside them, so a
+stale or mixed-up zip renamed to the new release's name does not pass:
 
 - each addon zip holds only `pvr.dispatcharr-unofficial/`, its `addon.xml` carries that id and VERSION (CoreELEC's,
   VERSION plus its package revision), and the library it names is the binary its asset name promises (a PE x86-64
@@ -155,6 +160,13 @@ READ_ERRORS = (zipfile.BadZipFile, zlib.error, NotImplementedError, RuntimeError
 ARCHIVE_SUFFIXES = (".zip", ".jar", ".apk", ".whl", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".zst")
 ARCHIVE_MAGIC = (b"PK\x03\x04", b"\x1f\x8b", b"BZh", b"\xfd7zXZ\x00", b"7z\xbc\xaf\x27\x1c", b"\x28\xb5\x2f\xfd")
 
+# The compression methods Kodi's zip reader opens: stored and deflated (xbmc/filesystem/ZipFile.cpp; Python's zipfile
+# also reads bzip2 and LZMA, so without this a zip Kodi cannot install passed).
+KODI_COMPRESS_TYPES = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+
+# What --expect-release takes: the plain version, as addon.xml carries it, not the tag (`0.14.0`, not `0.14.0-Piers`).
+RELEASE_VERSION = re.compile(r"\d+\.\d+\.\d+")
+
 ADDON_XML_VERSION = re.compile(rb"<addon\b[^>]*?\sversion=\"([^\"]+)\"")
 ADDON_XML_ID = re.compile(rb"<addon\b[^>]*?\sid=\"([^\"]+)\"")
 # The Plugin class attribute, not the HTTP handler's server_version string (read as tools/tests/test_version_sync.py
@@ -189,7 +201,10 @@ def load_blocklist(path):
 def find_blocklist(explicit):
     """The blocklist to use. An explicit path must exist: a mistyped one falling back to another list would pass a
     release against a list nobody chose."""
-    if explicit:
+    # `is not None`: an empty --blocklist is what `--blocklist "$UNSET"` expands to, and it once counted as not given
+    if explicit is not None:
+        if not explicit:
+            raise BlocklistError("--blocklist was given an empty path")
         if not os.path.isfile(explicit):
             raise BlocklistError("--blocklist %s: no such file" % explicit)
         return explicit
@@ -351,6 +366,59 @@ def _layout_problems(base, data, archive):
     return problems
 
 
+def _name_problems(base, archive):
+    """Entry names the checks and the installer could read differently. zipfile answers the last entry of a repeated
+    name (getinfo, and a dict keyed by name) while Kodi's zip reader answers the first, so the gate could check one
+    copy and Kodi install another; names differing only in case are one file on a case-insensitive file system; and
+    zipfile cuts `filename` at a NUL byte, so the name checks never read what followed it."""
+    problems, seen = [], set()
+    for info in archive.infolist():
+        name = info.orig_filename
+        if any(ord(c) < 32 or ord(c) == 127 for c in name):
+            problems.append("%s: entry name %r holds a control character" % (base, name))
+        elif name != info.filename:
+            problems.append("%s: entry name %r is read as %r" % (base, name, info.filename))
+        key = name.rstrip("/").casefold()
+        if key in seen:
+            problems.append("%s: entry name %r is repeated (compared without case)" % (base, name))
+        seen.add(key)
+    return problems
+
+
+def _data_span_problem(data, info):
+    """Why an entry's stored data holds bytes its decompressed contents do not (None when it does not). The scan reads
+    what decompression returns and the layout check accounts for `compress_size` bytes, so anything in between --
+    after a deflate stream's end, a stream running on past `file_size` (where zipfile stops), a stored entry longer
+    than its file -- was read by neither."""
+    start = info.header_offset
+    header = data[start : start + 30]
+    if len(header) < 30 or header[:4] != b"PK\x03\x04":
+        return None  # check_zip reports it
+    name_length, extra_length = struct.unpack_from("<HH", header, 26)
+    offset = start + 30 + name_length + extra_length
+    span = data[offset : offset + info.compress_size]
+    if info.compress_type == zipfile.ZIP_STORED:
+        if info.compress_size != info.file_size:
+            return "stores %d byte(s) of data for a %d-byte file" % (info.compress_size, info.file_size)
+        return None
+    if info.compress_type != zipfile.ZIP_DEFLATED:
+        return None  # check_zip reports the method
+    inflater = zlib.decompressobj(-15)
+    try:
+        inflated = len(inflater.decompress(span, info.file_size + 1))
+    except zlib.error as error:
+        return "cannot be inflated (%s)" % error
+    if inflated > info.file_size:
+        return "inflates to more than its %d-byte size" % info.file_size
+    if not inflater.eof:
+        return "has a deflate stream that does not end within its data"
+    if inflater.unused_data:
+        return "has %d byte(s) after its deflate stream ends" % len(inflater.unused_data)
+    if inflated != info.file_size:
+        return "inflates to %d byte(s), not its %d-byte size" % (inflated, info.file_size)
+    return None
+
+
 def _is_symlink(info):
     return info.create_system == 3 and stat.S_ISLNK(info.external_attr >> 16)
 
@@ -376,7 +444,9 @@ def check_zip(path, blocklist_terms):
     with archive, open(path, "rb") as raw:
         if archive.comment:
             problems.append("%s: has a zip comment" % base)
-        problems += _layout_problems(base, raw.read(), archive)
+        blob = raw.read()
+        problems += _layout_problems(base, blob, archive)
+        problems += _name_problems(base, archive)
         stamps = {info.date_time for info in archive.infolist()}
         if len(stamps) > 1:
             problems.append(
@@ -408,6 +478,11 @@ def check_zip(path, blocklist_terms):
                     break
             if info.comment:
                 problems.append("%s: entry %s has a comment" % (base, name))
+            if info.compress_type not in KODI_COMPRESS_TYPES:
+                problems.append(
+                    "%s: entry %s is compressed with method %d, which Kodi does not read (stored or deflated only)"
+                    % (base, name, info.compress_type)
+                )
             if info.is_dir():
                 if info.file_size or info.compress_size:
                     problems.append("%s: directory entry %s carries data" % (base, name))
@@ -421,6 +496,9 @@ def check_zip(path, blocklist_terms):
             except READ_ERRORS as error:
                 problems.append("%s: entry %s cannot be read (%s)" % (base, name, error))
                 continue
+            span = _data_span_problem(blob, info)
+            if span:
+                problems.append("%s: entry %s %s, bytes the scan never reads" % (base, name, span))
             if _is_symlink(info) and _escapes(data.decode("utf-8", errors="replace")):
                 problems.append("%s: entry %s is a symlink out of the zip (to %r)" % (base, name, data[:80]))
             if _is_archive(name, data):
@@ -669,6 +747,11 @@ def main(argv):
     if not paths:
         print(__doc__, file=sys.stderr)
         return 2
+    # An empty version (`--expect-release "$VERSION"` with the variable unset) once skipped the release checks and
+    # passed seven of the eight zips as clean.
+    if version is not None and not RELEASE_VERSION.fullmatch(version):
+        print("--expect-release wants a version such as 0.14.1, got %r" % version, file=sys.stderr)
+        return 2
     try:
         found = find_blocklist(blocklist_file)
         terms = load_blocklist(found) if found else []
@@ -683,7 +766,7 @@ def main(argv):
     if found and not terms and require:
         print("the privacy blocklist %s has no terms, so it blocks nothing" % found, file=sys.stderr)
         return 2
-    problems = check_release_set(paths, version) + check_release_contents(paths, version) if version else []
+    problems = check_release_set(paths, version) + check_release_contents(paths, version) if version is not None else []
     for path in paths:
         problems += check_zip(path, terms)
     for line in problems:

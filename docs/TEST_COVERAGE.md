@@ -3333,6 +3333,20 @@ directory's (a byte-written zip `zipfile` still reads); an encrypted entry, in `
 `plugin.json`; and a missing `$PRIVACY_BLOCKLIST` with a home list present. 12 cases fail on the old gate. The gate
 passes the shipped 0.14.2 set run with that tag's plugin sources.
 
+2026-11-10: the five tools fixes from the 2026-11-10 sweep (`docs/CLOSED_ITEMS.md`'s entries of that date).
+`tools/tests/test_check_release_zip.py`: an entry's data span against what decompression returns, with one-entry zips
+written byte by byte (`_crafted_zip`): text after a deflate stream's end, a stream running on past `file_size`, a stored
+entry longer than its file, each read back clean by `zipfile`, with an exact stored, deflated and empty deflated entry
+passing; bzip2 and LZMA entries; a repeated name, a pair differing only in case and a file beside a same-named
+directory; a whole release whose Linux zip carries a stale `addon.xml` ahead of the right one, which the content checks
+alone pass and the run fails; a NUL, a newline and DEL in a name; an empty `--expect-release` and four malformed ones
+over seven of the eight zips; an empty `--blocklist` with `$PRIVACY_BLOCKLIST` set. 18 cases fail on the old gate.
+`test_normalize_zip.py` and `test_scrub_zip_paths.py`: each copy of a repeated name keeps its own data (one case each,
+both failing on the old tools). `test_ci_build_needed.py`: five names git quotes and one that is the byte 0xff, each
+committed to a temporary repository with `core.quotepath` on and run through the script (6 cases fail on the old
+filter); `_fake_git` now checks for the `-z` call. The new gate passes the shipped 0.14.3 set run with that tag's
+plugin sources.
+
 ### `kodi_smoke_test.py`
 
 `tools/kodi_smoke_test.py` (added 2026-09-29, fixing several real,

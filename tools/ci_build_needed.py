@@ -46,10 +46,13 @@ def changed_files(event, ref, base, head, run_git=None):
     run_git = run_git or _git
     try:
         # --no-renames: with rename detection a file moved out of a build path is listed only under its new name, so
-        # `git mv src/Foo.cpp docs/` would skip the very jobs that fail without it.
-        return run_git(["diff", "--name-only", "--no-renames", base, head]).splitlines()
+        # `git mv src/Foo.cpp docs/` would skip the very jobs that fail without it. core.quotepath=off and -z: git
+        # otherwise C-quotes a name holding a non-ASCII byte, a quote, a backslash or a control character
+        # (`"src/\303\274.cpp"`), and the leading quote kept the start-anchored patterns from matching it.
+        output = run_git(["-c", "core.quotepath=off", "diff", "-z", "--name-only", "--no-renames", base, head])
     except (subprocess.CalledProcessError, OSError):
         return None
+    return [name for name in output.split("\0") if name]
 
 
 def decide(event, ref, base, head, run_git=None, relevant=needs_build):
@@ -59,7 +62,10 @@ def decide(event, ref, base, head, run_git=None, relevant=needs_build):
 
 
 def _git(args):
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+    # A name need not be UTF-8; surrogateescape keeps its bytes rather than raising, since only the ASCII prefix is
+    # matched.
+    output = subprocess.run(["git", *args], check=True, capture_output=True).stdout
+    return output.decode("utf-8", errors="surrogateescape")
 
 
 def main(argv):

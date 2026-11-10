@@ -66,11 +66,14 @@ def test_every_tool_the_build_jobs_run_is_on_the_trigger_list():
 
 
 def _fake_git(output=None, error=None):
+    """A git whose diff lists the names of `output` (one per line, written NUL-separated as `-z` makes git print
+    them)."""
+
     def run(args):
-        assert args[:2] == ["diff", "--name-only"]
+        assert args[:5] == ["-c", "core.quotepath=off", "diff", "-z", "--name-only"]
         if error:
             raise error
-        return output
+        return output.replace("\n", "\0")
 
     return run
 
@@ -154,6 +157,65 @@ def test_a_file_renamed_out_of_a_build_path_builds_through_the_real_git(tmp_path
         text=True,
     )
     assert "build=true" in result.stdout.split()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "src/Ünïcode.cpp",
+        'src/a"quote.h',
+        "src/back\\slash.h",
+        "src/tab\there.h",
+        "dispatcharr-plugin/recording_edl/é.py",
+    ],
+)
+def test_a_name_git_would_quote_still_builds_through_the_real_git(tmp_path, name):
+    # The 2026-11-10 sweep's finding: git C-quoted such a name with a leading `"`, which no start-anchored pattern
+    # matched, so a push changing only that file skipped the build.
+    base, head = _commit_one_file(tmp_path, name)
+    assert _git(tmp_path, "diff", "--name-only", base, head).startswith('"')  # the case this pins
+    assert gate.changed_files("push", "refs/heads/Piers", base, head, lambda args: _git_raw(tmp_path, args)) == [name]
+    expected_plugins = "true" if name.startswith("dispatcharr-plugin/") else "false"
+    assert _run_script(tmp_path, base, head) == ["build=true", "plugins=" + expected_plugins]
+
+
+def test_a_name_that_is_not_utf8_builds_rather_than_crashing(tmp_path):
+    # Quoted (`"src/\377.cpp"`) before the fix; now that git hands over raw names, a strict UTF-8 decode would raise
+    # on it instead, and the step's pipefail would fail the run.
+    base, head = _commit_one_file(tmp_path, "src/\udcff.cpp")  # surrogateescape: the file name is the byte 0xff
+    assert _run_script(tmp_path, base, head) == ["build=true", "plugins=false"]
+
+
+def _commit_one_file(repo, name):
+    """(base, head) of a temporary repository where head adds `name`, with core.quotepath on (git's default, and what
+    a CI runner's global config may set: the tool must not depend on it)."""
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@example.invalid")
+    _git(repo, "config", "user.name", "t")
+    _git(repo, "config", "core.quotepath", "on")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "x.md").write_text("x\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / name).parent.mkdir(parents=True, exist_ok=True)
+    (repo / name).write_text("x\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "add")
+    return base, _git(repo, "rev-parse", "HEAD")
+
+
+def _run_script(repo, base, head):
+    script = str(REPO_ROOT / "tools" / "ci_build_needed.py")
+    result = subprocess.run(
+        ["python3", script, "push", "refs/heads/Piers", base, head], cwd=repo, capture_output=True, text=True
+    )
+    return result.stdout.split()
+
+
+def _git_raw(cwd, args):
+    output = subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True).stdout
+    return output.decode("utf-8", errors="surrogateescape")
 
 
 def test_the_decide_step_runs_with_pipefail_and_the_jobs_build_on_an_empty_answer():

@@ -124,7 +124,8 @@ def scrub_zip(path: str, prefixes: list) -> int:
                 if info.is_dir():
                     target.writestr(copy, b"")
                     continue
-                data, count = scrub_bytes(source.read(info.filename), prefixes)
+                # by the entry, not its name: a repeated name would read the last copy's data into every copy
+                data, count = scrub_bytes(source.read(info), prefixes)
                 total += count
                 target.writestr(copy, data)
         os.replace(tmp, path)

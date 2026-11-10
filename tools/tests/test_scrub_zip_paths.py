@@ -2,6 +2,7 @@
 
 import importlib.util
 import stat
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -216,3 +217,16 @@ def test_main_exit_codes(tmp_path, capsys):
     assert scrub.main(["prog", "--prefix", prefix]) == 2  # no zip
     assert scrub.main(["prog", "--prefix", "/x", path]) == 2  # too short
     assert scrub.main(["prog", "--bogus", path]) == 2
+
+
+def test_each_copy_of_a_repeated_name_keeps_its_own_data(tmp_path):
+    # the 2026-11-10 sweep's finding: the rewrite read each entry by name, so every copy got the last copy's data
+    path = tmp_path / "a.zip"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # zipfile warns about the repeated name and writes it anyway
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("addon/notes.txt", b"first " + _HOME)
+            z.writestr("addon/notes.txt", b"second")
+        assert scrub.scrub_zip(str(path), [_HOME]) == 1
+    with zipfile.ZipFile(path) as z:
+        assert [z.read(info) for info in z.infolist()] == [b"first " + scrub.replacement_for(_HOME), b"second"]
