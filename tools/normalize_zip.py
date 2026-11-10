@@ -38,7 +38,8 @@ def normalize(path: str, commit_time: int) -> int:
                 if info.is_dir():
                     target.writestr(copy, b"")
                 else:
-                    target.writestr(copy, source.read(info.filename))
+                    # by the entry, not its name: a repeated name would read the last copy's data into every copy
+                    target.writestr(copy, source.read(info))
             count = len(source.infolist())
         os.replace(tmp, path)
     except BaseException:

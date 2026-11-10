@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import struct
+import warnings
 import zipfile
 import zlib
 from pathlib import Path
@@ -818,3 +819,152 @@ def test_a_kodi_dependency_path_outside_its_two_trees_is_not_excused(tmp_path):
     other = b"C:\\code\\kodi-deps\\secret\\x64"
     path = _zip(tmp_path / "a.zip", {"addon/libcurl.dll": other})
     assert gate.check_zip(path, [])
+
+
+def _crafted_zip(path, name, payload, method, file_size, crc):
+    """A one-entry zip written byte by byte whose stored data is `payload` exactly, whatever `file_size` and `crc`
+    say it decompresses to: what zipfile never writes, so the data span can hold bytes decompression never returns."""
+    encoded = name.encode()
+    dos_time, dos_date = gate._dos_time_and_date(_STAMP)
+    fields = (method, dos_time, dos_date, crc, len(payload), file_size, len(encoded))
+    local = struct.pack("<4sHHH", b"PK\x03\x04", 20, 0, fields[0]) + struct.pack("<HHIIIHH", *fields[1:], 0)
+    local += encoded + payload
+    central = struct.pack("<4sHHHH", b"PK\x01\x02", 20, 20, 0, method)
+    central += struct.pack("<HHIIIHHHHHII", *fields[1:], 0, 0, 0, 0, 0, 0) + encoded
+    end = struct.pack("<4sHHHHIIH", b"PK\x05\x06", 0, 0, 1, 1, len(central), len(local), 0)
+    path.write_bytes(local + central + end)
+    return str(path)
+
+
+def _deflate(data):
+    compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
+    return compressor.compress(data) + compressor.flush()
+
+
+_TEXT = b"<addon/>\n" * 20
+_HIDDEN = b"hidden-term"
+
+
+@pytest.mark.parametrize(
+    "payload,method,size,crc_of,wanted",
+    [
+        (_deflate(_TEXT) + _HIDDEN, 8, len(_TEXT), _TEXT, "after its deflate stream ends"),
+        # a stream that goes on past file_size, where zipfile stops reading (the CRC is of what it returns)
+        (_deflate(_TEXT + _HIDDEN), 8, len(_TEXT), _TEXT, "inflates to more than"),
+        (_TEXT + _HIDDEN, 0, len(_TEXT), _TEXT, "stores %d byte(s) of data" % (len(_TEXT) + len(_HIDDEN))),
+    ],
+    ids=["after-stream-end", "past-file-size", "stored-longer"],
+)
+def test_bytes_inside_an_entrys_data_that_decompression_never_returns_fail(
+    tmp_path, payload, method, size, crc_of, wanted
+):
+    # the 2026-11-10 sweep's finding: the layout check accounted for compress_size bytes and the scan read what
+    # decompression returned, so a blocklist term between the two was read by neither
+    path = _crafted_zip(tmp_path / "a.zip", "addon/addon.xml", payload, method, size, zlib.crc32(crc_of))
+    with zipfile.ZipFile(path) as z:
+        assert z.read("addon/addon.xml") == _TEXT  # every reader returns the clean text
+    problems = gate.check_zip(path, [_HIDDEN.decode()])
+    assert any(wanted in p and "never reads" in p for p in problems), problems
+    assert not any("blocklist term" in p for p in problems)  # the scan alone still misses it: this check is the catch
+
+
+@pytest.mark.parametrize("method", [0, 8])
+def test_an_exact_data_span_passes(tmp_path, method):
+    payload = _deflate(_TEXT) if method == 8 else _TEXT
+    path = _crafted_zip(tmp_path / "a.zip", "addon/addon.xml", payload, method, len(_TEXT), zlib.crc32(_TEXT))
+    assert gate.check_zip(path, [_HIDDEN.decode()]) == []
+    # an empty deflated file (normalize_zip.py deflates every file, empty ones too)
+    empty = tmp_path / "empty.zip"
+    with zipfile.ZipFile(empty, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(zipfile.ZipInfo("addon/empty.txt", date_time=_STAMP), b"")
+    assert gate.check_zip(str(empty), []) == []
+
+
+@pytest.mark.parametrize("method", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA])
+def test_an_entry_compressed_with_a_method_kodi_does_not_read_fails(tmp_path, method):
+    # the 2026-11-10 sweep's finding: zipfile reads both, Kodi's zip reader opens stored and deflated entries only
+    path = tmp_path / "a.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        info = zipfile.ZipInfo("addon/addon.xml", date_time=_STAMP)
+        info.compress_type = method
+        z.writestr(info, _TEXT)
+    problems = gate.check_zip(str(path), [])
+    assert problems == [
+        "a.zip: entry addon/addon.xml is compressed with method %d, which Kodi does not read "
+        "(stored or deflated only)" % method
+    ]
+
+
+def _repeated(path, names_and_data):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # zipfile warns about a repeated name and writes it anyway
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            for name, data in names_and_data:
+                z.writestr(zipfile.ZipInfo(name, date_time=_STAMP), data)
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    "first,second",
+    [
+        ("addon/addon.xml", "addon/addon.xml"),
+        ("addon/ADDON.XML", "addon/addon.xml"),  # one file on a case-insensitive file system
+        ("addon/lib", "addon/LIB/"),
+    ],
+)
+def test_a_repeated_entry_name_fails(tmp_path, first, second):
+    # the 2026-11-10 sweep's finding: the gate read the last copy (getinfo, a dict by name) and Kodi the first, so a
+    # stale addon.xml or another architecture's library ahead of the right one passed
+    path = _repeated(tmp_path / "a.zip", [(first, b"stale"), (second, b"" if second.endswith("/") else b"right")])
+    assert any("is repeated" in p and repr(second) in p for p in gate.check_zip(path, []))
+
+
+def test_a_release_zip_with_a_stale_copy_ahead_of_the_right_one_fails_the_whole_run(tmp_path, monkeypatch):
+    monkeypatch.delenv("PRIVACY_BLOCKLIST", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(gate, "PLUGIN_SOURCE", str(tmp_path / "dispatcharr-plugin"))
+    paths = _release(tmp_path, "9.9.9")
+    linux = next(p for p in paths if p.endswith("-linux.zip"))
+    with zipfile.ZipFile(linux) as z:
+        good = [(i.filename, z.read(i)) for i in z.infolist()]
+    stale = good[0][1].replace(b'version="9.9.9"', b'version="9.9.8"')
+    _repeated(Path(linux), [(good[0][0], stale)] + good)
+    assert _contents(tmp_path, paths, "9.9.9") == []  # what the release checks alone see: the last, right copy
+    assert gate.main(["prog", "--expect-release", "9.9.9", *paths]) == 1
+
+
+@pytest.mark.parametrize("hidden", ["\x00hidden-term", "\nFAKE", "\x7f"])
+def test_an_entry_name_holding_a_control_character_fails(tmp_path, hidden):
+    # zipfile cuts `filename` at a NUL, so a term after one was never seen by the name checks
+    path = tmp_path / "a.zip"
+    placeholder = "#" * len(hidden)
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(zipfile.ZipInfo("addon/notes.txt" + placeholder, date_time=_STAMP), b"x")
+    path.write_bytes(path.read_bytes().replace(placeholder.encode(), hidden.encode()))
+    with zipfile.ZipFile(path) as z:
+        assert z.read(z.infolist()[0]) == b"x"
+    problems = gate.check_zip(str(path), ["hidden-term"])
+    assert any("holds a control character" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("value", ["", "0.14", "0.14.0-Piers", "v0.14.0", "0.14.0 "])
+def test_an_empty_or_malformed_expect_release_is_an_error(tmp_path, monkeypatch, value):
+    # the 2026-11-10 sweep's finding: `--expect-release "$VERSION"` with the variable unset skipped the release checks,
+    # and seven of the eight zips passed as clean
+    monkeypatch.delenv("PRIVACY_BLOCKLIST", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(gate, "PLUGIN_SOURCE", str(tmp_path / "dispatcharr-plugin"))
+    seven = _release(tmp_path, "9.9.9")[:-1]
+    assert gate.main(["prog", "--expect-release", "9.9.9", *seven]) == 1
+    assert gate.main(["prog", "--expect-release", value, *seven]) == 2
+
+
+def test_an_empty_blocklist_path_is_an_error_not_a_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    real = tmp_path / "real.txt"
+    real.write_text("other\n", encoding="utf-8")
+    monkeypatch.setenv("PRIVACY_BLOCKLIST", str(real))
+    with pytest.raises(gate.BlocklistError, match="empty"):
+        gate.find_blocklist("")
+    clean = _zip(tmp_path / "clean.zip", {"a/x.txt": b"hello"})
+    assert gate.main(["prog", "--blocklist", "", "--require-blocklist", clean]) == 2

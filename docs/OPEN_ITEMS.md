@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**15 open, 399 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**10 open, 404 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,12 +13,13 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One from the 2026-11-09 change that buffers every audio track: the live checks it has not had yet.
-- Nine, all LOW, from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (six
+- Four, all LOW, from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (six
   read-only reviews by area, the sixth over the seams between the addon, the plugins, the test fakes and the docs; each
   finding checked against the code before it was filed): one `timeshift_buffer` regression that is in no release yet,
-  two in the addon, five in the release gate and the CI path filter and one in the glue harness's fake server. Nine of
-  the sweep's eleven findings hold here; the other two are `Piers` only (an in-progress recording's segment cache with
-  two streams of it open, which `Omega` never has, and a table in `BRANCHES.md`, which `Omega` does not carry).
+  two in the addon and one in the glue harness's fake server. Nine of the sweep's eleven findings hold here; the other
+  two are `Piers` only (an in-progress recording's segment cache with two streams of it open, which `Omega` never has,
+  and a table in `BRANCHES.md`, which `Omega` does not carry). Its five in the release gate and the CI path filter were
+  fixed on 2026-11-10.
 
 Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
 held here), from the 2026-10-19 live check of four audit fixes on `Piers`, from the 2026-10-23 sweep, made on `Piers`
@@ -36,8 +37,8 @@ recording's 20 s retry budget).
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 3 |
-| Open: Tooling (tools/) | 5 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 347 |
+| Open: Tooling (tools/) | 0 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 352 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 42 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -203,64 +204,4 @@ real channels.
 
 ### Tooling (tools/)
 
-#### The release gate skips its release checks for an empty `--expect-release`, and an empty `--blocklist` falls back to another list
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, reproduced by running the gate.** `main` in `tools/check_release_zip.py` runs the
-release-set and content checks only `if version`, and `find_blocklist` honours its explicit path only `if explicit`, so
-an empty string counts as the option not having been given. Seven of a release's eight zips with `--expect-release
-9.9.9` fail ("release asset missing"); the same seven with `--expect-release ""` print "7 zip(s) clean". An empty value
-is what an unset shell variable expands to (`--expect-release "$VERSION"`), which is how a release would meet it.
-`--blocklist ""` likewise goes on to `$PRIVACY_BLOCKLIST` or the home-directory list, the fallback that
-`find_blocklist`'s own docstring says a mistyped path must not get. Fix: test `is not None`, and exit 2 on an empty
-value for either option and on a version that is not three dot-separated numbers, with a test for each in
-`tools/tests/test_check_release_zip.py`.
-
-#### The CI path filter answers "skip" for a changed file whose name git quotes
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, reproduced by giving the filter the name as git prints it.** `changed_files` in
-`tools/ci_build_needed.py` reads `git diff --name-only --no-renames` line by line. Git prints a path that holds a
-non-ASCII byte, a double quote, a backslash or a control character C-quoted, with a leading `"` (`core.quotepath`), so
-the patterns in `needs_build` and `needs_plugins`, which are anchored at the start of the path, do not match it, and a
-push that changes only such a file skips the compile-and-package jobs. No tracked file has such a name today, so
-nothing has been skipped. Fix: `git -c core.quotepath=off diff -z --name-only --no-renames`, split on NUL, with a test
-in `tools/tests/test_ci_build_needed.py` that feeds a name git would have quoted.
-
-#### The release gate checks the last of several same-named zip entries, and Kodi reads the first
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, the gate's side reproduced with crafted zips, Kodi's side read in its source (its
-zip manager's entry lookup returns the first match), not run.** The gate reads `addon.xml` and the library through
-`archive.getinfo`, which answers the last entry of a name, and `_plugin_differences` builds a dict keyed by name, which
-keeps the last too. A zip whose first `addon.xml` carries another version and whose first library is another
-architecture's passes when correct copies follow them (the reverse order fails, as it should). So does a zip with an
-`ADDON.XML` beside its `addon.xml`, which are one file on a case-insensitive file system, and one whose stored entry
-name has a blocklist term after a NUL byte: Python's `zipfile` cuts `filename` at the NUL and the name checks read
-that. Related: `tools/normalize_zip.py` and `tools/scrub_zip_paths.py` read each entry's data by `info.filename`, so
-both write the last copy's data into every entry of a repeated name. The project's own builds never write a repeated
-name; what does not hold is the gate's promise that what it checked is what gets installed, for a zip assembled by
-hand. Fix: fail on a repeated name (compared without case), on `orig_filename != filename` and on a control character
-in a name; have the two rewriting tools read by the `ZipInfo` object, not by name.
-
-#### The release gate does not scan bytes inside an entry's data span that decompression never returns
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, reproduced with crafted zips.** Since `CLOSED_ITEMS.md`'s "The release gate does not
-scan bytes outside a member's decompressed data" the gate accounts for every byte of the archive by span (local header,
-name, extra field and `compress_size` bytes of data for each entry) and scans each entry's decompressed data. Bytes
-inside an entry's `compress_size` that the decompressor never returns are in neither: plain text after the end of the
-deflate stream, a deflate stream that goes on past `file_size` (`zipfile` stops reading there), and a stored entry
-whose `compress_size` is larger than its `file_size`. A blocklist term placed in any of the three passes. As with the
-earlier item, no tool the project builds with writes such an entry; the gate is the one place meant not to rely on
-that. Fix: inflate each deflated entry with `zlib.decompressobj(-15)` and require the stream to end, with nothing left
-over, at exactly `file_size` bytes; require `compress_size == file_size` for a stored one.
-
-#### The release gate passes a zip entry compressed with a method Kodi does not read
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, the gate's side reproduced with crafted zips, Kodi's side read in its source
-(`xbmc/filesystem/ZipFile.cpp` opens only stored and deflated entries), not run.** Python's `zipfile` reads bzip2 and
-LZMA entries, so a release zip whose `addon.xml` is compressed with either passes every check, and Kodi would then fail
-to install it. No tool the project builds with chooses those methods. Fix: fail any entry whose `compress_type` is not
-stored (0) or deflated (8).
+None open.

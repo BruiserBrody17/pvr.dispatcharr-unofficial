@@ -926,7 +926,9 @@ Cutting a release, in order:
    UTF-16), any extra field in the zip (timezone, uid/gid; in the central directory or in a local header), entries
    with more than one timestamp (or a local header's time differing from the central directory's), a zip or entry
    comment, any byte of the file outside its entries and directory (prepended data, a gap between entries), a
-   directory entry carrying data, an encrypted entry, an unsafe entry name, a symlink out of the zip, an archive inside
+   directory entry carrying data, an encrypted entry, an unsafe entry name, an entry name repeated (compared without
+   case) or holding a control character, an entry compressed with anything but stored or deflated (the two Kodi
+   reads), bytes in an entry's data that decompression does not return, a symlink out of the zip, an archive inside
    it, a debug or log file (also anything in a `.dSYM` bundle), a desktop's folder metadata (`.DS_Store`, `._*`,
    `__MACOSX/`, `Thumbs.db`, `desktop.ini`), an ELF library that is not stripped (`.debug_*`, `.zdebug_*`, `.symtab`),
    and a release that is missing an asset or carries an unexpected one.
@@ -935,7 +937,8 @@ Cutting a release, in order:
    must be the binary its name promises (a PE x86-64 DLL, a Mach-O arm64 dylib, an ELF of the right class and machine);
    the six addon zips must share one timestamp; each plugin zip must hold only its own folder, its `plugin.json`
    version must equal its `Plugin` class version and the tag's `plugin.json`, its files must be the tag's plugin
-   folder byte for byte (less `tests/` and `__pycache__/`), and it must be no older than the addon zips. A
+   folder byte for byte (less `tests/` and `__pycache__/`), and it must be no older than the addon zips. An empty
+   `--blocklist` or `--expect-release` (an unset variable), a version that is not three dot-separated numbers, a
    `--blocklist` path or a set `$PRIVACY_BLOCKLIST` that does not exist, a list with no terms (with
    `--require-blocklist`) and a UTF-16 list are errors. The handful of upstream strings it has to allow (the Windows
    zip's two prebuilt DLLs carry Kodi's own dependency-build path) are listed in the script with the reason each
