@@ -1716,10 +1716,14 @@ def _build_ffmpeg_command(
     playlist_path,
     visible_segments: int,
     segment_pattern: str,
+    audio_map: str | None = None,
 ) -> list[str]:
     """Pure argv-assembly core of _start_ffmpeg -- pulled out specifically
     so the exact flag order is unit-testable standalone without touching
     subprocess/the filesystem; see ../tests/test_timeshift_buffer.py.
+
+    `audio_map` is the spelling _usable_audio_map() found this ffmpeg accepts; None gives 0.8.17's argv plus -sn
+    (no -map: ffmpeg's default pick of one video and one audio stream, and no subtitle).
 
     -headers must precede -i: ffmpeg applies -headers to the input that
     follows it, not globally -- confirmed by this file's own top-of-file
@@ -1741,11 +1745,33 @@ def _build_ffmpeg_command(
     ]
     if attribution_headers:
         cmd += ["-headers", attribution_headers]
+    cmd += ["-i", input_url]
+    if audio_map:
+        cmd += [
+            # Every audio track, not ffmpeg's default pick of one, which left a channel's other audio languages
+            # unselectable in Kodi; each choice below was measured against generated streams (docs/TIMESHIFT.md,
+            # "Every audio track, not just the first"). Audio is mapped as usable only (see _usable_audio_map()): a
+            # track declared but never sent has no sample rate and, mapped, fails the start ("sample rate not set").
+            # Video is the first stream with no `:u`: a probe that began mid-GOP has no picture size yet and `:u`
+            # would drop the video, and Kodi plays the first of several anyway. No subtitles and not -map 0: the hls
+            # muxer sends subtitle streams to a WebVTT muxer, which refuses DVB subtitles and teletext and fails the
+            # start, and -map 0 would also take data streams. The `?`: no video (radio) or no audio still starts.
+            "-map",
+            "0:v:0?",
+            "-map",
+            audio_map,
+        ]
+    else:
+        # ffmpeg's default pick takes a teletext stream for any output that carries subtitles, and the hls muxer then
+        # fails the start on it (the WebVTT refusal above); a fallback start should not bring that back.
+        cmd += ["-sn"]
+    cmd += ["-c", "copy"]
+    if audio_map:
+        # With every audio track mapped, one that goes quiet can make the muxer hold the others back for up to its
+        # default 10 s while it waits to interleave it; Dispatcharr's own FFmpeg profiles set the same 100K (0.1 s)
+        # for that reason (docs/CLOSED_ITEMS.md, "Slow starts").
+        cmd += ["-max_interleave_delta", "100K"]
     cmd += [
-        "-i",
-        input_url,
-        "-c",
-        "copy",
         "-f",
         "hls",
         "-hls_time",
@@ -1764,6 +1790,79 @@ def _build_ffmpeg_command(
         str(playlist_path),
     ]
     return cmd
+
+
+# "Every usable audio stream, none is fine" has no spelling every ffmpeg reads the same way (measured 2026-11-09):
+# ffmpeg 6.1 takes `0:a:u?` and reads `0:a:u:?` as an invalid specifier, which it skips silently, mapping no audio
+# with exit 0; ffmpeg 8.1 (Dispatcharr 0.33.0's) refuses `0:a:u?` ("Trailing garbage after stream specifier: u?"),
+# failing every start, and takes `0:a:u:?`. Plain `0:a:u` parses on both but stops a channel with no audio.
+_AUDIO_MAP_SPELLINGS = ("0:a:u?", "0:a:u:?")
+_AUDIO_MAP_UNSET = object()
+_usable_audio_map_cache = _AUDIO_MAP_UNSET
+
+
+def _audio_map_maps_audio(ffmpeg_output: str) -> bool:
+    """Whether an `ffmpeg -loglevel info` run over a two-audio-stream input mapped both: its "Stream mapping" section
+    lists `Stream #0:0 -> #0:0` and `Stream #0:1 -> #0:1`. A positive check of both, because ffmpeg 6.1 skips a
+    spelling it does not understand, exits 0, and with no other -map left falls back to its default pick of one."""
+    _, _, mapping = ffmpeg_output.partition("Stream mapping:")
+    return "Stream #0:0 -> #0:0" in mapping and "Stream #0:1 -> #0:1" in mapping
+
+
+def _select_audio_map(maps_audio):
+    """The first of _AUDIO_MAP_SPELLINGS for which `maps_audio(spelling)` is True; None when every one answered False;
+    _AUDIO_MAP_UNSET when none worked and at least one could not be tried (`maps_audio` returned None)."""
+    inconclusive = False
+    for spelling in _AUDIO_MAP_SPELLINGS:
+        result = maps_audio(spelling)
+        if result:
+            return spelling
+        inconclusive = inconclusive or result is None
+    return _AUDIO_MAP_UNSET if inconclusive else None
+
+
+def _ffmpeg_maps_audio_with(spelling: str) -> bool | None:
+    """True or False once ffmpeg has run to the end; None when it could not be run or timed out (a fork failure, or a
+    worker busy long enough for the timeout to fire first under gevent), which says nothing about this ffmpeg."""
+    try:
+        run = subprocess.run(  # noqa: S603 -- fixed argv, no shell
+            [
+                "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "info",
+                "-f", "lavfi", "-i", "anullsrc[out0];anullsrc[out1]",
+                "-t", "0.1", "-map", spelling, "-c", "copy", "-f", "null", "-",
+            ],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=5,
+        )  # fmt: skip
+    except FileNotFoundError:
+        return False  # no ffmpeg on PATH: no buffer can start anyway, so nothing to retry
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return run.returncode == 0 and _audio_map_maps_audio(run.stderr.decode(errors="replace"))
+
+
+def _usable_audio_map(logger) -> str | None:
+    """The -map spelling for every usable audio stream that this host's ffmpeg understands, found once per process by
+    running it (see _AUDIO_MAP_SPELLINGS). None when neither works (no lavfi, an ffmpeg that reads both differently):
+    the buffer then runs 0.8.17's argv (plus -sn) and keeps one audio track, rather than risk failing or silencing every
+    start. A probe that could not run is not kept: that start gets the fallback and the next one probes again."""
+    global _usable_audio_map_cache
+    if _usable_audio_map_cache is _AUDIO_MAP_UNSET:
+        result = _select_audio_map(_ffmpeg_maps_audio_with)
+        if result is _AUDIO_MAP_UNSET:
+            logger.warning(
+                "timeshift_buffer: could not run ffmpeg to check its -map syntax; this start buffers only ffmpeg's "
+                "default audio track, the next one checks again"
+            )
+            return None
+        _usable_audio_map_cache = result
+        if result is None:
+            logger.warning(
+                "timeshift_buffer: this ffmpeg accepts none of %s; buffering only ffmpeg's default audio track",
+                ", ".join(_AUDIO_MAP_SPELLINGS),
+            )
+    return _usable_audio_map_cache
 
 
 # Names the ffmpeg this plugin started for a channel, inside that channel's own directory, so an
@@ -1903,6 +2002,13 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger, 
         )
 
     channel_dir = _channel_dir(storage_path, channel_uuid)
+    # Once per process, before the clear for the reason below: it runs ffmpeg, a yield under gevent, for up to a few
+    # seconds, so the locks are checked (and renewed) after a run as after a reap. Before the headers, whose token is
+    # short-lived.
+    first_audio_map_probe = _usable_audio_map_cache is _AUDIO_MAP_UNSET
+    audio_map = _usable_audio_map(logger)
+    if first_audio_map_probe and still_held is not None and not still_held():
+        raise _StartLocksLost()
     # Before the reap and the clear: it can query Dispatcharr's database, which may yield to another greenlet, and
     # from the clear to the spawn nothing should (_renew_start_buffer_lock()).
     attribution_headers = _ffmpeg_input_headers(channel_uuid, params, logger)
@@ -1934,6 +2040,7 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger, 
         playlist_path,
         visible_segments,
         segment_pattern,
+        audio_map,
     )
 
     log_path = channel_dir / "ffmpeg.log"
@@ -3720,7 +3827,7 @@ def _ensure_reaper_running(settings_dict, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "0.8.17"
+    version = "0.8.18"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."

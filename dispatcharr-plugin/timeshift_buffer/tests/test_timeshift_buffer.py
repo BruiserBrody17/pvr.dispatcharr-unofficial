@@ -120,6 +120,13 @@ def _clear_manifest_cache():
     timeshift_buffer_plugin._manifest_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _fixed_audio_map(monkeypatch):
+    """_usable_audio_map() runs ffmpeg once per process; tests of _start_ffmpeg() get a fixed spelling instead, and
+    the real-ffmpeg tests reset it to probe the ffmpeg they run."""
+    monkeypatch.setattr(timeshift_buffer_plugin, "_usable_audio_map_cache", "0:a:u?")
+
+
 _UUID = "11111111-1111-1111-1111-111111111111"
 
 
@@ -756,6 +763,163 @@ def test_build_ffmpeg_command_uses_stream_copy_not_re_encode():
     assert cmd[cmd.index("-c") + 1] == "copy"
 
 
+def test_build_ffmpeg_command_maps_the_first_video_and_every_usable_audio_stream():
+    """Without -map, ffmpeg keeps one audio stream, so a channel's other audio languages never reached the buffer.
+    No subtitle map and no -map 0: the real-ffmpeg tests below show why each stream type is mapped as it is."""
+    for audio_map in timeshift_buffer_plugin._AUDIO_MAP_SPELLINGS:
+        cmd = timeshift_buffer_plugin._build_ffmpeg_command(
+            "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts", audio_map
+        )
+
+        maps = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-map"]
+        assert maps == ["0:v:0?", audio_map]
+        # output options: after the input, before the output format
+        assert cmd.index("-i") < cmd.index("-map") < cmd.index("-f")
+        assert cmd[cmd.index("-max_interleave_delta") + 1] == "100K"
+        assert cmd.index("-i") < cmd.index("-max_interleave_delta") < cmd.index("-f")
+
+
+def test_build_ffmpeg_command_without_an_audio_map_is_the_0_8_17_command_without_subtitles():
+    """The fallback for an ffmpeg that reads neither spelling: ffmpeg's own default stream pick, as before, but with
+    -sn, so a teletext stream cannot fail the start (see the real-ffmpeg fallback test)."""
+    mapped = timeshift_buffer_plugin._build_ffmpeg_command(
+        "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts", "0:a:u?"
+    )
+    cmd = timeshift_buffer_plugin._build_ffmpeg_command(
+        "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts", None
+    )
+
+    assert "-map" not in cmd
+    assert "-max_interleave_delta" not in cmd
+    assert cmd[: cmd.index("-f")] == [
+        "ffmpeg",
+        "-nostdin",
+        "-loglevel",
+        "warning",
+        "-i",
+        "http://example/proxy",
+        "-sn",
+        "-c",
+        "copy",
+    ]
+    # everything from the output format on is the same as the mapped command's (and 0.8.17's)
+    assert cmd[cmd.index("-f") :] == mapped[mapped.index("-f") :]
+    assert "-sn" not in mapped
+
+
+_needs_ffmpeg_and_ffprobe = pytest.mark.skipif(
+    (shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None) and not os.environ.get("REQUIRE_FFMPEG"),
+    reason="ffmpeg/ffprobe not installed",
+)
+
+
+# Lines from real runs of _ffmpeg_maps_audio_with()'s command (2026-11-09, ffmpeg 6.1.1): with `0:a:u?`, and with
+# `0:a:u:?`, which 6.1 skips as an invalid specifier, still exiting 0, then picks one stream by default.
+_FFMPEG_MAPPED_BOTH = """Stream mapping:
+  Stream #0:0 -> #0:0 (copy)
+  Stream #0:1 -> #0:1 (copy)
+size=N/A time=00:00:00.09 bitrate=N/A speed= 404x
+"""
+_FFMPEG_DEFAULT_PICK = """[null @ 0x5805e2fa5080] Invalid stream specifier: a:u:.
+Stream mapping:
+  Stream #0:0 -> #0:0 (copy)
+size=N/A time=00:00:00.09 bitrate=N/A speed= 444x
+"""
+
+
+def test_audio_map_maps_audio_needs_both_streams_in_the_mapping_section():
+    assert timeshift_buffer_plugin._audio_map_maps_audio(_FFMPEG_MAPPED_BOTH)
+    assert not timeshift_buffer_plugin._audio_map_maps_audio(_FFMPEG_DEFAULT_PICK)
+    # an input listing names the streams too; only the mapping section counts
+    assert not timeshift_buffer_plugin._audio_map_maps_audio(
+        "Stream #0:0 -> #0:0 (copy)\nStream #0:1 -> #0:1 (copy)\nStream mapping:\n"
+    )
+    assert not timeshift_buffer_plugin._audio_map_maps_audio("")
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_the_audio_map_probe_rejects_a_spelling_this_ffmpeg_skips():
+    """On the ffmpeg CI installs (6.1), `0:a:u:?` is skipped as invalid with exit 0; the probe must not take it. On
+    ffmpeg 8.1 it is the other way round (`0:a:u?` fails to parse), checked live, not here."""
+    results = {
+        s: timeshift_buffer_plugin._ffmpeg_maps_audio_with(s) for s in timeshift_buffer_plugin._AUDIO_MAP_SPELLINGS
+    }
+    assert list(results.values()).count(True) == 1, results
+
+
+def test_select_audio_map_takes_the_first_spelling_that_works_or_none():
+    first, second = timeshift_buffer_plugin._AUDIO_MAP_SPELLINGS
+    tried = []
+
+    def only(ok):
+        return lambda spelling: tried.append(spelling) or spelling in ok
+
+    assert timeshift_buffer_plugin._select_audio_map(only({first, second})) == first
+    assert timeshift_buffer_plugin._select_audio_map(only({second})) == second
+    tried.clear()
+    assert timeshift_buffer_plugin._select_audio_map(only(set())) is None
+    assert tried == [first, second]
+
+
+def test_select_audio_map_is_inconclusive_when_a_spelling_could_not_be_tried():
+    first, second = timeshift_buffer_plugin._AUDIO_MAP_SPELLINGS
+    unset = timeshift_buffer_plugin._AUDIO_MAP_UNSET
+
+    assert timeshift_buffer_plugin._select_audio_map(lambda s: None if s == first else False) is unset
+    assert timeshift_buffer_plugin._select_audio_map(lambda s: False if s == first else None) is unset
+    # one that works still wins over one that could not be tried
+    assert timeshift_buffer_plugin._select_audio_map(lambda s: None if s == first else True) == second
+
+
+def test_usable_audio_map_does_not_keep_a_probe_that_could_not_run(monkeypatch):
+    """A timeout or fork failure says nothing about the ffmpeg: that start gets the fallback, and the next one probes
+    again instead of the worker buffering one audio track until it restarts."""
+    monkeypatch.setattr(timeshift_buffer_plugin, "_usable_audio_map_cache", timeshift_buffer_plugin._AUDIO_MAP_UNSET)
+    answers = iter([None, None, True])
+    probes = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_maps_audio_with", lambda s: probes.append(s) or next(answers))
+    logger = _FakeLogger()
+
+    assert timeshift_buffer_plugin._usable_audio_map(logger) is None
+    assert timeshift_buffer_plugin._usable_audio_map_cache is timeshift_buffer_plugin._AUDIO_MAP_UNSET
+    assert timeshift_buffer_plugin._usable_audio_map(logger) == timeshift_buffer_plugin._AUDIO_MAP_SPELLINGS[0]
+    assert timeshift_buffer_plugin._usable_audio_map(logger) == timeshift_buffer_plugin._AUDIO_MAP_SPELLINGS[0]
+
+    assert len(probes) == 3
+    assert [lvl for lvl, _ in logger.calls] == ["warning"]
+
+
+def test_usable_audio_map_probes_once_per_process_and_warns_once_when_none_works(monkeypatch):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_usable_audio_map_cache", timeshift_buffer_plugin._AUDIO_MAP_UNSET)
+    probes = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_maps_audio_with", lambda s: probes.append(s) or False)
+    logger = _FakeLogger()
+
+    assert timeshift_buffer_plugin._usable_audio_map(logger) is None
+    assert timeshift_buffer_plugin._usable_audio_map(logger) is None
+
+    assert probes == list(timeshift_buffer_plugin._AUDIO_MAP_SPELLINGS)
+    assert [lvl for lvl, _ in logger.calls] == ["warning"]
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (FileNotFoundError("ffmpeg"), False),
+        (BlockingIOError("fork"), None),
+        (subprocess.TimeoutExpired("ffmpeg", 5), None),
+    ],
+    ids=["no-ffmpeg-is-an-answer", "fork-failure-is-not", "timeout-is-not"],
+)
+def test_ffmpeg_maps_audio_with_tells_a_missing_ffmpeg_from_a_run_that_failed(monkeypatch, error, expected):
+    def fail(*a, **kw):
+        raise error
+
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "run", fail)
+
+    assert timeshift_buffer_plugin._ffmpeg_maps_audio_with("0:a:u?") is expected
+
+
 def _ts_continuity_breaks(segment_paths):
     """Counts, over every PID in every consecutive pair of segment files, the first packet whose continuity counter
     is not what the previous file's last packet of that PID leads to (a payload packet increments it, an
@@ -819,6 +983,259 @@ def test_buffer_segments_keep_one_continuity_counter_across_files(tmp_path):
     segments = sorted(out.glob("seg_*.ts"))
     assert len(segments) >= 4
     assert _ts_continuity_breaks(segments) == 0
+
+
+def _generate_or_skip(args, what):
+    gen = subprocess.run(["ffmpeg", "-v", "error", *args], capture_output=True)
+    if gen.returncode != 0:
+        message = f"this ffmpeg cannot generate {what}: {gen.stderr.decode(errors='replace')[-300:]}"
+        if os.environ.get("REQUIRE_FFMPEG"):
+            pytest.fail(message)
+        pytest.skip(message)
+
+
+_PROBED = object()
+
+
+def _run_buffer_ffmpeg(source, out, audio_map=_PROBED):
+    """The plugin's argv with the audio map the plugin's own probe picks for this ffmpeg, as _start_ffmpeg() does (or
+    the one given: None is the fallback argv)."""
+    out.mkdir()
+    if audio_map is _PROBED:
+        audio_map = timeshift_buffer_plugin._select_audio_map(timeshift_buffer_plugin._ffmpeg_maps_audio_with)
+        assert isinstance(audio_map, str), "this ffmpeg reads neither audio-map spelling"
+    cmd = timeshift_buffer_plugin._build_ffmpeg_command(
+        str(source), None, 2, 20, str(out / "live.m3u8"), 10, "seg_%05d.ts", audio_map
+    )
+    return subprocess.run(cmd, cwd=out, capture_output=True, timeout=60)
+
+
+def _segment_streams(segment):
+    """(codec_type, language) of each stream in one segment file, in order."""
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "stream=codec_type:stream_tags=language", "-of", "json",
+            str(segment),
+        ],
+        capture_output=True,
+        check=True,
+    )  # fmt: skip
+    return [(s["codec_type"], s.get("tags", {}).get("language")) for s in json.loads(probe.stdout)["streams"]]
+
+
+_TWO_LANGUAGE_SOURCE = [
+    "-f", "lavfi", "-i", "testsrc=duration=6:size=160x120:rate=25",
+    "-f", "lavfi", "-i", "sine=frequency=440:duration=6",
+    "-f", "lavfi", "-i", "sine=frequency=880:duration=6",
+]  # fmt: skip
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_buffer_segments_carry_every_audio_track_and_no_data_stream(tmp_path):
+    """The real ffmpeg with the plugin's own argv: both audio languages reach the segments (only the first did
+    before), and a data stream in the source is left out rather than copied."""
+    blob = tmp_path / "data.bin"
+    blob.write_bytes(bytes(range(256)) * 64)
+    source = tmp_path / "in.ts"
+    _generate_or_skip(
+        [
+            *_TWO_LANGUAGE_SOURCE, "-f", "data", "-i", str(blob),
+            "-map", "0", "-map", "1", "-map", "2", "-map", "3",
+            "-c:v", "libx264", "-g", "25", "-c:a", "aac", "-c:d", "copy",
+            "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=spa", "-f", "mpegts", str(source),
+        ],
+        "a two-language stream with a data track (needs libx264/aac)",
+    )  # fmt: skip
+
+    run = _run_buffer_ffmpeg(source, tmp_path / "chan")
+
+    assert run.returncode == 0, run.stderr.decode(errors="replace")
+    assert _segment_streams(tmp_path / "chan" / "seg_00000.ts") == [
+        ("video", None),
+        ("audio", "eng"),
+        ("audio", "spa"),
+    ]
+
+
+def _drop_ts_pid(source, dest, pid):
+    data = source.read_bytes()
+    kept = bytearray()
+    dropped = 0
+    for i in range(0, len(data) - 187, 188):
+        packet = data[i : i + 188]
+        if ((packet[1] & 0x1F) << 8) | packet[2] == pid:
+            dropped += 1
+            continue
+        kept += packet
+    dest.write_bytes(bytes(kept))
+    return dropped
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_an_audio_track_that_is_declared_but_never_sent_does_not_stop_the_buffer(tmp_path):
+    """A track the programme map lists but no packet ever arrives for has no sample rate after probing. Mapped
+    without `:u`, measured with ffmpeg 6.1: "sample rate not set", "Could not write header", exit before the first
+    segment, where the old unmapped command passed it over. The buffer must still start, with the tracks that are
+    there."""
+    # (fails on a plain 0:a? map, not on the 0.8.17 command, which mapped nothing)
+    full = tmp_path / "full.ts"
+    _generate_or_skip(
+        [
+            *_TWO_LANGUAGE_SOURCE, "-map", "0", "-map", "1", "-map", "2",
+            "-c:v", "libx264", "-g", "25", "-c:a", "aac", "-f", "mpegts", str(full),
+        ],
+        "a two-language stream (needs libx264/aac)",
+    )  # fmt: skip
+    source = tmp_path / "in.ts"
+    # The mpegts muxer numbers elementary streams from 0x100, so the second audio track is 0x102.
+    assert _drop_ts_pid(full, source, 0x102) > 0
+
+    run = _run_buffer_ffmpeg(source, tmp_path / "chan")
+
+    assert run.returncode == 0, run.stderr.decode(errors="replace")
+    assert [t for t, _ in _segment_streams(tmp_path / "chan" / "seg_00000.ts")] == ["video", "audio"]
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_a_channel_with_no_video_still_buffers_every_audio_track(tmp_path):
+    source = tmp_path / "in.ts"
+    _generate_or_skip(
+        [
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-f", "lavfi", "-i", "sine=frequency=880:duration=6",
+            "-map", "0", "-map", "1", "-c:a", "aac", "-f", "mpegts", str(source),
+        ],
+        "an audio-only stream (needs aac)",
+    )  # fmt: skip
+
+    run = _run_buffer_ffmpeg(source, tmp_path / "chan")
+
+    assert run.returncode == 0, run.stderr.decode(errors="replace")
+    assert [t for t, _ in _segment_streams(tmp_path / "chan" / "seg_00000.ts")] == ["audio", "audio"]
+
+
+# Raw elementary-stream inputs ffmpeg's dvbsub and dvbtxt demuxers accept, so a test can put a real dvb_subtitle or
+# dvb_teletext stream into a TS without a broadcast capture: an end-of-display-set segment per packet, and a teletext
+# PES payload of data_identifier 0x10 plus three 46-byte stuffing units.
+_DVBSUB_RAW = bytes.fromhex("20000f8000010000ff") * 200
+_TELETEXT_RAW = (b"\x10" + (b"\xff\x2c" + b"\xff" * 44) * 3) * 200
+
+
+@pytest.mark.parametrize(
+    "fmt,raw",
+    [("dvbsub", _DVBSUB_RAW), ("dvbtxt", _TELETEXT_RAW)],
+    ids=["dvb_subtitle", "dvb_teletext"],
+)
+@_needs_ffmpeg_and_ffprobe
+def test_a_channel_with_a_subtitle_stream_still_starts(tmp_path, fmt, raw):
+    """The hls muxer sends any mapped subtitle stream to a WebVTT muxer, which refuses DVB subtitles and teletext:
+    "Exactly one WebVTT stream is needed", "Could not write header", no segment. A first version of 0.8.18 mapped
+    subtitles and failed both; 0.8.17 already failed teletext this way (ffmpeg's default selection picked it), so a
+    teletext channel never started in Server-side mode. Subtitles are left out of the buffer."""
+    raw_path = tmp_path / "sub.raw"
+    raw_path.write_bytes(raw)
+    source = tmp_path / "in.ts"
+    _generate_or_skip(
+        [
+            *_TWO_LANGUAGE_SOURCE, "-f", fmt, "-i", str(raw_path),
+            "-map", "0", "-map", "1", "-map", "2", "-map", "3",
+            "-c:v", "libx264", "-g", "25", "-c:a", "aac", "-c:s", "copy", "-f", "mpegts", str(source),
+        ],
+        f"a stream with a {fmt} track (needs libx264/aac)",
+    )  # fmt: skip
+    assert [t for t, _ in _segment_streams(source)] == ["video", "audio", "audio", "subtitle"]
+
+    run = _run_buffer_ffmpeg(source, tmp_path / "chan")
+
+    assert run.returncode == 0, run.stderr.decode(errors="replace")
+    assert [t for t, _ in _segment_streams(tmp_path / "chan" / "seg_00000.ts")] == ["video", "audio", "audio"]
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_the_fallback_argv_still_starts_a_teletext_channel(tmp_path):
+    """With no usable audio-map spelling the buffer falls back to ffmpeg's default pick, which takes a teletext stream
+    and failed the start in 0.8.17; -sn keeps that fixed in the fallback too."""
+    raw_path = tmp_path / "sub.raw"
+    raw_path.write_bytes(_TELETEXT_RAW)
+    source = tmp_path / "in.ts"
+    _generate_or_skip(
+        [
+            *_TWO_LANGUAGE_SOURCE, "-f", "dvbtxt", "-i", str(raw_path),
+            "-map", "0", "-map", "1", "-map", "2", "-map", "3",
+            "-c:v", "libx264", "-g", "25", "-c:a", "aac", "-c:s", "copy", "-f", "mpegts", str(source),
+        ],
+        "a stream with a teletext track (needs libx264/aac)",
+    )  # fmt: skip
+
+    run = _run_buffer_ffmpeg(source, tmp_path / "chan", audio_map=None)
+
+    assert run.returncode == 0, run.stderr.decode(errors="replace")
+    assert [t for t, _ in _segment_streams(tmp_path / "chan" / "seg_00000.ts")] == ["video", "audio"]
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_a_channel_with_no_audio_still_starts(tmp_path):
+    """The reason the audio map must be optional: plain `0:a:u` stops a channel with no audio ("matches no streams").
+    Checked on ffmpeg 8.1 in Dispatcharr's container with `0:a:u:?` too (docs/TIMESHIFT.md)."""
+    source = tmp_path / "in.ts"
+    _generate_or_skip(
+        ["-f", "lavfi", "-i", "testsrc=duration=6:size=160x120:rate=25", "-c:v", "libx264", "-g", "25",
+         "-f", "mpegts", str(source)],
+        "a video-only stream (needs libx264)",
+    )  # fmt: skip
+
+    run = _run_buffer_ffmpeg(source, tmp_path / "chan")
+
+    assert run.returncode == 0, run.stderr.decode(errors="replace")
+    assert [t for t, _ in _segment_streams(tmp_path / "chan" / "seg_00000.ts")] == ["video"]
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_a_start_mid_gop_keeps_the_video(tmp_path):
+    """A connection that begins between keyframes, with a GOP longer than the probe, leaves the video's picture size
+    unknown. `0:v:u?` dropped the video (audio-only segments with no error); ffmpeg copies it fine regardless."""
+    full = tmp_path / "full.ts"
+    _generate_or_skip(
+        [
+            "-f", "lavfi", "-i", "testsrc=duration=20:size=160x120:rate=25", "-f", "lavfi", "-i", "sine=duration=20",
+            "-c:v", "libx264", "-x264-params", "keyint=600:min-keyint=600:scenecut=0", "-c:a", "aac",
+            "-f", "mpegts", str(full),
+        ],
+        "a long-GOP stream (needs libx264/aac)",
+    )  # fmt: skip
+    data = full.read_bytes()
+    cut = (len(data) // 5) // 188 * 188  # about 4 s in, with no keyframe after it: the probe never sees a size
+    source = tmp_path / "in.ts"
+    source.write_bytes(data[cut:])
+
+    run = _run_buffer_ffmpeg(source, tmp_path / "chan")
+
+    assert run.returncode == 0, run.stderr.decode(errors="replace")
+    segments = sorted((tmp_path / "chan").glob("seg_*.ts"))
+    assert segments
+    assert [t for t, _ in _segment_streams(segments[-1])] == ["video", "audio"]
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_only_the_first_of_several_video_streams_is_buffered(tmp_path):
+    """Dispatcharr's FFmpeg profile (-map 0) on an HLS master source sends every rendition. Kodi plays the first video
+    stream when none is flagged default, so buffering the rest would only cost disk and read bandwidth. (ffmpeg's
+    default pick, which 0.8.17 used, was the largest; with an explicit map the first is the one that can be named.)"""
+    source = tmp_path / "in.ts"
+    _generate_or_skip(
+        [
+            "-f", "lavfi", "-i", "testsrc=duration=6:size=160x120:rate=25",
+            "-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=25",
+            "-f", "lavfi", "-i", "sine=duration=6",
+            "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264", "-g", "25", "-c:a", "aac",
+            "-f", "mpegts", str(source),
+        ],
+        "a two-rendition stream (needs libx264/aac)",
+    )  # fmt: skip
+
+    run = _run_buffer_ffmpeg(source, tmp_path / "chan")
+
+    assert run.returncode == 0, run.stderr.decode(errors="replace")
+    assert [t for t, _ in _segment_streams(tmp_path / "chan" / "seg_00000.ts")] == ["video", "audio"]
 
 
 # ---------------------------------------------------------------------
@@ -7658,6 +8075,35 @@ def test_a_start_whose_reap_waited_past_its_locks_clears_and_spawns_nothing(tmp_
 
     assert spawned == []
     assert (channel_dir / "live.m3u8").read_text() == "a later start's playlist"
+
+
+def test_a_start_whose_first_audio_map_probe_outlasted_its_locks_clears_and_spawns_nothing(tmp_path, monkeypatch):
+    """The once-per-process audio-map probe runs ffmpeg, a yield under gevent: the locks are checked after it as after
+    a reap, and only when it actually ran."""
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    (channel_dir / "live.m3u8").write_text("a later start's playlist")
+    spawned = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: spawned.append(cmd) or _FakeProc()
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_input_headers", lambda *a: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_reap_untracked_ffmpeg", lambda d, logger: False)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_usable_audio_map_cache", timeshift_buffer_plugin._AUDIO_MAP_UNSET)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_maps_audio_with", lambda s: True)
+
+    with pytest.raises(timeshift_buffer_plugin._StartLocksLost):
+        timeshift_buffer_plugin._start_ffmpeg(
+            _UUID, {}, {"storage_path": str(tmp_path)}, _FakeLogger(), still_held=lambda: False
+        )
+    assert spawned == []
+    assert (channel_dir / "live.m3u8").read_text() == "a later start's playlist"
+
+    # probed now: a later start does not ask again, and passes the spelling on
+    timeshift_buffer_plugin._start_ffmpeg(
+        _UUID, {}, {"storage_path": str(tmp_path)}, _FakeLogger(), still_held=lambda: pytest.fail("asked")
+    )
+    assert timeshift_buffer_plugin._AUDIO_MAP_SPELLINGS[0] in spawned[0]
 
 
 def test_a_reap_that_stopped_nothing_does_not_ask_for_the_locks_again(tmp_path, monkeypatch):

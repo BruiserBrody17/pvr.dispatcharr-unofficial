@@ -3156,6 +3156,31 @@ heartbeat action lands and A only reads segments, then B stops; A stays listed a
 scenario, the stamp test and the replaced-token read fail on the previous plugin code (the scenario at its teardown
 check).
 
+2026-11-09 (the plugin's 0.8.18, `docs/TIMESHIFT.md`'s "Every audio track, not just the first"): `_build_ffmpeg_command`
+maps `0:v:0?` and the audio spelling it is given, and sets `-max_interleave_delta 100K`, all after `-i`; with no
+spelling it is 0.8.17's argv plus `-sn`. The spelling comes from `_usable_audio_map()` (ffmpeg 6.1 and 8.1 each read only
+one of `0:a:u?`/`0:a:u:?`): `_audio_map_maps_audio()` needs both streams listed under ffmpeg's `Stream mapping:` output (pinned on
+real 6.1 output, including the default-pick fallback that maps one stream after skipping an invalid spelling),
+`_select_audio_map()` takes the first that works, None when every one answered no, and "unset" when one could not
+be tried; the cache probes once and warns once, a probe that could not run (timeout, fork failure) is not kept and
+the next call probes again, a missing ffmpeg is a plain no, and on CI's ffmpeg exactly one spelling passes. `_start_ffmpeg()` re-checks the start locks after a first probe
+and spawns nothing when they are gone, and does not ask again once probed; an autouse fixture pins the spelling for
+every other `_start_ffmpeg()` test. Ten real-ffmpeg tests (same
+skip-unless-`REQUIRE_FFMPEG` guard as the continuity-counter one, plus ffprobe, which CI's `ffmpeg` package ships) run
+the plugin's own argv, with the spelling its probe picks, over generated streams: two audio languages and a data track give video, both languages in order
+and no data stream; an audio-only source keeps both tracks; a source whose second audio PID is stripped (declared in
+the programme map, never sent) still starts with the real tracks; a DVB subtitle stream and a teletext stream (raw
+`dvbsub`/`dvbtxt` input, the bytes are in the test) each still start, without the subtitle; a long-GOP source cut
+with no keyframe after the cut keeps its video; of two video renditions only the first is buffered; a video-only
+source starts (the map's `?`); and the fallback argv starts a teletext source (its `-sn`). The last two fail on plain
+`0:a:u` and on the fallback without `-sn`. Checked by
+hand against earlier argv: on 0.8.17's the argv, two-language, audio-only, DVB subtitle (one audio track) and teletext
+(the WebVTT failure, a pre-existing bug) tests fail; on the branch's first version (`0:v:u? 0:a:u? 0:s:u?`) both
+subtitle tests, the mid-GOP one and the two-rendition one fail; the stripped-PID test fails on a plain `0:a?`. Not
+covered: ffmpeg 8.1's side of the spelling split (CI has 6.1; the same source matrix was run in Dispatcharr 0.33.0's
+container and live, `docs/TIMESHIFT.md`), and whether `-max_interleave_delta` shortens a real start (neither a stream
+that stops after 0.3 s nor one never sent showed a holdback locally, so that flag rests on Dispatcharr's own finding).
+
 ## Tools
 
 ### `tools/tests/`
