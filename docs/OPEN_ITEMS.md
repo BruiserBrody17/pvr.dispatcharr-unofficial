@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**6 open, 404 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**7 open, 404 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,6 +13,7 @@ confirmed. The open ones came from:
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, documented and deferred.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
+- One from the 2026-11-09 change that buffers every audio track: the live checks it has not had yet.
 
 Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-23 sweep
 (five read-only reviews by area, 17 findings, the last fixed on 2026-11-04), from the 2026-10-24 sweep
@@ -21,7 +22,7 @@ closed without a change, the last on 2026-11-04 by keeping a recording's 20 s re
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 0 |
+| Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
@@ -37,7 +38,16 @@ closed without a change, the last on 2026-11-04 by keeping a recording's 20 s re
 
 ### Needs a live check
 
-None open.
+#### `timeshift_buffer` 0.8.18's audio-track mapping has only been seen on generated streams
+
+**Opened 2026-11-10, after the change that buffers every usable audio track** (`docs/TIMESHIFT.md`, "Every audio track,
+not just the first (0.8.18)"). The audio switch (live, after a pause, after a rewind), DVB subtitle, teletext, audio-only and
+two-rendition channels were checked on Kodi 21 and Kodi 22 against a real Dispatcharr, but every source was a generated
+stream served from a test machine. Still to see: (1) a real broadcast channel with several audio tracks (ideally one
+mixing codecs, such as MPEG audio beside AC-3 or E-AC-3, or carrying an audio-description track), switched in Kodi the same
+way; (2) the probe's two non-happy paths on a real server: a probe that times out is retried on the next start, and an
+ffmpeg that accepts neither spelling falls back to the 0.8.17 command line with `-sn`. Both are covered only by the unit
+and real-ffmpeg tests so far. Close this with how each was confirmed.
 
 ### Fix known, not yet done
 
