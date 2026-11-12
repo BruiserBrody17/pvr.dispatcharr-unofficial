@@ -52,6 +52,7 @@ run "in-progress, hung API"      TMO=30 T=300 -- ip_blackhole_close
 run "in-progress, 500 blip"      TMO=30 T=120 IP_EXPECT_RESUME=1 -- ip 9000 "2000:ip_seg_status=500;5500:ip_seg_status=0"
 run "destroy with streams open"  TMO=30 T=120 -- dtor_inflight
 run "PVR surface: functional"    BIN=pvr_harness T=180 -- functional
+run "PVR: timer ids out of range" BIN=pvr_harness T=60 -- timer_id_range
 run "PVR: guide redirect loop"     BIN=pvr_harness T=60 CTL="epg_redirect=loop" -- epg_redirect
 run "PVR: guide redirect to FTP"   BIN=pvr_harness T=60 CTL="epg_redirect=ftp" -- epg_redirect
 run "PVR: owner stamps, address form changed" BIN=pvr_harness T=60 -- owner_stamps

@@ -72,6 +72,30 @@ def live_count():
     return 4 + int((time.time() - T0["live"]) * 1000 / ctl_int("seg_ms", 300))
 
 
+def scheduled_rec(rid, title, start, rule_id=None):
+    """A scheduled recording on channel 1, an hour long from `start`, optionally a recurring rule's occurrence."""
+    props = {"status": "scheduled", "program": {"title": title}}
+    if rule_id is not None:
+        props["rule"] = {"type": "recurring", "id": rule_id}
+    end = start + datetime.timedelta(hours=1)
+    return {
+        "id": rid,
+        "channel": 1,
+        "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "end_time": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "custom_properties": props,
+    }
+
+
+def epg_source(value):
+    """Dispatcharr's parse_optional_epg_source_id(): a positive int, or None."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def ip_count():
     if IP_FROZEN_AT["n"] is not None:
         return IP_FROZEN_AT["n"]
@@ -406,16 +430,49 @@ def pvr_route(h, method, p, q, body):
             if method == "POST" and p.endswith("evaluate/"):
                 return h.J(200, {"ok": True})
             if method == "POST":
-                DB["series"] = [
-                    r
-                    for r in DB["series"]
-                    if not (r.get("title") == body.get("title") and r.get("tvg_id") == body.get("tvg_id"))
-                ]
-                DB["series"].append(body)
+                # Dispatcharr's SeriesRulesAPIView.post(), read at v0.33.0: upsert by (tvg_id, title, epg_source_id); a
+                # pinned request with no exact match upgrades the unpinned rule of that title and tvg_id in place.
+                tvg = str(body.get("tvg_id") or "").strip()
+                title = body.get("title") or ""
+                src = epg_source(body.get("epg_source_id"))
+                record = dict(body, tvg_id=tvg, title=title)
+                record.pop("epg_source_id", None)
+                if src is not None:
+                    record["epg_source_id"] = src
+
+                def same_key(r, want_src):
+                    return (
+                        str(r.get("tvg_id") or "") == tvg
+                        and str(r.get("title") or "") == title
+                        and epg_source(r.get("epg_source_id")) == want_src
+                    )
+
+                existing = next((r for r in DB["series"] if same_key(r, src)), None)
+                if existing is None and src is not None:
+                    existing = next((r for r in DB["series"] if same_key(r, None)), None)
+                if existing is not None:
+                    existing.clear()
+                    existing.update(record)
+                else:
+                    DB["series"].append(record)
                 return h.J(200, {"rules": DB["series"]})
             if method == "DELETE":
-                t = q.get("title", [""])[0]
-                DB["series"] = [r for r in DB["series"] if r.get("title") != t]
+                # SeriesRulesAPIView.delete()'s _matches(), read at v0.33.0: tvg_id always compared (blank when not
+                # sent), title only when sent, and a source in the request matches that source's rule AND an unpinned
+                # one (docs/OPEN_ITEMS.md, "Deleting a pinned series rule also deletes an unpinned one beside it").
+                tvg = str(q.get("tvg_id", [""])[0] or "").strip()
+                title = q.get("title", [None])[0]
+                src = epg_source(q.get("epg_source_id", [None])[0])
+
+                def matches(r):
+                    if str(r.get("tvg_id") or "") != tvg:
+                        return False
+                    if title is not None and str(r.get("title") or "") != title:
+                        return False
+                    rule_src = epg_source(r.get("epg_source_id"))
+                    return src is None or rule_src is None or rule_src == src
+
+                DB["series"] = [r for r in DB["series"] if not matches(r)]
                 return h.J(200, {"rules": DB["series"]})
     if p.startswith("/api/channels/recurring-rules/"):
         parts = [x for x in p.split("/") if x]
@@ -567,6 +624,34 @@ class H(BaseHTTPRequestHandler):
                     with DBL:
                         for r in DB["recurring"].values():
                             r["name"] = r.get("name", "").replace(old_name, new_name)
+                if k == "seed_huge_ids":
+                    # Ids no ClientIndex can carry (dispatcharr::IsEncodableTimerId()): a one-off recording 0x20000005,
+                    # which used to decode as recurring rule 5, and a recurring rule 0x20000006 whose occurrence (903)
+                    # has an ordinary id, beside an ordinary rule 5 and an ordinary recording 902.
+                    start = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=2)
+                    rule = {
+                        "channel": 1,
+                        "enabled": True,
+                        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+                        "start_time": "10:00:00",
+                        "end_time": "11:00:00",
+                        "start_date": start.date().isoformat(),
+                        "end_date": (start.date() + datetime.timedelta(days=30)).isoformat(),
+                    }
+                    with DBL:
+                        DB["recurring"][5] = dict(rule, id=5, name="ZZZ ordinary rule")
+                        DB["recurring"][0x20000006] = dict(rule, id=0x20000006, name="ZZZ huge rule")
+                        DB["recs"][0x20000005] = scheduled_rec(0x20000005, "ZZZ huge recording", start)
+                        DB["recs"][903] = scheduled_rec(903, "ZZZ huge rule occurrence", start, 0x20000006)
+                        DB["recs"][902] = scheduled_rec(902, "ZZZ ordinary recording", start)
+                if k == "seed_sibling_rules":
+                    # Four channel-less rules sharing one title: two tvg_ids, and one tvg_id pinned to two sources.
+                    with DBL:
+                        for tvg, src in (("sib.one", None), ("sib.two", None), ("sib.three", 5), ("sib.three", 7)):
+                            rule = {"tvg_id": tvg, "mode": "all", "title": "Sibling Show", "title_mode": "exact"}
+                            if src is not None:
+                                rule["epg_source_id"] = src
+                            DB["series"].append(rule)
                 if k == "seed_empty_title_rule":
                     # A description-only, channel-less series rule, as Dispatcharr's web interface can make one.
                     with DBL:
