@@ -561,6 +561,45 @@ TEST_CASE("HasPinnedSiblingSeriesRule finds a pinned rule sharing title and tvg_
   CHECK_FALSE(HasPinnedSiblingSeriesRule(std::vector<Rule>{}, "News", "tvg.news"));
 }
 
+namespace
+{
+struct SiblingRule
+{
+  std::string title;
+  std::string tvgId;
+  int epgSourceId;
+};
+} // namespace
+
+TEST_CASE("HasUnpinnedSiblingSeriesRule finds an unpinned rule sharing title and tvg_id, and nothing else",
+          "[TimerIdentity]")
+{
+  const std::vector<SiblingRule> rules = {{"News", "tvg.news", 5}, {"News", "tvg.news", 0}};
+  CHECK(HasUnpinnedSiblingSeriesRule(rules, "News", "tvg.news"));
+  CHECK(HasUnpinnedSiblingSeriesRule(std::vector<SiblingRule>{{"News", "tvg.news", -1}}, "News", "tvg.news"));
+  // Only pinned rules: none is unpinned.
+  CHECK_FALSE(HasUnpinnedSiblingSeriesRule(std::vector<SiblingRule>{{"News", "tvg.news", 5}, {"News", "tvg.news", 7}},
+                                           "News", "tvg.news"));
+  // A different title or tvg_id is not a sibling.
+  CHECK_FALSE(HasUnpinnedSiblingSeriesRule(std::vector<SiblingRule>{{"Other", "tvg.news", 0}}, "News", "tvg.news"));
+  CHECK_FALSE(HasUnpinnedSiblingSeriesRule(std::vector<SiblingRule>{{"News", "tvg.other", 0}}, "News", "tvg.news"));
+}
+
+TEST_CASE("SeriesRuleDeleteTakesSibling follows the server's delete match in both directions", "[TimerIdentity]")
+{
+  // The pair confirmed live 2026-11-12: a pinned rule and an unpinned one with the same title and tvg_id. Deleting
+  // either from Kodi would remove both.
+  const std::vector<SiblingRule> pair = {{"News", "tvg.news", 5}, {"News", "tvg.news", 0}};
+  CHECK(SeriesRuleDeleteTakesSibling(pair, "News", "tvg.news", 5));
+  CHECK(SeriesRuleDeleteTakesSibling(pair, "News", "tvg.news", 0));
+  // Two rules pinned to different sources: a scoped delete takes only its own.
+  const std::vector<SiblingRule> twoSources = {{"News", "tvg.news", 5}, {"News", "tvg.news", 7}};
+  CHECK_FALSE(SeriesRuleDeleteTakesSibling(twoSources, "News", "tvg.news", 5));
+  // A rule alone, pinned or not, has nothing to take.
+  CHECK_FALSE(SeriesRuleDeleteTakesSibling(std::vector<SiblingRule>{{"News", "tvg.news", 5}}, "News", "tvg.news", 5));
+  CHECK_FALSE(SeriesRuleDeleteTakesSibling(std::vector<SiblingRule>{{"News", "tvg.news", 0}}, "News", "tvg.news", 0));
+}
+
 TEST_CASE("IsSameSeriesRuleChannel treats every non-positive id on both sides as the same 'no channel'",
           "[TimerIdentity]")
 {

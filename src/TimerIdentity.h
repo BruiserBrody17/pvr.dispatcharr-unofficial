@@ -278,6 +278,36 @@ bool HasPinnedSiblingSeriesRule(const std::vector<RuleT>& rules, const std::stri
   return false;
 }
 
+// The mirror case: whether `rules` holds an UNPINNED rule (source <= 0) with this title and tvg_id, for the delete of
+// a rule that IS pinned. Given an epg_source_id, Dispatcharr's delete matches that source's rule and also one with no
+// source (SeriesRulesAPIView.delete()'s match function, read at v0.33.0, for a DVR "entire series" delete that forwards
+// a recording's source). Confirmed live 2026-11-12 on disposable rules: with (title, tvg_id, 5) and (title, tvg_id)
+// side by side, a delete scoped to source 5 removed both. The pair forms when a rule pinned by Dispatcharr's guide
+// button exists and Kodi, which creates unpinned rules, records the same series (the other order upgrades the
+// unpinned rule in place).
+template <typename RuleT>
+bool HasUnpinnedSiblingSeriesRule(const std::vector<RuleT>& rules, const std::string& title, const std::string& tvgId)
+{
+  for (const auto& rule : rules)
+  {
+    if (rule.title == title && rule.tvgId == tvgId && rule.epgSourceId <= 0)
+      return true;
+  }
+  return false;
+}
+
+// Whether Dispatcharr's delete of the rule (title, tvg_id, epgSourceId) would also remove another cached rule: an
+// unscoped delete (the rule is unpinned) takes every pinned rule with that title and tvg_id, a scoped one takes the
+// unpinned rule. Two rules pinned to different sources do not touch each other. Callers refuse such a delete, as
+// the addon cannot narrow the server's match, and the rule is left for Dispatcharr's own interface.
+template <typename RuleT>
+bool SeriesRuleDeleteTakesSibling(const std::vector<RuleT>& rules, const std::string& title, const std::string& tvgId,
+                                  int epgSourceId)
+{
+  return epgSourceId > 0 ? HasUnpinnedSiblingSeriesRule(rules, title, tvgId)
+                         : HasPinnedSiblingSeriesRule(rules, title, tvgId);
+}
+
 // The EPG source a series rule edit sends. The source is not independent of the channel: Dispatcharr
 // pins a rule to one source so the rule's tvg_id resolves inside that source's own guide data. When
 // the edit keeps the same tvg_id (an HD and an SD variant of one channel) the pin is echoed and the
@@ -315,7 +345,11 @@ inline bool ShouldReplaceSeriesRuleOnEdit(const std::string& oldTitle, const std
 // The same decision with the sources, for a rule that IS pinned to one. A different source
 // is a different identity too -- (title, tvg_id, 5) and (title, tvg_id, 7) are two rules -- so
 // saving one under the other leaves the old behind, and the delete (scoped to the old
-// source, which is > 0 here) removes exactly that rule. An unsourced old rule is left to the
+// source, which is > 0 here) removes that rule and no other pinned one. A scoped delete also
+// matches an unpinned rule with the same title and tvg_id (confirmed live 2026-11-12), which is
+// why UpdateTimer() checks SeriesRuleDeleteTakesSibling() before it; an edit from pinned to
+// unpinned with the same title and tvg_id would take the new rule that way, and
+// ResolveSeriesRuleSourceOnEdit() never produces one. An unsourced old rule is left to the
 // title/tvg_id test: deleting it without a source would match the new rule as well. Any
 // non-positive source is "unpinned", as Dispatcharr's own parse treats it.
 inline bool ShouldReplaceSeriesRuleOnEdit(const std::string& oldTitle, const std::string& oldTvgId, int oldEpgSourceId,
