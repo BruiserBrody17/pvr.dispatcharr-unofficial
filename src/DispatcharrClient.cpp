@@ -3177,15 +3177,16 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(InProgressRecordingSt
   // recording, and st.segments is always exactly this entry's own prefix
   // (seeded from it verbatim on open, append-only since) plus whatever's new
   // here. Several streams of one recording share the entry, so the plan also
-  // covers a stream that is behind another: it never shrinks the entry.
+  // covers a stream that is behind another (it never shrinks the entry) and
+  // one whose segments do not join the entry's end (it reseeds).
   if (newSegmentsProbed > 0 || st.finished)
   {
     std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
     auto& cacheEntry = m_inProgressSegmentCache[st.recordingId];
-    // The decision itself lives in dispatcharr::PlanInProgressSegmentCacheUpdate() (InProgressSegmentCache.h) so
-    // it's unit-testable standalone -- see that function's own comment, including the gap the reseed fixes.
+    // The decision itself lives in dispatcharr::PlanInProgressSegmentCacheUpdateFor() (InProgressSegmentCache.h) so
+    // it's unit-testable standalone -- see its comments, including the gaps the reseed fixes.
     const SegmentCachePlan plan =
-        PlanInProgressSegmentCacheUpdate(cacheEntry.segments.size(), st.segments.size(), newSegmentsProbed);
+        PlanInProgressSegmentCacheUpdateFor(cacheEntry.segments, st.segments, newSegmentsProbed);
     if (plan.action == SegmentCacheAction::kReseed)
       cacheEntry.segments = st.segments;
     else if (plan.action == SegmentCacheAction::kAppend)

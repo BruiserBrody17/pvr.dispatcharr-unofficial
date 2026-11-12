@@ -58,6 +58,7 @@ run "completed and in-progress at once" TMO=30 T=120 -- mixed
 run "in-progress stream while another opens" TMO=30 T=120 -- ip_open_while_playing
 run "two in-progress streams share the manifest" TMO=30 T=150 -- ip_two_share
 run "reopening a just-finished recording" TMO=30 T=120 -- ip_finished_reopen
+run "two in-progress streams disagree on a segment" TMO=30 T=120 -- ip_cache_diverge
 run "close racing reads, four streams" TMO=30 T=120 -- multi_close_race
 run "destroy with recorded streams open" TMO=30 T=120 -- multi_dtor
 run "destroy with streams open"  TMO=30 T=120 -- dtor_inflight

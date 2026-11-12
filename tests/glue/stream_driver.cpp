@@ -2212,6 +2212,102 @@ static void ip_two_share(DispatcharrClient& cl)
   expect_all_closed(cl);
 }
 
+// Two streams of one in-progress recording that disagree about one segment (the 2026-11-10 sweep): A gives up on
+// segment K and merges it as a zero-byte placeholder after UnprobeableSegment.h's 30 s wait; B, opened while A waits,
+// sizes K itself once it recovers, since it never takes another stream's placeholder (SegmentSizesKnownToCache()). From
+// K on their byte offsets differ by K's size. Before the shared cache entry's append checked the join
+// (dispatcharr::PlanInProgressSegmentCacheUpdateFor()), B's segments went onto the entry A had written, and a third
+// open seeded from it found a hole: its read answered 0 at K, far short of the length it reported. About 45 s.
+static void ip_cache_diverge(DispatcharrClient& cl)
+{
+  const int k = 9;
+  ctl("ip_seg_ms=1000&ip_reset=5");
+  ctl("ip_head_seq=" + std::to_string(k));
+  ctl("ip_head_status=503");
+  {
+    std::lock_guard<std::mutex> lock(g_logWatchMutex);
+    g_logWatch = "continuing past it as an empty segment";
+    g_logWatchCount = 0;
+  }
+  OpenStream a, b, c;
+  if (!open_stream(cl, 7, a))
+    return;
+  auto poll = [&cl](OpenStream& st)
+  {
+    DispatcharrClient::RecordedStreamTimes times;
+    cl.GetRecordedStreamTimes(st.sid, times);
+    return cl.GetRecordedStreamLength(st.sid);
+  };
+  // A reaches K and starts its wait; B opens while it is still waiting.
+  const long openB = ms() + 20000;
+  while (ms() < openB)
+  {
+    poll(a);
+    sleep_ms(100);
+  }
+  if (!open_stream(cl, 7, b))
+    return;
+  const long giveUpDeadline = ms() + 40000;
+  while (g_logWatchCount == 0 && ms() < giveUpDeadline)
+  {
+    poll(a);
+    if (g_logWatchCount != 0)
+      break; // A gave up: clear the fault before B's next probe
+    poll(b);
+    sleep_ms(100);
+  }
+  ctl("ip_head_status=0");
+  ctl("ip_head_seq=");
+  if (g_logWatchCount != 1)
+    FAIL("expected one stream to give up on segment %d, %ld did", k, (long)g_logWatchCount);
+  // B alone from here: it sizes K itself and appends to the entry A wrote.
+  const long bAlone = ms() + 7000;
+  while (ms() < bAlone)
+  {
+    poll(b);
+    sleep_ms(100);
+  }
+  const int64_t lenA = cl.GetRecordedStreamLength(a.sid);
+  const int64_t lenB = cl.GetRecordedStreamLength(b.sid);
+  INFO("A length %lld, B length %lld, seg_size(K)=%lld", (long long)lenA, (long long)lenB, (long long)seg_size(k));
+  if (lenB <= lenA)
+    FAIL("B (%lld) should have gone past A (%lld): the scenario no longer sets up the divergence", (long long)lenB,
+         (long long)lenA);
+  // A third open (Kodi 22's stream-details probe, or the next viewer) is seeded from the cache entry.
+  if (!open_stream(cl, 7, c))
+    return;
+  const int64_t lenC = cl.GetRecordedStreamLength(c.sid);
+  // Up to K every view holds the same bytes; past it the entry is one stream's view or the other's.
+  read_verified(cl, c, ip_prefix()[k]);
+  std::vector<uint8_t> buf(8192);
+  int retries = 0;
+  while (c.pos < lenC)
+  {
+    const int n = cl.ReadRecordedStream(c.sid, buf.data(), (unsigned)buf.size());
+    if (n < 0 && ++retries <= 200)
+    {
+      sleep_ms(20);
+      continue;
+    }
+    if (n <= 0)
+    {
+      FAIL("third open: read answered %d at %lld of the %lld bytes it reports (a hole in the shared segment cache)", n,
+           (long long)c.pos, (long long)lenC);
+      break;
+    }
+    c.pos += n;
+  }
+  INFO("third open read %lld of %lld", (long long)c.pos, (long long)lenC);
+  cl.CloseRecordedStream(a.sid);
+  cl.CloseRecordedStream(b.sid);
+  cl.CloseRecordedStream(c.sid);
+  {
+    std::lock_guard<std::mutex> lock(g_logWatchMutex);
+    g_logWatch.clear();
+  }
+  expect_all_closed(cl);
+}
+
 // Segment-size probes (HEADs on an in-progress recording's segments) the fake has answered so far.
 static long segment_heads()
 {
@@ -2528,6 +2624,8 @@ int main(int argc, char** argv)
       ip_two_share(*cl);
     else if (what == "ip_finished_reopen")
       ip_finished_reopen(*cl);
+    else if (what == "ip_cache_diverge")
+      ip_cache_diverge(*cl);
     else if (what == "multi_close_race")
       multi_close_race(*cl);
     else if (what == "multi_dtor")

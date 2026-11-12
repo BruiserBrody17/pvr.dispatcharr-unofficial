@@ -177,3 +177,63 @@ TEST_CASE("ShouldPruneInProgressSegmentCacheEntry keeps a still-recording entry 
   CHECK_FALSE(ShouldPruneInProgressSegmentCacheEntry(touched, false, touched + std::chrono::hours(24)));
   CHECK(ShouldPruneInProgressSegmentCacheEntry(touched, false, touched + std::chrono::hours(24) + milliseconds(1)));
 }
+
+namespace
+{
+struct OffsetSeg
+{
+  int64_t byteOffset;
+  int64_t byteSize;
+};
+
+// Consecutive segments of the given sizes from offset 0, as a stream merges them.
+std::vector<OffsetSeg> Segs(const std::vector<int64_t>& sizes)
+{
+  std::vector<OffsetSeg> out;
+  int64_t offset = 0;
+  for (int64_t size : sizes)
+  {
+    out.push_back({offset, size});
+    offset += size;
+  }
+  return out;
+}
+} // namespace
+
+TEST_CASE("PlanInProgressSegmentCacheUpdateFor appends when the stream's segments join the entry's end",
+          "[InProgressSegmentCache]")
+{
+  const auto cached = Segs({100, 200, 300});
+  const auto stream = Segs({100, 200, 300, 400, 500});
+  const auto plan = PlanInProgressSegmentCacheUpdateFor(cached, stream, 2);
+  CHECK(plan.action == SegmentCacheAction::kAppend);
+  CHECK(plan.appendFrom == 3);
+}
+
+TEST_CASE("PlanInProgressSegmentCacheUpdateFor reseeds when one stream gave up on a segment the other sized",
+          "[InProgressSegmentCache]")
+{
+  // The 2026-11-10 sweep's case: the entry holds stream A's view, with segment 1 a zero-byte placeholder; stream B
+  // sized it at 200, so its offsets from segment 2 on are 200 further on. Appending B's segment 4 at 1000 onto an
+  // entry that ends at 800 left a 200-byte hole.
+  const auto cached = Segs({100, 0, 300, 400});
+  const auto stream = Segs({100, 200, 300, 400, 500});
+  CHECK(PlanInProgressSegmentCacheUpdateFor(cached, stream, 1).action == SegmentCacheAction::kReseed);
+  // And the other way round: A appending onto B's entry would overlap.
+  CHECK(PlanInProgressSegmentCacheUpdateFor(stream, Segs({100, 0, 300, 400, 500, 600}), 1).action ==
+        SegmentCacheAction::kReseed);
+}
+
+TEST_CASE("PlanInProgressSegmentCacheUpdateFor leaves the count-only cases as they were", "[InProgressSegmentCache]")
+{
+  // An empty entry joins at 0, so a stream's first segments are appended to it.
+  const auto fresh = PlanInProgressSegmentCacheUpdateFor(std::vector<OffsetSeg>{}, Segs({100, 200}), 2);
+  CHECK(fresh.action == SegmentCacheAction::kAppend);
+  CHECK(fresh.appendFrom == 0);
+  // Never shrinks an entry another stream has taken further, whatever its offsets.
+  CHECK(PlanInProgressSegmentCacheUpdateFor(Segs({100, 0, 300, 400}), Segs({100, 200, 300}), 1).action ==
+        SegmentCacheAction::kNone);
+  // A short entry is still reseeded.
+  CHECK(PlanInProgressSegmentCacheUpdateFor(Segs({100}), Segs({100, 200, 300, 400}), 1).action ==
+        SegmentCacheAction::kReseed);
+}

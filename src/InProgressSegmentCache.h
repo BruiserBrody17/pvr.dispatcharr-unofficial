@@ -25,9 +25,10 @@ struct SegmentCachePlan
 // (m_inProgressSegmentCache): how a stream that just probed `newlyProbedCount` segments, and now holds
 // `streamCount` of them, brings its recording's cache entry (`cachedCount` segments) up to date.
 //
-// The entry is shared by every open stream of that recording, and a recording's segments are append-only and sized
-// once, so the entry and each stream hold the same segments in the same order and only their lengths differ. That
-// makes the cases:
+// The entry is shared by every open stream of that recording, and a recording's segments are append-only, so the
+// entry and each stream hold the same segments in the same order. Their sizes usually agree too, but not always: see
+// PlanInProgressSegmentCacheUpdateFor() below, which checks the join this function's append assumes. The cases by
+// count:
 //  - the entry is at least as long as the stream (another stream of the recording is ahead): nothing to do. Never
 //    shrink it to the stream's length: a stream that is behind would otherwise cut the entry back on every probe and
 //    the next open of the recording would re-probe what the stream ahead had already sized.
@@ -49,6 +50,27 @@ inline SegmentCachePlan PlanInProgressSegmentCacheUpdate(size_t cachedCount, siz
   if (cachedCount < streamPreviousCount)
     return {SegmentCacheAction::kReseed, 0};
   return {SegmentCacheAction::kAppend, cachedCount};
+}
+
+// PlanInProgressSegmentCacheUpdate() for the entry's and the stream's actual segments, with the append made a reseed
+// when the stream's segment at `appendFrom` does not start where the entry ends. Two streams can size one segment
+// differently: one gives up on it and merges a zero-byte placeholder (UnprobeableSegment.h), the other, opened while
+// it waited, sizes it itself because SegmentSizesKnownToCache() never hands out a placeholder. Their byte offsets
+// differ from there on, and appending one's segments onto an entry the other wrote left a hole (or an overlap) at the
+// join: a later open seeded from it found no segment for a position in the hole, and its read answered 0 in the
+// middle of the recording (the 2026-11-10 sweep; the glue harness's `ip_cache_diverge`). A reseed makes the entry one
+// stream's view throughout, which is all a later open needs. Segment needs `byteOffset` and `byteSize` members.
+template <typename Segment>
+SegmentCachePlan PlanInProgressSegmentCacheUpdateFor(const std::vector<Segment>& cached,
+                                                     const std::vector<Segment>& stream, size_t newlyProbedCount)
+{
+  SegmentCachePlan plan = PlanInProgressSegmentCacheUpdate(cached.size(), stream.size(), newlyProbedCount);
+  if (plan.action != SegmentCacheAction::kAppend)
+    return plan;
+  const int64_t cachedEnd = cached.empty() ? 0 : cached.back().byteOffset + cached.back().byteSize;
+  if (stream[plan.appendFrom].byteOffset != cachedEnd)
+    return {SegmentCacheAction::kReseed, 0};
+  return plan;
 }
 
 // How long a recording's cross-open cache entry outlives its last use. One still recording keeps the generous 24 h: a

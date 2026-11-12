@@ -785,6 +785,14 @@ Mutation-checked: with the finished limit at 24 hours the finished-entry test fa
 before, 2 after, against a limit of 10. Confirmed live on Kodi 22.0-RC1 as well: 116 segment HEADs for the probe's two
 opens before, 2 after (the closed entry has the details).
 
+2026-11-12 (`Piers`): `PlanInProgressSegmentCacheUpdateFor()` checks the join the append assumes. Two streams can size
+one segment differently (one merged a zero-byte placeholder after giving up, the other sized it), and appending one's
+segments onto an entry the other wrote left a hole a later open read 0 at (`docs/CLOSED_ITEMS.md`, "An in-progress
+recording's shared segment cache can mix two streams' byte offsets"); an append whose first segment does not start
+where the entry ends is now a reseed. The tests pin a hole and an overlap becoming a reseed, a joining append staying
+one, and the count-only cases unchanged. The wiring is the glue harness's `ip_cache_diverge` (in CI, about 45 s): it
+fails without the fix (read answered 0 at 118656 of 676776) and passes with it.
+
 ### `JsonFieldUtil`
 
 `JsonFieldUtil` also gained `MergeDvrOffsetMinutes()`, `SetDvrOffsetMinutes()`'s
@@ -952,6 +960,11 @@ so a playlist that names an address of the server's own ends up at the configure
 `ManagedRecurringRule` (added 2026-10-02, fixing two real bugs -- see `docs/OPEN_ITEMS.md` and `docs/RECURRING_RULES.md`): which recurring rules the addon owns and may renew. Ownership is a `[Kodi]` tag at the end of the rule's stored name (`IsManagedRuleName()`/`AddManagedRuleMarker()`/`StripManagedRuleMarker()`; a rule has no free-form field), Kodi is shown the name without it,
 `ParseRecordingFields()` strips it from the titles of the occurrences a rule generates, and `ShouldRenewRecurringRule()` renews only an owned rule -- reviving an owned, enabled one that has run past its end date, which used to stay dead because the addon could not tell it from a user's finished rule. `EvaluateInitialAdoption()`/`RecurringRuleAdoptionState` do the one-time tagging of rules that predate this (state persisted in
 `recurring_rule_adoption.json`, resumable across restarts, skipping a rule with a recording starting), and `HasActiveOrImminentOccurrence()` is the occurrence-safety check shared with renewal. Confirmed live against the real instance, including a rename through Kodi's edit dialog keeping the tag, and (2026-10-03) creation from Kodi's Add timer dialog: a rule typed in the dialog was stored at exactly the typed times with the tag, every day and a 30-day window, and Kodi listed it with its 31 occurrences (see `docs/CLOSED_ITEMS.md`'s "Unchanged recurring-rule times were re-sent on every edit for a rule near UTC midnight").
+
+2026-11-12: `HasActiveOrImminentOccurrence()` compares `startTime - now` in 64 bits. An upcoming occurrence whose start
+parsed to `kEarliestRepresentableTime` overflowed a 32-bit `time_t` there and stopped holding a rule PATCH back
+(`docs/CLOSED_ITEMS.md`, "`HasActiveOrImminentOccurrence()` overflows a 32-bit `time_t`..."). The case with that start
+fails under `unit-tests-32bit`'s UBSan with the old subtraction ("signed integer overflow") and passes with the fix.
 
 ### `PendingTitleLookup`
 
@@ -2060,6 +2073,13 @@ only the typed one is renamed (mutation-verified: with the call disabled the sce
 now carries the channel's name, as Kodi's does.
 
 2026-10-13: `IsSeriesRuleSafeToDeleteFromKodi()` (`TimerIdentity.h`, `tests/test_timer_identity.cpp`): only an empty series-rule title is refused (Dispatcharr's delete of one purges every upcoming recording on the rule's tvg_id; a whitespace-only title is truthy to the server and filters to nothing), and the three-case pairing with `ShouldReplaceSeriesRuleOnEdit()` (an edit that re-keys an empty-title rule is refused, one that keeps its identity is not). The wiring is the glue harness's `functional` scenario: a channel-less description-only rule seeded into the fake (`seed_empty_title_rule`), read back as a timer; a re-keying `UpdateTimer()` and a `DeleteTimer()` must be refused and send neither a DELETE nor a POST, the rule must remain, an identity-keeping edit must be posted, and a titled rule must still delete. With the predicate always answering "safe", two unit cases and five glue checks fail. What no test reaches is the server's purge itself (confirmed live on disposable data, and Kodi's own handling of the refusal, seen live: `PVR.DeleteTimer` failed with the rule and a recording on its tvg_id both surviving).
+
+2026-11-12: `IsEncodableTimerId()` (`TimerIdentity.h`, `tests/test_timer_identity.cpp`): a recording's or recurring
+rule's id becomes a ClientIndex only between 1 and 0x1FFFFFFF, below the recurring-rule bit; outside it the index
+decoded as another kind of timer (a recording 0x20000005 as recurring rule 5, whose delete removes the rule and its
+future recordings; `docs/CLOSED_ITEMS.md`, "A recording or recurring-rule id outside 1 to 0x1FFFFFFF..."). The tests
+pin both ends, 0, negatives and bits 29 and 30, and the round trip through `DecodeTimerClientIndex()` for both kinds.
+`GetTimers()` and `GetTimersAmount()` leave such a timer out alike; that wiring was read, not run with ids that large.
 
 ### `TimerRequestBuilder`
 

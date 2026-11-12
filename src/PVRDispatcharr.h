@@ -269,6 +269,11 @@ private:
   // GetTimers(), which already holds both lists.
   void UpdateServerOffsetCrossCheck(const std::vector<dispatcharr::Recording>& recordings,
                                     const std::vector<dispatcharr::RecurringRule>& recurringRules);
+  // Warns, once per run for each kind, that GetTimers() left a timer out because its id cannot be a ClientIndex
+  // (dispatcharr::IsEncodableTimerId(), TimerIdentity.h).
+  void LogUnencodableTimerIdOnce(std::atomic<bool>& logged, const char* kind, int id);
+  std::atomic<bool> m_loggedUnencodableRecordingId{false};
+  std::atomic<bool> m_loggedUnencodableRecurringRuleId{false};
   // Syncs recurring_rule_timezone/dispatcharr_timezone_info from
   // Dispatcharr's own configured system timezone -- extracted from the
   // constructor (added 2026-09-27, a 47th-pass audit) so
