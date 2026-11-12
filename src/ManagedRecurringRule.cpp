@@ -70,7 +70,10 @@ bool HasActiveOrImminentOccurrence(const RecurringRule& rule, const std::vector<
   {
     if (rec.recurringRuleId != rule.id)
       continue;
-    if (rec.isInProgress || (rec.isUpcoming && rec.endTime > now && rec.startTime - now < safetyMarginSeconds))
+    // In 64 bits: a start clamped to kEarliestRepresentableTime (TimeUtil.h) is more than 2^31 s before now, and
+    // the subtraction overflowed a 32-bit time_t, answering "not imminent" for an occurrence already under way.
+    if (rec.isInProgress || (rec.isUpcoming && rec.endTime > now &&
+                             static_cast<long long>(rec.startTime) - static_cast<long long>(now) < safetyMarginSeconds))
       return true;
   }
   return false;

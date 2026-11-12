@@ -4703,6 +4703,17 @@ catch (...)
   return PVR_ERROR_FAILED;
 }
 
+void PVRDispatcharr::LogUnencodableTimerIdOnce(std::atomic<bool>& logged, const char* kind, int id)
+{
+  // Once per run: GetTimers() runs on every refresh, and the id stays out of range until the server's data changes.
+  if (logged.exchange(true))
+    return;
+  kodi::Log(ADDON_LOG_WARNING,
+            "pvr.dispatcharr-unofficial: left a %s with id %d out of the Timers list, its id is outside the range "
+            "a timer index can carry (1 to 0x1FFFFFFF)",
+            kind, id);
+}
+
 PVR_ERROR PVRDispatcharr::GetTimersAmount(int& amount)
 try
 {
@@ -4742,10 +4753,14 @@ try
   if (!m_recordingsEverLoaded || !m_seriesRulesEverLoaded)
     return PVR_ERROR_SERVER_ERROR;
   time_t now = time(nullptr);
-  int scheduled =
-      static_cast<int>(std::count_if(m_cachedRecordings.begin(), m_cachedRecordings.end(),
-                                     [now](const Recording& rec) { return dispatcharr::IsListedAsTimer(rec, now); }));
-  amount = scheduled + static_cast<int>(m_cachedTimerRules.size()) + static_cast<int>(m_cachedRecurringRules.size());
+  // The same two filters GetTimers() applies, so the counts agree (IsEncodableTimerId(), TimerIdentity.h).
+  int scheduled = static_cast<int>(std::count_if(
+      m_cachedRecordings.begin(), m_cachedRecordings.end(), [now](const Recording& rec)
+      { return dispatcharr::IsListedAsTimer(rec, now) && IsEncodableTimerId(rec.id, kRecurringRuleIndexFlag); }));
+  int recurring = static_cast<int>(std::count_if(m_cachedRecurringRules.begin(), m_cachedRecurringRules.end(),
+                                                 [](const RecurringRule& rule)
+                                                 { return IsEncodableTimerId(rule.id, kRecurringRuleIndexFlag); }));
+  amount = scheduled + static_cast<int>(m_cachedTimerRules.size()) + recurring;
   return PVR_ERROR_NO_ERROR;
 }
 catch (...)
@@ -4806,6 +4821,11 @@ try
     // dispatcharr::IsListedAsTimer() (RecordingVisibility.h).
     if (!dispatcharr::IsListedAsTimer(rec, now))
       continue;
+    if (!IsEncodableTimerId(rec.id, kRecurringRuleIndexFlag))
+    {
+      LogUnencodableTimerIdOnce(m_loggedUnencodableRecordingId, "recording", rec.id);
+      continue;
+    }
     kodi::addon::PVRTimer timer;
     timer.SetClientIndex(static_cast<unsigned int>(rec.id));
     timer.SetTimerType(kTimerTypeOneTime);
@@ -4868,9 +4888,12 @@ try
     // instances (kodi-dev-kit's PVR_TIMER_NO_PARENT is 0,
     // SetParentClientIndex()'s own default, so this is a plain
     // stand-alone one-time timer when neither matches).
+    // A parent rule whose id is left out below (IsEncodableTimerId()) leaves its occurrences without a parent,
+    // rather than pointing them at whatever another index decodes to.
     if (rec.recurringRuleId != 0)
     {
-      timer.SetParentClientIndex(static_cast<unsigned int>(rec.recurringRuleId) | kRecurringRuleIndexFlag);
+      if (IsEncodableTimerId(rec.recurringRuleId, kRecurringRuleIndexFlag))
+        timer.SetParentClientIndex(static_cast<unsigned int>(rec.recurringRuleId) | kRecurringRuleIndexFlag);
     }
     else
     {
@@ -4955,12 +4978,18 @@ try
     std::map<int, ReportedRecurringRule> reported;
     for (const auto& rule : recurringRules)
     {
+      if (!IsEncodableTimerId(rule.id, kRecurringRuleIndexFlag))
+      {
+        LogUnencodableTimerIdOnce(m_loggedUnencodableRecurringRuleId, "recurring rule", rule.id);
+        continue;
+      }
       kodi::addon::PVRTimer timer;
       // Recurring rules have a real numeric id (unlike series rules
       // above), so it's used directly rather than hashed -- just needs
-      // its own namespace bit so it can never collide with a plain
+      // its own namespace bit so it does not collide with a plain
       // one-time recording's own id (kTimerTypeOneTime above) or a
-      // hashed series-rule index.
+      // hashed series-rule index, which holds for an id below that bit
+      // (IsEncodableTimerId(), checked above).
       timer.SetClientIndex(static_cast<unsigned int>(rule.id) | kRecurringRuleIndexFlag);
       timer.SetTimerType(kTimerTypeRecurring);
       // Kodi is shown the name without the ownership tag (ManagedRecurringRule.h).

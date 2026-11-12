@@ -91,6 +91,17 @@ inline DecodedTimerIdentity DecodeTimerClientIndex(unsigned int clientIndex, uns
   return {TimerIdentityKind::OneTimeRecording, static_cast<int>(clientIndex & ~kSeriesRuleIndexFlag)};
 }
 
+// Whether a recording's or recurring rule's server id can be a ClientIndex that DecodeTimerClientIndex() decodes back
+// to the same kind and id. A one-off recording's id is used unmasked, so one with bit 29 set (0x20000005) decodes as
+// recurring rule 5 and DeleteTimer() would delete that rule and its future recordings; bit 30 or a negative id decodes
+// as a series rule; and 0 is Kodi's "no index". Dispatcharr's ids are auto-increment integers from 1, so only a server
+// past half a billion ids or a malformed answer gets here (the 2026-11-10 sweep). GetTimers() and GetTimersAmount()
+// leave such a timer out, both of them, so the two counts agree.
+inline bool IsEncodableTimerId(int id, unsigned int recurringRuleIndexFlag)
+{
+  return id > 0 && static_cast<unsigned int>(id) < recurringRuleIndexFlag;
+}
+
 // PVRDispatcharr::UpdateTimer()'s own "extend an already-recording timer"
 // math: Dispatcharr's dedicated extend endpoint takes a relative
 // extra_minutes, not the absolute end time Kodi's timer-edit dialog hands

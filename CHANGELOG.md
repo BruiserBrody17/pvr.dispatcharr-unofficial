@@ -10,6 +10,16 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased] -- addon
+
+### Fixed
+
+- A recording or repeating timer with an id the addon cannot represent (over about 537 million, or none) is now left
+  out of the Timers list with a warning in the log. Before, deleting it could have deleted a different repeating
+  timer.
+- On 32-bit systems (CoreELEC, 32-bit Android), a repeating timer's occurrence with an unreadable start date no longer
+  lets the addon change that timer while it records.
+
 ## `timeshift_buffer` [0.8.18] - Unreleased
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a

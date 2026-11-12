@@ -105,6 +105,38 @@ TEST_CASE("DecodeTimerClientIndex prioritizes the series-rule bit over the recur
   CHECK(decoded.kind == TimerIdentityKind::SeriesRule);
 }
 
+TEST_CASE("IsEncodableTimerId accepts exactly the ids that decode back to themselves", "[TimerIdentity]")
+{
+  CHECK(IsEncodableTimerId(1, kTestRecurringRuleIndexFlag));
+  CHECK(IsEncodableTimerId(0x1FFFFFFF, kTestRecurringRuleIndexFlag));
+  CHECK_FALSE(IsEncodableTimerId(0, kTestRecurringRuleIndexFlag));
+  CHECK_FALSE(IsEncodableTimerId(-1, kTestRecurringRuleIndexFlag));
+  CHECK_FALSE(IsEncodableTimerId(std::numeric_limits<int>::min(), kTestRecurringRuleIndexFlag));
+  CHECK_FALSE(IsEncodableTimerId(0x20000000, kTestRecurringRuleIndexFlag));
+  CHECK_FALSE(IsEncodableTimerId(0x40000000, kTestRecurringRuleIndexFlag));
+  CHECK_FALSE(IsEncodableTimerId(std::numeric_limits<int>::max(), kTestRecurringRuleIndexFlag));
+}
+
+TEST_CASE("IsEncodableTimerId's range round-trips through DecodeTimerClientIndex for both kinds", "[TimerIdentity]")
+{
+  // The sweep's case: a recording id of 0x20000005 decoded as recurring rule 5.
+  DecodedTimerIdentity collided = DecodeTimerClientIndex(0x20000005u, kTestRecurringRuleIndexFlag);
+  CHECK(collided.kind == TimerIdentityKind::RecurringRule);
+  CHECK_FALSE(IsEncodableTimerId(0x20000005, kTestRecurringRuleIndexFlag));
+
+  for (int id : {1, 5, 0x1FFFFFFF})
+  {
+    REQUIRE(IsEncodableTimerId(id, kTestRecurringRuleIndexFlag));
+    DecodedTimerIdentity recording = DecodeTimerClientIndex(static_cast<unsigned int>(id), kTestRecurringRuleIndexFlag);
+    CHECK(recording.kind == TimerIdentityKind::OneTimeRecording);
+    CHECK(recording.id == id);
+    DecodedTimerIdentity rule = DecodeTimerClientIndex(static_cast<unsigned int>(id) | kTestRecurringRuleIndexFlag,
+                                                       kTestRecurringRuleIndexFlag);
+    CHECK(rule.kind == TimerIdentityKind::RecurringRule);
+    CHECK(rule.id == id);
+  }
+}
+
 // ---------------------------------------------------------------------
 // ComputeRecordingExtendMinutes
 // ---------------------------------------------------------------------
