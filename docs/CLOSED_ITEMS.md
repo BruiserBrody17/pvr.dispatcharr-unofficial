@@ -6,6 +6,45 @@
 
 ### Fixed
 
+#### `timeshift_buffer` 0.8.18 never becomes ready on a channel that declares a video stream it does not send
+
+**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with a generated stream on ffmpeg 6.1.1, not seen on a real channel.** A
+regression of the change that buffers every audio track (`docs/TIMESHIFT.md`, "Every audio track, not just the first
+(0.8.18)"), which is in no release yet. With a usable audio map, `_build_ffmpeg_command()` maps the video explicitly as
+`-map 0:v:0?`. The `?` forgives only a stream that is not declared at all. One the programme map declares but never
+sends (a radio service that lists a video PID, or a dead first video PID beside a live second one) is mapped, and the
+HLS muxer then waits for a video keyframe that never comes: no segment is cut, `live.m3u8` never appears, ffmpeg stays
+alive and the plugin never reports the buffer ready. 0.8.17's command line (no `-map`, so ffmpeg's own pick of streams)
+and 0.8.18's own `-sn` fallback both buffer the same input: run side by side, the 0.8.18 command had no playlist and no
+segment after 15 s, the other two a playlist within 9 s and seven segments by 15 s. `ffmpeg.log` shows only "Could not
+find codec parameters for stream 0 (Video: h264, none): unspecified size", the same warning a harmless mid-GOP start
+prints. Not checked: the ffmpeg 8.1.2 in Dispatcharr 0.33.0's container, and whether Dispatcharr's proxy passes such a
+programme map through at all. Options: (a) restart ffmpeg once on the fallback command line (no audio map) when it is
+alive, has written no `live.m3u8` after about 12 to 15 s and its log carries that warning, at the price of one audio
+track on that channel; or (b) accept it and document it. Settle before the next plugin release: 0.8.17 buffers such a
+channel and 0.8.18 as it stands would not.
+
+**Fixed 2026-11-10, in `timeshift_buffer` 0.8.18 before its release, by option (a), the maintainer's choice.** When
+`get_live_manifest` finds no playlist, ffmpeg alive, the start made with the audio map and not restarted yet, the
+warning in `ffmpeg.log` and the start overdue (12 s at the default 2 s segments, earlier with long segments so the
+restart still finishes inside the addon's 30 s wait), the buffer is restarted once without the audio map, under the
+channel's start lock, keeping its viewers and access token (`_restart_without_audio_map()`). The branch's review found
+three races and a timing gap, all fixed before the merge: a too-late restart with long segments, a second viewer's
+poll tearing the buffer down mid-restart, a SIGTERM flush serving the old instance's segment under the kept token, and
+`stop_all` declined as "replaced" right after a restart. `docs/TIMESHIFT.md`, "A video stream that is declared and
+never sent", has the measurements, the details and the cost of a false positive. Confirmed with 26 tests (24 fail on
+the previous plugin code), among them a real-ffmpeg one on a stream with its video PID removed, and end to end with
+the plugin's own start and manifest actions, real ffmpeg 6.1.1 and the stream served at its real rate over HTTP: with
+2 s segments restarted at 12.2 s and the first playlist at 19.7 s, with 10 s segments at 14.0 s and 24.5 s, both
+inside the addon's 30 s wait; a healthy stream was ready at 5.5 s and not restarted. **Checked live on 2026-11-11** on
+Dispatcharr 0.33.0's ffmpeg 8.1.2 through its own proxy, which passes such a programme map through: restarted at 14.4
+to 15.1 s, Kodi 21 playing one audio track after 19.7 s (3 s segments) and 20.3 s (10 s segments), the restarted ffmpeg
+attributed to the same viewer, a healthy channel and two real channels not restarted, and two viewers at once served by
+one restart. 8.1.2 logs the warning after about 15 s of stream, later than 6.1.1, so there the warning, not the timer,
+sets the restart time. A real channel of that shape is still item (3) of the open entry "`timeshift_buffer` 0.8.18's
+audio-track mapping has only been seen on generated streams".
+
 #### The release gate skips its release checks for an empty `--expect-release`, and an empty `--blocklist` falls back to another list
 
 **Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against

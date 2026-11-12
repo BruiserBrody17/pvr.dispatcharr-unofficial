@@ -1983,7 +1983,11 @@ class _StartLocksLost(Exception):
     """Raised by _start_ffmpeg() when its caller's `still_held` check says the start locks are gone."""
 
 
-def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger, still_held=None) -> dict:
+def _start_ffmpeg(
+    channel_uuid: str, params: dict, settings_dict: dict, logger, still_held=None, use_audio_map: bool = True
+) -> dict:
+    """Clears the channel's directory and spawns its ffmpeg; returns the new buffer's state. `use_audio_map=False` is
+    the restart of a buffer stuck on a video stream that is declared and never sent (_restart_without_audio_map())."""
     storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
     segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1, maximum=_MAX_SEGMENT_SECONDS)
     buffer_minutes = _int_setting(settings_dict, "buffer_minutes", 60, minimum=1, maximum=_MAX_BUFFER_MINUTES)
@@ -2005,8 +2009,8 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger, 
     # Once per process, before the clear for the reason below: it runs ffmpeg, a yield under gevent, for up to a few
     # seconds, so the locks are checked (and renewed) after a run as after a reap. Before the headers, whose token is
     # short-lived.
-    first_audio_map_probe = _usable_audio_map_cache is _AUDIO_MAP_UNSET
-    audio_map = _usable_audio_map(logger)
+    first_audio_map_probe = use_audio_map and _usable_audio_map_cache is _AUDIO_MAP_UNSET
+    audio_map = _usable_audio_map(logger) if use_audio_map else None
     if first_audio_map_probe and still_held is not None and not still_held():
         raise _StartLocksLost()
     # Before the reap and the clear: it can query Dispatcharr's database, which may yield to another greenlet, and
@@ -2073,7 +2077,7 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger, 
         wrap_segments,
     )
 
-    return {
+    state = {
         "channel_uuid": str(channel_uuid),
         "pid": proc.pid,
         # The process's own start time (/proc/<pid>/stat field 22, in clock ticks since boot),
@@ -2091,10 +2095,213 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger, 
         # the full URL as http://<whatever host it already uses>:<http_port><playlist_route>.
         "playlist_route": f"/{channel_uuid}/live.m3u8",
         "log_path": str(log_path),
+        "audio_map": audio_map,
     }
+    if audio_map:
+        # What a restart without the audio map needs to connect the same way: get_live_manifest, which triggers it,
+        # carries neither. Never the -headers string itself, which holds a bearer token.
+        state["input_params"] = {key: params.get(key) for key in ("username", "client_ip") if params.get(key)}
+    return state
 
 
-def _stop_ffmpeg(state: dict, logger):
+# ffmpeg's warning for a stream it found no picture size for. A video stream the programme map declares and never sends
+# (a radio service that lists a video PID, a dead first video PID) prints it, and so does a harmless start between two
+# keyframes (docs/TIMESHIFT.md, "A video stream that is declared and never sent"), so it counts only together with a
+# playlist that is overdue.
+_UNSENT_VIDEO_WARNING = re.compile(r"Could not find codec parameters for stream \d+ \(Video:")
+# When a start that has written no playlist is due for the restart. A healthy start writes its first playlist once
+# its first segment closes: the proxy's connect time plus a segment length or so (measured within 9 s at the default
+# 2 s segments), so at least _UNSENT_VIDEO_GRACE_SECONDS past one segment length. But the restarted ffmpeg must still
+# write its own first playlist inside the addon's wait for one (kColdStartExtendedAttempts in DispatcharrClient.cpp,
+# 30 s while the plugin answers "not ready"), which costs it the stop, a reconnect and a segment (7.5 s from restart to
+# playlist at 2 s segments, measured): with longer segments the restart comes earlier rather than too late, down to
+# the probe's own few seconds, by which the warning has been printed.
+_UNSENT_VIDEO_GRACE_SECONDS = 10
+_ADDON_FIRST_PLAYLIST_WAIT_SECONDS = 30
+_RESTART_TO_PLAYLIST_OVERHEAD_SECONDS = 6
+_UNSENT_VIDEO_EARLIEST_SECONDS = 6
+# How long a restart's marker (`restarting_since`) holds off a teardown of the instance it is replacing: its old ffmpeg
+# is dead on purpose until the new one is adopted, a few seconds later.
+_RESTART_MARKER_SECONDS = 30
+# The warning is printed while ffmpeg probes its input, before anything else is logged.
+_UNSENT_VIDEO_LOG_READ_BYTES = 65536
+
+
+def _should_restart_without_audio_map(state: dict, now: float, segment_seconds: int, log_head: str) -> bool:
+    """Whether a buffer that has written no playlist yet is stuck on a video stream that is declared and never sent:
+    started with the audio map, not restarted for this already, overdue, and its ffmpeg.log carries the warning. The
+    caller has already established that ffmpeg is alive and that there is no live.m3u8."""
+    if not state.get("audio_map") or state.get("restarted_without_audio_map"):
+        return False
+    started_at = state.get("started_at")
+    if not isinstance(started_at, (int, float)) or isinstance(started_at, bool):
+        return False
+    if now - started_at < _unsent_video_restart_due_seconds(segment_seconds):
+        return False
+    return bool(_UNSENT_VIDEO_WARNING.search(log_head))
+
+
+def _unsent_video_restart_due_seconds(segment_seconds: int) -> int:
+    """Seconds after its start at which a start with no playlist and the warning is restarted: 12 at the default 2 s
+    segments, 16 at 6 s, 14 at 10 s, 6 from 18 s (see the constants above)."""
+    overdue = segment_seconds + _UNSENT_VIDEO_GRACE_SECONDS
+    latest_that_fits = _ADDON_FIRST_PLAYLIST_WAIT_SECONDS - _RESTART_TO_PLAYLIST_OVERHEAD_SECONDS - segment_seconds
+    return max(_UNSENT_VIDEO_EARLIEST_SECONDS, min(overdue, latest_that_fits))
+
+
+def _restart_in_progress(state: dict, now: float) -> bool:
+    """Whether a restart without the audio map has stopped this instance's ffmpeg on purpose and not yet adopted the new
+    one: a poll that finds that ffmpeg dead meanwhile must not tear the buffer down."""
+    since = state.get("restarting_since")
+    return (
+        isinstance(since, (int, float)) and not isinstance(since, bool) and 0 <= now - since < _RESTART_MARKER_SECONDS
+    )
+
+
+def _read_log_head(channel_dir: Path) -> str:
+    try:
+        with open(channel_dir / "ffmpeg.log", "rb") as f:
+            return f.read(_UNSENT_VIDEO_LOG_READ_BYTES).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _restart_without_audio_map(channel_uuid: str, state: dict, settings_dict: dict, logger) -> bool:
+    """Restarts a buffer stuck on a video stream that is declared and never sent, once, on the command line without
+    the audio map, keeping its viewers and access token so a client waiting for the first playlist simply gets one.
+    With `-map 0:v:0?` ffmpeg waits on a stream that sends nothing, and the start writes no playlist while ffmpeg runs
+    on; ffmpeg's own pick of streams leaves such a stream out
+    (docs/TIMESHIFT.md, "A video stream that is declared and never sent"). The price is one audio track on that channel.
+
+    Under the channel's start lock, so no start_buffer runs meanwhile, and only for the instance `state` describes.
+    True when the restart happened."""
+    with _deferred_removals(logger):
+        lock_token = _acquire_start_buffer_lock(channel_uuid)
+        if lock_token is None:
+            return False  # a start, or this same restart from another request, is under way
+        try:
+            return _restart_without_audio_map_locked(channel_uuid, lock_token, state, settings_dict, logger)
+        finally:
+            _release_start_buffer_lock(channel_uuid, lock_token)
+
+
+def _restart_without_audio_map_locked(channel_uuid, lock_token, state, settings_dict, logger) -> bool:
+    current = _get_buffer_state(channel_uuid)
+    if not current or current.get("stopping") or not _same_buffer_instance(current, state):
+        return False
+    if current.get("restarted_without_audio_map") or not current.get("audio_map"):
+        return False
+    # The settings the new ffmpeg would start with must be the ones this buffer runs on: a changed storage path would
+    # put it in another directory, and a changed port is start_buffer's to handle (_classify_existing_buffer()).
+    storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
+    http_port = _int_setting(settings_dict, "http_port", 9192, minimum=1, maximum=65535)
+    if current.get("storage_path") != storage_path or current.get("http_port") != http_port:
+        return False
+    channel_dir = _channel_dir(storage_path, channel_uuid)
+    # Checked again under the lock: a slow start can still have written its playlist since the caller looked.
+    if (channel_dir / "live.m3u8").exists() or not _is_process_alive(
+        current.get("pid"), current.get("pid_start_ticks")
+    ):
+        return False
+
+    # Marked first, atomically and only for this instance: from the kill below until the adoption, Redis names a dead
+    # ffmpeg, and another viewer's poll in that window would otherwise tear the buffer down as failed
+    # (_restart_in_progress()).
+    def mark(fresh):
+        if fresh.get("stopping") or not _same_buffer_instance(fresh, current):
+            return None
+        fresh["restarting_since"] = _shared_now()
+        return fresh
+
+    outcome, marked = _update_buffer_state(channel_uuid, mark)
+    if outcome != "written":
+        return False
+    current = marked
+
+    def clear_mark(fresh):
+        if not _same_buffer_instance(fresh, current) or "restarting_since" not in fresh:
+            return None
+        fresh.pop("restarting_since")
+        return fresh
+
+    def give_up():
+        # The old ffmpeg is gone and nothing replaced it: without the marker the next poll reports the buffer failed
+        # at once, rather than "not ready" until the marker runs out.
+        _update_buffer_state(channel_uuid, clear_mark)
+        return False
+
+    logger.warning(
+        "timeshift_buffer: channel %s has written no playlist %ds after its start and its ffmpeg found no picture "
+        "size for a video stream -- most likely one the programme lists and never sends; restarting it once with "
+        "ffmpeg's own choice of streams (one audio track)",
+        channel_uuid,
+        int(_shared_now() - current["started_at"]),
+    )
+    # SIGKILL, not SIGTERM: on SIGTERM the muxer would flush what it holds into a first segment and playlist of this
+    # instance, which a poll could be served before the new ffmpeg's own replace them under the same access token.
+    _stop_ffmpeg(current, logger, first_signal=signal.SIGKILL)
+
+    def still_held():
+        return _renew_start_buffer_lock(channel_uuid, lock_token)
+
+    if not still_held():
+        # Another start may own the channel by now; it finds this instance dead and starts afresh.
+        return give_up()
+    try:
+        new = _start_ffmpeg(
+            channel_uuid, current.get("input_params") or {}, settings_dict, logger, still_held, use_audio_map=False
+        )
+    except _StartLocksLost:
+        return give_up()
+    except Exception:
+        logger.exception("timeshift_buffer: couldn't restart the buffer for %s without the audio map", channel_uuid)
+        return give_up()
+
+    def adopt(fresh):
+        if fresh.get("stopping") or not _same_buffer_instance(fresh, current):
+            return None
+        # What a teardown decided on the old instance needs to follow it here (_teardown_following_a_restart()).
+        fresh["restarted_from"] = {"pid": fresh.get("pid"), "started_at": fresh.get("started_at")}
+        for key in ("pid", "pid_start_ticks", "started_at", "playlist_path", "log_path", "audio_map"):
+            fresh[key] = new[key]
+        fresh.pop("input_params", None)
+        fresh.pop("restarting_since", None)
+        fresh["restarted_without_audio_map"] = True
+        return fresh
+
+    try:
+        held = still_held()
+    except Exception:
+        _stop_ffmpeg(new, logger)
+        give_up()
+        raise
+    outcome = _update_buffer_state(channel_uuid, adopt)[0] if held else "lock lost"
+    if outcome != "written":
+        # Stopped or replaced meanwhile: this ffmpeg belongs to nobody.
+        logger.warning(
+            "timeshift_buffer: the buffer for %s changed during its restart (%s) -- stopping the new ffmpeg",
+            channel_uuid,
+            outcome,
+        )
+        _stop_ffmpeg(new, logger)
+        return give_up()
+    _forget_cached_manifest(channel_uuid)
+    return True
+
+
+def _teardown_following_a_restart(state: dict, logger) -> bool:
+    """_teardown_buffer() for a stop that must end the channel's buffer whichever instance runs it (stop_all, a stop
+    with no viewer_id): one declined because a restart without the audio map adopted its new ffmpeg after `state` was
+    read is repeated once on the instance that restart made, and only that one."""
+    if _teardown_buffer(state, logger) is not False:
+        return True
+    fresh = _get_buffer_state(state["channel_uuid"])
+    if not fresh or fresh.get("restarted_from") != {"pid": state.get("pid"), "started_at": state.get("started_at")}:
+        return False
+    return _teardown_buffer(fresh, logger)
+
+
+def _stop_ffmpeg(state: dict, logger, first_signal=signal.SIGTERM):
     pid = state.get("pid")
     if not pid:
         return
@@ -2112,7 +2319,7 @@ def _stop_ffmpeg(state: dict, logger):
             )
             return
     try:
-        os.killpg(pid, signal.SIGTERM)
+        os.killpg(pid, first_signal)
     except ProcessLookupError:
         pass  # already gone
     except Exception:
@@ -4590,7 +4797,7 @@ class Plugin:
                 }
             return {"status": "ok", "message": "Buffer stopped"}
 
-        _teardown_buffer(state, logger)
+        _teardown_following_a_restart(state, logger)
         return {"status": "ok", "message": "Buffer stopped"}
 
     def _heartbeat(self, params, settings_dict, logger):
@@ -4691,9 +4898,25 @@ class Plugin:
             # start_buffer call to notice (see that method's own comment):
             # nothing else will proactively clean this up otherwise, since
             # a dead buffer with no further fetches never goes idle either.
-            _teardown_buffer(state, logger)
+            # Not while a restart without the audio map has stopped this ffmpeg on purpose, and not when the instance
+            # has been replaced since `state` was read (that restart's new ffmpeg, or another start's): the buffer
+            # this caller polls is not the failed one, so it hears "not ready" and asks again (a replacement with
+            # another token answers its next poll as replaced).
+            if (
+                _teardown_buffer(state, logger, abort_if=lambda fresh: _restart_in_progress(fresh, _shared_now()))
+                is False
+            ):
+                return {"status": "error", "message": "the buffer is being restarted -- retry in a moment"}
             return {"status": "error", "fatal": True, "message": str(exc)}
         except RuntimeError as exc:
+            # Not ready yet. The addon keeps asking while it waits for the first playlist, so this is where a start
+            # stuck on a video stream that is never sent is noticed (_restart_without_audio_map()).
+            if self._restart_if_stuck_on_unsent_video(channel_uuid, state, settings_dict, logger):
+                return {
+                    "status": "error",
+                    "message": "restarted the buffer without the audio map (its video stream never arrived) -- "
+                    "the playlist follows shortly",
+                }
             return {"status": "error", "message": str(exc)}
         except Exception as exc:
             logger.exception("timeshift_buffer: manifest build failed for %s", channel_uuid)
@@ -4746,6 +4969,29 @@ class Plugin:
             **manifest,
         }
 
+    @staticmethod
+    def _restart_if_stuck_on_unsent_video(channel_uuid, state, settings_dict, logger) -> bool:
+        if not state.get("audio_map") or state.get("restarted_without_audio_map"):
+            return False  # the common case, answered before any file is read
+        try:
+            channel_dir = _channel_dir(state["storage_path"], channel_uuid)
+        except (KeyError, ValueError):
+            return False
+        if (channel_dir / "live.m3u8").exists() or not _is_process_alive(
+            state.get("pid"), state.get("pid_start_ticks")
+        ):
+            return False
+        segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1, maximum=_MAX_SEGMENT_SECONDS)
+        if not _should_restart_without_audio_map(state, _shared_now(), segment_seconds, _read_log_head(channel_dir)):
+            return False
+        try:
+            return _restart_without_audio_map(channel_uuid, state, settings_dict, logger)
+        except Exception:
+            logger.exception(
+                "timeshift_buffer: restarting the buffer for %s without the audio map failed", channel_uuid
+            )
+            return False
+
     def _list_buffers(self):
         buffers = []
         now = _shared_now()
@@ -4778,7 +5024,7 @@ class Plugin:
     def _stop_all(self, logger):
         stopped = []
         for state in _iter_buffer_states():
-            _teardown_buffer(state, logger)
+            _teardown_following_a_restart(state, logger)
             stopped.append(state["channel_uuid"])
         message = "No buffers were running" if not stopped else f"Stopped {len(stopped)} buffer(s)"
         return {"status": "ok", "message": message, "stopped": stopped}
