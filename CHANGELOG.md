@@ -21,6 +21,10 @@ compare against.
   timer.
 - On 32-bit systems (CoreELEC, 32-bit Android), a repeating timer's occurrence with an unreadable start date no longer
   lets the addon change that timer while it records.
+- **Deleting a series timer from Kodi no longer also deletes a second series rule for the same show and channel**
+  (one made in Dispatcharr's guide, one from Kodi), with its upcoming recordings. Dispatcharr can only delete such a
+  pair together, from Kodi or its own interface, so Kodi now leaves both in place and says so; to remove one, delete
+  both in Dispatcharr and record the other again. Editing one keeps the old rule.
 
 ## `timeshift_buffer` [0.8.18] - Unreleased
 

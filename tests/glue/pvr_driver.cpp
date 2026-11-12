@@ -969,6 +969,71 @@ int main(int argc, char** argv)
           FAIL("the sibling series rules were not all deleted");
       }
     }
+    // A pinned rule and an unpinned one with the same title and tvg_id: Dispatcharr's delete of either removes both
+    // (unscoped, it takes every source; scoped, it takes the unpinned rule too; confirmed live 2026-11-12), so neither
+    // may be deleted from Kodi, and an edit that re-keys the pinned one keeps the old rule rather than delete it.
+    {
+      auto stat = [&](const char* key) -> long
+      {
+        const std::string st = http("/__stats");
+        const std::string k = std::string("\"") + key + "\": ";
+        const size_t at = st.find(k);
+        return at == std::string::npos ? 0 : atol(st.c_str() + at + k.size());
+      };
+      auto pairCount = [&]()
+      {
+        int n = 0;
+        const auto db = nlohmann::json::parse(http("/__db"), nullptr, false);
+        if (db.is_object() && db.contains("series"))
+          for (const auto& r : db["series"])
+            if (r.value("title", "") == "Pair Show" && r.value("tvg_id", "") == "pair.tvg")
+              n++;
+        return n;
+      };
+      ctl("seed_pinned_pair=1");
+      Collected got;
+      A()->GetTimers(I(), (PVR_HANDLE)&got);
+      const PVR_TIMER* pinned = nullptr;
+      const PVR_TIMER* unpinned = nullptr;
+      for (const auto& x : got.timers)
+      {
+        if (x.iTimerType != 2)
+          continue;
+        if (x.iClientIndex == dispatcharr::ComputeSeriesRuleClientIndex("Pair Show", "pair.tvg", 5))
+          pinned = &x;
+        else if (x.iClientIndex == dispatcharr::ComputeSeriesRuleClientIndex("Pair Show", "pair.tvg", 0))
+          unpinned = &x;
+      }
+      if (!pinned || !unpinned)
+        FAIL("the seeded pinned/unpinned pair was not listed (pinned %d, unpinned %d)", pinned != nullptr,
+             unpinned != nullptr);
+      else
+      {
+        const long deletes = stat("DELETE /api/channels/series-rules/");
+        for (const PVR_TIMER* t : {pinned, unpinned})
+        {
+          PVR_TIMER del = *t;
+          if (A()->DeleteTimer(I(), &del, false) == PVR_ERROR_NO_ERROR)
+            FAIL("deleting the %s rule of a pinned/unpinned pair was accepted", t == pinned ? "pinned" : "unpinned");
+        }
+        if (stat("DELETE /api/channels/series-rules/") != deletes)
+          FAIL("a DELETE for a rule of a pinned/unpinned pair reached the server (it removes both)");
+        if (pairCount() != 2)
+          FAIL("the pinned/unpinned pair is no longer both on the server (%d left)", pairCount());
+        // Re-keying the pinned rule (a new search text) saves the new rule and leaves the old one.
+        PVR_TIMER rekey = *pinned;
+        abi::setf(rekey.strTitle, "Pair Show Renamed");
+        abi::setf(rekey.strEpgSearchString, "Pair Show Renamed");
+        if (A()->UpdateTimer(I(), &rekey) != PVR_ERROR_NO_ERROR)
+          FAIL("re-keying the pinned rule of a pair failed");
+        if (stat("DELETE /api/channels/series-rules/") != deletes)
+          FAIL("re-keying the pinned rule of a pair deleted the old rule (the delete removes the unpinned one too)");
+        if (pairCount() != 2)
+          FAIL("re-keying the pinned rule of a pair left %d of the pair on the server", pairCount());
+        if (http("/__db").find("Pair Show Renamed") == std::string::npos)
+          FAIL("the re-keyed rule was not saved");
+      }
+    }
     // A manual timer's typed name is written to the server (it would otherwise give way to the channel's name once the
     // pending-title cache expires); a manual timer that carries the channel's name, which is what Kodi's dialog sends
     // for an empty or default name, and a guide timer are not (writing marks the recording user_edited, which stops

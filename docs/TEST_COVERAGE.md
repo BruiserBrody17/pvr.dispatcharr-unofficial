@@ -2083,6 +2083,13 @@ pin both ends, 0, negatives and bits 29 and 30, and the round trip through `Deco
 (in CI): a huge one-off recording and a huge recurring rule seeded beside an ordinary rule 5; with the range check
 disabled it fails four ways, the first a one-off timer with ClientIndex 0x20000005, rule 5's own index.
 
+2026-11-12: `HasUnpinnedSiblingSeriesRule()` and `SeriesRuleDeleteTakesSibling()` (`TimerIdentity.h`,
+`tests/test_timer_identity.cpp`): Dispatcharr's delete scoped to a source also matches the unpinned rule with the same
+title and `tvg_id` (confirmed live; `docs/CLOSED_ITEMS.md`, "Deleting a pinned series rule also deletes an unpinned one
+beside it"), the mirror of `HasPinnedSiblingSeriesRule()`. The tests pin both directions, two sources that leave each
+other alone, and a lone rule. The wiring is the glue harness's `functional`, which seeds the pair: on the code before
+the fix it fails five ways (the pinned delete accepted, its DELETE sent, both rules gone, and the same after a re-key).
+
 ### `TimerRequestBuilder`
 
 `TimerRequestBuilder` is the pure request-body/query-string assembly for

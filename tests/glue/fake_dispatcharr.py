@@ -468,7 +468,7 @@ def pvr_route(h, method, p, q, body):
             if method == "DELETE":
                 # SeriesRulesAPIView.delete()'s _matches(), read at v0.33.0: tvg_id always compared (blank when not
                 # sent), title only when sent, and a source in the request matches that source's rule AND an unpinned
-                # one (docs/OPEN_ITEMS.md, "Deleting a pinned series rule also deletes an unpinned one beside it").
+                # one (docs/CLOSED_ITEMS.md, "Deleting a pinned series rule also deletes an unpinned one beside it").
                 tvg = str(q.get("tvg_id", [""])[0] or "").strip()
                 title = q.get("title", [None])[0]
                 src = epg_source(q.get("epg_source_id", [None])[0])
@@ -660,6 +660,15 @@ class H(BaseHTTPRequestHandler):
                         DB["recs"][0x20000005] = scheduled_rec(0x20000005, "ZZZ huge recording", start)
                         DB["recs"][903] = scheduled_rec(903, "ZZZ huge rule occurrence", start, 0x20000006)
                         DB["recs"][902] = scheduled_rec(902, "ZZZ ordinary recording", start)
+                if k == "seed_pinned_pair":
+                    # The pair confirmed live 2026-11-12: a rule pinned to source 5 and an unpinned one with the same
+                    # title and tvg_id (the guide button's rule, then the same series recorded from Kodi).
+                    with DBL:
+                        for src in (5, None):
+                            rule = {"tvg_id": "pair.tvg", "mode": "all", "title": "Pair Show", "title_mode": "exact"}
+                            if src is not None:
+                                rule["epg_source_id"] = src
+                            DB["series"].append(rule)
                 if k == "seed_sibling_rules":
                     # Four channel-less rules sharing one title: two tvg_ids, and one tvg_id pinned to two sources.
                     with DBL:
