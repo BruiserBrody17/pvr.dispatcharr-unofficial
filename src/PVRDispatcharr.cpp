@@ -5515,23 +5515,25 @@ try
     const bool replaceOld =
         ok && foundOldRule &&
         dispatcharr::ShouldReplaceSeriesRuleOnEdit(oldTitle, oldTvgId, oldEpgSourceId, newTitle, tvgId, epgSourceId);
-    bool oldHasPinnedSibling = false;
-    if (replaceOld && oldEpgSourceId <= 0)
+    bool oldDeleteTakesSibling = false;
+    if (replaceOld)
     {
       std::lock_guard<std::mutex> lock(m_dataMutex);
-      oldHasPinnedSibling = dispatcharr::HasPinnedSiblingSeriesRule(m_cachedTimerRules, oldTitle, oldTvgId);
+      oldDeleteTakesSibling =
+          dispatcharr::SeriesRuleDeleteTakesSibling(m_cachedTimerRules, oldTitle, oldTvgId, oldEpgSourceId);
     }
-    if (replaceOld && oldHasPinnedSibling)
+    if (replaceOld && oldDeleteTakesSibling)
     {
-      // An unscoped delete of the old rule would remove the pinned rule with the same title and tvg_id
-      // as well, and purge its recordings (found by the 2026-10-04 eighth hardening sweep): leave the
-      // old rule and say so.
+      // The delete of the old rule would remove the other rule with the same title and tvg_id as well, and
+      // purge its recordings: an unscoped delete takes a pinned rule (found by the 2026-10-04 eighth hardening
+      // sweep), a scoped one the unpinned rule (confirmed live 2026-11-12; SeriesRuleDeleteTakesSibling()).
+      // Leave the old rule and say so.
       kodi::Log(ADDON_LOG_WARNING,
-                "pvr.dispatcharr-unofficial: not deleting the old series rule: another rule with the same "
-                "title and tvg_id is pinned to an EPG source and the delete would remove it too");
+                "pvr.dispatcharr-unofficial: not deleting the old series rule: another rule has the same title "
+                "and tvg_id, and the delete would remove it too");
       kodi::QueueNotification(QUEUE_WARNING, "",
-                              "The edited series rule was saved, but the old one was left in place (another rule "
-                              "shares its title) -- delete it in Dispatcharr if you no longer want it.");
+                              "The edited series rule was saved, but the old one was left in place: another rule "
+                              "has the same title and channel, and Dispatcharr can only delete the two together.");
     }
     else if (replaceOld)
     {
@@ -6087,7 +6089,7 @@ try
     // pinned copy the user meant to delete.
     int epgSourceId = 0;
     bool foundInCache = false;
-    bool siblingPinned = false;
+    bool siblingTaken = false;
     {
       std::lock_guard<std::mutex> lock(m_dataMutex);
       int ruleIdx = dispatcharr::FindSeriesRuleIndexByClientIndex(m_cachedTimerRules, timer.GetClientIndex());
@@ -6098,8 +6100,7 @@ try
         tvgId = cached.tvgId;
         epgSourceId = cached.epgSourceId;
         foundInCache = true;
-        if (epgSourceId <= 0)
-          siblingPinned = dispatcharr::HasPinnedSiblingSeriesRule(m_cachedTimerRules, title, tvgId);
+        siblingTaken = dispatcharr::SeriesRuleDeleteTakesSibling(m_cachedTimerRules, title, tvgId, epgSourceId);
       }
     }
     if (!foundInCache)
@@ -6131,15 +6132,22 @@ try
       ok = false;
       error = "a series rule with no title can only be deleted in Dispatcharr";
     }
-    else if (epgSourceId <= 0 && siblingPinned)
+    else if (siblingTaken)
     {
-      // See HasPinnedSiblingSeriesRule(): this delete names no EPG source, so Dispatcharr would
-      // remove the pinned rule with the same title and tvg_id too.
+      // See SeriesRuleDeleteTakesSibling(): Dispatcharr's delete of this rule would also remove the other rule
+      // with the same title and tvg_id (a pinned one for this unscoped delete, the unpinned one for this scoped
+      // delete) and purge its recordings. Dispatcharr's own interface deletes through the same endpoint with the
+      // rule's source, so it removes both as well: the notification says so rather than send the user there to lose
+      // the other rule (found by the branch's review, read in its frontend at v0.33.0).
       kodi::Log(ADDON_LOG_WARNING,
-                "pvr.dispatcharr-unofficial: not deleting a series rule whose title and tvg_id are shared with a "
-                "rule pinned to an EPG source: the delete would remove both");
+                "pvr.dispatcharr-unofficial: not deleting a series rule whose title and tvg_id are shared with "
+                "another rule (one pinned to an EPG source, one not): Dispatcharr's delete would remove both");
+      kodi::QueueNotification(QUEUE_WARNING, "",
+                              "Another series rule has the same title and channel, and Dispatcharr can only delete "
+                              "the two together (from Kodi or its own interface). To remove one, delete both in "
+                              "Dispatcharr and record the other again.");
       ok = false;
-      error = "another series rule with the same title is pinned to an EPG source; delete it in Dispatcharr";
+      error = "another series rule shares this rule's title and channel; Dispatcharr can only delete them together";
     }
     else
     {

@@ -6,6 +6,44 @@
 
 ### Fixed
 
+#### Deleting a pinned series rule also deletes an unpinned one beside it
+
+**Opened 2026-11-12, found while matching the glue harness's fake to Dispatcharr's source; MEDIUM by consequence,
+confirmed by reading `SeriesRulesAPIView.delete()` at the v0.33.0 tag, not reproduced live.** Given an
+`epg_source_id`, the view's match function returns true for a rule pinned to that source and for one with no source
+(`return rule_source is None or rule_source == epg_source_id`; its comment says a DVR "entire series" delete forwards the
+recording's source and must still match the unsourced rule). The addon sends the source whenever the rule has one, so
+with a pinned rule (title, `tvg_id`, 5) and an unpinned rule (title, `tvg_id`) side by side, deleting the pinned one
+from Kodi removes both rules, and the purge that follows (`future_recordings_for_series()` with source 5) removes the
+recordings tagged 5 and the untagged ones. The same delete runs after an edit that replaces a pinned rule
+(`ShouldReplaceSeriesRuleOnEdit()`, whose comment says the source-scoped delete "removes exactly that rule"). This is the
+mirror image of what `HasPinnedSiblingSeriesRule()` guards (an unpinned delete taking the pinned rule). How common the
+pair is is not known: Dispatcharr's own guide button pins, a Kodi-created rule is unpinned. Options: (a) refuse the
+delete from Kodi when the cache holds an unpinned sibling, as for an empty-title rule; (b) delete, then re-create the
+unpinned sibling from the cache (its recordings would still be purged); (c) document it. Needs a decision; a live check
+on disposable rules first.
+
+**Confirmed live and fixed 2026-11-12, by option (a).** Against the lab's Dispatcharr 0.33.0, with disposable rules on a
+made-up title and `tvg_id` (so the purge could match nothing real; the real rules' list was unchanged afterwards): a
+rule pinned to one source created first, then an unpinned one with the same title and `tvg_id` (two rules); the delete
+the addon sends, scoped to that source, removed both. Control: two rules pinned to different sources, the delete scoped to one
+left the other. Created the other way round (unpinned first, then pinned) the server upgrades the unpinned rule in
+place, so the pair forms only when the pinned rule came first, which is the guide button's rule followed by the same
+series recorded from Kodi. `SeriesRuleDeleteTakesSibling()` (`src/TimerIdentity.h`, with
+`HasUnpinnedSiblingSeriesRule()` beside `HasPinnedSiblingSeriesRule()`) now decides both directions: `DeleteTimer()`
+refuses the delete with a notification, and `UpdateTimer()` saves a re-keyed rule but leaves the old one, as it already
+did for the unpinned case. The notification does not send the user to Dispatcharr's interface to delete one rule: its
+series dialog deletes through the same endpoint with the rule's source (read in its frontend at v0.33.0 by the branch's
+review), so it removes both as well; it says the two can only go together. Cases in `tests/test_timer_identity.cpp`; the glue harness's `functional` seeds the pair and
+fails five ways on the code before the fix (both rules gone after the pinned delete, and again after the re-key).
+Live on Kodi 22.0-RC1 with the PR's CI build (2026-11-12), disposable rules seeded before Kodi started: deleting
+either rule of a pinned/unpinned pair was refused (the addon's warning, its notification and Kodi's own error), and
+both stayed on the server; a lone pinned rule, a lone unpinned rule and one of two rules pinned to different sources
+deleted normally, the other of those two staying; editing a pair rule's "Search guide for" saved the new pinned rule
+and left the pair, with the "left in place" notification. Dispatcharr's own interface deletes with the same query
+(its frontend's series-rule delete sends `tvg_id`, `title` and the rule's `epg_source_id`); that request, replayed
+for the pinned rule, removed both, which is what the notification now says. That live check was of the `Piers` build; `Omega`'s change is the same code, checked here by the unit tests and the glue harness.
+
 #### The glue harness's fake Dispatcharr keys series rules more loosely than the real server
 
 **Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
