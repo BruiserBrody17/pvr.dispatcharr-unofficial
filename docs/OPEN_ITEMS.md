@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**7 open, 407 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**7 open, 408 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,15 +13,11 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One from the 2026-11-09 change that buffers every audio track: the live checks it has not had yet.
-- One, LOW, from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (six read-only
-  reviews by area, the sixth over the seams between the addon, the plugins, the test fakes and the docs; each finding
-  checked against the code before it was filed): in the glue harness's fake server.
-  Nine of the sweep's eleven findings hold here; the other two are `Piers` only (an in-progress recording's segment
-  cache with two streams of it open, which `Omega` never has, and a table in `BRANCHES.md`, which `Omega` does not
-  carry). Its five in the release gate and the CI path filter and its `timeshift_buffer` regression (in no release) were
-  fixed on 2026-11-10, its two in the addon on 2026-11-12.
+- One from fixing the last of the 2026-11-10 sweep: reading Dispatcharr's series-rule delete to match the glue
+  harness's fake to it showed that a pinned delete also removes an unpinned rule of the same title and `tvg_id`.
 
-Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
+Nothing is left from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (nine of its
+eleven findings held here, the other two being `Piers` only; all fixed by 2026-11-12), nor from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
 held here), from the 2026-10-19 live check of four audit fixes on `Piers`, from the 2026-10-23 sweep, made on `Piers`
 and checked against `Omega`'s code (all 17 findings held here, the last fixed on 2026-11-04), from the 2026-10-24 sweep (one reviewer
 over the whole project, seven findings), or from the 2026-10-31 sweep, made on `Piers` and checked against `Omega`'s
@@ -33,12 +29,12 @@ recording's 20 s retry budget).
 | Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 0 |
-| Open: Release, CI and manual testing | 1 |
+| Open: Design decision needed | 1 |
+| Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 3 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 355 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 356 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 42 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -71,20 +67,26 @@ None open.
 
 ### Design decision needed
 
-None open.
+#### Deleting a pinned series rule also deletes an unpinned one beside it
+
+**Opened 2026-11-12, found while matching the glue harness's fake to Dispatcharr's source; MEDIUM by consequence,
+confirmed by reading `SeriesRulesAPIView.delete()` at the v0.33.0 tag, not reproduced live.** Given an
+`epg_source_id`, the view's match function returns true for a rule pinned to that source and for one with no source
+(`return rule_source is None or rule_source == epg_source_id`; its comment says a DVR "entire series" delete forwards the
+recording's source and must still match the unsourced rule). The addon sends the source whenever the rule has one, so
+with a pinned rule (title, `tvg_id`, 5) and an unpinned rule (title, `tvg_id`) side by side, deleting the pinned one
+from Kodi removes both rules, and the purge that follows (`future_recordings_for_series()` with source 5) removes the
+recordings tagged 5 and the untagged ones. The same delete runs after an edit that replaces a pinned rule
+(`ShouldReplaceSeriesRuleOnEdit()`, whose comment says the source-scoped delete "removes exactly that rule"). This is the
+mirror image of what `HasPinnedSiblingSeriesRule()` guards (an unpinned delete taking the pinned rule). How common the
+pair is is not known: Dispatcharr's own guide button pins, a Kodi-created rule is unpinned. Options: (a) refuse the
+delete from Kodi when the cache holds an unpinned sibling, as for an empty-title rule; (b) delete, then re-create the
+unpinned sibling from the cache (its recordings would still be purged); (c) document it. Needs a decision; a live check
+on disposable rules first.
 
 ### Release, CI and manual testing
 
-#### The glue harness's fake Dispatcharr keys series rules more loosely than the real server
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading.** Dispatcharr keys a series rule by (`tvg_id`, `title`,
-`epg_source_id`) and its delete takes all three as query parameters (the series-rule delete row of the endpoint table in
-`docs/API_NOTES.md`; `BuildSeriesRuleDeleteQuery()`). `tests/glue/fake_dispatcharr.py` replaces a rule on (`title`, `tvg_id`) and deletes
-every rule with the given title, whatever else the request says. A regression that sent a wrong or missing `tvg_id` or
-`epg_source_id` on a delete, which on a real server removes nothing or the wrong rule, would therefore still pass the
-harness's timer scenarios. Fix: have the fake match on all three fields, seed two rules that share a title and assert
-that deleting one leaves the other.
+None open.
 
 ### Upstream (Dispatcharr) or documentation accuracy
 

@@ -2,6 +2,7 @@
 // dev-kit's CInstancePVRClient fills in), against fake_dispatcharr.py, from several threads.
 #include "PVRDispatcharr.h"
 #include "kodi_abi.h"
+#include "TimerIdentity.h"
 #include <kodi/addon-instance/PVR.h>
 #include <atomic>
 #include <chrono>
@@ -10,6 +11,7 @@
 #include <curl/curl.h>
 #include <map>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <random>
 #include <string>
 #include <thread>
@@ -392,6 +394,8 @@ int main(int argc, char** argv)
     // occurrence it materialized; the constructor's zone sync then selects the same zone in the setting.
     ctl("seed_offset_check=1");
   }
+  if (what == "timer_id_range")
+    ctl("seed_huge_ids=1");
   if (what == "connection_resend")
     g_connDrop = true;
   KODI_ADDON_INSTANCE_STRUCT* inst = MakePvrInstanceStruct();
@@ -906,6 +910,73 @@ int main(int argc, char** argv)
           FAIL("a titled series rule could not be deleted");
         if (stat("DELETE /api/channels/series-rules/") != deletes + 1)
           FAIL("deleting a titled series rule did not reach the server");
+        if (http("/__db").find("Show 3-5") != std::string::npos)
+          FAIL("the deleted series rule 'Show 3-5' is still on the server");
+      }
+    }
+    // A series rule delete names the rule exactly: Dispatcharr keys a rule by (tvg_id, title, epg_source_id), and the
+    // fake now matches as it does, so a delete with a wrong or missing tvg_id or source removes nothing or the wrong
+    // rule. Four channel-less rules share a title: two tvg_ids, and one tvg_id pinned to sources 5 and 7. Deleting one
+    // of each pair from Kodi must leave its sibling.
+    {
+      ctl("seed_sibling_rules=1");
+      struct Sibling
+      {
+        const char* tvgId;
+        int source;
+      };
+      const Sibling siblings[] = {{"sib.one", 0}, {"sib.two", 0}, {"sib.three", 5}, {"sib.three", 7}};
+      Collected got;
+      A()->GetTimers(I(), (PVR_HANDLE)&got);
+      auto find = [&](const Sibling& sib) -> const PVR_TIMER*
+      {
+        const unsigned int index = dispatcharr::ComputeSeriesRuleClientIndex("Sibling Show", sib.tvgId, sib.source);
+        for (const auto& x : got.timers)
+          if (x.iTimerType == 2 && x.iClientIndex == index)
+            return &x;
+        return nullptr;
+      };
+      auto onServer = [&](const Sibling& sib)
+      {
+        const auto db = nlohmann::json::parse(http("/__db"), nullptr, false);
+        if (!db.is_object() || !db.contains("series"))
+          return false;
+        for (const auto& r : db["series"])
+          if (r.value("title", "") == "Sibling Show" && r.value("tvg_id", "") == sib.tvgId &&
+              r.value("epg_source_id", 0) == sib.source)
+            return true;
+        return false;
+      };
+      bool listed = true;
+      for (const auto& sib : siblings)
+        if (!find(sib))
+        {
+          FAIL("the seeded series rule (%s, source %d) was not listed as a timer", sib.tvgId, sib.source);
+          listed = false;
+        }
+      if (listed)
+      {
+        // Each delete is followed by the check that its sibling is still there and that it is gone.
+        for (int pair : {0, 2})
+        {
+          const Sibling& gone = siblings[pair];
+          const Sibling& kept = siblings[pair + 1];
+          PVR_TIMER del = *find(gone);
+          if (A()->DeleteTimer(I(), &del, false) != PVR_ERROR_NO_ERROR)
+            FAIL("deleting the series rule (%s, source %d) failed", gone.tvgId, gone.source);
+          if (onServer(gone))
+            FAIL("the deleted series rule (%s, source %d) is still on the server", gone.tvgId, gone.source);
+          if (!onServer(kept))
+            FAIL("deleting (%s, source %d) also removed (%s, source %d)", gone.tvgId, gone.source, kept.tvgId,
+                 kept.source);
+        }
+        for (int pair : {1, 3})
+        {
+          PVR_TIMER del = *find(siblings[pair]);
+          A()->DeleteTimer(I(), &del, false);
+        }
+        if (http("/__db").find("Sibling Show") != std::string::npos)
+          FAIL("the sibling series rules were not all deleted");
       }
     }
     // A manual timer's typed name is written to the server (it would otherwise give way to the channel's name once the
@@ -1329,6 +1400,51 @@ int main(int argc, char** argv)
       if (ConnSnapshot() != std::vector<std::string>{"connected"})
         FAIL("a five-second outage reported [%s], expected only [connected]", Joined(ConnSnapshot()).c_str());
     }
+  }
+  else if (what == "timer_id_range")
+  {
+    // A recording or recurring rule whose id no ClientIndex can carry (dispatcharr::IsEncodableTimerId()) is left out
+    // of the Timers list and its count alike, logged once per kind. Before, the recording 0x20000005 was listed with
+    // ClientIndex 0x20000005, which DeleteTimer() decoded as recurring rule 5. The seed (before the constructor) has
+    // an ordinary recurring rule 5 and recording 902 beside a huge recording, and a huge rule whose occurrence 903
+    // has an ordinary id.
+    g_logWatch = "out of the Timers list";
+    g_logWatchCount = 0;
+    int amount = -1;
+    A()->GetTimersAmount(I(), &amount);
+    Collected got;
+    A()->GetTimers(I(), (PVR_HANDLE)&got);
+    INFO("timers: amount %d, listed %zu, warnings %d", amount, got.timers.size(), g_logWatchCount.load());
+    if (amount != (int)got.timers.size())
+      FAIL("GetTimersAmount() says %d, GetTimers() listed %zu", amount, got.timers.size());
+    bool ordinaryRule = false, ordinaryRecording = false, orphan = false;
+    for (const auto& x : got.timers)
+    {
+      const unsigned int index = x.iClientIndex, parent = x.iParentClientIndex;
+      // 0x20000005 is also rule 5's own ClientIndex, the collision itself: only a one-off timer with it is wrong.
+      if ((index == 0x20000005u && x.iTimerType != 4) || index == (0x20000006u | 0x20000000u))
+        FAIL("a timer with an out-of-range id was listed (ClientIndex %08x, type %d)", index, x.iTimerType);
+      if (index == (5u | 0x20000000u) && x.iTimerType == 4)
+        ordinaryRule = true;
+      if (index == 902u)
+        ordinaryRecording = true;
+      // The left-out rule's occurrence stays, as a stand-alone timer: no parent rather than one that decodes to
+      // something else.
+      if (index == 903u)
+      {
+        orphan = true;
+        if (parent != 0)
+          FAIL("the occurrence of the left-out rule was given the parent %08x", parent);
+      }
+    }
+    if (!ordinaryRule || !ordinaryRecording || !orphan)
+      FAIL("the ordinary recurring rule 5 (%d), recording 902 (%d) or occurrence 903 (%d) was not listed", ordinaryRule,
+           ordinaryRecording, orphan);
+    // A recording and a recurring rule were left out: one warning each, and none on the second call.
+    A()->GetTimers(I(), (PVR_HANDLE)&got);
+    if (g_logWatchCount != 2)
+      FAIL("expected one warning per kind left out, got %d", g_logWatchCount.load());
+    g_logWatch = nullptr;
   }
   else if (what == "finished_hls_gone")
   {
