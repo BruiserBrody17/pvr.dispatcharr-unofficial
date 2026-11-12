@@ -6,6 +6,54 @@
 
 ### Fixed
 
+#### A recording or recurring-rule id outside 1 to 0x1FFFFFFF is taken for another kind of timer
+
+**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, the decoding reproduced with a small program, the delete and update that would
+follow read in the code, not run.** `GetTimers()` gives a one-off recording's timer the server's recording id as its
+client index unchanged, a recurring rule `rule.id | kRecurringRuleIndexFlag` (bit 29) and a series rule a hashed index
+with bit 30 set; `DecodeTimerClientIndex()` (`src/TimerIdentity.h`) tests bit 30, then bit 29. The comment beside the
+recurring case says its namespace bit means it "can never collide", which holds only while every server id stays below
+0x20000000 (about 537 million). A recording whose id is 0x20000005 decodes as recurring rule 5, so `DeleteTimer()` on it
+would call `DeleteRecurringRule()` for rule 5, which removes that rule and its future recordings, and `UpdateTimer()`
+would PATCH rule 5; an id with bit 30 set, or a negative one, decodes as a series rule; and an id of 0 is the value
+Kodi uses for "no index". Dispatcharr's ids are auto-increment integers from 1, so reaching this takes a server that
+has handed out more than half a billion of them, or a malformed answer. Fix: leave out, and log once, any recording or
+recurring rule whose id is 0 or less or 0x20000000 or more, in `GetTimers()` and `GetTimersAmount()` alike (the two
+counts must agree), with the range check as a free function tested in `tests/test_timer_identity.cpp`; optionally have
+delete and update confirm that a decoded rule id is one in `m_cachedRecurringRules` before acting on it.
+
+**Fixed 2026-11-12, as proposed, without the optional check against `m_cachedRecurringRules`.** `IsEncodableTimerId()`
+(`src/TimerIdentity.h`) accepts 1 to 0x1FFFFFFF; `GetTimers()` leaves out any recording or recurring rule outside it
+(logged once per run, `LogUnencodableTimerIdOnce()`), `GetTimersAmount()` applies the same filter so the counts agree,
+and an occurrence whose recurring rule was left out gets no parent index rather than one that decodes to something
+else. With nothing outside the range ever handed to Kodi, a ClientIndex coming back always decodes to what it was
+made from, so the delete-and-update check was not needed. Two cases in `tests/test_timer_identity.cpp` pin the range
+(both ends, 0, negatives, bits 29 and 30) and the round trip through `DecodeTimerClientIndex()`, including the sweep's
+0x20000005. The wiring (the two filters and the parent index) was read, not run against ids that large: the glue
+harness's `functional` scenario still passes with the ordinary ids.
+
+#### `HasActiveOrImminentOccurrence()` overflows a 32-bit `time_t` for a start far in the past
+
+**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with a `-m32` build and under UBSan.** `src/ManagedRecurringRule.cpp`
+tests `rec.startTime - now < safetyMarginSeconds` for an upcoming recording whose end is still ahead. A start more than
+2^31 seconds before now, which is what a date clamped to `kEarliestRepresentableTime` is, overflows that subtraction
+where `time_t` is 32 bits: UBSan reports the signed overflow, and the `-m32` build answers false where the 64-bit build
+answers true. Its callers are the two guards that put off a rule PATCH while an occurrence is recording or about to
+(`ShouldRenewRecurringRule()` and `PlanRecurringRuleAdoption()`), so on such a build that recording no longer holds the
+PATCH back. Narrow: a 32-bit `time_t`, and a server answer with an upcoming recording whose start parsed to the floor.
+The same class as `CLOSED_ITEMS.md`'s "Windows (and 32-bit) parse a pre-1970 (pre-1901) date to a floor that later
+subtractions overflow", which fixed the other subtractions and missed this one. Fix: compare in 64 bits, and add a case
+with a floor-valued start to `tests/test_managed_recurring_rule.cpp` so that `unit-tests-32bit` (which runs under
+UBSan) pins it.
+
+**Fixed 2026-11-12, as proposed.** The comparison in `HasActiveOrImminentOccurrence()` is made in 64 bits. A case in
+`tests/test_managed_recurring_rule.cpp` gives an upcoming occurrence a start at `kEarliestRepresentableTime`: in a
+`-m32` build under UBSan (CI's `unit-tests-32bit` flags) it aborts with "signed integer overflow: -2115861248 -
+1767225600 cannot be represented in type 'long int'" with the old subtraction and passes with the fix, as does the whole
+32-bit suite.
+
 #### `timeshift_buffer` 0.8.18 never becomes ready on a channel that declares a video stream it does not send
 
 **Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against

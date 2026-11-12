@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**9 open, 405 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**7 open, 407 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,13 +13,13 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One from the 2026-11-09 change that buffers every audio track: the live checks it has not had yet.
-- Three, all LOW, from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (six
-  read-only reviews by area, the sixth over the seams between the addon, the plugins, the test fakes and the docs; each
-  finding checked against the code before it was filed): two in the addon and one in the glue harness's fake server.
+- One, LOW, from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (six read-only
+  reviews by area, the sixth over the seams between the addon, the plugins, the test fakes and the docs; each finding
+  checked against the code before it was filed): in the glue harness's fake server.
   Nine of the sweep's eleven findings hold here; the other two are `Piers` only (an in-progress recording's segment
   cache with two streams of it open, which `Omega` never has, and a table in `BRANCHES.md`, which `Omega` does not
   carry). Its five in the release gate and the CI path filter and its `timeshift_buffer` regression (in no release) were
-  fixed on 2026-11-10.
+  fixed on 2026-11-10, its two in the addon on 2026-11-12.
 
 Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
 held here), from the 2026-10-19 live check of four audit fixes on `Piers`, from the 2026-10-23 sweep, made on `Piers`
@@ -31,14 +31,14 @@ recording's 20 s retry budget).
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 2 |
+| Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 3 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 353 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 355 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 42 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -63,37 +63,7 @@ that the restart could land past the addon's 30 s. Close this with how each was 
 
 ### Fix known, not yet done
 
-#### A recording or recurring-rule id outside 1 to 0x1FFFFFFF is taken for another kind of timer
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, the decoding reproduced with a small program, the delete and update that would
-follow read in the code, not run.** `GetTimers()` gives a one-off recording's timer the server's recording id as its
-client index unchanged, a recurring rule `rule.id | kRecurringRuleIndexFlag` (bit 29) and a series rule a hashed index
-with bit 30 set; `DecodeTimerClientIndex()` (`src/TimerIdentity.h`) tests bit 30, then bit 29. The comment beside the
-recurring case says its namespace bit means it "can never collide", which holds only while every server id stays below
-0x20000000 (about 537 million). A recording whose id is 0x20000005 decodes as recurring rule 5, so `DeleteTimer()` on it
-would call `DeleteRecurringRule()` for rule 5, which removes that rule and its future recordings, and `UpdateTimer()`
-would PATCH rule 5; an id with bit 30 set, or a negative one, decodes as a series rule; and an id of 0 is the value
-Kodi uses for "no index". Dispatcharr's ids are auto-increment integers from 1, so reaching this takes a server that
-has handed out more than half a billion of them, or a malformed answer. Fix: leave out, and log once, any recording or
-recurring rule whose id is 0 or less or 0x20000000 or more, in `GetTimers()` and `GetTimersAmount()` alike (the two
-counts must agree), with the range check as a free function tested in `tests/test_timer_identity.cpp`; optionally have
-delete and update confirm that a decoded rule id is one in `m_cachedRecurringRules` before acting on it.
-
-#### `HasActiveOrImminentOccurrence()` overflows a 32-bit `time_t` for a start far in the past
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, reproduced with a `-m32` build and under UBSan.** `src/ManagedRecurringRule.cpp`
-tests `rec.startTime - now < safetyMarginSeconds` for an upcoming recording whose end is still ahead. A start more than
-2^31 seconds before now, which is what a date clamped to `kEarliestRepresentableTime` is, overflows that subtraction
-where `time_t` is 32 bits: UBSan reports the signed overflow, and the `-m32` build answers false where the 64-bit build
-answers true. Its callers are the two guards that put off a rule PATCH while an occurrence is recording or about to
-(`ShouldRenewRecurringRule()` and `PlanRecurringRuleAdoption()`), so on such a build that recording no longer holds the
-PATCH back. Narrow: a 32-bit `time_t`, and a server answer with an upcoming recording whose start parsed to the floor.
-The same class as `CLOSED_ITEMS.md`'s "Windows (and 32-bit) parse a pre-1970 (pre-1901) date to a floor that later
-subtractions overflow", which fixed the other subtractions and missed this one. Fix: compare in 64 bits, and add a case
-with a floor-valued start to `tests/test_managed_recurring_rule.cpp` so that `unit-tests-32bit` (which runs under
-UBSan) pins it.
+None open.
 
 ### Architectural / concurrency
 

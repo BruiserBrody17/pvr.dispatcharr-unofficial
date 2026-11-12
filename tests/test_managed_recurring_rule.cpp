@@ -1,4 +1,5 @@
 #include "ManagedRecurringRule.h"
+#include "TimeUtil.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -272,6 +273,20 @@ TEST_CASE("HasActiveOrImminentOccurrence treats a start exactly at the margin as
   CHECK(HasActiveOrImminentOccurrence(rule, {rec}, true, kNow, 3600));
   rec.startTime = kNow + 3600;
   CHECK_FALSE(HasActiveOrImminentOccurrence(rule, {rec}, true, kNow, 3600));
+}
+
+TEST_CASE("HasActiveOrImminentOccurrence holds back for a start clamped to the earliest representable time",
+          "[ManagedRecurringRule]")
+{
+  // The start is more than 2^31 s before now on a 32-bit time_t, where `startTime - now` overflowed and answered
+  // false (unit-tests-32bit runs this under UBSan). The 2026-11-10 sweep.
+  RecurringRule rule = Rule(5, "x [Kodi]");
+  Recording rec;
+  rec.recurringRuleId = 5;
+  rec.isUpcoming = true;
+  rec.startTime = kEarliestRepresentableTime;
+  rec.endTime = kNow + 1800;
+  CHECK(HasActiveOrImminentOccurrence(rule, {rec}, true, kNow, 3600));
 }
 
 TEST_CASE("EvaluateInitialAdoption skips a rule whose end date is exactly now, keeps one a second later",
