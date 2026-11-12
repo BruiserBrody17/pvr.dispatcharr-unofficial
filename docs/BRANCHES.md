@@ -47,9 +47,15 @@ What differs between the branches, beyond comments (a handful of comments name `
 | Kodi ABI shape in the glue harness | `tests/glue/kodi_abi.h`, `collected.h`, `pvr_stub.cpp`, the recorded-stream parts of `pvr_driver.cpp` and `stream_driver.cpp`, `fake_dispatcharr.py` |
 | Build pin | `.github/workflows/build.yml` (`Piers` branch trigger, `KODI_BRANCH`, `KODI_COMMIT`) |
 | Release line | `addon.xml.in` and `package.mk` versions, `CHANGELOG.md` |
+| Kodi 22 only | `src/StreamWarmUp.h` (the Off-mode warm-up) and `IsViewerRequestedOpen()` in `src/RecordingVisibility.{h,cpp}`, each with its test; `src/RecordedStreamRegistry.h` and the `InProgressSegmentCache.h` join check (above) with theirs; the matching lines of the root `CMakeLists.txt` and `tests/CMakeLists.txt` |
+| Android link | the root `CMakeLists.txt` links brotli when it is present (Kodi 22's depends build curl with it, Kodi 21's do not) |
+| Release gate and CI path filter | `tools/check_release_zip.py` names the branch's CoreELEC asset (`coreelec-aarch64` on `Piers`, `coreelec-armv7` on `Omega`); `tools/tests/test_version_sync.py` its tag suffix, `test_check_release_zip.py` and `test_ci_build_needed.py` the same; `tools/doc_refs_baseline.txt` each branch's own docs |
 
-Everything else (the plugins, `tools/`, the other `src/` files, most docs) is the same file on both and cherry-picks
-cleanly. The plugins are shared code: a plugin fix is made once and lands on both.
+Everything else (the plugins, the rest of `tools/`, the other `src/` files, most docs) is the same file on both and
+cherry-picks cleanly. A handful of small `src/` headers differ in comments only (`CatchUpUtil.h`, `LiveEdgeMargin.h`,
+`RecordingHttpUtil.h`, `SegmentLookup.h`, `StreamPropertyUtil.h`, `StreamSeek.h`, checked 2026-11-12). The plugins are
+shared code: a plugin fix is made once and lands on both. `tools/` is shared too, except where it names a branch's
+assets, tag suffix or versions, as in the table.
 
 ### Ported from Omega
 

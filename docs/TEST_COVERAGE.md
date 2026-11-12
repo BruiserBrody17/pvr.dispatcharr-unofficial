@@ -2079,7 +2079,9 @@ rule's id becomes a ClientIndex only between 1 and 0x1FFFFFFF, below the recurri
 decoded as another kind of timer (a recording 0x20000005 as recurring rule 5, whose delete removes the rule and its
 future recordings; `docs/CLOSED_ITEMS.md`, "A recording or recurring-rule id outside 1 to 0x1FFFFFFF..."). The tests
 pin both ends, 0, negatives and bits 29 and 30, and the round trip through `DecodeTimerClientIndex()` for both kinds.
-`GetTimers()` and `GetTimersAmount()` leave such a timer out alike; that wiring was read, not run with ids that large.
+`GetTimers()` and `GetTimersAmount()` leave such a timer out alike. The wiring is the glue harness's `timer_id_range`
+(in CI): a huge one-off recording and a huge recurring rule seeded beside an ordinary rule 5; with the range check
+disabled it fails four ways, the first a one-off timer with ClientIndex 0x20000005, rule 5's own index.
 
 ### `TimerRequestBuilder`
 
@@ -2471,6 +2473,13 @@ fails. On the old code the stamp was written beside the old key.
 a rotated refresh token"). A network path, so the glue harness: the fake's `rotate_refresh` knob plays SimpleJWT with
 rotation and blacklisting on, and `auth_refresh_rotated` (in CI) lapses the token four times and requires four
 refreshes, no 401 and no password login. On the old code two of the four were rejected and fell back to a login.
+
+2026-11-12: the fake's series rules follow Dispatcharr's own `SeriesRulesAPIView` (read at v0.33.0): upsert by
+(`tvg_id`, `title`, `epg_source_id`) with the unpinned rule upgraded in place, and a delete that always compares
+`tvg_id`, compares `title` when sent, and with a source matches that source's rule and an unpinned one. Before, it
+replaced on (`title`, `tvg_id`) and deleted every rule with the title, so a delete that sent a wrong `tvg_id` or no
+source passed. The `functional` scenario's four seeded sibling rules now fail it: three failures with `tvg_id` left out
+of `BuildSeriesRuleDeleteQuery()`, one with the source left out.
 
 ### Test-extraction passes and hardening sweeps
 

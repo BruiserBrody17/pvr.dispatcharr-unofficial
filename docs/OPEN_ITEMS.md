@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**9 open, 413 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**8 open, 415 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -14,28 +14,27 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One from the 2026-11-09 change that buffers every audio track: the live checks it has not had yet.
-- Two of the eleven, both LOW, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, the sixth over the
-  seams between the addon, the plugins, the test fakes and the docs; each finding checked against the code before it
-  was filed): one in the glue harness's fake server and one stale table in `BRANCHES.md`. Its five in the release gate
-  and the CI path filter and its `timeshift_buffer` regression (in no release) were fixed on 2026-11-10, its three in
-  the addon on 2026-11-12.
+- One from fixing the last of the 2026-11-10 sweep: reading Dispatcharr's series-rule delete to match the glue
+  harness's fake to it showed that a pinned delete also removes an unpinned rule of the same title and `tvg_id`.
 
 Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-23 sweep
 (five read-only reviews by area, 17 findings, the last fixed on 2026-11-04), from the 2026-10-24 sweep
-(one reviewer over the whole project, seven findings) or from the 2026-10-31 sweep (eleven findings: nine fixed, two
-closed without a change, the last on 2026-11-04 by keeping a recording's 20 s retry budget).
+(one reviewer over the whole project, seven findings), from the 2026-10-31 sweep (eleven findings: nine fixed, two
+closed without a change, the last on 2026-11-04 by keeping a recording's 20 s retry budget) or from the 2026-11-10
+sweep (eleven findings, all fixed: the release gate, the CI path filter and a `timeshift_buffer` regression on
+2026-11-10, the addon's three, the glue fake and the `BRANCHES.md` table on 2026-11-12).
 
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 0 |
-| Open: Release, CI and manual testing | 2 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 3 |
+| Open: Design decision needed | 1 |
+| Open: Release, CI and manual testing | 1 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 3 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 361 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 363 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 42 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -68,7 +67,23 @@ None open.
 
 ### Design decision needed
 
-None open.
+#### Deleting a pinned series rule also deletes an unpinned one beside it
+
+**Opened 2026-11-12, found while matching the glue harness's fake to Dispatcharr's source; MEDIUM by consequence,
+confirmed by reading `SeriesRulesAPIView.delete()` at the v0.33.0 tag, not reproduced live.** Given an
+`epg_source_id`, the view's match function returns true for a rule pinned to that source and for one with no source
+(`return rule_source is None or rule_source == epg_source_id`; its comment says a DVR "entire series" delete forwards the
+recording's source and must still match the unsourced rule). The addon sends the source whenever the rule has one, so
+with a pinned rule (title, `tvg_id`, 5) and an unpinned rule (title, `tvg_id`) side by side, deleting the pinned one
+from Kodi removes both rules, and the purge that follows (`future_recordings_for_series()` with source 5) removes the
+recordings tagged 5 and the untagged ones. The same delete runs after an edit that replaces a pinned rule
+(`ShouldReplaceSeriesRuleOnEdit()`, whose comment says the source-scoped delete "removes exactly that rule"). This is the
+mirror image of what `HasPinnedSiblingSeriesRule()` guards (an unpinned delete taking the pinned rule). How common the
+pair is is not known: Dispatcharr's own guide button pins, a Kodi-created rule is unpinned. Options: (a) refuse the
+delete from Kodi when the cache holds an unpinned sibling, as for an empty-title rule; (b) delete, then re-create the
+unpinned sibling from the cache (its recordings would still be purged); (c) document it. Needs a decision; a live check
+on disposable rules first.
+
 
 ### Release, CI and manual testing
 
@@ -76,32 +91,9 @@ None open.
 
 **Opened 2026-10-15, what is left of the Kodi 22 port once the addon was confirmed on Kodi 22.0-RC1** (the closed entry "Kodi 22 (Piers) refused the addon" in `CLOSED_ITEMS.md` has what was done and how it was checked, including the other platforms' builds, their device runs and the first release). (1) Raise the pinned Kodi commit (`KODI_COMMIT`) from the `22.0rc1-Piers` tag to 22.0 final when it ships, and repeat the smoke run. (2) Not checked on Kodi 22: audio passthrough, a long soak and HEVC. (3) When Kodi 22.0 final ships and (1) is done: cut the next `Piers` release from the final without the pre-release mark (`0.14.0-Piers` to `0.14.3-Piers` were cut from RC1 and all carry it) so the newest-release badge can follow Kodi 22, and decide whether the repository's default branch should move from `Omega` to `Piers` (it stays on `Omega` while most users are on Kodi 21: the badge and the front-page README should send a Kodi 21 user to a build that works).
 
-#### The glue harness's fake Dispatcharr keys series rules more loosely than the real server
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading.** Dispatcharr keys a series rule by (`tvg_id`, `title`,
-`epg_source_id`) and its delete takes all three as query parameters (the series-rule delete row of the endpoint table in
-`docs/API_NOTES.md`; `BuildSeriesRuleDeleteQuery()`). `tests/glue/fake_dispatcharr.py` replaces a rule on (`title`, `tvg_id`) and deletes
-every rule with the given title, whatever else the request says. A regression that sent a wrong or missing `tvg_id` or
-`epg_source_id` on a delete, which on a real server removes nothing or the wrong rule, would therefore still pass the
-harness's timer scenarios. Fix: have the fake match on all three fields, seed two rules that share a title and assert
-that deleting one leaves the other.
+None open.
 
 ### Upstream (Dispatcharr) or documentation accuracy
-
-#### `BRANCHES.md`'s account of what differs between the branches has fallen behind
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed with `git diff --stat Omega Piers`.** The table of what differs
-(`docs/BRANCHES.md`, under "Fixes that need to reach both") closes with "Everything else (the plugins, `tools/`, the
-other `src/` files, most docs) is the same file on both and cherry-picks cleanly". Since it was written:
-`src/StreamWarmUp.h` and its test exist on `Piers` only; `src/RecordingVisibility.{h,cpp}` and their test differ
-(`IsViewerRequestedOpen()` is on `Piers` only); the root `CMakeLists.txt` and `tests/CMakeLists.txt` differ with them;
-`tools/check_release_zip.py` differs in the CoreELEC asset name it expects, and three files under `tools/tests/` and
-`tools/doc_refs_baseline.txt` differ too; and half a dozen other `src/` headers differ by a few lines each (not checked
-whether those are comments only, which the table's heading excludes). Someone porting by the table would expect all of
-these to cherry-pick cleanly. Fix: add the rows, and say that `tools/` is shared except where it names a branch's
-assets or versions.
 
 #### Dispatcharr schedules a recurring rule's occurrence that starts inside a spring-forward gap to end before it starts
 

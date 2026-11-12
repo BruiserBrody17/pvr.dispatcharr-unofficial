@@ -63,6 +63,7 @@ run "close racing reads, four streams" TMO=30 T=120 -- multi_close_race
 run "destroy with recorded streams open" TMO=30 T=120 -- multi_dtor
 run "destroy with streams open"  TMO=30 T=120 -- dtor_inflight
 run "PVR surface: functional"    BIN=pvr_harness T=180 -- functional
+run "PVR: timer ids out of range" BIN=pvr_harness T=60 -- timer_id_range
 run "PVR: several recorded streams" BIN=pvr_harness T=60 -- streams2
 run "PVR: finished recording, playlist gone" BIN=pvr_harness T=60 -- finished_hls_gone
 run "PVR: no-file notice only on Play" BIN=pvr_harness T=60 -- no_file_notice

@@ -6,6 +6,50 @@
 
 ### Fixed
 
+#### The glue harness's fake Dispatcharr keys series rules more loosely than the real server
+
+**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** Dispatcharr keys a series rule by (`tvg_id`, `title`,
+`epg_source_id`) and its delete takes all three as query parameters (the series-rule delete row of the endpoint table in
+`docs/API_NOTES.md`; `BuildSeriesRuleDeleteQuery()`). `tests/glue/fake_dispatcharr.py` replaces a rule on (`title`, `tvg_id`) and deletes
+every rule with the given title, whatever else the request says. A regression that sent a wrong or missing `tvg_id` or
+`epg_source_id` on a delete, which on a real server removes nothing or the wrong rule, would therefore still pass the
+harness's timer scenarios. Fix: have the fake match on all three fields, seed two rules that share a title and assert
+that deleting one leaves the other.
+
+**Fixed 2026-11-12, as proposed, with the fake taken from Dispatcharr's own source rather than from this entry.** Read
+at the v0.33.0 tag (the lab's version; `main` is the same there), `SeriesRulesAPIView.post()` upserts by (`tvg_id`,
+`title`, `epg_source_id`) and upgrades the unpinned rule in place for a pinned request with no exact match, and
+`delete()`'s `_matches()` always compares `tvg_id` (blank when not sent), compares `title` only when sent, and, given an
+`epg_source_id`, matches that source's rule and also an unpinned one. `tests/glue/fake_dispatcharr.py` now does exactly
+that. The `functional` scenario seeds four channel-less rules sharing a title (two `tvg_id`s, one `tvg_id` pinned to
+sources 5 and 7), deletes one of each pair from Kodi, and checks the deleted one is gone and its sibling kept; it also
+checks that the deleted titled rule left the server, which nothing checked before. Mutation-checked: with
+`BuildSeriesRuleDeleteQuery()` leaving out `tvg_id` the scenario fails three ways, leaving out the source it fails with
+"deleting (sib.three, source 5) also removed (sib.three, source 7)". Reading `_matches()` turned up a new item: a pinned
+delete removes an unpinned rule of the same title and `tvg_id` (`OPEN_ITEMS.md`, "Deleting a pinned series rule also
+deletes an unpinned one beside it").
+
+#### `BRANCHES.md`'s account of what differs between the branches has fallen behind
+
+**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed with `git diff --stat Omega Piers`.** The table of what differs
+(`docs/BRANCHES.md`, under "Fixes that need to reach both") closes with "Everything else (the plugins, `tools/`, the
+other `src/` files, most docs) is the same file on both and cherry-picks cleanly". Since it was written:
+`src/StreamWarmUp.h` and its test exist on `Piers` only; `src/RecordingVisibility.{h,cpp}` and their test differ
+(`IsViewerRequestedOpen()` is on `Piers` only); the root `CMakeLists.txt` and `tests/CMakeLists.txt` differ with them;
+`tools/check_release_zip.py` differs in the CoreELEC asset name it expects, and three files under `tools/tests/` and
+`tools/doc_refs_baseline.txt` differ too; and half a dozen other `src/` headers differ by a few lines each (not checked
+whether those are comments only, which the table's heading excludes). Someone porting by the table would expect all of
+these to cherry-pick cleanly. Fix: add the rows, and say that `tools/` is shared except where it names a branch's
+assets or versions.
+
+**Fixed 2026-11-12, as proposed.** The table gained rows for the Kodi 22-only code (`StreamWarmUp.h`,
+`IsViewerRequestedOpen()`, `RecordedStreamRegistry.h`, the segment-cache join check and their CMake lines), the Android
+brotli link and the release gate's and CI path filter's branch-specific names. The six small headers were checked:
+they differ in comments only, and the text now names them. `tools/` is described as shared except where it names a
+branch's assets, tag suffix or versions.
+
 #### An in-progress recording's shared segment cache can mix two streams' byte offsets (`Piers` only)
 
 **Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
