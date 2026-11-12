@@ -32,6 +32,11 @@ made from, so the delete-and-update check was not needed. Two cases in `tests/te
 (both ends, 0, negatives, bits 29 and 30) and the round trip through `DecodeTimerClientIndex()`, including the sweep's
 0x20000005. The wiring (the two filters and the parent index) was read, not run against ids that large: the glue
 harness's `functional` scenario still passes with the ordinary ids.
+Live on Kodi 22.0-RC1 and Kodi 21.3 against a real Dispatcharr (2026-11-12, each branch's CI build), with ordinary
+ids: a disposable one-day recurring rule showed in Kodi with its occurrence inside it and a one-off timer beside it;
+deleting the occurrence from Kodi removed only that recording, deleting the rule removed it and left no occurrence,
+deleting the one-off removed it (each re-read 404 on the server), and the "left a ... out of the Timers list" warning
+never appeared.
 
 #### `HasActiveOrImminentOccurrence()` overflows a 32-bit `time_t` for a start far in the past
 
