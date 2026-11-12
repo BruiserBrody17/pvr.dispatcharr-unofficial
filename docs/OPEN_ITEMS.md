@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**10 open, 404 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**9 open, 405 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,12 +13,12 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One from the 2026-11-09 change that buffers every audio track: the live checks it has not had yet.
-- Four, all LOW, from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (six
+- Three, all LOW, from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (six
   read-only reviews by area, the sixth over the seams between the addon, the plugins, the test fakes and the docs; each
-  finding checked against the code before it was filed): one `timeshift_buffer` regression that is in no release yet,
-  two in the addon and one in the glue harness's fake server. Nine of the sweep's eleven findings hold here; the other
-  two are `Piers` only (an in-progress recording's segment cache with two streams of it open, which `Omega` never has,
-  and a table in `BRANCHES.md`, which `Omega` does not carry). Its five in the release gate and the CI path filter were
+  finding checked against the code before it was filed): two in the addon and one in the glue harness's fake server.
+  Nine of the sweep's eleven findings hold here; the other two are `Piers` only (an in-progress recording's segment
+  cache with two streams of it open, which `Omega` never has, and a table in `BRANCHES.md`, which `Omega` does not
+  carry). Its five in the release gate and the CI path filter and its `timeshift_buffer` regression (in no release) were
   fixed on 2026-11-10.
 
 Nothing is left from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
@@ -33,12 +33,12 @@ recording's 20 s retry budget).
 | Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 2 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 1 |
+| Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 3 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 352 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 353 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 42 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -55,7 +55,11 @@ stream served from a test machine. Still to see: (1) a real broadcast channel wi
 mixing codecs, such as MPEG audio beside AC-3 or E-AC-3, or carrying an audio-description track), switched in Kodi the same
 way; (2) the probe's two non-happy paths on a real server: a probe that times out is retried on the next start, and an
 ffmpeg that accepts neither spelling falls back to the 0.8.17 command line with `-sn`. Both are covered only by the unit
-and real-ffmpeg tests so far. Close this with how each was confirmed.
+and real-ffmpeg tests so far; (3) the one restart without the audio map for a start stuck on a video stream that is
+declared and never sent (`docs/TIMESHIFT.md`, "A video stream that is declared and never sent"): checked live on
+2026-11-11 on Dispatcharr's ffmpeg 8.1.2 through its proxy, with the plugin's actions and in Kodi 21 (that section has
+the results); still to see on a real channel of that shape if one turns up, and with an upstream slow enough to start
+that the restart could land past the addon's 30 s. Close this with how each was confirmed.
 
 ### Fix known, not yet done
 
@@ -97,24 +101,7 @@ None open.
 
 ### Design decision needed
 
-#### `timeshift_buffer` 0.8.18 never becomes ready on a channel that declares a video stream it does not send
-
-**Opened 2026-11-10, from the 2026-11-10 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, reproduced with a generated stream on ffmpeg 6.1.1, not seen on a real channel.** A
-regression of the change that buffers every audio track (`docs/TIMESHIFT.md`, "Every audio track, not just the first
-(0.8.18)"), which is in no release yet. With a usable audio map, `_build_ffmpeg_command()` maps the video explicitly as
-`-map 0:v:0?`. The `?` forgives only a stream that is not declared at all. One the programme map declares but never
-sends (a radio service that lists a video PID, or a dead first video PID beside a live second one) is mapped, and the
-HLS muxer then waits for a video keyframe that never comes: no segment is cut, `live.m3u8` never appears, ffmpeg stays
-alive and the plugin never reports the buffer ready. 0.8.17's command line (no `-map`, so ffmpeg's own pick of streams)
-and 0.8.18's own `-sn` fallback both buffer the same input: run side by side, the 0.8.18 command had no playlist and no
-segment after 15 s, the other two a playlist within 9 s and seven segments by 15 s. `ffmpeg.log` shows only "Could not
-find codec parameters for stream 0 (Video: h264, none): unspecified size", the same warning a harmless mid-GOP start
-prints. Not checked: the ffmpeg 8.1.2 in Dispatcharr 0.33.0's container, and whether Dispatcharr's proxy passes such a
-programme map through at all. Options: (a) restart ffmpeg once on the fallback command line (no audio map) when it is
-alive, has written no `live.m3u8` after about 12 to 15 s and its log carries that warning, at the price of one audio
-track on that channel; or (b) accept it and document it. Settle before the next plugin release: 0.8.17 buffers such a
-channel and 0.8.18 as it stands would not.
+None open.
 
 ### Release, CI and manual testing
 

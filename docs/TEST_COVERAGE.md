@@ -3181,6 +3181,29 @@ covered: ffmpeg 8.1's side of the spelling split (CI has 6.1; the same source ma
 container and live, `docs/TIMESHIFT.md`), and whether `-max_interleave_delta` shortens a real start (neither a stream
 that stops after 0.3 s nor one never sent showed a holdback locally, so that flag rests on Dispatcharr's own finding).
 
+2026-11-10 (still 0.8.18, `docs/TIMESHIFT.md`'s "A video stream that is declared and never sent"): the one restart
+without the audio map. `_should_restart_without_audio_map()` (pure) is due at `_unsent_video_restart_due_seconds()`
+and not a tenth before, never without ffmpeg's "Could not find codec parameters ... (Video:" warning (an audio
+stream's does not count), once restarted, on the fallback argv or without a usable start time; the due time is pinned
+for nine segment lengths and, for every length up to 18 s, leaves the restarted ffmpeg its 6 s plus a segment inside
+the addon's 30 s. `_start_ffmpeg()` records its audio map and only the username and client address of its params
+(never the `-headers` string), and with `use_audio_map=False` neither probes nor maps. `_restart_without_audio_map()`,
+with an in-memory state store, the start-lock fake and a fake Popen: it marks the state restarting before the kill,
+kills the old ffmpeg with SIGKILL, spawns one without `-map` whose headers are built from the stored params, and
+adopts it with the viewers, heartbeats and access token kept, `restarted_from` set and the marker gone; it does nothing
+while the channel's start lock is held, when the state is another instance, stopping or already restarted, once
+`live.m3u8` exists, or for a storage path or port the buffer does not run on; a buffer marked stopping or deleted
+while the new ffmpeg spawns gets that ffmpeg stopped, not adopted; a lock lost after the kill or a failed spawn clears
+the marker. Through `Plugin.run("get_live_manifest")`: the overdue poll restarts and answers "not ready" (not fatal),
+the next still-empty poll does not restart again, a start one second short of due is left alone, another viewer's poll
+of the dead instance under a fresh marker (or after the adoption, holding the old state) answers "not ready" and
+leaves the buffer, and one under a marker 31 s old tears it down as before. `_teardown_following_a_restart()` follows a
+stop read before the adoption to the new ffmpeg and not into an unrelated instance. One real-ffmpeg test, on a stream
+whose video PID's packets are removed: the mapped argv cuts only at the end of the input, the restart's argv cuts on
+time with audio only, and the trigger's pattern matches this ffmpeg's warning. 24 of the 26 fail on the previous
+plugin code (the "merely slow" guard and the run-out marker pass on both). The end-to-end runs with real ffmpeg over
+HTTP are in the closed entry, not CI.
+
 ## Tools
 
 ### `tools/tests/`

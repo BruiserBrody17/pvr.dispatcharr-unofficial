@@ -33,6 +33,7 @@ import copy
 import json
 import os
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -1236,6 +1237,34 @@ def test_only_the_first_of_several_video_streams_is_buffered(tmp_path):
 
     assert run.returncode == 0, run.stderr.decode(errors="replace")
     assert [t for t, _ in _segment_streams(tmp_path / "chan" / "seg_00000.ts")] == ["video", "audio"]
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_a_video_stream_declared_and_never_sent_stalls_the_mapped_argv_but_not_the_restart(tmp_path):
+    """What _restart_without_audio_map() is for, on the real ffmpeg: with `-map 0:v:0?` ffmpeg waits on a video
+    stream that sends nothing and cuts nothing until the input ends (one segment, at EOF), so a live channel never
+    gets a playlist. The restart's argv (no audio map) cuts on time. The warning the trigger looks for is the one this
+    ffmpeg prints."""
+    full = tmp_path / "full.ts"
+    _generate_or_skip(
+        [
+            "-f", "lavfi", "-i", "testsrc=duration=12:size=160x120:rate=25", "-f", "lavfi", "-i", "sine=duration=12",
+            "-c:v", "libx264", "-g", "25", "-c:a", "aac", "-f", "mpegts", str(full),
+        ],
+        "an audio and video stream (needs libx264/aac)",
+    )  # fmt: skip
+    source = tmp_path / "in.ts"
+    assert _drop_ts_pid(full, source, 0x100) > 0  # the video PID: still in the programme map, no packet sent
+
+    mapped = _run_buffer_ffmpeg(source, tmp_path / "mapped")
+    restarted = _run_buffer_ffmpeg(source, tmp_path / "restarted", audio_map=None)
+
+    assert mapped.returncode == 0, mapped.stderr.decode(errors="replace")
+    assert sorted(p.name for p in (tmp_path / "mapped").glob("seg_*.ts")) == ["seg_00000.ts"]
+    assert timeshift_buffer_plugin._UNSENT_VIDEO_WARNING.search(mapped.stderr.decode(errors="replace"))
+    assert restarted.returncode == 0, restarted.stderr.decode(errors="replace")
+    assert len(list((tmp_path / "restarted").glob("seg_*.ts"))) >= 4
+    assert [t for t, _ in _segment_streams(tmp_path / "restarted" / "seg_00000.ts")] == ["audio"]
 
 
 # ---------------------------------------------------------------------
@@ -8332,3 +8361,405 @@ def test_a_read_through_the_file_server_checks_its_token_inside_the_update(monke
     _touch_as_request(f"/{_UUID}/seg_00042.ts?token=old&viewer_id=A")
     assert store[_UUID]["viewers"] == ["B"]
     assert "last_heartbeat" not in store[_UUID]
+
+
+# ---------------------------------------------------------------------
+# A video stream that is declared and never sent: the one restart without the audio map
+# ---------------------------------------------------------------------
+
+_UNSENT_VIDEO_LOG = (
+    "[mpegts @ 0x1] Could not find codec parameters for stream 0 (Video: h264 ([27][0][0][0] / 0x001B), none): "
+    "unspecified size\nConsider increasing the value for the 'analyzeduration' (0) and 'probesize' (5000000) options\n"
+)
+
+
+def _mapped_state(**overrides):
+    return {"audio_map": "0:a:u?", "started_at": 100.0, **overrides}
+
+
+def test_a_start_with_no_playlist_is_restarted_once_it_is_overdue_and_the_video_warning_is_logged():
+    should = timeshift_buffer_plugin._should_restart_without_audio_map
+    # two seconds of segment plus the ten of grace
+    assert should(_mapped_state(), 112.0, 2, _UNSENT_VIDEO_LOG) is True
+    assert should(_mapped_state(), 111.9, 2, _UNSENT_VIDEO_LOG) is False
+    # a longer segment closes later, so the playlist is overdue later
+    assert should(_mapped_state(), 115.9, 6, _UNSENT_VIDEO_LOG) is False
+    assert should(_mapped_state(), 116.0, 6, _UNSENT_VIDEO_LOG) is True
+
+
+def test_the_restart_comes_early_enough_for_the_new_ffmpeg_to_finish_inside_the_addons_wait():
+    """The restarted ffmpeg needs about 6 s plus a segment for its first playlist, and the addon waits 30 s: with long
+    segments `segment_seconds + 10` came too late, and such a channel never played (found by the branch's review)."""
+    due = timeshift_buffer_plugin._unsent_video_restart_due_seconds
+    assert [due(s) for s in (1, 2, 6, 7, 8, 10, 14, 18, 20)] == [11, 12, 16, 17, 16, 14, 10, 6, 6]
+    for segment_seconds in range(1, 19):
+        assert due(segment_seconds) + 6 + segment_seconds <= 30
+
+
+def test_no_restart_without_the_warning_or_once_already_restarted_or_on_the_fallback_argv():
+    should = timeshift_buffer_plugin._should_restart_without_audio_map
+    # a slow source with no such warning: restarting would not help it
+    assert should(_mapped_state(), 200.0, 2, "[http @ 0x1] Opening 'http://...' for reading\n") is False
+    # an audio stream with no parameters is not the case this handles
+    audio_only_warning = "Could not find codec parameters for stream 1 (Audio: mp2, 0 channels): unspecified frame size"
+    assert should(_mapped_state(), 200.0, 2, audio_only_warning) is False
+    assert should(_mapped_state(restarted_without_audio_map=True), 200.0, 2, _UNSENT_VIDEO_LOG) is False
+    assert should(_mapped_state(audio_map=None), 200.0, 2, _UNSENT_VIDEO_LOG) is False
+    assert should({"audio_map": "0:a:u?"}, 200.0, 2, _UNSENT_VIDEO_LOG) is False
+    assert should(_mapped_state(started_at=True), 200.0, 2, _UNSENT_VIDEO_LOG) is False
+
+
+def test_start_ffmpeg_records_its_audio_map_and_what_a_restart_needs_to_connect_the_same_way(tmp_path, monkeypatch):
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_input_headers", lambda uuid, params, logger: None)
+
+    state = timeshift_buffer_plugin._start_ffmpeg(
+        _UUID,
+        {"username": "alice", "client_ip": "192.0.2.7", "viewer_id": "v1", "channel_uuid": _UUID},
+        {"storage_path": str(tmp_path)},
+        _FakeLogger(),
+    )
+
+    assert state["audio_map"] == "0:a:u?"
+    # only the two attribution inputs, never the -headers string (it carries a bearer token)
+    assert state["input_params"] == {"username": "alice", "client_ip": "192.0.2.7"}
+
+
+def test_start_ffmpeg_without_the_audio_map_neither_probes_nor_maps(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_popen(cmd, **kw):
+        seen["cmd"] = cmd
+        return _FakeProc()
+
+    def no_probe(spelling):
+        raise AssertionError("a restart without the audio map must not run the probe")
+
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_usable_audio_map_cache", timeshift_buffer_plugin._AUDIO_MAP_UNSET)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_maps_audio_with", no_probe)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_input_headers", lambda uuid, params, logger: None)
+
+    state = timeshift_buffer_plugin._start_ffmpeg(
+        _UUID, {"username": "alice"}, {"storage_path": str(tmp_path)}, _FakeLogger(), use_audio_map=False
+    )
+
+    assert "-map" not in seen["cmd"] and "-sn" in seen["cmd"]
+    assert state["audio_map"] is None
+    assert "input_params" not in state
+
+
+class _RestartRig:
+    """A buffer stuck on a video stream that is never sent, around _restart_without_audio_map(): state in an in-memory
+    store, the old ffmpeg alive until stopped, the new one spawned by a fake Popen."""
+
+    OLD_PID = 1111
+    NEW_PID = 4242
+
+    def __init__(self, monkeypatch, tmp_path, start_locks, **state_overrides):
+        self.tmp_path = tmp_path
+        self.locks = start_locks
+        self.channel_dir = tmp_path / _UUID
+        self.channel_dir.mkdir()
+        (self.channel_dir / "ffmpeg.log").write_text(_UNSENT_VIDEO_LOG)
+        self.state = {
+            "channel_uuid": _UUID,
+            "pid": self.OLD_PID,
+            "pid_start_ticks": 7,
+            "started_at": 100.0,
+            "last_heartbeat": 111.0,
+            "storage_path": str(tmp_path),
+            "http_port": 9192,
+            "playlist_path": str(self.channel_dir / "live.m3u8"),
+            "playlist_route": f"/{_UUID}/live.m3u8",
+            "log_path": str(self.channel_dir / "ffmpeg.log"),
+            "audio_map": "0:a:u?",
+            "input_params": {"username": "alice", "client_ip": "192.0.2.7"},
+            "viewers": ["v1"],
+            "viewer_heartbeats": {"v1": 111.0},
+            "access_token": "tok",
+            **state_overrides,
+        }
+        self.store = _state_store(monkeypatch, {_UUID: self.state})
+        self.alive = {self.OLD_PID}
+        self.stopped = []
+        self.spawned = []
+        self.header_params = []
+        self.on_spawn = None
+        self.on_stop = None
+        self.signals = []
+        monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 112.0)
+        monkeypatch.setattr(timeshift_buffer_plugin, "_proc_start_ticks", lambda pid: 9)
+        monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, ticks=None: pid in self.alive)
+        monkeypatch.setattr(timeshift_buffer_plugin, "_stop_ffmpeg", self._stop)
+        monkeypatch.setattr(timeshift_buffer_plugin, "_ffmpeg_input_headers", self._headers)
+        monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", self._popen)
+        self.removed = []
+        monkeypatch.setattr(timeshift_buffer_plugin, "_delete_buffer_state", lambda uuid: self.store.pop(uuid, None))
+        monkeypatch.setattr(
+            timeshift_buffer_plugin, "_remove_channel_files", lambda state, logger: self.removed.append(state["pid"])
+        )
+
+    def _stop(self, state, logger, first_signal=signal.SIGTERM):
+        self.stopped.append(state["pid"])
+        self.signals.append(first_signal)
+        self.alive.discard(state["pid"])
+        if self.on_stop:
+            self.on_stop()
+
+    def _headers(self, uuid, params, logger):
+        self.header_params.append(dict(params))
+        return None
+
+    def _popen(self, cmd, **kw):
+        self.spawned.append(cmd)
+        self.alive.add(self.NEW_PID)
+        if self.on_spawn:
+            self.on_spawn()
+        return _FakeProc()
+
+    def restart(self, settings=None):
+        logger = _FakeLogger()
+        result = timeshift_buffer_plugin._restart_without_audio_map(
+            _UUID, copy.deepcopy(self.state), settings or {"storage_path": str(self.tmp_path)}, logger
+        )
+        return result, logger
+
+
+def test_a_stuck_buffer_is_restarted_without_the_audio_map_keeping_its_viewers_and_token(
+    monkeypatch, tmp_path, start_locks
+):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+
+    restarted, logger = rig.restart()
+
+    assert restarted is True
+    assert rig.stopped == [rig.OLD_PID]
+    [cmd] = rig.spawned
+    assert "-map" not in cmd and "-sn" in cmd
+    # connected as the original start did: same account, same viewer address
+    assert rig.header_params == [{"username": "alice", "client_ip": "192.0.2.7"}]
+    state = rig.store[_UUID]
+    assert (state["pid"], state["pid_start_ticks"], state["started_at"]) == (rig.NEW_PID, 9, 112.0)
+    # killed outright: on SIGTERM its muxer would flush a playlist of the old instance under the same token
+    assert rig.signals == [signal.SIGKILL]
+    assert state["restarted_from"] == {"pid": rig.OLD_PID, "started_at": 100.0}
+    assert "restarting_since" not in state
+    assert state["audio_map"] is None
+    assert state["restarted_without_audio_map"] is True
+    assert "input_params" not in state
+    # the waiting client's token and registration still hold
+    assert state["access_token"] == "tok"
+    assert state["viewers"] == ["v1"]
+    assert state["viewer_heartbeats"] == {"v1": 111.0}
+    assert start_locks.held == set()
+    assert any(level == "warning" and "restarting it once" in msg for level, msg in logger.calls)
+
+
+def test_no_restart_while_another_start_holds_the_channel_lock(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    start_locks.held.add(_UUID)
+
+    assert rig.restart()[0] is False
+    assert rig.stopped == [] and rig.spawned == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param(lambda s: s.update(pid=2222, started_at=105.0), id="replaced-by-another-instance"),
+        pytest.param(lambda s: s.update(stopping=True), id="being-stopped"),
+        pytest.param(lambda s: s.update(restarted_without_audio_map=True), id="already-restarted"),
+    ],
+)
+def test_no_restart_when_the_buffer_changed_before_the_lock_was_taken(monkeypatch, tmp_path, start_locks, change):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    change(rig.store[_UUID])
+
+    assert rig.restart()[0] is False
+    assert rig.stopped == [] and rig.spawned == []
+
+
+def test_no_restart_once_the_playlist_has_appeared(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    (rig.channel_dir / "live.m3u8").write_text("#EXTM3U\n")
+
+    assert rig.restart()[0] is False
+    assert rig.stopped == [] and rig.spawned == []
+
+
+def test_no_restart_into_a_storage_path_the_buffer_does_not_run_on(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+
+    assert rig.restart({"storage_path": str(tmp_path / "elsewhere")})[0] is False
+    assert rig.stopped == [] and rig.spawned == []
+
+
+def test_a_restart_whose_buffer_is_stopped_meanwhile_stops_its_new_ffmpeg(monkeypatch, tmp_path, start_locks):
+    """A stop_buffer does not take the start lock: one that marks the buffer stopping while the new ffmpeg spawns
+    must not have that ffmpeg adopted into the state it is tearing down, or left running with nothing tracking it."""
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    rig.on_spawn = lambda: rig.store[_UUID].update(stopping=True)
+
+    restarted, _logger = rig.restart()
+
+    assert restarted is False
+    assert rig.stopped == [rig.OLD_PID, rig.NEW_PID]
+    assert rig.store[_UUID]["pid"] == rig.OLD_PID
+
+
+def test_get_live_manifest_restarts_a_stuck_start_once_and_reports_not_ready(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    params = {"channel_uuid": _UUID, "viewer_id": "v1", "access_token": "tok"}
+    # _run() installs its own always-free locks; these keep the rig's
+    locks = {"acquire_lock": start_locks.acquire, "release_lock": start_locks.release, "renew_lock": start_locks.renew}
+
+    first, _logger = _run(monkeypatch, "get_live_manifest", params, {}, tmp_path, **locks)
+    assert first["status"] == "error" and "fatal" not in first
+    assert "restarted the buffer without the audio map" in first["message"]
+    assert len(rig.spawned) == 1
+
+    # still no playlist on the next poll: no second restart
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 140.0)
+    second, _logger = _run(monkeypatch, "get_live_manifest", params, {}, tmp_path, **locks)
+    assert second == {
+        "status": "error",
+        "message": "live playlist not found -- the buffer may not have produced any segments yet",
+    }
+    assert len(rig.spawned) == 1
+
+
+def test_get_live_manifest_does_not_restart_a_start_that_is_merely_slow(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 111.0)
+    locks = {"acquire_lock": start_locks.acquire, "release_lock": start_locks.release, "renew_lock": start_locks.renew}
+
+    result, _logger = _run(
+        monkeypatch, "get_live_manifest", {"channel_uuid": _UUID, "access_token": "tok"}, {}, tmp_path, **locks
+    )
+
+    assert "live playlist not found" in result["message"]
+    assert rig.spawned == [] and rig.stopped == []
+
+
+def test_the_buffer_is_marked_restarting_before_its_ffmpeg_is_killed(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    seen = []
+    rig.on_stop = lambda: seen.append(rig.store[_UUID].get("restarting_since"))
+
+    assert rig.restart()[0] is True
+    assert seen[0] == 112.0
+
+
+def _poll(monkeypatch, tmp_path, start_locks, token="tok"):
+    locks = {"acquire_lock": start_locks.acquire, "release_lock": start_locks.release, "renew_lock": start_locks.renew}
+    result, _logger = _run(
+        monkeypatch, "get_live_manifest", {"channel_uuid": _UUID, "viewer_id": "v2", "access_token": token}, {},
+        tmp_path, **locks,
+    )  # fmt: skip
+    return result
+
+
+def test_another_viewers_poll_during_a_restart_hears_not_ready_and_leaves_the_buffer(
+    monkeypatch, tmp_path, start_locks
+):
+    """Between the kill and the adoption Redis names a dead ffmpeg; a second viewer's poll in that window tore the
+    buffer down as failed, and both viewers got a fatal answer (found by the branch's review)."""
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks, restarting_since=111.0)
+    rig.alive.clear()
+
+    result = _poll(monkeypatch, tmp_path, start_locks)
+
+    assert result == {"status": "error", "message": "the buffer is being restarted -- retry in a moment"}
+    assert rig.store[_UUID]["pid"] == rig.OLD_PID and not rig.store[_UUID].get("stopping")
+    assert rig.removed == []
+
+
+def test_a_restart_marker_that_has_run_out_no_longer_protects_a_dead_buffer(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks, restarting_since=112.0 - 31)
+    rig.alive.clear()
+
+    result = _poll(monkeypatch, tmp_path, start_locks)
+
+    assert result["fatal"] is True
+    assert _UUID not in rig.store
+
+
+def test_a_poll_that_read_the_old_instance_hears_not_ready_once_the_restart_has_adopted_its_ffmpeg(
+    monkeypatch, tmp_path, start_locks
+):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    assert rig.restart()[0] is True
+    adopted = copy.deepcopy(rig.store[_UUID])
+    reads = iter([copy.deepcopy(rig.state)])  # the poll's first read: the instance before the restart
+    monkeypatch.setattr(
+        timeshift_buffer_plugin,
+        "_get_buffer_state",
+        lambda uuid: next(reads, None) or copy.deepcopy(rig.store.get(uuid)),
+    )
+    rig.alive.discard(rig.OLD_PID)
+
+    result = _poll(monkeypatch, tmp_path, start_locks)
+
+    assert result == {"status": "error", "message": "the buffer is being restarted -- retry in a moment"}
+    assert rig.store[_UUID]["pid"] == adopted["pid"] and not rig.store[_UUID].get("stopping")
+
+
+@pytest.mark.parametrize(
+    "fail",
+    [
+        pytest.param(lambda rig, locks: setattr(rig, "on_stop", lambda: locks.held.discard(_UUID)), id="lock-lost"),
+        pytest.param(
+            lambda rig, locks: setattr(rig, "_popen", lambda cmd, **kw: (_ for _ in ()).throw(OSError("no fork"))),
+            id="spawn-fails",
+        ),
+    ],
+)
+def test_a_restart_that_fails_after_the_kill_clears_its_marker(monkeypatch, tmp_path, start_locks, fail):
+    """The old ffmpeg is gone and nothing replaced it: the marker is cleared so the next poll reports the failure at
+    once instead of "not ready" until the marker runs out."""
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    fail(rig, start_locks)
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: rig._popen(cmd, **kw))
+
+    restarted, _logger = rig.restart()
+
+    assert restarted is False
+    assert rig.stopped == [rig.OLD_PID]
+    state = rig.store[_UUID]
+    assert state["pid"] == rig.OLD_PID and "restarting_since" not in state
+
+
+def test_no_restart_on_a_port_the_buffer_does_not_run_on(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+
+    assert rig.restart({"storage_path": str(tmp_path), "http_port": 9300})[0] is False
+    assert rig.stopped == [] and rig.spawned == []
+
+
+def test_a_restart_whose_state_is_deleted_meanwhile_stops_its_new_ffmpeg(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    rig.on_spawn = lambda: rig.store.pop(_UUID)
+
+    assert rig.restart()[0] is False
+    assert rig.stopped == [rig.OLD_PID, rig.NEW_PID]
+    assert _UUID not in rig.store
+
+
+def test_a_stop_decided_before_a_restart_landed_follows_it_to_the_new_ffmpeg(monkeypatch, tmp_path, start_locks):
+    """stop_all and a stop with no viewer_id end the channel's buffer whichever instance runs it: one that read the
+    state before the restart adopted its ffmpeg was declined as "replaced", and the new ffmpeg ran on."""
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    assert rig.restart()[0] is True
+
+    assert timeshift_buffer_plugin._teardown_following_a_restart(copy.deepcopy(rig.state), _FakeLogger()) is True
+    assert rig.stopped == [rig.OLD_PID, rig.NEW_PID]
+    assert _UUID not in rig.store
+
+
+def test_a_stop_decided_on_an_older_instance_does_not_follow_into_an_unrelated_one(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    rig.store[_UUID].update(pid=2222, started_at=105.0)  # another start's buffer, not a restart of this one
+
+    assert timeshift_buffer_plugin._teardown_following_a_restart(copy.deepcopy(rig.state), _FakeLogger()) is False
+    assert rig.store[_UUID]["pid"] == 2222 and not rig.store[_UUID].get("stopping")

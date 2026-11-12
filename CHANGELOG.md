@@ -25,6 +25,9 @@ Dispatcharr restart for every worker to pick it up.
   and teletext tracks are still not available in Server-side mode.
 - A source that sends several video renditions at once is now buffered with its first one rather than its largest
   (the others were never shown). Use a stream profile that picks one rendition if the first is not the one you want.
+- A channel whose stream lists a video track it never sends (some radio services) would not have started with the
+  change above. Such a start is now restarted once after about 12 seconds (with the default segment length), with one
+  audio track.
 
 ## [0.13.3] - 2026-11-06
 
