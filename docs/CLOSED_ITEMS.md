@@ -38,6 +38,11 @@ both sit at the live edge may now reseed the entry by turns, a copy of the segme
 case. Confirmed with the sweep's glue scenario, now in the tree and in CI as `ip_cache_diverge`: before the fix the
 third open's read answered 0 at 118656 of 676776 bytes, as in the sweep; after it, it read all 676776. Three cases in
 `tests/test_in_progress_segment_cache.cpp` pin the join check (a hole, an overlap, and the count-only cases unchanged).
+Live on Kodi 22.0-RC1 against a real Dispatcharr (2026-11-12, the PR's CI build): an in-progress recording played,
+seeked back and to the live edge, stopped and reopened 20 s later, the reopen sizing only the 4 segments added
+meanwhile; then, with the recording stopped while it played from the start, Kodi's stream-details probe opened it
+twice beside the playing stream (two streams open) and the playing stream ran to the real end. The divergence itself (a
+segment one stream gives up on) was not forced live; `ip_cache_diverge` covers it.
 
 #### A recording or recurring-rule id outside 1 to 0x1FFFFFFF is taken for another kind of timer
 
@@ -65,6 +70,11 @@ made from, so the delete-and-update check was not needed. Two cases in `tests/te
 (both ends, 0, negatives, bits 29 and 30) and the round trip through `DecodeTimerClientIndex()`, including the sweep's
 0x20000005. The wiring (the two filters and the parent index) was read, not run against ids that large: the glue
 harness's `functional` scenario still passes with the ordinary ids.
+Live on Kodi 22.0-RC1 and Kodi 21.3 against a real Dispatcharr (2026-11-12, each branch's CI build), with ordinary
+ids: a disposable one-day recurring rule showed in Kodi with its occurrence inside it and a one-off timer beside it;
+deleting the occurrence from Kodi removed only that recording, deleting the rule removed it and left no occurrence,
+deleting the one-off removed it (each re-read 404 on the server), and the "left a ... out of the Timers list" warning
+never appeared.
 
 #### `HasActiveOrImminentOccurrence()` overflows a 32-bit `time_t` for a start far in the past
 
