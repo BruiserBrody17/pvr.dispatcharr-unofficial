@@ -93,7 +93,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`9ab73ba`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`5d1f7dd`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -202,6 +202,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `1db9aad` | `11597ed` (`git cherry-pick -x`, without `[skip ci]`, the segment-cache part left out; `OPEN_ITEMS.md`, `CLOSED_ITEMS.md`, `TEST_COVERAGE.md` and the CHANGELOG by hand) | The timer-id range (`IsEncodableTimerId()`) and the 64-bit comparison in `HasActiveOrImminentOccurrence()` from the 2026-11-10 sweep, with their unit tests. Not ported: the in-progress segment cache's join check (`PlanInProgressSegmentCacheUpdateFor()`) and the glue `ip_cache_diverge` scenario, since `Omega` keeps one in-progress stream open at a time |
 | `43a8104` | `7f8ea81` (by hand, the timer-id note only) | The live checks of the 2026-11-10 sweep's addon fixes in `CLOSED_ITEMS.md`; the segment-cache note is `Piers` only |
 | `9ab73ba` | `653735f` (`git cherry-pick -x`, without `[skip ci]`; the glue driver, `ci.sh`, README and `OPEN_ITEMS.md`/`CLOSED_ITEMS.md` by hand) | The glue fake's series rules keyed as Dispatcharr does, the sibling-delete step in `functional`, the `timer_id_range` scenario and the new pinned/unpinned delete item. Not ported: the `BRANCHES.md` table update (`Piers` only) |
+| `5d1f7dd` | `e94600f` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand, and a line in the closed entry that the live check was of the `Piers` build) | The pinned/unpinned series delete guard (`SeriesRuleDeleteTakesSibling()`), its tests, the glue pair step and the notification wording |
 
 ## Dependencies that differ by Kodi release
 
