@@ -87,7 +87,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`1db9aad`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`43a8104`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -194,6 +194,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `a7f94c7` | `589cd72` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand, the closed notes and `TEST_COVERAGE.md` citing `Omega`'s 0.13.3 set) | The release gate's and the CI path filter's five fixes from the 2026-11-10 sweep, tools and docs only |
 | `09c2d46` | `960f18c` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and intro by hand) | The `timeshift_buffer` restart without the audio map for a start stuck on a video stream that is declared and never sent, with its live check on ffmpeg 8.1.2; the plugin and `TIMESHIFT.md` identical |
 | `1db9aad` | `11597ed` (`git cherry-pick -x`, without `[skip ci]`, the segment-cache part left out; `OPEN_ITEMS.md`, `CLOSED_ITEMS.md`, `TEST_COVERAGE.md` and the CHANGELOG by hand) | The timer-id range (`IsEncodableTimerId()`) and the 64-bit comparison in `HasActiveOrImminentOccurrence()` from the 2026-11-10 sweep, with their unit tests. Not ported: the in-progress segment cache's join check (`PlanInProgressSegmentCacheUpdateFor()`) and the glue `ip_cache_diverge` scenario, since `Omega` keeps one in-progress stream open at a time |
+| `43a8104` | `7f8ea81` (by hand, the timer-id note only) | The live checks of the 2026-11-10 sweep's addon fixes in `CLOSED_ITEMS.md`; the segment-cache note is `Piers` only |
 
 ## Dependencies that differ by Kodi release
 
