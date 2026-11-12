@@ -3718,6 +3718,94 @@ Not checked live: a real broadcast channel with several audio tracks (none of th
 Dispatcharr's stream stats record), a channel with a declared but never-sent audio track, and a mid-GOP start long
 enough to hide the picture size (each covered by the real-ffmpeg tests and the container matrix only).
 
+### A video stream that is declared and never sent
+
+*2026-11-10. Found by the 2026-11-10 bug-hunting sweep before 0.8.18 was released; fixed in 0.8.18 by the
+maintainer's choice of the two options in `docs/CLOSED_ITEMS.md`'s entry.*
+
+The `?` in `-map 0:v:0?` forgives only a stream that is not declared at all. A video stream the programme map lists and
+no packet ever arrives for (a radio service that declares a video PID, or a dead first video PID beside a live second
+one) is mapped, and ffmpeg then never cuts a segment (the muxer is waiting on a stream that sends nothing): no segment
+file appears, `live.m3u8` never does, ffmpeg stays alive and the buffer never becomes ready. ffmpeg's own pick of streams
+(0.8.17's command line, and the fallback with `-sn`) passes over a video stream it found no picture size for, and
+buffers the same input. Measured with ffmpeg 6.1.1 on a generated stream with its video PID's packets removed, served
+at its real rate: the mapped command had no segment file after 16 s, the other a playlist after 2 s; read as a file,
+the mapped command cut one segment, at the end of the input (the real-ffmpeg test pins that).
+
+Nothing in ffmpeg's log tells this apart from a slow start. It prints "Could not find codec parameters for stream 0
+(Video: ...): unspecified size", but so does a start between two keyframes when the GOP is longer than the probe; and
+such a start also writes no segment file until its first segment closes (measured: a 10 s GOP joined 3 s in wrote
+its first segment file and its playlist together, 16.8 s in). So the plugin goes by time. When `get_live_manifest`
+finds no playlist, ffmpeg alive, the start made with the audio map and not already restarted, the warning in the first
+64 KB of `ffmpeg.log`, and enough time gone since the start, it restarts the buffer once without the audio map
+(`_restart_without_audio_map()`): under the channel's start lock, only for the same instance (pid and start time),
+with the viewers and the access token kept, so the addon, which waits up to 30 s for a first playlist while the plugin
+answers "not ready", simply gets one. The new ffmpeg connects with the account and viewer address of the original
+start, which the state keeps for that (`input_params`; never the `-headers` string, which holds a token).
+
+"Enough time" is `segment_seconds` plus 10 s, a playlist clearly overdue, but never so late that the restarted ffmpeg
+(a reconnect and one segment, about 6 s plus a segment) cannot finish inside the addon's 30 s, and never under 6 s
+(`_unsent_video_restart_due_seconds()`): 12 s at the default 2 s segments, 16 s at 6 s, 14 s at 10 s, 6 s from 18 s.
+The first version used `segment_seconds` plus 10 s alone, and from about 10 s segments its restart came too late to
+help (found by the branch's review). With long segments the earlier restart catches more merely slow starts (below).
+
+Three details keep the restart safe against another request for the same channel (each found by the branch's review):
+
+- The state is marked (`restarting_since`, compare-and-set, same instance) before the old ffmpeg is stopped. Until the
+  new one is adopted Redis names a dead ffmpeg, and a second viewer's poll in that window used to tear the buffer down
+  as failed, ending both viewers. A poll whose teardown is declined, because a restart is under way (for 30 s at most)
+  or because the instance was replaced since it read the state, now answers "not ready" rather than fatal; a
+  replacement with another token answers that caller's next poll as replaced, as before. A restart that fails after
+  the kill clears its marker, so the failure is reported at once.
+- The old ffmpeg is killed with SIGKILL, not SIGTERM: on SIGTERM the muxer would most likely flush what it holds into
+  a first segment and playlist (read as a file, the stuck command cuts one at the end), which a poll could be served (and a worker could have cached) under the access token the new
+  instance keeps, with different bytes behind the same segment names.
+- A stop that must end the channel's buffer whichever instance runs it (`stop_all` on disable, a stop with no
+  `viewer_id`) and that read the state just before the restart adopted its ffmpeg used to be declined as "replaced",
+  leaving the new ffmpeg running. The adopted state records `restarted_from`, and such a stop follows it once
+  (`_teardown_following_a_restart()`).
+
+End to end with the plugin's own start and manifest actions, real ffmpeg 6.1.1 and the stream served over HTTP at its
+real rate: restarted at 12.2 s and ready at 19.7 s with 2 s segments, restarted at 14.0 s and ready at 24.5 s with
+10 s segments, and a healthy stream ready at 5.5 s, not restarted; no ffmpeg left running after each stop.
+
+The price, on such a channel, is one audio track (ffmpeg's pick) for the life of that buffer. A start that is merely
+slow and prints the warning (a GOP long enough that the join misses a keyframe within the probe and the first
+playlist takes longer than the time above) is restarted too and pays the same, plus a second start's wait;
+ffmpeg's pick keeps its video (checked: a 24 s GOP joined mid-GOP gave video and audio segments). A start that is merely slow without
+the warning is never restarted.
+
+**Checked live (2026-11-11, Dispatcharr 0.33.0, its container's ffmpeg 8.1.2, Kodi 21.3 on Linux, addon 0.13.3,
+Server-side mode, the branch's plugin on every worker).** Disposable channels on Dispatcharr's default Proxy stream
+profile pointed at generated streams served at their real rate from a test machine: one with its video PID's packets
+removed (two AAC tracks left, the video still in the programme map), one healthy (video and the same two tracks). The
+plugin's segment length was 3 s, so the restart was due at 13 s; one pass used 10 s (due at 14 s).
+
+- Dispatcharr's proxy passes such a programme map through unchanged: the first ffmpeg wrote no segment file and logged
+  the same "Could not find codec parameters for stream 0 (Video: h264 ...): unspecified size" line, which the plugin's
+  pattern matched.
+- ffmpeg 8.1.2 logs that line later than 6.1.1, after roughly 15 to 17 s of stream: 14.7 s after the start when the
+  source sent 2 s of stream at connect, 2.4 s when it sent 20 s. So on 8.1.2 the restart waits for the warning
+  rather than the timer unless the upstream bursts at connect, as many upstreams do.
+- Started through the plugin's own actions: restarted at 14.4 to 15.1 s, the first playlist 0.8 to 0.9 s later at 3 s
+  segments (the new ffmpeg joins a proxy channel that is already running and gets its buffer), and at 18.5 s with 10 s
+  segments. The restarted buffer held one audio track. No ffmpeg was left after each stop.
+- Kodi played the channel after 19.7 s (3 s segments) and 20.3 s (10 s segments), one audio track, position
+  advancing. The proxy's client list showed the restarted ffmpeg with the viewer's address and account, as for the
+  first one.
+- Not restarted: the healthy generated channel (Kodi played video and both tracks after 9.9 s, and 15.8 s with 10 s
+  segments) and two real channels (5.2 s each, video kept).
+- Two viewers at once (Kodi and a second viewer through the plugin's actions): one restart, the second viewer's poll
+  during it answered "the buffer is being restarted -- retry in a moment" and then got the playlist at 15.3 s, Kodi
+  played at 18.0 s, one ffmpeg served both, and the two stops left none.
+
+Not checked: a real channel of this shape (the lab has none that can be identified: no stream flagged as radio, and
+stream stats for only one of its streams); Kodi 22 (its addon waits for the first playlist with the same code);
+a stop or disable landing inside the restart itself (unit tests only); and an upstream that is slow to start. The
+proxy sends nothing until an initial amount has arrived (16 s for a 2 x 320 kb/s radio source in the 2026-11-09
+check), and on 8.1.2 the warning comes about 15 s of stream after that, so a source that starts as slowly could
+restart past the addon's 30 s.
+
 ## The plugin's moving parts
 
 *(moved from `dispatcharr-plugin/timeshift_buffer/README.md`, which now keeps only the user-facing summary)*
