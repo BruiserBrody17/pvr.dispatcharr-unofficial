@@ -158,6 +158,23 @@ what it can't do. This is a Dispatcharr permission, not an addon bug.
 
 **What to do:** an admin sets the account's DVR access to `manage` in Dispatcharr's user settings.
 
+## Kodi won't delete a series timer
+
+**You see:** deleting a series timer (a series rule) from Kodi fails, with a notice that it was left in place.
+
+**Why:** Dispatcharr's own delete would remove more than that one rule, from Kodi or from its own interface, so the
+addon refuses it:
+
+- **A rule with no title** (empty name in Kodi; made in Dispatcharr with only a description filter): Dispatcharr deletes
+  it together with every upcoming recording on its channel. Its own Remove button also deletes every other series rule
+  on that channel.
+- **Two rules for the same show and channel** (one made with Dispatcharr's guide button, one from Kodi): Dispatcharr can
+  only delete them together.
+
+**What to do:** for a rule with no title, open it in Dispatcharr's series rules and change its description to something
+no programme will match; the rule then records nothing. For two rules, delete both in Dispatcharr and record the series
+again from the one place you want to keep it.
+
 ## Known Kodi-core quirks (confirmed not this addon's bug)
 
 None of these can be fixed from the addon; each was traced to Kodi's own code.

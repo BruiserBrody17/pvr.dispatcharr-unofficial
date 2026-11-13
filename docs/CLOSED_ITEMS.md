@@ -6,6 +6,28 @@
 
 ### Fixed
 
+#### The notice for a series rule with no title sent users to a broader delete
+
+**Opened and fixed 2026-11-12, found while fixing the pinned/unpinned series delete; confirmed by reading Dispatcharr's
+frontend and series-rule views at v0.33.0, the rule part live on disposable rules.** When the addon refuses to delete a
+series rule with no title (`IsSeriesRuleSafeToDeleteFromKodi()`, closed entry "Refuse to delete a series rule that has
+no title: Dispatcharr's delete purges the channel's recordings"), its notification said to delete the rule in Dispatcharr. Dispatcharr's Remove (its series rules
+dialog) first bulk-removes upcoming recordings by `tvg_id` and title, which for
+an empty title is every upcoming recording on the `tvg_id`, then deletes the rule with the empty title left out of the
+query; the server reads a missing title as "any title", so every series rule on that `tvg_id` goes as well. For a
+channel-less rule the bulk-remove is refused (no `tvg_id`, no title) and the delete names neither, so by the code it
+removes every channel-less rule and its purge matches every upcoming recording on the server (read, not run). Live,
+with a title-less rule and a titled rule on a made-up `tvg_id`: the two requests replayed for the title-less rule left
+neither rule. Editing the rule in Dispatcharr's editor is an in-place upsert on (`tvg_id`, title, source) (confirmed
+live: one rule, new description), and the editor refuses to save with both title and description empty, so changing
+the description to text no programme matches stops the rule safely.
+
+**Fixed** by rewording, nothing else changed: the delete notice says Dispatcharr deletes such a rule with every
+upcoming recording on its channel, from Kodi or its own interface, and suggests editing its description to match
+nothing; the re-key notice says the old rule could not be removed without other recordings and that the description
+can be edited in Dispatcharr; both error strings say why rather than "in Dispatcharr". `docs/TROUBLESHOOTING.md` has
+a new entry, "Kodi won't delete a series timer", for this and the pinned/unpinned pair.
+
 #### Deleting a pinned series rule also deletes an unpinned one beside it
 
 **Opened 2026-11-12, found while matching the glue harness's fake to Dispatcharr's source; MEDIUM by consequence,

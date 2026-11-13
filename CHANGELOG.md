@@ -25,6 +25,10 @@ compare against.
   (one made in Dispatcharr's guide, one from Kodi), with its upcoming recordings. Dispatcharr can only delete such a
   pair together, from Kodi or its own interface, so Kodi now leaves both in place and says so; to remove one, delete
   both in Dispatcharr and record the other again. Editing one keeps the old rule.
+- The notice shown when Kodi refuses to delete a series rule with no title no longer advises deleting it in Dispatcharr:
+  Dispatcharr's own Remove deletes its upcoming recordings too, and every other series rule on that channel. The notice
+  now explains this and suggests changing the rule's description in Dispatcharr instead
+  (`docs/TROUBLESHOOTING.md`, "Kodi won't delete a series timer").
 
 ## `timeshift_buffer` [0.8.18] - Unreleased
 

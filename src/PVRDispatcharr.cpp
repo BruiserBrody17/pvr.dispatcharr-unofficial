@@ -5532,10 +5532,11 @@ try
                 "pvr.dispatcharr-unofficial: not editing a series rule that has no title in a way that changes its "
                 "identity: the old rule could not be deleted afterwards without removing other recordings");
       kodi::QueueNotification(QUEUE_WARNING, "",
-                              "This series rule has no title filter (it matches on the description), so its search "
-                              "text or channel cannot be changed from Kodi. Change it in Dispatcharr.");
+                              "This series rule has no title (it matches on the description), so its search text or "
+                              "channel cannot be changed: the old rule could not be removed without other "
+                              "recordings. Its description can be edited in Dispatcharr.");
       ok = false;
-      error = "a series rule with no title can only be re-keyed in Dispatcharr";
+      error = "a series rule with no title cannot be re-keyed without removing other recordings";
     }
     else
     {
@@ -6159,16 +6160,18 @@ try
     {
       // See IsSeriesRuleSafeToDeleteFromKodi(): the server's delete of a rule with no title also removes every
       // upcoming recording on the rule's channel (all of them, for a channel-less rule), whichever rule or timer
-      // made them, and this addon cannot narrow that.
+      // made them, and this addon cannot narrow that. Dispatcharr's own Remove does the same and more, so the
+      // notification does not send the user there; editing the description to match nothing stops the rule.
       kodi::Log(ADDON_LOG_WARNING,
                 "pvr.dispatcharr-unofficial: not deleting a series rule that has no title: Dispatcharr's delete "
                 "would also remove every upcoming recording on its channel");
       kodi::QueueNotification(QUEUE_WARNING, "",
-                              "This series rule has no title filter (it matches on the description). Deleting it "
-                              "from Kodi could remove other upcoming recordings, so it was left in place -- delete "
-                              "it in Dispatcharr.");
+                              "This series rule has no title (it matches on the description). Dispatcharr deletes "
+                              "such a rule with every upcoming recording on its channel, from Kodi or its own "
+                              "interface, so it was left in place. To stop it, edit its description in Dispatcharr "
+                              "to match nothing.");
       ok = false;
-      error = "a series rule with no title can only be deleted in Dispatcharr";
+      error = "a series rule with no title cannot be deleted without removing other recordings";
     }
     else if (siblingTaken)
     {
