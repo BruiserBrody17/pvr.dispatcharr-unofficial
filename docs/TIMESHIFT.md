@@ -3714,9 +3714,34 @@ switches each way at the live edge, after a 30 s pause and after three skip-back
 `SeekLiveTimeshiftStream` calls (13 of them real jumps back), no "Packet corrupt", no early end. DVB subtitles,
 teletext, the two-rendition source (first rendition) and radio all played with the expected streams.
 
-Not checked live: a real broadcast channel with several audio tracks (none of the lab's channels has one that
-Dispatcharr's stream stats record), a channel with a declared but never-sent audio track, and a mid-GOP start long
-enough to hide the picture size (each covered by the real-ffmpeg tests and the container matrix only).
+**Real channels and the probe's failure paths (2026-11-13, Dispatcharr 0.33.0 and its ffmpeg 8.1.2, Kodi 21.3 on
+Linux with addon 0.13.3, Server-side mode, the plugin at the `Piers` tip on every worker).** Dispatcharr's stream
+stats record no channel with several audio tracks, so candidates were probed with `ffprobe` through Dispatcharr's own
+proxy, one at a time. A few real channels qualified, carrying several audio tracks in mixed
+codecs and layouts.
+
+- Every track reached the segments (`ffprobe` of a segment inside the container), mapped with `0:a:u:?`.
+- Kodi offered all of them and first picked the first. Switches each way at the live edge, after a 30 s pause and after
+  three 20 s skip-backs all kept playing (13 to 16 s of position gained in each 14 s window), each opening that track's
+  own decoder; no "Packet corrupt". Kodi lists an AAC track's channels as 0 until it
+  has decoded it.
+- Each switch logs a burst of `non-existing PPS 0 referenced` (and a few other h264 complaints) from the video decoder:
+  on a switch Kodi re-seeks with a time seek through its demuxer, which lands between keyframes, and flushes. Plain
+  skip-backs on the same channel logged none. Screenshots 0.15 to 3 s after two switches showed clean pictures, so it
+  does not reach the screen.
+- The probe's failure paths, forced in the real workers by a throwaway plugin that replaced the module's `subprocess`
+  with a wrapper (the plugin's own code unchanged). A 1 ms timeout on both probe runs raised a real `TimeoutExpired`,
+  the worker logged "could not run ffmpeg to check its -map syntax", and the buffer ran 0.8.17's command line plus
+  `-sn` (video and one audio track); Kodi played that one track after 10.7 s. The next start that worker served probed
+  again (on 8.1.2 `0:a:u?` exits 234, `0:a:u:?` exits 0) and buffered every track. With both spellings made to fail
+  (a suffix appended to each) the worker logged "this ffmpeg accepts none of 0:a:u?, 0:a:u:?", ran the same fallback,
+  Kodi played one track after 6.6 s, and the worker kept that answer, as designed.
+- Stopping one of these buffers needed the SIGKILL after 2 s in four or five stops of six, with all tracks mapped and
+  with the one-track fallback alike, so the mapping does not slow ffmpeg's exit.
+
+Not found or not checked: a channel with other audio codecs or an audio-description track; a declared but never-sent audio track
+and a mid-GOP start long enough to hide the picture size on a real channel (the real-ffmpeg tests and the container
+matrix only); Kodi 22 against these real channels (the segments are the same whichever Kodi reads them).
 
 ### A video stream that is declared and never sent
 
@@ -3799,12 +3824,33 @@ plugin's segment length was 3 s, so the restart was due at 13 s; one pass used 1
   during it answered "the buffer is being restarted -- retry in a moment" and then got the playlist at 15.3 s, Kodi
   played at 18.0 s, one ffmpeg served both, and the two stops left none.
 
-Not checked: a real channel of this shape (the lab has none that can be identified: no stream flagged as radio, and
-stream stats for only one of its streams); Kodi 22 (its addon waits for the first playlist with the same code);
-a stop or disable landing inside the restart itself (unit tests only); and an upstream that is slow to start. The
-proxy sends nothing until an initial amount has arrived (16 s for a 2 x 320 kb/s radio source in the 2026-11-09
-check), and on 8.1.2 the warning comes about 15 s of stream after that, so a source that starts as slowly could
-restart past the addon's 30 s.
+Not checked: a real channel of this shape (the lab has none that can be identified: no stream flagged as radio, stream
+stats for only one of its streams, and on 2026-11-13 every real channel probed through the
+proxy sent its video); Kodi 22 (its addon waits for the first playlist with the same code); and a stop or
+disable landing inside the restart itself (unit tests only).
+
+**A slow upstream (2026-11-13, same setup, addon 0.13.3 in Kodi 21.3, 3 s segments).** The stream with its video PID's
+packets removed again, served from a test machine that could hold back its response or its first byte:
+
+| Upstream | Restart | First playlist | Kodi |
+|---|---|---|---|
+| 2 s of stream sent at connect | 21.3 to 21.4 s | 22.3 s | played one track at 25.2 s |
+| response 10 s late | 41.8 s | 43.0 s | gave up at 30 s ("Playback failed") |
+| response 18 s late, or 10 s of silence after the headers | none | none (the buffer was reaped) | not run |
+| healthy stream, response 18 s late (control) | none | 33.5 s | gave up at 30 s |
+
+- The restart came later than on 2026-11-11 (21 s rather than 14 to 15 s, from a different generated source), and
+  still finished inside the addon's 30 s, with about 5 s to spare.
+- Dispatcharr's proxy asks a silent upstream again after about 8 s, so a response 10 s late cost about 18 s before the
+  first byte.
+- Past the addon's 30 s the restart cannot help: the addon has already given up, and the plugin ends such a buffer at
+  about the same time anyway. A `get_live_manifest` that answers "not ready" does not refresh `last_heartbeat`, so a
+  buffer with no playlist yet looks idle to the reaper from its start and is ended 30 to 45 s in
+  (`idle_timeout_seconds` plus the 15 s reaper tick). In the 18 s runs ffmpeg was stopped while still waiting for the
+  proxy's response ("Immediate exit requested").
+- The healthy control shows the addon's 30 s limit on a first playlist (`CLOSED_ITEMS.md`, "A channel that is slow to
+  start") applies to any slow upstream; the restart only adds a few seconds to a start that is already near it.
+- No buffer, ffmpeg or proxy channel was left after any run.
 
 ## The plugin's moving parts
 

@@ -179,8 +179,9 @@ Dispatcharr 0.33.0's ffmpeg 8.1.2 through its own proxy, which passes such a pro
 to 15.1 s, Kodi 21 playing one audio track after 19.7 s (3 s segments) and 20.3 s (10 s segments), the restarted ffmpeg
 attributed to the same viewer, a healthy channel and two real channels not restarted, and two viewers at once served by
 one restart. 8.1.2 logs the warning after about 15 s of stream, later than 6.1.1, so there the warning, not the timer,
-sets the restart time. A real channel of that shape is still item (3) of the open entry "`timeshift_buffer` 0.8.18's
-audio-track mapping has only been seen on generated streams".
+sets the restart time. A real channel of that shape was looked for and not found, and a slow upstream was measured, on
+2026-11-13 (item (3) of the closed entry "`timeshift_buffer` 0.8.18's audio-track mapping has only been seen on
+generated streams").
 
 #### The release gate skips its release checks for an empty `--expect-release`, and an empty `--blocklist` falls back to another list
 
@@ -9421,6 +9422,43 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 **Fixed 2026-10-06 (the last known gap).** The scope the entry set when it was parked was followed: the real event sequence was captured first (a passive listener on the lab's realtime socket, then an EPG source and an M3U account refreshed on demand, the same thing their scheduler does every three hours), `docs/EPG.md`'s new section records both, `ClassifyRefreshEvent()` (`RefreshEvents.h`) is the pure decision, and the reactions reuse existing machinery. A finished EPG refresh (`parsing_programs`, progress 100, status success; the earlier `parsing_channels` success is a step, not the end) schedules one guide fetch 330 s later through `m_epgRefetchDueAt`, past Dispatcharr's own 300 s cache of the exported guide, with several sources coalesced into the pending fetch; a finished M3U refresh whose channel auto-sync created, updated or deleted a channel (the counts are in the same final event) ages the channel list to just-stale and wakes the background thread. A refresh that changed nothing, a failed one and every progress event cost nothing. The "cost to watch" in the entry (a guide fetch is large) is bounded by construction: at most one fetch per 330 s window. Unit tests use the real event shapes with the numbers replaced (every mutant of the classifier and the schedule fails one), and the glue harness gained a minimal WebSocket in its fake server and `refresh_events` (it fails when the wiring is removed). `docs/MANUAL_TESTING.md` has the check a person runs. **Confirmed live the same day** (a real Kodi on the Linux test VM, realtime updates on, through a plain TCP forwarder so the WebSocket passes): an EPG refresh of the lab's XMLTV source finished on the server, the addon logged it at once, and the guide was downloaded again 392 s after the event (the 330 s schedule plus the background thread's one-minute check while a fetch is pending), against the 4-hour window it replaces; an M3U refresh was logged and the channel list was fetched 11 s later, finding a lineup change and resyncing Kodi.
 
 ### Closed without a change (refuted, explained or harmless)
+
+#### `timeshift_buffer` 0.8.18's audio-track mapping has only been seen on generated streams
+
+**Opened 2026-11-10, after the change that buffers every usable audio track; closed without a change 2026-11-13
+after a live check** (`docs/TIMESHIFT.md`, "Every audio track,
+not just the first (0.8.18)"). The audio switch (live, after a pause, after a rewind), DVB subtitle, teletext, audio-only and
+two-rendition channels were checked on Kodi 21 and Kodi 22 against a real Dispatcharr, but every source was a generated
+stream served from a test machine. Still to see: (1) a real broadcast channel with several audio tracks (ideally one
+mixing codecs, such as MPEG audio beside AC-3 or E-AC-3, or carrying an audio-description track), switched in Kodi the same
+way; (2) the probe's two non-happy paths on a real server: a probe that times out is retried on the next start, and an
+ffmpeg that accepts neither spelling falls back to the 0.8.17 command line with `-sn`. Both are covered only by the unit
+and real-ffmpeg tests so far; (3) the one restart without the audio map for a start stuck on a video stream that is
+declared and never sent (`docs/TIMESHIFT.md`, "A video stream that is declared and never sent"): checked live on
+2026-11-11 on Dispatcharr's ffmpeg 8.1.2 through its proxy, with the plugin's actions and in Kodi 21 (that section has
+the results); still to see on a real channel of that shape if one turns up, and with an upstream slow enough to start
+that the restart could land past the addon's 30 s.
+
+**Closed 2026-11-13: all three checked live (Dispatcharr 0.33.0 and its ffmpeg 8.1.2, the plugin at the `Piers` tip on
+every worker, Kodi 21.3 on Linux with addon 0.13.3, Server-side mode); nothing needed changing.** `docs/TIMESHIFT.md`
+has the measurements under "Every audio track, not just the first (0.8.18)" and "A video stream that is declared and
+never sent".
+
+- (1) A few real channels with several audio tracks, found by probing through Dispatcharr's own proxy (stream stats
+  record none), carrying several tracks in mixed codecs and layouts. Every
+  track reached the segments; Kodi offered them all and switched each way at the live edge, after a 30 s pause and
+  after three skip-backs, still playing after every switch, with no "Packet corrupt". A switch's re-seek makes the video
+  decoder log a burst of h264 errors that screenshots show never reach the screen. No other audio codec or audio-description
+  track turned up.
+- (2) Both failure paths, forced in the real workers by a throwaway plugin wrapping the module's `subprocess`: a probe
+  that timed out logged its warning, the start ran 0.8.17's command line plus `-sn` and Kodi played one track, and the
+  next start on that worker probed again and buffered them all; an ffmpeg accepting neither spelling gave the other
+  warning, the same fallback and one track in Kodi, and the worker kept the answer.
+- (3) No real channel of that shape found among those probed. A slow upstream, with a generated stream: with 2 s sent at
+  connect the restart came at 21.4 s and Kodi played at 25.2 s; with the response 10 s late the restart came at 42 s,
+  after the addon had given up at 30 s; later than that, the buffer was reaped as idle before any restart (a "not
+  ready" manifest poll does not refresh its heartbeat). A healthy stream behind an 18 s delay failed in Kodi the same
+  way, so this is the existing 30 s limit on a first playlist, not the restart.
 
 #### A Stop while a recording rides out a transient failure holds Kodi's interface for up to 20 s
 
