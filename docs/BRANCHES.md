@@ -59,7 +59,7 @@ assets, tag suffix or versions, as in the table.
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`1298e4b`** (everything up to it is on `Piers`; `1298e4b` is a port from `Piers`, logged
+Last `Omega` commit accounted for: **`5519d7a`** (everything up to it is on `Piers`; `5519d7a` is a port from `Piers`, logged
 below). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`aa83498`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`d6916e4`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -208,6 +208,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `74be21c` | `6a070ad` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand) | The title-less series rule notices no longer send the user to Dispatcharr's delete; the troubleshooting entry for both series-delete refusals |
 | `5baf65a` | not ported: `Piers` only | A stray "None open." under the Kodi 22 open item, which `Omega` does not have |
 | `aa83498` | `1298e4b` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | The live check that closed the `timeshift_buffer` audio-track item, docs only |
+| `d6916e4` | `5519d7a` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and source list by hand) | The deferred item for `timeshift_buffer` reaping a buffer that has no playlist yet, docs only |
 
 ## Dependencies that differ by Kodi release
 
