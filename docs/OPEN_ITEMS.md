@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**6 open, 410 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**7 open, 410 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,6 +13,7 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One from the 2026-11-09 change that buffers every audio track: the live checks it has not had yet.
+- One from the 2026-11-12 live checks on Kodi 21: timers made on the server showed about 75 s after the realtime event.
 
 Nothing is left from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (nine of its
 eleven findings held here, the other two being `Piers` only; all fixed by 2026-11-12), nor from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
@@ -24,7 +25,7 @@ recording's 20 s retry budget).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
+| Open: Needs a live check | 2 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
@@ -39,6 +40,21 @@ recording's 20 s retry budget).
 ## Open
 
 ### Needs a live check
+
+#### Kodi 21 showed timers made on the server about 75 s after the realtime event
+
+**Opened 2026-11-12, seen once during the live check of the 2026-11-10 sweep's timer-id fix; not investigated.** On
+Kodi 21.3 with the `Omega` CI build (realtime updates on, no proxy), a recurring rule and a one-off recording created
+through Dispatcharr's API were followed within seconds by `recordings_refreshed` and `recording_updated` realtime
+events, which the addon logged; `PVR.GetTimers` still had neither 15 s and 35 s later, and the addon's next "recordings
+cache refreshed" and "timer-rules cache refreshed" lines came about 75 s after the events, after which Kodi listed
+both. On Kodi 22.0-RC1 with the `Piers` build, the same steps showed the timers within 15 s. The handler calls
+`InvalidateAndTriggerTimerUpdate()` (caches cleared, then `TriggerTimerUpdate()`), so the addon asked at once; the gap
+is in when Kodi 21 next called `GetTimers()`. Unconfirmed lead: it was about a minute after Kodi started, while Kodi was
+still importing the guide (its startup log has many `GetEPGForChannel` errors in
+the same minute), so Kodi's PVR job queue may simply have been busy. Next step: repeat on Kodi 21 well after startup, with
+Kodi's PVR component logging on (`debug.setextraloglevel`, LOGPVR) to see when the timer update job runs; if it is
+prompt then, close this as a startup-load effect.
 
 #### `timeshift_buffer` 0.8.18's audio-track mapping has only been seen on generated streams
 
