@@ -59,7 +59,7 @@ assets, tag suffix or versions, as in the table.
 
 ### Ported from Omega
 
-Last `Omega` commit accounted for: **`209fc1a`** (everything up to it is on `Piers`). When porting, list every `Omega`
+Last `Omega` commit accounted for: **`7d3cb5a`** (everything up to it is on `Piers`). When porting, list every `Omega`
 commit after the last one here (`git log --oneline <last>..Omega`), port or decide not to, record it below and move
 "last accounted for" forward. A fix that is not ported on purpose says why.
 
@@ -90,6 +90,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 | `583cfe1`, `c2e2576` | not ported: `Omega` release line | `0.13.2` and its CoreELEC checksum; `Piers` has its own `0.14.2` (`75a1ca8`, `8f6ae77`). |
 | `e292c44`, `4a2aaa3`, `caca234`, `ce1ed11`, `f27ba96`, `dd8190a`, `f40c6d2`, `a231242`, `c472413`, `50d563c`, `d2dc3d6`, `b517ebb`, `d2922a3`, `16d8932`, `ccf20ce`, `04b0aa4`, `23f7433`, `757c5fc`, `ca22083`, `077e620`, `51c9fdb`, `7a5919c`, `8a4acca`, `740dc4d` | already on `Piers` | Ports from `Piers`; see the table below. |
 | `43a8b7f`, `209fc1a` | not ported: `Omega` release line | `0.13.3` and its CoreELEC checksum; `Piers` has its own `0.14.3` (`07eaf96`, `fb36f8b`). |
+| `7d3cb5a` | not ported: Kodi 21 only | Files the delay seen on Kodi 21 between a realtime event and the timers it announced; Kodi 22 showed them within 15 s. The `Omega` commits between `209fc1a` and it are ports from `Piers`, each logged under "Ported to Omega". |
 
 ### Ported to Omega
 
