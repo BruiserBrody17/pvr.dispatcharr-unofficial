@@ -368,9 +368,14 @@ inline bool ShouldReplaceSeriesRuleOnEdit(const std::string& oldTitle, const std
 // make) removes every future recording carrying its tvg_id, whichever rule or timer made it, and a channel-less one
 // (empty tvg_id as well) every future recording on the server. Confirmed live 2026-10-13 on disposable data: the
 // delete of an empty-title rule answered `removed: 2` and two recordings it had nothing to do with were gone. The
-// addon cannot narrow that purge, it is inside the server's delete, so such a rule is only ever deleted in
-// Dispatcharr's own interface. A title that is only whitespace is truthy to the server and filters to nothing, so it
-// is safe; only the empty one is refused. It also stops an edit that changes a rule's identity from deleting the old
+// addon cannot narrow that purge, it is inside the server's delete, so it never deletes such a rule. Nor is
+// Dispatcharr's own Remove safer (read in its frontend at v0.33.0, the rule part confirmed live 2026-11-12 on
+// disposable rules): it bulk-removes every upcoming recording on the tvg_id first, then deletes with the empty title
+// left out of the query, which the server reads as "any title", so every series rule on that tvg_id goes too (for a
+// channel-less rule, every channel-less rule). What does work is editing the description in Dispatcharr's editor to
+// something that never matches: the save is an upsert on (tvg_id, title, source), an in-place update for this rule.
+// A title that is only whitespace is truthy to the server and filters to nothing, so it is safe; only the empty one
+// is refused. It also stops an edit that changes a rule's identity from deleting the old
 // one afterwards (see ShouldReplaceSeriesRuleOnEdit()).
 inline bool IsSeriesRuleSafeToDeleteFromKodi(const std::string& title)
 {
