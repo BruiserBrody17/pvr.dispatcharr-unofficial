@@ -3656,6 +3656,7 @@ def test_run_get_live_manifest_plain_runtime_error_does_not_tear_down(monkeypatc
     still cold-starting shouldn't be torn down on a retryable error."""
     state = {"channel_uuid": _UUID}
     monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(state))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: None)  # the poll's heartbeat
 
     def _raise_runtime(*a, **k):
         raise RuntimeError("live playlist not found")
@@ -3785,6 +3786,74 @@ def test_run_get_live_manifest_refreshes_the_calling_viewers_own_heartbeat(monke
     assert result["status"] == "ok"
     assert store[_UUID]["viewer_heartbeats"]["a"] > 0  # the calling viewer's own heartbeat is refreshed
     assert store[_UUID]["viewer_heartbeats"]["b"] == 0  # a different viewer's own heartbeat is untouched
+
+
+def _not_ready_poll_store(monkeypatch, on_build=None):
+    store = {
+        _UUID: {
+            "channel_uuid": _UUID,
+            "http_port": 9192,
+            "access_token": "tok",
+            "last_heartbeat": 0,
+            "viewers": ["a"],
+            "viewer_heartbeats": {"a": 0},
+        }
+    }
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: copy.deepcopy(store[uuid]) if uuid in store else None
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, s: store.__setitem__(uuid, s))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 500.0)
+
+    def not_ready(_state, _logger):
+        if on_build:
+            on_build(store)
+        raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet")
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_live_manifest", not_ready)
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.Plugin, "_restart_if_stuck_on_unsent_video", staticmethod(lambda *a: False)
+    )
+    return store
+
+
+def test_run_get_live_manifest_not_ready_poll_counts_as_activity(monkeypatch, tmp_path):
+    """A buffer still waiting for its first playlist is being watched by whoever polls it: before 0.8.19 a "not ready"
+    answer refreshed nothing, so the reaper ended a slow-starting buffer idle_timeout_seconds after its start while
+    the addon was still polling (seen live 2026-11-13 with an upstream that answered 18 s late)."""
+    store = _not_ready_poll_store(monkeypatch)
+
+    result, _logger = _run(
+        monkeypatch, "get_live_manifest", {"channel_uuid": _UUID, "viewer_id": "a", "access_token": "tok"}, {}, tmp_path
+    )
+
+    assert result == {
+        "status": "error",
+        "message": "live playlist not found -- the buffer may not have produced any segments yet",
+    }
+    assert store[_UUID]["last_heartbeat"] == 500.0
+    assert store[_UUID]["viewer_heartbeats"]["a"] == 500.0
+
+
+def test_run_get_live_manifest_not_ready_poll_does_not_join_a_replacement(monkeypatch, tmp_path):
+    replacement = {"channel_uuid": _UUID, "http_port": 9193, "access_token": "new", "viewers": ["b"]}
+    store = _not_ready_poll_store(monkeypatch, on_build=lambda s: s.__setitem__(_UUID, copy.deepcopy(replacement)))
+
+    _run(
+        monkeypatch, "get_live_manifest", {"channel_uuid": _UUID, "viewer_id": "a", "access_token": "tok"}, {}, tmp_path
+    )
+
+    assert store[_UUID] == replacement
+
+
+def test_run_get_live_manifest_not_ready_poll_does_not_resurrect_a_buffer_torn_down_meanwhile(monkeypatch, tmp_path):
+    store = _not_ready_poll_store(monkeypatch, on_build=lambda s: s.pop(_UUID))
+
+    _run(
+        monkeypatch, "get_live_manifest", {"channel_uuid": _UUID, "viewer_id": "a", "access_token": "tok"}, {}, tmp_path
+    )
+
+    assert _UUID not in store
 
 
 def test_run_get_live_manifest_re_adds_a_viewer_id_this_buffer_does_not_know_about(monkeypatch, tmp_path):

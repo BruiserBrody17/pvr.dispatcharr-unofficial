@@ -3844,13 +3844,22 @@ packets removed again, served from a test machine that could hold back its respo
 - Dispatcharr's proxy asks a silent upstream again after about 8 s, so a response 10 s late cost about 18 s before the
   first byte.
 - Past the addon's 30 s the restart cannot help: the addon has already given up, and the plugin ends such a buffer at
-  about the same time anyway. A `get_live_manifest` that answers "not ready" does not refresh `last_heartbeat`, so a
-  buffer with no playlist yet looks idle to the reaper from its start and is ended 30 to 45 s in
-  (`idle_timeout_seconds` plus the 15 s reaper tick). In the 18 s runs ffmpeg was stopped while still waiting for the
-  proxy's response ("Immediate exit requested").
+  about the same time anyway. A `get_live_manifest` that answered "not ready" did not refresh `last_heartbeat` (fixed
+  the same day, below), so a buffer with no playlist yet looked idle to the reaper from its start and was ended 30 to
+  45 s in (`idle_timeout_seconds` plus the 15 s reaper tick). In the 18 s runs ffmpeg was stopped while still waiting
+  for the proxy's response ("Immediate exit requested").
 - The healthy control shows the addon's 30 s limit on a first playlist (`CLOSED_ITEMS.md`, "A channel that is slow to
   start") applies to any slow upstream; the restart only adds a few seconds to a start that is already near it.
 - No buffer, ffmpeg or proxy channel was left after any run.
+
+**A "not ready" poll now counts as activity (2026-11-13, still 0.8.18).** `get_live_manifest` refreshes
+`last_heartbeat` and the caller's stamp when it answers "not ready" too, so a buffer still waiting for its first
+playlist is not idle while someone polls it. Checked on the lab's Dispatcharr 0.33.0 with `idle_timeout_seconds` set
+to 10 and a healthy generated stream whose response came 18 s late, polled every 0.5 s through the plugin's own
+actions: with 0.8.17 the buffer was reaped at 23 s with no playlist; with the fix it was still there at its first
+playlist, 32.5 s and 33.0 s in. Control: the same start with the fix and no polls was reaped at 24 s. A trap for the
+next such check: a plugin reload restarts each worker's reaper, and a new reaper gives every buffer one full
+`idle_timeout_seconds` before it can be idle, so a run straight after a reload does not show the reap.
 
 ## The plugin's moving parts
 

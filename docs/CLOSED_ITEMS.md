@@ -6,6 +6,32 @@
 
 ### Fixed
 
+#### `timeshift_buffer` reaps a buffer that has not written its first playlist yet as idle
+
+**Opened 2026-11-13, from the live check of the audio-track mapping (`CLOSED_ITEMS.md`, "`timeshift_buffer` 0.8.18's
+audio-track mapping has only been seen on generated streams"); deferred.** A `get_live_manifest` that answers "not
+ready" does not refresh `last_heartbeat`, so to `_reaper_loop()` a buffer whose ffmpeg has not produced a playlist yet
+looks idle from the moment it starts, and it is ended 30 to 45 s in (`idle_timeout_seconds`, 30 by default, plus the
+15 s reaper tick). Seen on the lab's Dispatcharr 0.33.0 with an upstream that answered 18 s late: the buffer was stopped
+while ffmpeg was still waiting for the proxy ("Immediate exit requested"). Harmless at the default settings, because the
+addon gives up on a first playlist at 30 s anyway (`OpenLiveTimeshiftStream()`, "no live playlist after ... giving up";
+`CLOSED_ITEMS.md`, "A channel that is slow to start"), so nobody is still waiting when the reaper acts. It matters if
+the addon's wait is ever made longer, and already on a server whose `idle_timeout_seconds` is set below 30 (it accepts
+down to 1): there a slow channel is torn down while the addon is still polling it (not run). The fix would be to count a
+"not ready" poll as activity (refresh `last_heartbeat` there, as a file fetch does). The measurements are in
+`TIMESHIFT.md`, "A slow upstream (2026-11-13...)".
+
+**Fixed 2026-11-13 (still `timeshift_buffer` 0.8.18), as proposed above, and confirmed live.** A "not ready" answer now
+refreshes `last_heartbeat` and the caller's own stamp through the same token-checked write-back as an answered poll
+(`_touch_after_manifest_poll()`), so a replacement started meanwhile does not get the caller and a buffer torn down
+meanwhile stays gone. On the lab's Dispatcharr 0.33.0 with `idle_timeout_seconds` at 10 and a healthy generated stream
+whose response came 18 s late, polled every 0.5 s through the plugin's own actions: 0.8.17 reaped the buffer at 23 s
+with no playlist; the fix on every worker kept it to its first playlist at 32.5 s and 33.0 s, and the same start
+with no polls was still reaped at 24 s. A buffer that never writes a playlist is still ended once its caller stops
+asking. The opening's "harmless at the default settings" was too strong (found by the branch's review): the addon's
+wait is 60 polls of 0.5 s plus each poll's own time, a few seconds past 30 s, and the reaper ended such a buffer 30 to
+45 s in, so a first playlist at about 30 to 35 s could be lost at the default `idle_timeout_seconds` as well. Details in `TIMESHIFT.md`, "A "not ready" poll now counts as activity"; tests in `TEST_COVERAGE.md`.
+
 #### The notice for a series rule with no title sent users to a broader delete
 
 **Opened and fixed 2026-11-12, found while fixing the pinned/unpinned series delete; confirmed by reading Dispatcharr's
