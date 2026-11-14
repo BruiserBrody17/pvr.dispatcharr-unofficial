@@ -85,17 +85,24 @@ sides) and make sure the Kodi device can reach it. To check by hand from the Kod
 **You see:** live TV was playing, the channel's source had a moment of trouble, and since then the picture stays on one
 frame while the time display keeps counting (in Server-side mode it may also jump back every few seconds).
 **Applies to:** channels that have more than one stream in Dispatcharr, when those streams use different video formats
-(for example one H.264 and one HEVC). Kodi 21 in every live mode; Kodi 22 in **Server-side** mode only.
+(for example one H.264 and one HEVC). Kodi 21 in every live mode; Kodi 22 in **Server-side** mode with a
+`timeshift_buffer` plugin older than 0.8.18.
 
 **Why:** when a channel's stream fails, Dispatcharr switches to the channel's next stream without stopping playback. If
-the next stream's video format is different, Kodi 21's player goes on decoding it as the old format, and in Server-side
-mode the timeshift buffer goes on recording the old format, so no new picture comes out.
+the next stream's video format is different, Kodi 21's player goes on decoding it as the old format. In Server-side
+mode, a timeshift buffer from before 0.8.18 also went on recording the old format, so no new picture came out; 0.8.18
+restarts its recording at the switch.
 
 **What to do:**
 
-1. **In Dispatcharr, give a channel backup streams in the same video format as its main stream** where you have the
-   choice.
-2. **On Kodi 22, use Off or Local mode** for channels where this happens: Kodi 22's player switches formats there.
+1. **On Kodi 22 with Server-side mode, update `timeshift_buffer` on the Dispatcharr server to 0.8.18 or later.** Off and
+   Local mode already switch formats on Kodi 22.
+   - If the Dispatcharr account Kodi uses has a stream limit, also turn on "ignore same-channel connections" in
+     Dispatcharr's user limit settings. Without it, the buffer cannot reconnect beside its old connection and keeps
+     recording the old format.
+2. **On Kodi 21, give a channel backup streams in the same video format as its main stream** in Dispatcharr where you
+   have the choice: Kodi 21's player cannot follow the change in any mode. With `timeshift_buffer` 0.8.18 in
+   Server-side mode, use addon 0.13.4 or later, or the picture also holds for about 10 seconds after every switch.
 
 ## The guide is empty, but channels and recordings work
 

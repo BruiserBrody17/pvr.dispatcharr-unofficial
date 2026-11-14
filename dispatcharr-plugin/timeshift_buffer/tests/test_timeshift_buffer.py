@@ -35,6 +35,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import types
@@ -3339,6 +3340,43 @@ def test_run_start_buffer_refuses_when_another_call_already_holds_the_lock(monke
     # Never even reached the classify-then-spawn logic -- refused before
     # the first Redis read, not just before the eventual ffmpeg spawn.
     assert get_buffer_state_calls == []
+
+
+def test_run_start_buffer_records_the_viewers_kodi_version(monkeypatch, tmp_path):
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: [])
+    fake_state = {"channel_uuid": _UUID, "pid": 123, "http_port": 9192, "playlist_route": f"/{_UUID}/live.m3u8"}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_start_ffmpeg", lambda *a, **k: dict(fake_state))
+    saved = {}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_set_buffer_state", lambda uuid, state: saved.update(state))
+
+    params = {"channel_uuid": _UUID, "viewer_id": "v1", "kodi_version": 21}
+    result, _logger = _run(monkeypatch, "start_buffer", params, {}, tmp_path)
+
+    assert result["status"] == "ok"
+    assert saved["viewer_kodi_versions"] == {"v1": 21}
+
+
+def test_run_start_buffer_reattach_records_the_kodi_version_and_forgets_departed_viewers(monkeypatch, tmp_path):
+    store = _shared_state(
+        monkeypatch,
+        {
+            "channel_uuid": _UUID,
+            "pid": 12345,
+            "http_port": 9192,
+            "playlist_route": f"/{_UUID}/live.m3u8",
+            "access_token": "tok123",
+            "viewers": ["v2"],
+            "viewer_kodi_versions": {"v2": 21, "gone": 22},
+        },
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, *_a: True)
+
+    params = {"channel_uuid": _UUID, "viewer_id": "v1", "kodi_version": 22}
+    result, _logger = _run(monkeypatch, "start_buffer", params, {}, tmp_path)
+
+    assert result["already_running"] is True
+    assert store["s"]["viewer_kodi_versions"] == {"v2": 21, "v1": 22}
 
 
 def test_run_start_buffer_releases_the_lock_even_when_the_locked_call_errors(monkeypatch, tmp_path):
@@ -8515,7 +8553,7 @@ def test_start_ffmpeg_without_the_audio_map_neither_probes_nor_maps(tmp_path, mo
 
     assert "-map" not in seen["cmd"] and "-sn" in seen["cmd"]
     assert state["audio_map"] is None
-    assert "input_params" not in state
+    assert state["input_params"] == {"username": "alice"}  # kept for a restart without the audio map
 
 
 class _RestartRig:
@@ -8616,7 +8654,8 @@ def test_a_stuck_buffer_is_restarted_without_the_audio_map_keeping_its_viewers_a
     assert "restarting_since" not in state
     assert state["audio_map"] is None
     assert state["restarted_without_audio_map"] is True
-    assert "input_params" not in state
+    # kept: a later restart after a stream switch connects the same way (_restart_after_stream_switch())
+    assert state["input_params"] == {"username": "alice", "client_ip": "192.0.2.7"}
     # the waiting client's token and registration still hold
     assert state["access_token"] == "tok"
     assert state["viewers"] == ["v1"]
@@ -8832,3 +8871,765 @@ def test_a_stop_decided_on_an_older_instance_does_not_follow_into_an_unrelated_o
 
     assert timeshift_buffer_plugin._teardown_following_a_restart(copy.deepcopy(rig.state), _FakeLogger()) is False
     assert rig.store[_UUID]["pid"] == 2222 and not rig.store[_UUID].get("stopping")
+
+
+# --- The restart after a stream switch (_restart_after_stream_switch(), docs/TIMESHIFT.md "A stream switch that changes
+# the video format (0.8.18)").
+
+_SETTLE = 8.0
+
+
+@pytest.mark.parametrize(
+    "state,upstream,switch_time,now,expected",
+    [
+        pytest.param({"started_at": 100.0}, "7", None, 200.0, "record", id="first-sighting-no-switch-yet"),
+        pytest.param({"started_at": 100.0}, "7", 90.0, 200.0, "record", id="first-sighting-switch-long-before-start"),
+        # the proxy switched after the buffer started: ffmpeg may have probed the stream before the switch
+        pytest.param({"started_at": 100.0}, "7", 150.0, 200.0, "restart", id="first-sighting-switched-since-start"),
+        pytest.param({"started_at": 100.0}, "7", 195.0, 200.0, "wait", id="first-sighting-switch-too-recent"),
+        pytest.param({"upstream_stream_id": "7"}, "7", 150.0, 200.0, None, id="same-stream"),
+        pytest.param({"upstream_stream_id": "7"}, "8", 150.0, 200.0, "restart", id="switched-and-settled"),
+        pytest.param({"upstream_stream_id": "7"}, "8", 200.0 - _SETTLE + 0.5, 200.0, "wait", id="switch-not-settled"),
+        pytest.param({"upstream_stream_id": "7"}, "8", None, 200.0, "restart", id="no-switch-time"),
+        pytest.param({"upstream_stream_id": "7"}, None, 150.0, 200.0, None, id="proxy-has-no-id"),
+        pytest.param({"upstream_stream_id": "7", "stopping": True}, "8", 150.0, 200.0, None, id="stopping"),
+        pytest.param({"upstream_stream_id": "7", "restarting_since": 195.0}, "8", 150.0, 200.0, None, id="mid-restart"),
+        # a mark a failed restart left behind (a Redis error between mark and adoption) must not hold the buffer
+        pytest.param(
+            {"upstream_stream_id": "7", "restarting_since": 1.0}, "8", 150.0, 200.0, "restart", id="stale-mark"
+        ),
+        pytest.param({"started_at": 100.0}, "7", 95.0, 200.0, "restart", id="first-sighting-switch-just-before-start"),
+        pytest.param({"upstream_stream_id": "7", "switch_frozen": "8"}, "8", 199.0, 200.0, "wait", id="frozen-waiting"),
+        pytest.param({"upstream_stream_id": "7", "switch_frozen": "8"}, "7", 199.0, 200.0, "thaw", id="switched-back"),
+        pytest.param({"upstream_stream_id": "7", "switch_frozen": "8"}, None, None, 200.0, "thaw", id="proxy-gone"),
+    ],
+)
+def test_stream_switch_step(state, upstream, switch_time, now, expected):
+    assert timeshift_buffer_plugin._stream_switch_step(state, upstream, switch_time, now, _SETTLE) == expected
+
+
+def test_upstream_stream_reads_the_live_proxys_hash(monkeypatch):
+    seen = []
+
+    class FakeRedis:
+        def __init__(self, values):
+            self.values = values
+
+        def hmget(self, key, *fields):
+            seen.append((key, fields))
+            if isinstance(self.values, Exception):
+                raise self.values
+            return self.values
+
+    def answer(values):
+        monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: FakeRedis(values))
+        return timeshift_buffer_plugin._upstream_stream(_UUID)
+
+    assert answer([b"8", b"1000.5"]) == ("8", 1000.5)
+    assert seen == [(f"live:channel:{_UUID}:metadata", ("stream_id", "stream_switch_time"))]
+    assert answer(["8", None]) == ("8", None)
+    assert answer([b"8", b"not a time"]) == ("8", None)
+    assert answer([None, None]) == (None, None)
+    assert answer([b"", b""]) == (None, None)
+    # unknown, not "no stream": that would resume a held buffer
+    assert answer(ConnectionError("redis down")) == (timeshift_buffer_plugin._UPSTREAM_UNKNOWN, None)
+
+
+def test_switch_settle_seconds_is_the_proxys_offset_plus_a_margin(monkeypatch):
+    # Outside Dispatcharr (the tests) its config cannot be imported: the default offset of 5 s applies.
+    monkeypatch.setitem(sys.modules, "apps", None)
+    assert (
+        timeshift_buffer_plugin._switch_settle_seconds() == 5.0 + timeshift_buffer_plugin._SWITCH_SETTLE_MARGIN_SECONDS
+    )
+
+
+def test_continue_playlist_appends_to_the_old_playlist_and_marks_the_join():
+    def flags(**kw):
+        cmd = timeshift_buffer_plugin._build_ffmpeg_command(
+            "http://x/in", None, 2, 20, "/p/live.m3u8", 10, "seg_%05d.ts", "0:a:u?", **kw
+        )
+        return cmd[cmd.index("-hls_flags") + 1]
+
+    assert flags() == "delete_segments+omit_endlist"
+    assert flags(continue_playlist=True) == "delete_segments+omit_endlist+append_list+discont_start"
+
+
+def test_dead_only_for_a_restart():
+    old = {"pid": 1111, "started_at": 100.0}
+    marked = {**old, "restarting_since": 110.0}
+    adopted = {"pid": 4242, "started_at": 112.0, "restarted_from": {"pid": 1111, "started_at": 100.0}}
+    other = {"pid": 2222, "started_at": 105.0}
+
+    assert timeshift_buffer_plugin._dead_only_for_a_restart(old, marked, 112.0) is True
+    assert timeshift_buffer_plugin._dead_only_for_a_restart(old, adopted, 112.0) is True
+    assert timeshift_buffer_plugin._dead_only_for_a_restart(old, old, 112.0) is False  # really dead
+    assert timeshift_buffer_plugin._dead_only_for_a_restart(old, other, 112.0) is False
+    assert timeshift_buffer_plugin._dead_only_for_a_restart(old, marked, 110.0 + 31) is False  # the marker ran out
+
+
+@pytest.mark.parametrize(
+    "names,first_listed,keep_extra,expected",
+    [
+        pytest.param(
+            ["seg_00009.ts", "seg_00010.ts", "seg_00011.ts", "seg_00024.ts", "seg_00027.ts", "live.m3u8"],
+            27, 3, ["seg_00009.ts", "seg_00010.ts", "seg_00011.ts"], id="the-killed-ffmpegs-leftovers",
+        ),
+        pytest.param(["seg_00024.ts", "seg_00026.ts"], 27, 3, [], id="inside-ffmpegs-own-threshold"),
+        pytest.param(["seg_00001.ts", "ffmpeg.log", "seg_1.ts.tmp", "other_00001.ts"], 27, 3, ["seg_00001.ts"],
+                     id="only-segment-files"),
+    ],
+)  # fmt: skip
+def test_stray_segment_names(names, first_listed, keep_extra, expected):
+    assert sorted(timeshift_buffer_plugin._stray_segment_names(names, first_listed, keep_extra)) == expected
+
+
+def _continued_buffer_dir(tmp_path, listed, on_disk):
+    channel_dir = tmp_path / _UUID
+    channel_dir.mkdir()
+    lines = ["#EXTM3U", f"#EXT-X-MEDIA-SEQUENCE:{listed[0]}"]
+    for n in listed:
+        lines += ["#EXTINF:2.0,", f"seg_{n:05d}.ts"]
+    (channel_dir / "live.m3u8").write_text("\n".join(lines) + "\n")
+    for n in on_disk:
+        (channel_dir / f"seg_{n:05d}.ts").write_bytes(b"\x47" * 188)
+    return channel_dir
+
+
+def test_the_reaper_sweeps_a_continued_playlists_stray_segments(tmp_path):
+    channel_dir = _continued_buffer_dir(tmp_path, [27, 28, 29], [9, 10, 11, 24, 25, 26, 27, 28, 29])
+    state = {"channel_uuid": _UUID, "storage_path": str(tmp_path), "segment_keep_extra": 3, "playlist_continued": True}
+
+    timeshift_buffer_plugin._sweep_stray_segments(state, _FakeLogger())
+
+    assert sorted(p.name for p in channel_dir.glob("seg_*.ts")) == [f"seg_{n:05d}.ts" for n in range(24, 30)]
+
+
+@pytest.mark.parametrize(
+    "state_change",
+    [
+        pytest.param({"playlist_continued": False}, id="never-continued"),  # ffmpeg deletes its own
+        pytest.param({"segment_keep_extra": None}, id="state-from-before-0.8.18"),
+    ],
+)
+def test_the_reaper_sweep_leaves_other_buffers_alone(tmp_path, state_change):
+    channel_dir = _continued_buffer_dir(tmp_path, [27, 28, 29], [9, 27, 28, 29])
+    state = {"channel_uuid": _UUID, "storage_path": str(tmp_path), "segment_keep_extra": 3, "playlist_continued": True}
+
+    timeshift_buffer_plugin._sweep_stray_segments({**state, **state_change}, _FakeLogger())
+
+    assert (channel_dir / "seg_00009.ts").exists()
+
+
+class _SwitchRig(_RestartRig):
+    """A playing buffer (playlist, segments and owner file on disk) whose channel Dispatcharr has switched to another
+    stream. `events` records, in order, signals sent through os.killpg, stops and spawns."""
+
+    def __init__(self, monkeypatch, tmp_path, start_locks, **state_overrides):
+        super().__init__(monkeypatch, tmp_path, start_locks, **{"upstream_stream_id": "7", **state_overrides})
+        (self.channel_dir / "ffmpeg.log").write_text("")
+        (self.channel_dir / "live.m3u8").write_text(
+            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nseg_00000.ts\n#EXTINF:2.0,\nseg_00001.ts\n"
+        )
+        for name in ("seg_00000.ts", "seg_00001.ts"):
+            (self.channel_dir / name).write_bytes(b"\x47" * 188)
+        # the old ffmpeg's owner file: a start that is not a continuation would reap the ffmpeg it names
+        (self.channel_dir / "ffmpeg.owner.json").write_text(
+            json.dumps({"pid": self.OLD_PID, "pid_start_ticks": 7, "started_at": 100.0})
+        )
+        self.upstream = "8"
+        self.switch_time = 50.0
+        self.events = []
+        self.refuse_spawns = 0
+        monkeypatch.setattr(timeshift_buffer_plugin, "_upstream_stream", lambda uuid: (self.upstream, self.switch_time))
+        monkeypatch.setattr(timeshift_buffer_plugin, "_wall_clock", lambda: 112.0)
+        monkeypatch.setattr(timeshift_buffer_plugin, "_proc_start_ticks", lambda pid: 7 if pid == self.OLD_PID else 9)
+        monkeypatch.setattr(timeshift_buffer_plugin.os, "killpg", self._killpg)
+        monkeypatch.setattr(timeshift_buffer_plugin, "_OVERLAP_SECONDS", 0.05)
+        monkeypatch.setattr(timeshift_buffer_plugin, "_account_stream_limit", lambda username: (0, {}))
+
+    def _killpg(self, pid, sig):
+        if pid not in self.alive:
+            raise ProcessLookupError(pid)
+        self.events.append((sig.name, pid))
+
+    def _stop(self, state, logger, first_signal=signal.SIGTERM):
+        self.events.append(("stop", state["pid"]))
+        super()._stop(state, logger, first_signal)
+
+    def _popen(self, cmd, **kw):
+        self.events.append(("spawn", cmd[cmd.index("-hls_flags") + 1]))
+        self.spawned.append(cmd)
+        if self.refuse_spawns:
+            self.refuse_spawns -= 1  # connected and was refused: gone again within the overlap
+            self.alive.discard(self.NEW_PID)
+        else:
+            self.alive.add(self.NEW_PID)
+        return _FakeProc()
+
+    def restart(self, settings=None):
+        logger = _FakeLogger()
+        result = timeshift_buffer_plugin._restart_after_stream_switch(
+            _UUID, copy.deepcopy(self.state), self.upstream, settings or {"storage_path": str(self.tmp_path)}, logger
+        )
+        return result, logger
+
+
+def test_a_stream_switch_restarts_ffmpeg_on_the_same_playlist_keeping_viewers_and_token(
+    monkeypatch, tmp_path, start_locks
+):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+
+    restarted, logger = rig.restart()
+
+    assert restarted is True
+    # the old ffmpeg is frozen, not killed, until the new one has connected: the proxy's channel never has no client
+    assert rig.events == [
+        ("SIGSTOP", rig.OLD_PID),
+        ("spawn", "delete_segments+omit_endlist+append_list+discont_start"),
+        ("stop", rig.OLD_PID),
+    ]
+    assert rig.signals == [signal.SIGKILL]
+    [cmd] = rig.spawned
+    assert "-map" in cmd  # every audio track, as the buffer started
+    # the directory is kept: the new ffmpeg appends to this playlist and the client reads on across the join
+    assert sorted(p.name for p in rig.channel_dir.iterdir() if p.suffix in (".ts", ".m3u8")) == [
+        "live.m3u8",
+        "seg_00000.ts",
+        "seg_00001.ts",
+    ]
+    # the owner file is handed to the new ffmpeg, though the frozen old one it named was still alive
+    assert json.loads((rig.channel_dir / "ffmpeg.owner.json").read_text())["pid"] == rig.NEW_PID
+    assert rig.header_params == [{"username": "alice", "client_ip": "192.0.2.7"}]
+    state = rig.store[_UUID]
+    assert (state["pid"], state["started_at"]) == (rig.NEW_PID, 112.0)
+    assert state["upstream_stream_id"] == "8" and state["playlist_continued"] is True
+    assert state["restarted_from"] == {"pid": rig.OLD_PID, "started_at": 100.0}
+    assert "restarting_since" not in state and "restarted_without_audio_map" not in state
+    assert state["access_token"] == "tok" and state["viewers"] == ["v1"]
+    assert state["input_params"] == {"username": "alice", "client_ip": "192.0.2.7"}
+    assert any("switched from stream 7 to 8" in msg for _level, msg in logger.calls)
+    assert start_locks.log == [("acquire", _UUID), ("release", _UUID)]
+
+
+def test_a_new_ffmpeg_refused_beside_the_old_one_leaves_the_old_one_running(monkeypatch, tmp_path, start_locks):
+    """A user stream limit that still counts the frozen old connection refuses the new one, which exits. Killing the old
+    one to try again emptied the channel, and the proxy started it again on its first stream (checked live): the old
+    ffmpeg is resumed instead, and the switch is recorded so it is not tried again."""
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    rig.refuse_spawns = 1
+
+    restarted, logger = rig.restart()
+
+    assert restarted is False
+    assert [e[0] for e in rig.events] == ["SIGSTOP", "spawn", "SIGCONT"]
+    assert rig.OLD_PID in rig.alive and len(rig.spawned) == 1
+    state = rig.store[_UUID]
+    assert state["pid"] == rig.OLD_PID and "restarting_since" not in state
+    assert state["upstream_stream_id"] == "8"  # handled: the next poll does not try again
+    assert "playlist_continued" not in state
+    assert any("keeping the old one" in msg for _level, msg in logger.calls)
+    assert json.loads((rig.channel_dir / "ffmpeg.owner.json").read_text())["pid"] == rig.OLD_PID
+
+
+def test_a_failed_spawn_after_a_switch_resumes_the_old_ffmpeg(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+
+    def fail(cmd, **kw):
+        raise OSError("no fork")
+
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", fail)
+
+    assert rig.restart()[0] is False
+    assert rig.events == [("SIGSTOP", rig.OLD_PID), ("SIGCONT", rig.OLD_PID)]
+    state = rig.store[_UUID]
+    assert state["pid"] == rig.OLD_PID and "restarting_since" not in state
+    assert state["upstream_stream_id"] == "7"
+
+
+def test_a_lost_start_lock_before_the_spawn_resumes_the_old_ffmpeg(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_renew_start_buffer_lock", lambda uuid, token: False)
+
+    assert rig.restart()[0] is False
+    assert rig.events == [("SIGSTOP", rig.OLD_PID), ("SIGCONT", rig.OLD_PID)]
+    assert rig.spawned == [] and "restarting_since" not in rig.store[_UUID]
+
+
+def test_a_buffer_restarted_without_the_audio_map_stays_on_ffmpegs_own_pick_after_a_switch(
+    monkeypatch, tmp_path, start_locks
+):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks, audio_map=None, restarted_without_audio_map=True)
+
+    assert rig.restart()[0] is True
+    [cmd] = rig.spawned
+    assert "-map" not in cmd and "-sn" in cmd
+    assert rig.store[_UUID]["restarted_without_audio_map"] is True
+
+
+def test_a_switch_before_the_first_sighting_is_followed(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    rig.store[_UUID].pop("upstream_stream_id")
+
+    restarted, logger = rig.restart()
+
+    assert restarted is True
+    assert rig.store[_UUID]["upstream_stream_id"] == "8"
+    assert any("the one it started on" in msg for _level, msg in logger.calls)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param(lambda rig: rig.store[_UUID].update(upstream_stream_id="8"), id="already-followed"),
+        pytest.param(lambda rig: (rig.channel_dir / "live.m3u8").unlink(), id="no-playlist-yet"),
+        pytest.param(lambda rig: rig.alive.clear(), id="ffmpeg-dead"),
+        pytest.param(lambda rig: rig.store[_UUID].update(stopping=True), id="stopping"),
+        pytest.param(lambda rig: rig.store[_UUID].update(pid=2222, started_at=105.0), id="another-instance"),
+        pytest.param(lambda rig: rig.locks.held.add(_UUID), id="start-lock-held"),
+    ],
+)
+def test_no_restart_after_a_switch_when(monkeypatch, tmp_path, start_locks, change):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    change(rig)
+
+    assert rig.restart()[0] is False
+    assert rig.events == [] and rig.spawned == []
+
+
+def test_a_restart_whose_buffer_is_stopped_meanwhile_stops_both_ffmpegs(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    real_popen = rig._popen
+
+    def spawn_then_stop(cmd, **kw):
+        proc = real_popen(cmd, **kw)
+        rig.store[_UUID]["stopping"] = True
+        return proc
+
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", spawn_then_stop)
+
+    assert rig.restart()[0] is False
+    assert rig.OLD_PID not in rig.alive and rig.NEW_PID not in rig.alive
+
+
+@pytest.mark.parametrize(
+    "stream_limit,settings,expected",
+    [
+        pytest.param(0, {}, False, id="no-limit"),
+        pytest.param(None, None, False, id="unknown-account"),
+        pytest.param(1, {}, True, id="limit-counts-every-connection-by-default"),
+        pytest.param(2, {"ignore_same_channel_connections": False}, True, id="limit-counts-every-connection"),
+        pytest.param(1, {"ignore_same_channel_connections": True}, False, id="same-channel-reconnect-ignored"),
+        pytest.param(True, {}, False, id="not-a-number"),
+        pytest.param(1, None, True, id="limit-with-unreadable-settings-counts-as-blocking"),
+    ],
+)
+def test_stream_limit_blocks_reconnect(stream_limit, settings, expected):
+    assert timeshift_buffer_plugin._stream_limit_blocks_reconnect(stream_limit, settings) is expected
+
+
+def test_no_restart_after_a_switch_for_an_account_whose_stream_limit_counts_the_reconnect(
+    monkeypatch, tmp_path, start_locks
+):
+    """With a limit of 1, the restart's new connection made Dispatcharr end the old one, the channel stopped and the
+    buffer ended (checked live); the buffer goes on as it was, and the switch counts as handled."""
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    looked_up = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_account_stream_limit", lambda username: looked_up.append(username) or (1, {})
+    )
+
+    restarted, logger = rig.restart()
+
+    assert restarted is False
+    assert looked_up == ["alice"]
+    assert rig.events == [] and rig.spawned == []
+    assert rig.store[_UUID]["upstream_stream_id"] == "8" and rig.store[_UUID]["pid"] == rig.OLD_PID
+    assert any("has a stream limit" in msg for _level, msg in logger.calls)
+
+
+def test_a_switch_that_goes_back_before_it_settles_resumes_the_held_ffmpeg(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_switch_settle_seconds", lambda: _SETTLE)
+    rig.upstream, rig.switch_time = "8", 111.0
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+    assert rig.store[_UUID]["switch_frozen"] == "8"
+
+    rig.upstream = "7"  # back on the stream the buffer recorded
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+
+    assert rig.events == [("SIGSTOP", rig.OLD_PID), ("SIGCONT", rig.OLD_PID)]
+    assert "switch_frozen" not in rig.store[_UUID] and rig.spawned == []
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [(21, 21), (22, 22), (None, None), ("22", None), (True, None), (0, None), (22.0, None), (1000, None)],
+)
+def test_resolve_kodi_version(value, expected):
+    params = {} if value is None else {"kodi_version": value}
+    assert timeshift_buffer_plugin._resolve_kodi_version(params) == expected
+
+
+def test_record_viewer_kodi_version_keeps_only_listed_viewers():
+    state = {"viewers": ["a", "b"], "viewer_kodi_versions": {"a": 21, "old": 22, "b": 22}}
+
+    timeshift_buffer_plugin._record_viewer_kodi_version(state, "b", None)  # restarted with an addon that sends none
+    assert state["viewer_kodi_versions"] == {"a": 21}
+
+    timeshift_buffer_plugin._record_viewer_kodi_version(state, "a", None)
+    assert "viewer_kodi_versions" not in state
+
+    timeshift_buffer_plugin._record_viewer_kodi_version(state, None, 21)  # no viewer_id: nothing to record
+    assert "viewer_kodi_versions" not in state
+
+
+@pytest.mark.parametrize(
+    "viewers, versions, expected",
+    [
+        (["a"], {"a": 21}, False),
+        (["a", "b"], {"a": 21, "b": 21}, False),
+        (["a"], {"a": 22}, True),
+        (["a"], {"a": 23}, True),
+        (["a", "b"], {"a": 21, "b": 22}, True),
+        (["a", "b"], {"a": 21}, True),  # b's addon did not say
+        (["a"], None, True),
+        ([], {"a": 21}, True),  # no viewer_id at all: not known
+    ],
+)
+def test_stream_switch_needs_hold(viewers, versions, expected):
+    state = {"viewers": viewers}
+    if versions is not None:
+        state["viewer_kodi_versions"] = versions
+    assert timeshift_buffer_plugin._stream_switch_needs_hold(state) is expected
+
+
+def test_a_buffer_watched_only_from_kodi_21_plays_on_until_the_restart(monkeypatch, tmp_path, start_locks):
+    """Kodi 21 cannot follow a change of format (checked live), so holding its picture for the settle gains nothing:
+    the old ffmpeg runs on, and only the restart's own overlap freezes it."""
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks, viewer_kodi_versions={"v1": 21})
+    now = [112.0]
+    monkeypatch.setattr(timeshift_buffer_plugin, "_wall_clock", lambda: now[0])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_switch_settle_seconds", lambda: _SETTLE)
+    rig.upstream, rig.switch_time = "8", 111.0
+
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+    assert rig.events == [] and "switch_frozen" not in rig.store[_UUID]
+
+    now[0] = 111.0 + _SETTLE
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+    assert rig.events == [
+        ("SIGSTOP", rig.OLD_PID),
+        ("spawn", "delete_segments+omit_endlist+append_list+discont_start"),
+        ("stop", rig.OLD_PID),
+    ]
+    assert rig.store[_UUID]["upstream_stream_id"] == "8"
+
+
+def test_a_kodi_22_viewer_beside_a_kodi_21_one_still_gets_the_hold(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(
+        monkeypatch, tmp_path, start_locks, viewers=["v1", "v2"], viewer_kodi_versions={"v1": 21, "v2": 22}
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_switch_settle_seconds", lambda: _SETTLE)
+    rig.upstream, rig.switch_time = "8", 111.0
+
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+
+    assert rig.events == [("SIGSTOP", rig.OLD_PID)] and rig.store[_UUID]["switch_frozen"] == "8"
+
+
+def test_a_buffer_whose_account_limit_rules_out_the_restart_is_not_held(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_account_stream_limit", lambda username: (1, {}))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_switch_settle_seconds", lambda: _SETTLE)
+    rig.upstream, rig.switch_time = "8", 111.0
+
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+
+    assert rig.events == [] and "switch_frozen" not in rig.store[_UUID]
+    assert rig.store[_UUID]["upstream_stream_id"] == "8"  # handled: not tried again
+
+
+def test_stop_ffmpeg_resumes_a_held_ffmpeg_so_it_acts_on_sigterm(monkeypatch):
+    calls = []
+    monkeypatch.setattr(timeshift_buffer_plugin.os, "killpg", lambda pid, sig: calls.append(sig))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_stopped", lambda pid: True)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, ticks=None: False)
+
+    timeshift_buffer_plugin._stop_ffmpeg({"pid": 4242}, _FakeLogger())
+
+    assert calls == [signal.SIGTERM, signal.SIGCONT]
+
+
+def test_is_stopped_reads_a_real_process_state():
+    proc = subprocess.Popen(["sleep", "30"])
+    try:
+        assert timeshift_buffer_plugin._is_stopped(proc.pid) is False
+        os.kill(proc.pid, signal.SIGSTOP)
+        deadline = time.monotonic() + 5
+        while not timeshift_buffer_plugin._is_stopped(proc.pid) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert timeshift_buffer_plugin._is_stopped(proc.pid) is True
+        os.kill(proc.pid, signal.SIGCONT)
+    finally:
+        proc.kill()
+        proc.wait()
+    assert timeshift_buffer_plugin._is_stopped(proc.pid) is False  # gone
+
+
+def test_a_redis_error_on_the_lock_after_the_hold_resumes_the_old_ffmpeg(monkeypatch, tmp_path, start_locks):
+    """still_held() ran outside the try: its exception left the mark set and the ffmpeg frozen, and every later poll
+    took the mark for a restart in progress (found by the branch's second review)."""
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+
+    def renew(uuid, token):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_renew_start_buffer_lock", renew)
+
+    assert rig.restart()[0] is False
+    assert rig.events == [("SIGSTOP", rig.OLD_PID), ("SIGCONT", rig.OLD_PID)]
+    assert "restarting_since" not in rig.store[_UUID] and rig.spawned == []
+
+
+def test_a_settings_change_during_a_hold_resumes_and_records_the_switch(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks, switch_frozen="8")
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_stopped", lambda pid: pid == rig.OLD_PID)
+
+    restarted, logger = rig.restart({"storage_path": str(tmp_path / "elsewhere")})
+
+    assert restarted is False and rig.spawned == []
+    assert rig.events == [("SIGCONT", rig.OLD_PID)]
+    state = rig.store[_UUID]
+    assert state["upstream_stream_id"] == "8" and "switch_frozen" not in state
+    assert any("storage path or port changed" in msg for _level, msg in logger.calls)
+
+
+def test_a_buffer_that_cannot_follow_the_switch_is_never_held(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_switch_settle_seconds", lambda: _SETTLE)
+    rig.upstream, rig.switch_time = "8", 111.0
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_live_manifest", lambda state, logger: dict(_SWITCH_MANIFEST))
+    locks = {"acquire_lock": start_locks.acquire, "release_lock": start_locks.release, "renew_lock": start_locks.renew}
+
+    _run(
+        monkeypatch, "get_live_manifest", {"channel_uuid": _UUID, "viewer_id": "v1", "access_token": "tok"},
+        {"http_port": 9300}, tmp_path, **locks,
+    )  # fmt: skip
+
+    assert rig.events == [] and "switch_frozen" not in rig.store[_UUID]
+    assert rig.store[_UUID]["upstream_stream_id"] == "8"
+
+
+def test_no_thaw_during_a_restarts_overlap(monkeypatch, tmp_path, start_locks):
+    """A poll holding an older copy of the state (still held, the switch gone back) must not resume the old ffmpeg
+    while another poll's restart runs the new one beside it: both would write the same playlist."""
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks, switch_frozen="8", restarting_since=111.0)
+    stale_copy = {**copy.deepcopy(rig.state), "restarting_since": None}
+    stale_copy.pop("restarting_since")
+
+    timeshift_buffer_plugin._thaw_after_stream_switch(_UUID, stale_copy)
+
+    assert rig.events == [] and rig.store[_UUID]["switch_frozen"] == "8"
+
+
+def test_a_redis_error_reading_the_proxy_leaves_a_held_buffer_held(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks, switch_frozen="8")
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_upstream_stream", lambda uuid: (timeshift_buffer_plugin._UPSTREAM_UNKNOWN, None)
+    )
+
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+
+    assert rig.events == [] and rig.store[_UUID]["switch_frozen"] == "8"
+
+
+def test_the_settled_poll_restarts_in_the_background_once_per_channel(monkeypatch, tmp_path, start_locks):
+    """The poll answers at once: run inside it, the restart could outlast the addon's 5 s limit on that poll."""
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    _InlineThread.started.clear()
+
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+    assert _InlineThread.started == ["timeshift_buffer_switch_restart"] and len(rig.spawned) == 1
+
+    # one already running in this worker: a poll landing meanwhile starts no second one
+    rig.store[_UUID]["upstream_stream_id"] = "7"
+    timeshift_buffer_plugin._stream_switch_restarts.add(_UUID)
+    try:
+        _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+    finally:
+        timeshift_buffer_plugin._stream_switch_restarts.discard(_UUID)
+    assert _InlineThread.started == ["timeshift_buffer_switch_restart"] and len(rig.spawned) == 1
+
+
+class _InlineThread:
+    """Runs a thread's target inside start(), so a poll's background restart has happened when the poll returns."""
+
+    started = []
+
+    def __init__(self, target, name=None, daemon=None):
+        self.target, self.name = target, name
+
+    def start(self):
+        _InlineThread.started.append(self.name)
+        self.target()
+
+
+def _switch_poll(monkeypatch, tmp_path, start_locks, manifest):
+    monkeypatch.setattr(timeshift_buffer_plugin.threading, "Thread", _InlineThread)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_live_manifest", lambda state, logger: dict(manifest))
+    locks = {"acquire_lock": start_locks.acquire, "release_lock": start_locks.release, "renew_lock": start_locks.renew}
+    result, _logger = _run(
+        monkeypatch, "get_live_manifest", {"channel_uuid": _UUID, "viewer_id": "v1", "access_token": "tok"}, {},
+        tmp_path, **locks,
+    )  # fmt: skip
+    return result
+
+
+_SWITCH_MANIFEST = {"media_sequence": 0, "segments": [{"sequence": 0}], "total_bytes": 188, "total_duration_ms": 2000}
+
+
+def test_get_live_manifest_records_the_stream_then_restarts_once_the_switch_has_settled(
+    monkeypatch, tmp_path, start_locks
+):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+    rig.store[_UUID].pop("upstream_stream_id")
+    rig.upstream, rig.switch_time = "7", None
+    now = [112.0]
+    monkeypatch.setattr(timeshift_buffer_plugin, "_wall_clock", lambda: now[0])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_switch_settle_seconds", lambda: _SETTLE)
+
+    first = _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+    assert first["status"] == "ok"
+    assert rig.store[_UUID]["upstream_stream_id"] == "7" and rig.spawned == []
+
+    rig.upstream, rig.switch_time = "8", 115.0
+    now[0] = 116.0  # 1 s after the switch: the proxy would still hand a new client the old stream's last seconds
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+    assert rig.spawned == []
+    # held meanwhile, once: left running it wrote the new stream's packets labelled as the old format
+    assert rig.events == [("SIGSTOP", rig.OLD_PID)] and rig.store[_UUID]["switch_frozen"] == "8"
+
+    now[0] = 115.0 + _SETTLE
+    switched = _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+    assert switched["status"] == "ok" and not switched.get("ended")
+    assert len(rig.spawned) == 1 and rig.store[_UUID]["upstream_stream_id"] == "8"
+    assert "switch_frozen" not in rig.store[_UUID]
+
+    _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
+    assert len(rig.spawned) == 1  # followed once
+
+
+def test_get_live_manifest_does_not_restart_a_buffer_whose_ffmpeg_has_ended(monkeypatch, tmp_path, start_locks):
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks)
+
+    result = _switch_poll(monkeypatch, tmp_path, start_locks, {**_SWITCH_MANIFEST, "ended": True})
+
+    assert result["ended"] is True
+    assert rig.spawned == []
+
+
+def test_a_poll_between_a_restarts_kill_and_adoption_is_not_told_the_buffer_ended(monkeypatch, tmp_path, start_locks):
+    """The poll found the old ffmpeg dead with its playlist on disk, which reads as "ended"; a client told that stops
+    waiting at the live tail, though the restart's new ffmpeg is about to append to the same playlist."""
+    rig = _SwitchRig(monkeypatch, tmp_path, start_locks, restarting_since=111.0)
+    rig.upstream = "7"
+
+    result = _switch_poll(monkeypatch, tmp_path, start_locks, {**_SWITCH_MANIFEST, "ended": True})
+
+    assert result["status"] == "ok" and result["ended"] is False
+    assert rig.spawned == []
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_a_continued_playlist_leaves_its_predecessors_kept_segments_until_the_sweep(tmp_path):
+    """The real ffmpeg with the plugin's argv and a list that overflows: a continuing ffmpeg (append_list) does not know
+    the segments its predecessor kept past the list, and nothing but the reaper's sweep deletes them."""
+    source = tmp_path / "a.ts"
+    _generate_or_skip(
+        ["-f", "lavfi", "-i", "testsrc=duration=30:size=160x120:rate=25", "-c:v", "libx264", "-g", "25",
+         "-f", "mpegts", str(source)],
+        "an H.264 stream (needs libx264)",
+    )  # fmt: skip
+    out = tmp_path / _UUID
+    out.mkdir()
+
+    def run(**kw):
+        # 3 listed, 3 more kept (wrap 6), 2 s segments: 15 segments a run
+        cmd = timeshift_buffer_plugin._build_ffmpeg_command(
+            str(source), None, 2, 6, str(out / "live.m3u8"), 3, "seg_%05d.ts", None, **kw
+        )
+        done = subprocess.run(cmd, cwd=out, capture_output=True, timeout=60)
+        assert done.returncode == 0, done.stderr.decode(errors="replace")
+
+    def on_disk():
+        return sorted(int(p.name[4:9]) for p in out.glob("seg_*.ts"))
+
+    def listed_now():
+        return timeshift_buffer_plugin._parse_live_playlist_lines((out / "live.m3u8").read_text().splitlines())[1]
+
+    run()
+    # kept past the list by the first ffmpeg; the second never learns of them
+    kept_past_the_list = sorted(set(on_disk()) - {seq for seq, _name, _ms in listed_now()})
+    run(continue_playlist=True)
+    listed = listed_now()
+    first_listed = listed[0][0]
+    assert kept_past_the_list and all(n < first_listed - 3 for n in kept_past_the_list)
+    assert set(kept_past_the_list) <= set(on_disk())  # the bug: never deleted
+
+    state = {"channel_uuid": _UUID, "storage_path": str(tmp_path), "segment_keep_extra": 3, "playlist_continued": True}
+    timeshift_buffer_plugin._sweep_stray_segments(state, _FakeLogger())
+
+    assert on_disk() == [n for n in range(first_listed - 3, listed[-1][0] + 1)]
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_a_continuing_ffmpeg_numbers_on_from_the_killed_ones_playlist_in_the_new_format(tmp_path):
+    """The real ffmpeg with the plugin's argv: a buffer written from an H.264 source, then the restart's argv on an
+    MPEG-2 source (a format every ffmpeg can encode, standing in for the HEVC of the live check) into the same
+    directory. One playlist, sequence numbers on from the first run's, a discontinuity at the join, and the new
+    segments in the new format; the old ones keep theirs."""
+    first, second = tmp_path / "a.ts", tmp_path / "b.ts"
+    _generate_or_skip(
+        ["-f", "lavfi", "-i", "testsrc=duration=6:size=160x120:rate=25", "-c:v", "libx264", "-g", "25",
+         "-f", "mpegts", str(first)],
+        "an H.264 stream (needs libx264)",
+    )  # fmt: skip
+    _generate_or_skip(
+        ["-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=25", "-c:v", "mpeg2video", "-g", "25",
+         "-f", "mpegts", str(second)],
+        "an MPEG-2 stream",
+    )  # fmt: skip
+    out = tmp_path / "chan"
+    out.mkdir()
+
+    def run(source, **kw):
+        cmd = timeshift_buffer_plugin._build_ffmpeg_command(
+            str(source), None, 2, 20, str(out / "live.m3u8"), 10, "seg_%05d.ts", None, **kw
+        )
+        done = subprocess.run(cmd, cwd=out, capture_output=True, timeout=60)
+        assert done.returncode == 0, done.stderr.decode(errors="replace")
+
+    run(first)
+    _, before = timeshift_buffer_plugin._parse_live_playlist_lines((out / "live.m3u8").read_text().splitlines())
+    run(second, continue_playlist=True)
+    lines = (out / "live.m3u8").read_text().splitlines()
+    media_sequence, after = timeshift_buffer_plugin._parse_live_playlist_lines(lines)
+
+    assert media_sequence == 0
+    sequences = [seq for seq, _name, _ms in after]
+    assert sequences == list(range(len(after))) and len(after) > len(before)
+    assert after[: len(before)] == before
+    first_new = after[len(before)][1]
+    assert lines[lines.index(first_new) - 2].startswith("#EXT-X-DISCONTINUITY")
+
+    def codec(name):
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of",
+             "default=nw=1:nk=1", str(out / name)],
+            capture_output=True, check=True,
+        )  # fmt: skip
+        return probe.stdout.decode().split()[0]  # listed under the program too
+
+    assert codec(before[-1][1]) == "h264"
+    assert codec(first_new) == "mpeg2video" and codec(after[-1][1]) == "mpeg2video"

@@ -4,12 +4,11 @@
 
 ## Status at a glance
 
-**6 open, 412 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**5 open, 413 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
-- One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, documented and deferred.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One from the 2026-11-12 live checks on Kodi 21: timers made on the server showed about 75 s after the realtime event.
@@ -30,9 +29,9 @@ recording's 20 s retry budget).
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
-| Open: Known gaps, deliberately deferred | 3 |
+| Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 359 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 360 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -119,30 +118,6 @@ assumption: partially hardened, not fully" section lists what else assumes that 
 rule tag). Worth doing only if someone runs two Dispatcharr servers, or wants two accounts (admin for the companion
 plugins, non-admin otherwise) against one server from one Kodi; the migration step and the per-instance settings
 handling in `OnAddonSettingChanged()` are the work. Not started.
-
-#### Server-side mode freezes the picture after a stream switch that changes codec (and Kodi 21 does in every mode)
-
-**Opened 2026-10-24 from the Dispatcharr 0.33.0 stream-switch re-test; checked live 2026-10-25 and turned into a design
-question.** Three disposable channels on the lab, each with a synthetic first stream that stops sending 20 s after it
-connects and a synthetic second stream (no provider involved): 720p H.264 then 1080p HEVC, the reverse, and H.264 both
-times as the control. Dispatcharr switched at about 45 s every time. The control played on in every mode. With a codec
-change, watched for 120 s with screenshots compared at 50, 80 and 110 s: on Kodi 22.0-RC1, Off and Local mode switched
-decoder (H.264 1280 ↔ HEVC 1920) and played on in both directions; on Kodi 21.3, Off and Local mode froze the picture on
-the old stream's last frame while sound and the player time went on (Kodi kept feeding the new stream to the old
-decoder, logging `[h264] no frame!` over and over), which is Kodi's demuxer not acting on the PMT's new stream type for
-the same PID; and in Server-side mode both Kodi versions froze in both directions, the decoder never changed and the
-player time reset to 0 every few seconds from then on (the symptom first seen on 2026-10-24 with a real channel). So
-Server-side is the case on the addon's own path: the buffer's ffmpeg (`-c copy -f hls`) keeps writing segments for the
-codec it opened with. Options: watch the buffer's ffmpeg for a codec or stream-layout change on its input and restart it
-(a fresh segmenter; the addon then has to treat the new segments like a buffer restart), or re-mux each segment's codec
-parameters some other way; or accept it and document it (on Kodi 21 nothing on the addon side helps in Off or Local
-mode). Real channels change codec on a switch only when their streams come from different sources, so how often this
-bites is unknown.
-
-**Deferred 2026-11-04, by the maintainer's decision: documented, not fixed for now.** The user-facing account is
-`TROUBLESHOOTING.md`'s "The picture freezes after a channel switches streams, while playback keeps running" (backup
-streams in the same video format; Off or Local mode on Kodi 22). Pick up the ffmpeg restart above if users report it on
-real channels.
 
 ### Tooling (tools/)
 

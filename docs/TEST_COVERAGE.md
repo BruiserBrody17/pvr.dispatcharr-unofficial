@@ -3239,6 +3239,53 @@ started while it was answered, and does not bring back a buffer torn down meanwh
 the code before the fix; the other two pin the guards it shares with the answered poll. The reaper's side was checked
 live, not here.
 
+2026-11-13 (still 0.8.18, `docs/TIMESHIFT.md`'s "A stream switch that changes the video format (0.8.18)"): the
+restart after a stream switch. Pure: `_stream_switch_step()` records a first sighting (or follows it when the proxy
+switched after the buffer started), waits until a switch is the settle time old, restarts then, does nothing for the
+same id, no id, a buffer stopping or one mid-restart, and thaws a buffer held for a switch that went back or whose
+proxy channel went away; `_upstream_stream()` reads `stream_id` and `stream_switch_time` from
+`live:channel:<uuid>:metadata` (bytes or str, an unreadable time as None, a Redis error as nothing);
+`_switch_settle_seconds()` is the proxy's offset (5 s outside Dispatcharr) plus the margin; `continue_playlist` adds
+`append_list+discont_start` and nothing else; `_dead_only_for_a_restart()` holds a dead ffmpeg as not ended while the
+same instance is marked or once the adopted state names it; `_stream_limit_blocks_reconnect()` is true for a limit
+that counts every connection and false with no limit, an unknown account or same-channel connections ignored;
+`_stray_segment_names()` picks only `seg_N.ts` files below the first listed segment by more than the threshold.
+With the restart rig (`_SwitchRig`: a playlist, segments and an owner file on disk, `os.killpg` recorded): the old
+ffmpeg is frozen, the new one spawned with the append flags and the audio map, and only then the old one killed; the
+directory is kept, the owner file passes to the new ffmpeg, and the adopted state has the new id,
+`playlist_continued`, `restarted_from`, the token, the viewers and `input_params`; a new ffmpeg that exits inside the
+overlap leaves the old one resumed, the owner file back on it and the switch recorded as handled; a failed spawn and a
+lock lost before the spawn resume the old one; a buffer stopped during the restart has both ffmpegs stopped; a buffer
+already restarted without the audio map stays on ffmpeg's own pick; an account whose limit counts the reconnect gets
+no restart and the switch recorded; nothing happens for an id already followed, before the first playlist, for a dead
+ffmpeg, a buffer stopping, another instance or a held start lock. Through `Plugin.run("get_live_manifest")`: the first
+poll records, a switch too recent holds the ffmpeg once (SIGSTOP) and does not restart, the settled poll restarts once
+and clears the hold, a later poll does nothing, a switch that goes back resumes the held ffmpeg, a limited account is
+never held, an ended buffer is not restarted, and a poll between a kill and the adoption is not told "ended".
+`_stop_ffmpeg()` resumes a stopped ffmpeg after its SIGTERM; `_is_stopped()` reads a real `sleep` process stopped and
+resumed. The reaper's sweep deletes only a continued playlist's strays, not those of a buffer never continued or of
+state from before 0.8.18. Two real-ffmpeg tests: the plugin's argv on an H.264 source, then the restart's argv on an
+MPEG-2 source, gives one playlist numbered on, a discontinuity before the first new segment and the new segments in
+the new format; and on a list that overflows, the segments the first ffmpeg kept past its list survive the
+continuing one (the bug) until the sweep removes exactly them. `input_params` is now kept for every buffer (two
+assertions changed with it), and the audio-map restart runs through the shared core with its tests otherwise
+unchanged. From the second review: a stale `restarting_since` no longer stops a step, a switch less than the settle
+time before the start is followed, a Redis error reading the proxy is "unknown" and leaves a held buffer held, a lock
+check that raises after the hold resumes the old ffmpeg, a settings change resumes and records instead of holding, no
+resume during a restart's overlap, a limit with unreadable settings blocks, and the settled poll starts one background
+restart per channel and worker (`_InlineThread` runs it inside the poll for the tests). Kodi following the new format,
+and the proxy's behaviour behind each guard, were checked live, not here.
+
+2026-11-13 (still 0.8.18, `docs/TIMESHIFT.md`'s "Only Kodi 22 pays for the hold"): `_resolve_kodi_version()` takes
+a plain int from 1 to 999 and nothing else (no string, bool, float or 0); `_record_viewer_kodi_version()` records a
+viewer's version, forgets it when a later start sends none, and drops entries for viewers no longer listed;
+`_stream_switch_needs_hold()` is false only when every listed viewer is known to be on Kodi 21, and true for one on 22
+or later, for a viewer whose addon did not say and for a buffer with no viewers. `start_buffer` records the version on
+a fresh start and on a reattach. Through the switch rig: a buffer watched only from Kodi 21 is not held while the
+switch settles and the settled poll restarts it as usual (the restart's own SIGSTOP, spawn, kill; fails without the
+check), and a Kodi 22 viewer beside a Kodi 21 one still gets the hold. On the addon side, the glue scenario
+`live_stop_token` checks `start_buffer` carries the version the stub Kodi reports (`kodi_stub.cpp`, `pvr_stub.cpp`).
+
 ## Tools
 
 ### `tools/tests/`

@@ -38,6 +38,14 @@ static bool my_notify(void*, int, const char* h, const char* m, const char*, uns
   g_notifyCount++;
   return true;
 }
+static void my_kodi_version(void*, char** compile_name, int* major, int* minor, char** revision, char** tag,
+                            char** tagversion)
+{
+  // A plausible answer, minus the strings: the addon reads only the major version, and passes it on.
+  *compile_name = *revision = *tag = *tagversion = nullptr;
+  *major = 21;
+  *minor = 0;
+}
 static AddonToKodiFuncTable_kodi g_kodi;
 static AddonToKodiFuncTable_Addon g_toKodi;
 static KodiToAddonFuncTable_Addon g_toAddon;
@@ -46,6 +54,7 @@ void InitKodiStub()
 {
   memset(&g_kodi, 0, sizeof g_kodi);
   g_kodi.queue_notification = my_notify;
+  g_kodi.kodi_version = my_kodi_version;
   memset(&g_toKodi, 0, sizeof g_toKodi);
   g_toKodi.addon_log_msg = my_log;
   g_toKodi.free_string = my_free;
