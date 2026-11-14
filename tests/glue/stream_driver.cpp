@@ -634,6 +634,11 @@ static void live_stop_token(DispatcharrClient& cl)
     FAIL("stop_buffer carried no viewer_id: %s", stop.dump().c_str());
   else
     INFO("stop_buffer params %s", stop.dump().c_str());
+  // start_buffer names the Kodi it runs in, so the plugin holds the picture after a stream switch only for a Kodi that
+  // can use it (timeshift_buffer 0.8.18; docs/TIMESHIFT.md, "A stream switch that changes the video format (0.8.18)").
+  const auto start = nlohmann::json::parse(http("/__laststart"), nullptr, false);
+  if (!start.is_object() || !start.contains("kodi_version") || start["kodi_version"] != 21)
+    FAIL("start_buffer did not carry the stub's Kodi version 21: %s", start.dump().c_str());
   // The segment reads name the same viewer, so the plugin's file server keeps that viewer listed while its heartbeat
   // calls fail (timeshift_buffer 0.8.17; docs/CLOSED_ITEMS.md, "a stop from the last listed viewer ends a buffer
   // another viewer is still reading").

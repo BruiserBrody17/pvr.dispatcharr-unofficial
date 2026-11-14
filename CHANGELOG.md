@@ -12,6 +12,12 @@ compare against.
 
 ## [Unreleased] -- addon
 
+### Changed
+
+- Server-side mode: the addon now tells `timeshift_buffer` which Kodi version it runs in, so that on Kodi 21, after a
+  channel switches to a backup stream, the plugin from 0.8.18 does not hold the picture for a format change Kodi 21
+  cannot show anyway.
+
 ### Fixed
 
 - A recording or repeating timer with an id the addon cannot represent (over about 537 million, or none) is now left
@@ -48,6 +54,14 @@ Dispatcharr restart for every worker to pick it up.
   audio track.
 - A channel that takes about 30 seconds to start is no longer ended as idle while Kodi is still waiting for it (with
   `idle_timeout_seconds` set below 30, a quicker start could be ended too).
+- **Kodi 22, Server-side mode: the picture no longer freezes after a channel switches to a backup stream in another
+  video format** (for example H.264 to HEVC). The buffer now restarts its recording when Dispatcharr switches the
+  channel's stream. Kodi 21 still cannot follow such a switch in any mode.
+  - On Kodi 22 in Server-side mode, the picture now holds for about 10 seconds longer after every stream switch while
+    the new stream settles. Kodi 21 is spared this with addon 0.13.4 or later; with an older addon it holds there too.
+  - If the Dispatcharr account Kodi uses has a stream limit, turn on "ignore same-channel connections" in
+    Dispatcharr's user limit settings for this to work. Otherwise the buffer keeps recording in the old format, as
+    before.
 
 ## [0.13.3] - 2026-11-06
 
