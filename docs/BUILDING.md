@@ -641,7 +641,7 @@ load with an API-version mismatch even if the library itself loads fine.
 Confirmed live end to end (2026-09-15/16) against two real physical
 devices on real Android builds, not an emulator: an older 32-bit ARM
 device and a newer 64-bit ARM device, both against a real Dispatcharr
-backend -- real channel list (a real, full-size channel lineup), real live
+backend -- real channel list, real live
 playback, real live-timeshift seek, on both architectures.
 
 Unlike every other platform this addon has been built for, this addon's
@@ -898,10 +898,10 @@ Once JSON-RPC is reachable, `tools/kodi_smoke_test.py` works completely
 unmodified -- same as every other platform, since it only ever speaks
 Kodi's own platform-generic JSON-RPC API.
 
-### A large real channel count can outrun Kodi's own first-boot EPG sync on old/slow hardware
+### Kodi's own first-boot EPG sync can fall behind on old/slow hardware
 
 Confirmed live (2026-09-15/16) on an older, low-power 32-bit ARM device
-against a real account with a real, full-size channel lineup: on a fresh install,
+against a real account: on a fresh install,
 `PVR.GetBroadcasts` returned real, correctly-titled programme data for
 every channel, but roughly 11% of channels were
 consistently missing their own `broadcastid` field -- while a newer,
@@ -923,8 +923,7 @@ observation window (confirmed via `kodi.log`, not inferred), meaning
 Kodi's own handling of that very first round of `TriggerEpgUpdate()`
 calls hadn't finished, and was in fact frozen at the same channel count
 (still under 90% of the total) for over 15 consecutive minutes -- consistent with a Kodi-core-side
-threading/performance limitation surfacing under an unusually large
-channel count on old hardware, not a hang in this addon's own code (which
+threading/performance limitation surfacing on old hardware, not a hang in this addon's own code (which
 never blocks in that loop -- `TriggerEpgUpdate()` is a Kodi SDK call this
 addon does not implement).
 Reproduced on a genuinely fresh install (`adb shell pm clear
@@ -937,7 +936,7 @@ playback/seek all passed on this same device before this was
 investigated -- normal use of the addon isn't blocked, only a subset of
 channels' guide data (and, by extension, "Record" from a guide entry for
 those specific channels) may be incomplete for a while after a very
-first cold boot on old/slow hardware with a very large channel count.
+first cold boot on old/slow hardware.
 Not pursued further -- root-causing past this point would need Kodi-core
 thread-dump-level debugging, disproportionate given normal functionality
 is unaffected. Revisit if a real user reports this specifically.

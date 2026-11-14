@@ -126,7 +126,7 @@ Not substituted for by a virtual GPU or a laptop.
   *Android, 64-bit and 32-bit:* the addon loads (Android needed the brotli link fix, `docs/BUILDING.md`), and each
   passed 12 of 15 with 3 skips on its first run, the 64-bit phone 13 of 15 with a test recording running. On both,
   an in-progress and a completed recording played and seeked, and catch-up played; on the 32-bit one catch-up only
-  worked after Kodi finished its first-run guide write (trap 3 below; about 45 minutes for a very large lineup).
+  worked after Kodi finished its first-run guide write (trap 3 below; about 45 minutes).
   *Traps these runs added, none of them the addon:* (a) the first smoke run on a fresh Kodi 22 profile on the Mac
   failed its first playback check (position stuck at 0) and Kodi then hung for good. A stack sample showed Kodi's own
   deadlock: the main thread in Kodi's stop-playing path joining the `VideoPlayer` thread, which was waiting
@@ -144,7 +144,7 @@ Not substituted for by a virtual GPU or a laptop.
   because the guide ids had not been written yet, trap 3), then 15 once it was stopped. The log has no `Packet
   corrupt`, audio-sync or fatal lines, Kodi 22 again opened two streams of one recording at once, and the only addon
   error is the 404 of the `interrupted` recording above, which Kodi 22 probes in the background. (d) Kodi 22 copies the
-  21.x guide database (`Epg16.db`, a very large one here) to `Epg22.db` and then fails to upgrade it (`index
+  21.x guide database (`Epg16.db`) to `Epg22.db` and then fails to upgrade it (`index
   idx_epg_idEpg_iStartTime already exists`), after which every guide read logs `no such column: sParentalRatingIcon`;
   deleting both guide databases (Kodi rebuilds the guide from the addon) cleared it. That is Kodi's own upgrade path,
   not the addon's, but a user who moves a long-lived Kodi 21 profile to Kodi 22 may see an empty or erroring guide.
@@ -173,7 +173,7 @@ Not substituted for by a virtual GPU or a laptop.
   3. **Kodi's guide ids arrive minutes after a start** (found on the Android runs): a timer is created from a
      guide entry's `broadcastid`, which Kodi assigns when it writes the entry to its own EPG database. On a freshly
      started Kodi the guide is readable long before that: about 5 minutes on the 64-bit phone, over 10 on the
-     32-bit one with a very large channel list (the same slowness `docs/BUILDING.md`'s Android section describes).
+     32-bit one (the same slowness `docs/BUILDING.md`'s Android section describes).
      The harness now skips its timer checks with that explanation instead of crashing; wait and rerun.
   4. **Wireless debugging needs pairing once per computer** (`adb pair <ip>:<pairing port>`, then `adb connect` on
      the connect port); a connect port that is open but refuses is that, not a network fault. And a device on a

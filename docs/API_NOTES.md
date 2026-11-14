@@ -126,7 +126,7 @@ use, then live against a 0.32.0 server (a real recording, a real client on a 64-
   real-time push was confirmed live (a recording created outside Kodi appeared with no restart).
 - **Channels:** `is_radio` and `effective_is_radio` are new on the channel (and a stream filter `is_radio`, a channel filter
   `only_radio`); nothing was removed or renamed, `streams` is still a list of ids, and the list is still unpaginated for the
-  addon's request (a full-size lineup, `next` null). Before the addon read the radio flag, radio channels reached Kodi
+  addon's request (`next` null). Before the addon read the radio flag, radio channels reached Kodi
   as TV; it now maps `effective_is_radio` (else `is_radio`) to Kodi's radio channel type (`docs/CLOSED_ITEMS.md`, "Map
   Dispatcharr's radio flag to Kodi's radio channel type", from the 2026-10-10 pvr.hts comparison; confirmed live 2026-10-10). Sorting, search and filtering now use the
   override-aware values (what the addon already reads as `effective_*`).
