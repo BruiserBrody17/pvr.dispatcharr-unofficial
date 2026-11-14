@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**5 open, 413 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**6 open, 413 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -12,6 +12,7 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One from the 2026-11-12 live checks on Kodi 21: timers made on the server showed about 75 s after the realtime event.
+- One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
 
 Nothing is left from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (nine of its
 eleven findings held here, the other two being `Piers` only; all fixed by 2026-11-12), nor from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
@@ -23,7 +24,7 @@ recording's 20 s retry budget).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 1 |
+| Open: Needs a live check | 2 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
@@ -53,6 +54,37 @@ still importing the guide (its startup log has many `GetEPGForChannel` errors in
 the same minute), so Kodi's PVR job queue may simply have been busy. Next step: repeat on Kodi 21 well after startup, with
 Kodi's PVR component logging on (`debug.setextraloglevel`, LOGPVR) to see when the timer update job runs; if it is
 prompt then, close this as a startup-load effect.
+
+#### Off-mode live TV ends by itself on an Android tablet; an HLS output option was suggested
+
+**Opened 2026-11-14, from a user report in the community chat; not reproduced, waiting on the reporter's Kodi log.**
+Two Android tablets on Kodi 21.3, Off mode, the same channel: one plays for hours, the other stops every so often and
+the channel has to be reopened. The reporter traced it to Android power saving (changing the power settings did not
+help) and found that another client's "Force HLS" option seemed to help, then pointed at a community fork's commit
+(on top of `Omega` 0.13.3). That commit adds a "Streaming format" setting
+(MPEG-TS, fMP4, HLS) for Off and Local mode: the URL asks for that `output_format`, Kodi is given the matching
+mimetype, and fMP4 and HLS go through `inputstream.ffmpegdirect`. Server-side mode was suggested to the reporter; no
+answer yet on whether it helped.
+
+**What Dispatcharr does with a client that stops reading (confirmed live 2026-11-14, Dispatcharr 0.33.0, one test
+client on an otherwise idle channel).** An MPEG-TS client that stopped reading, its connection left open, kept its
+stream through a 20 s and a 45 s pause and caught up afterwards; a 75 s pause was dropped about 50 s in as a ghost
+client, after which the channel stopped (it had no other client) and the connection reached EOF once the buffered data
+was read. An HLS client that stopped polling survived 8 s; after 15 s and 30 s it had been dropped about 12 s in, and
+its next playlist request got 410 `Session expired`. Both match the source (`apps/proxy/live_proxy/client_manager.py`,
+`_ghost_timeout_for_client()`): TS and fMP4 clients get `CLIENT_HEARTBEAT_INTERVAL` x `GHOST_CLIENT_MULTIPLIER`
+(5 s x 10), HLS clients `HLS_SEGMENT_DURATION` x `HLS_CLIENT_GHOST_SEGMENTS` (4 s x 3), and the 410 expects the player
+to come back through `/proxy/ts/stream/` (`apps/proxy/live_proxy/output/hls/views.py`), which ffmpeg's HLS reader does
+not do. So Dispatcharr's HLS output tolerates a paused client a quarter as long as MPEG-TS does. It could still help
+where the failure is a short loss of the *connection* rather than a pause: an MPEG-TS stream handed to Kodi is one
+connection and ends with it, while an HLS reader opens a new one for every request.
+
+**Next:** read the reporter's Kodi debug log for how playback ends (curl's low-speed abort with no data arriving, a
+connection reset, or EOF from the proxy), and whether Server-side mode helped. Only then decide whether to add the
+format setting; if it is added, the fork commit needs the tests updated (the signatures change), `Piers`'s Kodi 22 warm-up
+taught about HLS (it takes the 302 as a final answer), the setting hidden in Server-side mode, and a decision on making
+`inputstream.ffmpegdirect` (an optional import) required in Off mode. If the log shows a dropped connection, ffmpeg's
+own HTTP reconnect options through `inputstream.ffmpegdirect` are worth comparing with HLS.
 
 ### Fix known, not yet done
 
