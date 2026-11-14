@@ -87,7 +87,7 @@ PLAYBACK_TRANSITION_SETTLE_SECONDS = 2
 PLAYBACK_OPEN_SETTLE_SECONDS = 3
 # Confirmed live (2026-09-15, real CoreELEC/ODROID N2+ hardware, real
 # production Dispatcharr account): 5 was too low against a real account's
-# actual content distribution -- of a large real set of hasarchive=true channels,
+# actual content distribution -- of its hasarchive=true channels,
 # the first several (in PVR.GetChannels' own return order) had no
 # finished broadcast at test time, but one showed up further down the
 # list, and
@@ -555,7 +555,7 @@ def check_channel_group_membership(rpc: JsonRpcClient):
     to list a group's member channels. Also confirmed live that its
     "channels.limits" sub-param is NOT honored by Kodi-core for this
     method (a real Kodi quirk, not this addon's own doing) -- passing one
-    made no difference to a large real group's response size, so this
+    made no difference to a real group's response size, so this
     doesn't bother trying to limit the result, just checks it's
     non-empty."""
     groups = rpc.call("PVR.GetChannelGroups", {"channeltype": "tv"})["channelgroups"]
@@ -1131,8 +1131,8 @@ def _windows_overlap(candidate_start: str, candidate_end: str, existing_windows:
 def _with_database_ids(broadcasts: list[dict], channel_id: int) -> list[dict]:
     """Keeps only guide entries Kodi has given a database id (the "broadcastid" a timer is created from). Kodi
     assigns it when it writes a guide entry to its own EPG database, which on a freshly started Kodi comes minutes
-    after the guide is readable (about 5 minutes on a modern phone, over 10 on an older 32-bit one with a very
-    large channel list, 2026-10-07), so an entry without one is "not ready yet", not a fault, and reading the key
+    after the guide is readable (about 5 minutes on a modern phone, over 10 on an older 32-bit one,
+    2026-10-07), so an entry without one is "not ready yet", not a fault, and reading the key
     anyway crashed the check with an unexplained KeyError."""
     ready = [b for b in broadcasts if b.get("broadcastid", -1) > 0]
     if not ready:

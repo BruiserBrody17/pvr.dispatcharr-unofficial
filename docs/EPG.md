@@ -181,9 +181,8 @@ interval.
 be called only lazily, inline, on whichever Kodi-owned thread first asked
 after the cache went stale -- meaning a real fetch (channel list +
 channel groups, or a full XMLTV guide fetch+parse) could block that
-calling thread. Fine on a small install, but confirmed live against a
-real, full-size channel instance that this is a genuinely slow operation (~7
-seconds) worth moving off Kodi's calling thread.
+calling thread. Confirmed live against a real instance that this can be a
+genuinely slow operation (several seconds) worth moving off Kodi's calling thread.
 
 Fixed with `StartChannelEpgRefreshThread()`, a background thread (started
 in the constructor, joined in the destructor -- same pattern as the
