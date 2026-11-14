@@ -10,7 +10,11 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased] -- addon
+## [0.13.4] - 2026-11-14
+
+For Kodi 21; Kodi 22 users want `0.14.4` (tag `0.14.4-Piers`), which has the same fixes and one more of Kodi 22's own.
+It bundles `timeshift_buffer` `0.8.18` (below), which needs redeploying to Dispatcharr for its fixes, and `recording_edl`
+`0.2.3` as it was in `0.13.3`. It carries the same eight downloads as `0.13.3`.
 
 ### Changed
 
@@ -34,7 +38,7 @@ compare against.
   now explains this and suggests changing the rule's description in Dispatcharr instead
   (`docs/TROUBLESHOOTING.md`, "Kodi won't delete a series timer").
 
-## `timeshift_buffer` [0.8.18] - Unreleased
+## `timeshift_buffer` [0.8.18] - 2026-11-14
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
 Dispatcharr restart for every worker to pick it up.
