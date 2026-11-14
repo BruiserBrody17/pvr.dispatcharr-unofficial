@@ -3964,8 +3964,18 @@ H.264 to H.264 switch on a healthy stream, with the player clock sampled every 0
 stopped for 7.6 s three seconds after the switch, then 1.7 s again at the join, and the clock lost 6 s over 50 s (a
 second run, with the player further behind live, stopped for 2.2 s and lost 3 s); marked Kodi 21, it never stopped
 until the join (1.7 s) and the clock kept wall time, with the restart (a new ffmpeg, the playlist continued) about
-12 s after the switch. The addon's side, the param itself, is the glue scenario `live_stop_token`; an addon build
-sending it was not run live.
+12 s after the switch. The addon's side, the param itself, is the glue scenario `live_stop_token`.
+
+Checked live with the addon (2026-11-14, the `Omega` CI build of the port that becomes 0.13.4, on Kodi 21.3 in
+Server-side mode; same lab, plugin and kind of channels). The addon's `start_buffer` reached the plugin through
+Dispatcharr's run endpoint as the integer 21 (`viewer_kodi_versions` read back from the buffer's state). A manual
+H.264 to H.264 switch: never held, restarted about 10 s after the switch, no stop longer than 2.2 s after it, and the
+clock kept wall time (50 s over 50 s). With a second viewer started through the API with `kodi_version` 22 on the same
+buffer, both versions were kept and the buffer was held from the first poll after the switch, then restarted and
+released at the same point. A manual H.264 to HEVC switch with Kodi 21 alone: not held, restarted; Kodi stayed on its
+H.264 decoder and its time went back to 0 at the join, as without any restart (Kodi 21's own limit, below). With a
+second Kodi 21 viewer keeping the buffer up, stopping and opening the channel again played HEVC at 1920 from the
+continued playlist.
 
 **Checked live (2026-11-13, Dispatcharr 0.33.0 with its default proxy settings, Server-side mode).** Disposable
 channels on the Proxy profile, each with two generated streams served at their real rate from a test machine: 720p
@@ -3997,7 +4007,7 @@ runs drove the plugin's own actions and probed the segments around each `#EXT-X-
   and Local mode too on 2026-10-25, and nothing on the addon's side changes it.
 
 Not checked: a switch between real channels' streams (no real channel with streams of different formats was available); a switch
-onto different PIDs; a format-changing switch on Kodi 21 with the shipped design;
+onto different PIDs;
 and a buffer kept for over an hour before a switch, where the sweep has real leftovers to delete (the real-ffmpeg test
 covers the rule).
 
