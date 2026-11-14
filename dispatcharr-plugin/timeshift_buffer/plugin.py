@@ -4911,7 +4911,13 @@ class Plugin:
         except RuntimeError as exc:
             # Not ready yet. The addon keeps asking while it waits for the first playlist, so this is where a start
             # stuck on a video stream that is never sent is noticed (_restart_without_audio_map()).
-            if self._restart_if_stuck_on_unsent_video(channel_uuid, state, settings_dict, logger):
+            restarted = self._restart_if_stuck_on_unsent_video(channel_uuid, state, settings_dict, logger)
+            # A caller still waiting for the first playlist is watching: without this, a buffer whose upstream is
+            # slow to answer looked idle from its start and the reaper ended it idle_timeout_seconds in, while the
+            # addon was still polling (docs/CLOSED_ITEMS.md, "`timeshift_buffer` reaps a buffer that has not written
+            # its first playlist yet as idle").
+            self._touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id)
+            if restarted:
                 return {
                     "status": "error",
                     "message": "restarted the buffer without the audio map (its video stream never arrived) -- "
@@ -4945,16 +4951,7 @@ class Plugin:
         # heartbeat, undoing the teardown. The manifest itself was
         # already built successfully and is still returned to the caller
         # either way; only the write-back is skipped.
-        # The token is checked again here, as in _heartbeat(): a replacement that started while the manifest was being
-        # built must not get this caller registered on it.
-        _update_buffer_state(
-            channel_uuid,
-            lambda fresh_state: (
-                None
-                if _is_stale_access_token(fresh_state, supplied_token)
-                else _apply_heartbeat(fresh_state, _shared_now(), viewer_id)
-            ),
-        )
+        self._touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id)
 
         return {
             "status": "ok",
@@ -4968,6 +4965,22 @@ class Plugin:
             "segment_route_prefix": f"/{channel_uuid}/",
             **manifest,
         }
+
+    @staticmethod
+    def _touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id) -> None:
+        """A get_live_manifest poll, answered or "not ready", counts as activity for the buffer and its caller.
+        Applied to a fresh read, never the copy read before the manifest was built: a concurrent start_buffer may have
+        registered a viewer meanwhile (_apply_heartbeat()), and a buffer torn down meanwhile stays gone. The token is
+        checked again, as in _heartbeat(): a replacement started in the meantime must not get this caller registered
+        on it."""
+        _update_buffer_state(
+            channel_uuid,
+            lambda fresh_state: (
+                None
+                if _is_stale_access_token(fresh_state, supplied_token)
+                else _apply_heartbeat(fresh_state, _shared_now(), viewer_id)
+            ),
+        )
 
     @staticmethod
     def _restart_if_stuck_on_unsent_video(channel_uuid, state, settings_dict, logger) -> bool:
