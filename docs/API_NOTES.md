@@ -85,6 +85,11 @@ plugins use, then live against a 0.33.0 server with Kodi 21.3 and Kodi 22.0-RC1 
   it). The addon and `timeshift_buffer` now always ask for `mpegts` (`CLOSED_ITEMS.md`, "Pin the live proxy's output
   format to MPEG-TS"). Dispatcharr's own DVR capture (`_dvr_capture_url()`) and its HDHR and M3U outputs send no
   `output_format` either, so a server default of HLS or fMP4 reaches them too; not checked live.
+- **A live client that stops reading.** Measured 2026-11-14 on 0.33.0 with one test client: an MPEG-TS client that
+  stops reading with its connection open is dropped as a ghost about 50 s in (it survived 20 s and 45 s pauses), an
+  HLS client that stops polling about 12 s in, after which its playlist answers 410 `Session expired`
+  (`_ghost_timeout_for_client()`, `apps/proxy/live_proxy/client_manager.py`). `OPEN_ITEMS.md`, "Off-mode live TV ends
+  by itself on an Android tablet".
 - **User `custom_properties` merge.** `PATCH /api/accounts/users/me/` merges the keys sent into the stored ones
   (`UserSerializer.update()`) and removes a key sent as `null`, unlike `/api/core/settings/{id}/`, whose `value` is
   replaced whole.
