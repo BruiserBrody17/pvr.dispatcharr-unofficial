@@ -3975,7 +3975,12 @@ buffer, both versions were kept and the buffer was held from the first poll afte
 released at the same point. A manual H.264 to HEVC switch with Kodi 21 alone: not held, restarted; Kodi stayed on its
 H.264 decoder and its time went back to 0 at the join, as without any restart (Kodi 21's own limit, below). With a
 second Kodi 21 viewer keeping the buffer up, stopping and opening the channel again played HEVC at 1920 from the
-continued playlist.
+continued playlist. Which worker answers did not matter (the same day, `timeshift_buffer` 0.8.18 on every worker
+and the `Omega` tip's build, with a probe logging the answering worker and the map after every start, stop and poll):
+the two viewers' starts landed on different workers, each keeping the other's entry; in about 400
+polls spread over every worker, no listed viewer was ever missing from the map; a switch was held while the Kodi 22 viewer
+was listed, and after it left (its entry still in the map, which is pruned only on a start) a switch was not held and
+the restart went ahead.
 
 **Checked live (2026-11-13, Dispatcharr 0.33.0 with its default proxy settings, Server-side mode).** Disposable
 channels on the Proxy profile, each with two generated streams served at their real rate from a test machine: 720p
