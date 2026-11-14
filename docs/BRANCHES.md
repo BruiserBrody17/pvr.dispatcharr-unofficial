@@ -96,7 +96,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`16e6caf`** (itself a port from `Omega`, logged above). As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`f2a1602`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -212,6 +212,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `d6916e4` | `5519d7a` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and source list by hand) | The deferred item for `timeshift_buffer` reaping a buffer that has no playlist yet, docs only |
 | `f3fb349` | `c1daf84` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and source list by hand) | A "not ready" timeshift poll counts as activity, so the reaper no longer ends a buffer still waiting for its first playlist |
 | `faa8326` | `7ef8e5d` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and source list by hand; the glue stubs report Kodi 21 and `live_stop_token` expects it; the changelog entry without its Kodi 22 sentence) | The `timeshift_buffer` restart after a stream switch, and the addon sending its Kodi version so only Kodi 22 viewers get the hold. On `Omega` it is what spares Kodi 21 the hold (0.13.4) |
+| `f2a1602` | `43df915` (`git cherry-pick -x`, applied cleanly) | The live check that the Kodi-version map holds across workers, docs only |
 
 ## Dependencies that differ by Kodi release
 
