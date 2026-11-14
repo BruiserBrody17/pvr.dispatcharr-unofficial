@@ -125,7 +125,7 @@ Not substituted for by a virtual GPU or a laptop.
   3. **Kodi's guide ids arrive minutes after a start** (found on the Android runs): a timer is created from a
      guide entry's `broadcastid`, which Kodi assigns when it writes the entry to its own EPG database. On a freshly
      started Kodi the guide is readable long before that: about 5 minutes on the 64-bit phone, over 10 on the
-     32-bit one with a very large channel list (the same slowness `docs/BUILDING.md`'s Android section describes).
+     32-bit one (the same slowness `docs/BUILDING.md`'s Android section describes).
      The harness now skips its timer checks with that explanation instead of crashing; wait and rerun.
   4. **Wireless debugging needs pairing once per computer** (`adb pair <ip>:<pairing port>`, then `adb connect` on
      the connect port); a connect port that is open but refuses is that, not a network fault. And a device on a
