@@ -212,6 +212,14 @@ static int64_t fs_len(void*, void* fp)
   return e;
 }
 
+static void my_kodi_version(void*, char** compile_name, int* major, int* minor, char** revision, char** tag,
+                            char** tagversion)
+{
+  // A plausible answer, minus the strings: the addon reads only the major version, and passes it on.
+  *compile_name = *revision = *tag = *tagversion = nullptr;
+  *major = 22;
+  *minor = 0;
+}
 static AddonToKodiFuncTable_kodi g_kodi;
 static AddonToKodiFuncTable_kodi_addon g_kodiAddon;
 static AddonToKodiFuncTable_kodi_filesystem g_fs;
@@ -223,6 +231,7 @@ void InitKodiStub()
 {
   memset(&g_kodi, 0, sizeof g_kodi);
   g_kodi.queue_notification = my_notify;
+  g_kodi.kodi_version = my_kodi_version;
   memset(&g_kodiAddon, 0, sizeof g_kodiAddon);
   g_kodiAddon.get_user_path = get_user_path;
   g_kodiAddon.get_addon_path = get_addon_path;

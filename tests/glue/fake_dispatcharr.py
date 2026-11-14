@@ -36,6 +36,7 @@ TOKEN = {"v": "tok1"}
 # refresh token and answers 401 to any other (Dispatcharr 0.33.0 ships rotation off; this is the case if it turns on).
 REFRESH = {"n": 0}
 LAST_STOP = {"params": None}  # the params of the last stop_buffer, for /__laststop
+LAST_START = {"params": None}  # the params of the last start_buffer, for /__laststart
 LAST_SEGMENT_VIEWER = {"v": None}  # the viewer_id query param of the last segment request, for /__lastsegviewer
 LAST_HEARTBEAT = {"params": None}  # the params of the last heartbeat, for /__lastheartbeat
 WS_PUSHED = []  # realtime messages pushed through /__ctl?ws_push= (every connected client gets all of them)
@@ -610,6 +611,8 @@ class H(BaseHTTPRequestHandler):
             return self.J(200, LAST_EPG_QUERY["q"])
         if p == "/__laststop":
             return self.J(200, LAST_STOP["params"])
+        if p == "/__laststart":
+            return self.J(200, LAST_START["params"])
         if p == "/__lastsegviewer":
             return self.J(200, {"viewer_id": LAST_SEGMENT_VIEWER["v"]})
         if p == "/__lastheartbeat":
@@ -790,6 +793,7 @@ class H(BaseHTTPRequestHandler):
             with lock:
                 counts["action " + str(act)] += 1
             if act == "start_buffer":
+                LAST_START["params"] = params
                 if CTL["start_fail"] == "1":
                     return self.J(200, {"success": True, "result": {"status": "error", "message": "limit"}})
                 if T0["live"] is None:

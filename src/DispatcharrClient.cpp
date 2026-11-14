@@ -1328,6 +1328,18 @@ bool DispatcharrClient::StartTimeshiftBuffer(const std::string& channelUuid, std
   }
   if (!viewerId.empty())
     extraParams["viewer_id"] = viewerId;
+  // The major version of the Kodi this runs in. After Dispatcharr switches the channel to another stream, the plugin
+  // holds the picture until it restarts the buffer's ffmpeg, which Kodi 22 needs to show a new video format but
+  // Kodi 21, which cannot follow one, only pays for (docs/TIMESHIFT.md, "A stream switch that changes the video format
+  // (0.8.18)"). An older plugin ignores the param.
+  static const int kodiMajor = []()
+  {
+    kodi_version_t version{};
+    kodi::KodiVersion(version);
+    return version.major;
+  }();
+  if (kodiMajor > 0)
+    extraParams["kodi_version"] = kodiMajor;
   return CallTimeshiftPluginAction("start_buffer", channelUuid, playlistUrlOut, error, extraParams, retryableOut);
 }
 

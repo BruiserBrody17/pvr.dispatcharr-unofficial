@@ -6,6 +6,52 @@
 
 ### Fixed
 
+#### Server-side mode freezes the picture after a stream switch that changes codec (and Kodi 21 does in every mode)
+
+**Opened 2026-10-24 from the Dispatcharr 0.33.0 stream-switch re-test; checked live 2026-10-25 and turned into a design
+question.** Three disposable channels on the lab, each with a synthetic first stream that stops sending 20 s after it
+connects and a synthetic second stream (no provider involved): 720p H.264 then 1080p HEVC, the reverse, and H.264 both
+times as the control. Dispatcharr switched at about 45 s every time. The control played on in every mode. With a codec
+change, watched for 120 s with screenshots compared at 50, 80 and 110 s: on Kodi 22.0-RC1, Off and Local mode switched
+decoder (H.264 1280 ↔ HEVC 1920) and played on in both directions; on Kodi 21.3, Off and Local mode froze the picture on
+the old stream's last frame while sound and the player time went on (Kodi kept feeding the new stream to the old
+decoder, logging `[h264] no frame!` over and over), which is Kodi's demuxer not acting on the PMT's new stream type for
+the same PID; and in Server-side mode both Kodi versions froze in both directions, the decoder never changed and the
+player time reset to 0 every few seconds from then on (the symptom first seen on 2026-10-24 with a real channel). So
+Server-side is the case on the addon's own path: the buffer's ffmpeg (`-c copy -f hls`) keeps writing segments for the
+codec it opened with. Options: watch the buffer's ffmpeg for a codec or stream-layout change on its input and restart it
+(a fresh segmenter; the addon then has to treat the new segments like a buffer restart), or re-mux each segment's codec
+parameters some other way; or accept it and document it (on Kodi 21 nothing on the addon side helps in Off or Local
+mode). Real channels change codec on a switch only when their streams come from different sources, so how often this
+bites is unknown.
+
+**Deferred 2026-11-04, by the maintainer's decision: documented, not fixed for now.** The user-facing account is
+`TROUBLESHOOTING.md`'s "The picture freezes after a channel switches streams, while playback keeps running" (backup
+streams in the same video format; Off or Local mode on Kodi 22). Pick up the ffmpeg restart above if users report it on
+real channels.
+
+**Fixed 2026-11-13 for Server-side mode on Kodi 22 (`timeshift_buffer` 0.8.18), confirmed live; the Kodi 21 part is
+Kodi's and stays documented.** Picked up again at the maintainer's request. The cause on the addon's side was ffmpeg's:
+its MPEG-TS demuxer sets a PID's stream type once, so `-c copy` went on labelling the new HEVC packets as H.264 (seen in
+the buffer's own segments after a switch: `h264`, width 0). The plugin now reads the stream Dispatcharr's proxy is
+playing for the channel (`stream_id` and `stream_switch_time` in `live:channel:<uuid>:metadata`) on each answered
+`get_live_manifest` poll. When it changes, the plugin holds the buffer's ffmpeg (SIGSTOP) until the switch is
+`new_client_behind_seconds` plus 3 s old. It then starts a new ffmpeg that appends to the same playlist
+(`append_list+discont_start`) under the same token, and kills the old one once the new one has run for 1.5 s; the
+restart runs beside the poll, not inside it.
+Accounts whose stream limit counts a same-channel reconnect are left as before, and the reaper sweeps the segments a
+continued playlist leaves behind. Every switch is followed, and the picture holds about 10 s longer on each. The
+branch's first review found four of those parts (the leftover segments, the proxy's new-client offset, the channel
+stop on its last client leaving, and the stream limit), its second the restart's length inside a poll and ways a hold
+could outlive its restart; live runs showed each mattered, and showed the hold was needed (without
+it Kodi 22 showed a black picture after the join). On the lab's Dispatcharr 0.33.0 with disposable two-stream channels
+(720p H.264 and 1080p HEVC; stalled, dropped and manual switches): manual switches 3 of 3 and dropped-stream failovers
+2 of 2 put HEVC in the first segment after the join, five quick switches were each followed once, and Kodi 22.0-RC1
+(addon 0.14.3) followed a dropped-stream failover to HEVC with the picture moving and no time reset. With a stream
+limit of 1 the buffer kept running in the old format. Kodi 21.3 (addon 0.13.3) kept its old decoder, as its demuxer
+ignores the new stream type in every mode, which `TROUBLESHOOTING.md` already says. Details in `TIMESHIFT.md`, "A stream
+switch that changes the video format (0.8.18)"; tests in `TEST_COVERAGE.md`.
+
 #### `timeshift_buffer` reaps a buffer that has not written its first playlist yet as idle
 
 **Opened 2026-11-13, from the live check of the audio-track mapping (`CLOSED_ITEMS.md`, "`timeshift_buffer` 0.8.18's

@@ -3861,6 +3861,146 @@ playlist, 32.5 s and 33.0 s in. Control: the same start with the fix and no poll
 next such check: a plugin reload restarts each worker's reaper, and a new reaper gives every buffer one full
 `idle_timeout_seconds` before it can be idle, so a run straight after a reload does not show the reap.
 
+## A stream switch that changes the video format (0.8.18)
+
+*2026-11-13. Closes `CLOSED_ITEMS.md`'s "Server-side mode freezes the picture after a stream switch that changes codec
+(and Kodi 21 does in every mode)" for Server-side mode on Kodi 22.*
+
+**Why the buffer froze.** When a channel's stream fails, Dispatcharr's proxy moves the channel to its next stream on
+the same connection, so the buffer's ffmpeg (`-c copy -f hls`) reads on without noticing. Its MPEG-TS demuxer sets a
+PID's stream type once: a programme map that changes the type on the same PID is ignored (libavformat's `mpegts.c`, in
+its programme-map handler, sets a stream's codec only `if (pes && !pes->stream_type)`; read in ffmpeg 6.0.1's
+source). So after a switch from H.264 to HEVC the buffer went on writing segments whose programme map says H.264
+and whose packets are HEVC. Seen on the lab's server (its ffmpeg 8.1.2): after such a switch, ffprobe of the
+buffer's newest segments read `h264` with a width of 0. Kodi then sent HEVC to its H.264 decoder: the picture stayed
+on the last good frame, the log filled with `[h264] ... no frame!`, and the player time reset every few seconds. A
+switch onto different PIDs would have its new video stream left unmapped, since the stream map is fixed at start
+(read, not run).
+
+**The fix.** Dispatcharr's live proxy records the stream a channel is playing in Redis
+(`live:channel:<uuid>:metadata`: `stream_id` and `stream_switch_time`; the same key in v0.30.0, v0.32.0 and v0.33.0) and
+rewrites both on every switch to another of the channel's streams, automatic or manual, but not on a reconnect to the
+same stream. Each `get_live_manifest` poll that returns a manifest reads them (one HMGET) and `_stream_switch_step()`
+decides:
+
+1. **Record.** The first sighting is stored in the buffer's state (`upstream_stream_id`), unless the switch came after
+   the buffer started (ffmpeg may then have probed the stream before it), which is followed like any other.
+2. **Hold, then settle.** A new id is followed only once the switch is `new_client_behind_seconds` (Dispatcharr's
+   Stream Settings, 5 s by default, read from its config) plus 3 s old. The proxy starts a new client that far behind
+   live, so a restart sooner reads the old stream's last seconds first, probes the old format again and is mislabelled
+   as before, with no second restart to come (checked live: on an abrupt drop, a restart about 1 s after the switch
+   left Kodi on its H.264 decoder with a frozen picture; and once, on a manual switch, a restart 1 to 2 s after it
+   raced the proxy's own switch and the channel stayed on its old stream). Meanwhile the buffer's ffmpeg is frozen
+   (SIGSTOP, `_freeze_for_stream_switch()`): left running, it wrote the new stream's packets under the old label for
+   those seconds, and Kodi 22, fed them, changed decoder at the join but showed a black picture (checked live, below).
+   Frozen, it writes nothing, so the client waits at the tail on the last good picture, and its connection stays
+   open. A switch that goes back before it settles resumes it (SIGCONT, `_thaw_after_stream_switch()`). The hold is
+   only for a Kodi that can use it (below, "Only Kodi 22 pays for the hold").
+3. **Restart.** `_restart_after_stream_switch()`, under the channel's start lock, shares its core with the restart
+   without the audio map (`_restart_ffmpeg_locked()`: the `restarting_since` mark, the stored connection params, the
+   adoption with viewers, heartbeats and the access token kept). What differs: the directory is kept, and the new
+   ffmpeg runs with `-hls_flags ...+append_list+discont_start`, so it reads the playlist the old one left, numbers on
+   from its last segment and marks the join with `#EXT-X-DISCONTINUITY`. The client sees one playlist under one token
+   and reads on across the join. The new ffmpeg starts while the old one is still frozen, and the old one is killed
+   once the new one has run for 1.5 s (`_OVERLAP_SECONDS`): the proxy's channel never has no client. With Dispatcharr's
+   default channel shutdown delay of 0, the last client leaving stops the channel at once, and a kill before the
+   reconnect left it stopping (a 503 "Channel is stopping") or started again on its first stream. A new ffmpeg that
+   exits inside the overlap is not tried again: the old one is resumed and kept, and the switch is recorded as handled.
+   The restart runs in a thread beside the poll that found the switch settled (`_start_stream_switch_restart()`), which
+   answers at once: inside it, the restart (the lock, a database read and a token for the new connection, a first
+   audio-map probe on a worker that has not run one, the overlap) could outlast the addon's 5 s limit on that poll,
+   and a refresh the addon gives up on at the live tail ends playback (found by the branch's second review).
+
+Guards on the hold, from the same review: a `restarting_since` mark counts only while fresh (`_restart_in_progress()`,
+30 s), so one a failed restart left behind cannot keep the buffer held; a lock check that raises after the hold
+resumes the old ffmpeg; a buffer whose storage path or port changed since it started, which a restart cannot serve, is
+neither held nor restarted, and one already held is resumed; a resume is decided on fresh state and never during a
+restart's overlap; and a Redis error reading the proxy's hash changes nothing, where "no stream" (a proxy channel that
+went away) resumes. A first sighting is followed, not recorded, when the switch came less than the settle time before
+the buffer started, since ffmpeg joining that far behind live may have probed the old stream.
+
+**Accounts with a stream limit.** Dispatcharr counts every connection of an account with a stream limit unless its
+user limit settings ignore same-channel connections, and over the limit it ends the account's oldest connection by
+default (`terminate_on_limit_exceeded`, `terminate_oldest`; `apps/proxy/utils.py`). Checked live with a limit of 1: the
+restart's new connection ended the old one, the channel was left with no client and stopped, the new one got 503, and
+the buffer ended; killing the old one first instead let the proxy start the channel again on its first stream, which
+lost a manual switch. So for such an account (`_stream_limit_blocks_reconnect()`; a limit whose settings cannot be
+read counts as such) the plugin neither holds nor restarts:
+the switch is recorded as handled and the buffer goes on in the old format, as before 0.8.18 (checked live: it kept
+running). Turning on "ignore same-channel connections" in Dispatcharr's user limit settings lets it follow switches.
+
+**Segments a continued playlist leaves behind.** `append_list` rebuilds only the segments the playlist lists, so the
+ones the killed ffmpeg kept past the list (`-hls_delete_threshold`, a whole buffer's worth at the defaults) were never
+deleted by anyone (found by the branch's review; reproduced with ffmpeg 6.1: a 3-segment list with 3 kept past it left
+those 3 for good). The reaper's tick now deletes, for a buffer whose playlist was continued, segment files numbered
+below the first listed one by more than that threshold (`_sweep_stray_segments()`), which is ffmpeg's own rule.
+
+Every switch is followed, whether the format changed or not: the proxy fills its `video_codec` field only for the
+FFmpeg, VLC and Streamlink stream profiles (from their log output), not for the default Proxy profile. The price is
+on every switch: the picture holds about 10 s longer than the switch itself took (the settle and the overlap), on top
+of whatever outage caused it. `input_params` (the account and viewer address the new ffmpeg connects with) is now kept
+for every buffer, not only for one started with the audio map.
+
+**Only Kodi 22 pays for the hold.** Kodi 21 cannot follow a change of video format in any mode (below), so the hold
+bought it nothing and cost it about 8 s of frozen picture on every switch, a same-format one included. The addon now
+sends the major version of the Kodi it runs in with `start_buffer` (`kodi_version`, read with `kodi::KodiVersion()`;
+addon 0.14.4 and 0.13.4). The plugin keeps it per viewer (`viewer_kodi_versions`, entries for viewers no longer listed
+dropped on each start) and holds a buffer only when one of its viewers is on Kodi 22 or later, or does not say
+(`_stream_switch_needs_hold()`): an older addon gets the hold as before, and so does a buffer with no listed viewers.
+A client reading without being listed (no `viewer_id`, or a viewer the reaper pruned that its next poll has not
+re-added yet) is not seen: beside a listed Kodi 21 viewer it goes without the hold (found by the review; rare, since a
+polling viewer is re-added on every poll). For such a buffer the stream-limit and settings checks run only at the
+restart, under its lock, not on every poll of the settle. A
+watched only from Kodi 21 plays on through the settle and is frozen only by the restart's own overlap, so a
+same-format switch there costs what the restart costs. The restart itself still happens on every switch: it is what
+lets a Kodi 21 viewer who stops and opens the channel again get the new format.
+
+Checked live (2026-11-13, same lab and disposable channels as below, the branch's plugin on every worker). Plugin
+only, a manual H.264 to HEVC switch: a viewer started with `kodi_version` 21 was recorded as such, never held, and
+restarted about 8 s after the switch with HEVC at 1920 in the first segment after the join; with 22 the buffer was
+held from the next poll, restarted at the same point and released. Kodi 21.3 (addon 0.13.x, which does not send the
+version; the probe plugin wrote `viewer_kodi_versions` into the buffer's state as 0.13.4's start would), a manual
+H.264 to H.264 switch on a healthy stream, with the player clock sampled every 0.5 s: held (no version), the picture
+stopped for 7.6 s three seconds after the switch, then 1.7 s again at the join, and the clock lost 6 s over 50 s (a
+second run, with the player further behind live, stopped for 2.2 s and lost 3 s); marked Kodi 21, it never stopped
+until the join (1.7 s) and the clock kept wall time, with the restart (a new ffmpeg, the playlist continued) about
+12 s after the switch. The addon's side, the param itself, is the glue scenario `live_stop_token`; an addon build
+sending it was not run live.
+
+**Checked live (2026-11-13, Dispatcharr 0.33.0 with its default proxy settings, Server-side mode).** Disposable
+channels on the Proxy profile, each with two generated streams served at their real rate from a test machine: 720p
+H.264 (2.4 Mb/s) and 1080p HEVC (4.8 Mb/s), both on PID 0x100. The first stream either sent 20 s and then held the
+connection silent (the health monitor switched at about 44 s), dropped the connection after 20 s (the proxy retried it
+until about 63 s, each retry a fresh 20 s, then switched), or stayed healthy while the channel was switched by hand
+(`POST /proxy/ts/change_stream/<uuid>`). The picture was judged by screenshots 15, 40 and 70 s after the switch (a
+cropped md5 of each; equal hashes mean a frozen picture), and by Kodi's player time and decoder labels. Plugin-only
+runs drove the plugin's own actions and probed the segments around each `#EXT-X-DISCONTINUITY`.
+
+- Without any restart (0.8.17), after a switch from H.264 to HEVC: the newest segments read `h264` with width 0, Kodi
+  22.0-RC1 (addon 0.14.3) stayed on its H.264 decoder at 1280, the player time reset to 0 every few seconds, and the
+  three screenshots after the switch were identical (a visibly corrupt frame).
+- First design (restart about 1 s after the switch, kill before spawn), on the stalled stream: Kodi 22 changed to its
+  HEVC decoder about 6 s after the switch in both directions, the time ran on, every screenshot differed, a skip back
+  across the join went back to the old decoder and forward again, and an H.264 to H.264 switch played on about 2 s
+  behind. But on the dropped stream the same build left Kodi on its H.264 decoder with a frozen picture, and on a
+  manual switch one run in two lost the switch. The stalled stream had hidden it: after 24 s of silence the proxy had
+  no recent old-stream data to hand the new ffmpeg.
+- Settle and overlap without the hold, on the dropped stream: Kodi 22 changed to HEVC at 1920, but the picture was
+  black from the join on (all three screenshots identical and black) and the time display started again from 0.
+- The shipped design: manual switches 3 of 3 and dropped-stream failovers 2 of 2 put HEVC at 1920 in the first segment
+  after the join; five manual switches 20 s apart were each followed once, about 10 s after the switch, the joins
+  alternating H.264 and HEVC correctly, one ffmpeg at a time and none after the stop. On Kodi 22, the dropped-stream
+  failover changed to HEVC at 1920 with the time running on without a reset (0:58, 1:01, then steadily), every
+  screenshot differed and showed the picture.
+- Kodi 21.3 with addon 0.13.3 and the first design: no help. Its demuxer does not act on the new stream type in the
+  programme map, so the decoder stayed on the old format in both directions. That is Kodi 21's own limit, seen in Off
+  and Local mode too on 2026-10-25, and nothing on the addon's side changes it.
+
+Not checked: a switch between real channels' streams (no real channel with streams of different formats was available); a switch
+onto different PIDs; a format-changing switch on Kodi 21 with the shipped design;
+and a buffer kept for over an hour before a switch, where the sweep has real leftovers to delete (the real-ffmpeg test
+covers the rule).
+
 ## The plugin's moving parts
 
 *(moved from `dispatcharr-plugin/timeshift_buffer/README.md`, which now keeps only the user-facing summary)*

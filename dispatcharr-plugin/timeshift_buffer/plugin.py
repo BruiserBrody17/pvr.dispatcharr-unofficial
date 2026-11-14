@@ -1717,6 +1717,7 @@ def _build_ffmpeg_command(
     visible_segments: int,
     segment_pattern: str,
     audio_map: str | None = None,
+    continue_playlist: bool = False,
 ) -> list[str]:
     """Pure argv-assembly core of _start_ffmpeg -- pulled out specifically
     so the exact flag order is unit-testable standalone without touching
@@ -1724,6 +1725,10 @@ def _build_ffmpeg_command(
 
     `audio_map` is the spelling _usable_audio_map() found this ffmpeg accepts; None gives 0.8.17's argv plus -sn
     (no -map: ffmpeg's default pick of one video and one audio stream, and no subtitle).
+
+    `continue_playlist` is the restart after the channel switched upstream streams (_restart_after_stream_switch()):
+    `append_list` reads the playlist the killed ffmpeg left and numbers on from its last segment, so a client keeps one
+    sequence; `discont_start` marks the join with #EXT-X-DISCONTINUITY.
 
     -headers must precede -i: ffmpeg applies -headers to the input that
     follows it, not globally -- confirmed by this file's own top-of-file
@@ -1784,7 +1789,7 @@ def _build_ffmpeg_command(
         "-hls_delete_threshold",
         str(max(1, wrap_segments - visible_segments)),
         "-hls_flags",
-        "delete_segments+omit_endlist",
+        "delete_segments+omit_endlist" + ("+append_list+discont_start" if continue_playlist else ""),
         "-hls_segment_filename",
         segment_pattern,
         str(playlist_path),
@@ -1876,15 +1881,17 @@ def _usable_audio_map(logger) -> str | None:
 _OWNER_FILE_NAME = "ffmpeg.owner.json"
 
 
-def _write_owner_file(channel_dir: Path, pid, start_ticks, started_at: float, logger):
+def _write_owner_file(channel_dir: Path, pid, start_ticks, started_at: float, logger, replaces=None):
     try:
         tmp = channel_dir / (_OWNER_FILE_NAME + ".tmp")
         tmp.write_text(json.dumps({"pid": pid, "pid_start_ticks": start_ticks, "started_at": started_at}))
         # Never over another live ffmpeg's: under gevent Popen itself can park this greenlet between the spawn and
         # this write, long enough for a later start to clear the directory and spawn its own; that start's file is
         # what lets its ffmpeg be found should its state be lost, and this one stops its ffmpeg at the next lock check.
+        # `replaces` is the (pid, start ticks) of the ffmpeg a restart after a stream switch is taking over from: it is
+        # still alive, frozen, until the new one is up (_restart_ffmpeg_locked()).
         other = _live_owner(channel_dir)
-        if other is not None and (other["pid"], other["pid_start_ticks"]) != (pid, start_ticks):
+        if other is not None and (other["pid"], other["pid_start_ticks"]) not in ((pid, start_ticks), replaces):
             tmp.unlink(missing_ok=True)
             logger.warning(
                 "timeshift_buffer: %s already names another running ffmpeg (pid %s) -- not replacing it with pid %s",
@@ -1984,10 +1991,20 @@ class _StartLocksLost(Exception):
 
 
 def _start_ffmpeg(
-    channel_uuid: str, params: dict, settings_dict: dict, logger, still_held=None, use_audio_map: bool = True
+    channel_uuid: str,
+    params: dict,
+    settings_dict: dict,
+    logger,
+    still_held=None,
+    use_audio_map: bool = True,
+    continue_playlist: bool = False,
+    replaces=None,
 ) -> dict:
     """Clears the channel's directory and spawns its ffmpeg; returns the new buffer's state. `use_audio_map=False` is
-    the restart of a buffer stuck on a video stream that is declared and never sent (_restart_without_audio_map())."""
+    the restart of a buffer stuck on a video stream that is declared and never sent (_restart_without_audio_map()).
+    `continue_playlist=True` keeps the directory and appends to its playlist: the restart after the channel switched
+    upstream streams (_restart_after_stream_switch()), whose predecessor, `replaces` ((pid, start ticks)), is tracked
+    and still alive, frozen, so it is neither reaped here nor kept from handing over the owner file."""
     storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
     segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1, maximum=_MAX_SEGMENT_SECONDS)
     buffer_minutes = _int_setting(settings_dict, "buffer_minutes", 60, minimum=1, maximum=_MAX_BUFFER_MINUTES)
@@ -2020,9 +2037,15 @@ def _start_ffmpeg(
     # state left running here would otherwise keep writing beside the new one.
     # Stopping one waits on it (_stop_ffmpeg()'s sleep, a yield under gevent), so the locks are checked again after
     # that, before this directory -- by then possibly a later start's -- is cleared.
-    if _reap_untracked_ffmpeg(channel_dir, logger) and still_held is not None and not still_held():
+    if (
+        not continue_playlist
+        and _reap_untracked_ffmpeg(channel_dir, logger)
+        and still_held is not None
+        and not still_held()
+    ):
         raise _StartLocksLost()
-    _clear_channel_dir(channel_dir, logger)
+    if not continue_playlist:
+        _clear_channel_dir(channel_dir, logger)
     channel_dir.mkdir(parents=True, exist_ok=True)
     playlist_path = channel_dir / "live.m3u8"
     # Deliberately a bare relative filename, not channel_dir / "...": ffmpeg
@@ -2045,6 +2068,7 @@ def _start_ffmpeg(
         visible_segments,
         segment_pattern,
         audio_map,
+        continue_playlist,
     )
 
     log_path = channel_dir / "ffmpeg.log"
@@ -2064,7 +2088,7 @@ def _start_ffmpeg(
     # before the first Redis call after the spawn, which can park this greenlet (_renew_start_buffer_lock()): a later
     # start that clears this directory meanwhile then finds this ffmpeg named here. A park inside Popen itself comes
     # before this write; _write_owner_file() then leaves the later start's file alone.
-    _write_owner_file(channel_dir, proc.pid, pid_start_ticks, time.time(), logger)
+    _write_owner_file(channel_dir, proc.pid, pid_start_ticks, time.time(), logger, replaces=replaces)
     started_at = _shared_now()
 
     logger.info(
@@ -2096,11 +2120,13 @@ def _start_ffmpeg(
         "playlist_route": f"/{channel_uuid}/live.m3u8",
         "log_path": str(log_path),
         "audio_map": audio_map,
+        # Segment files ffmpeg keeps past the listed ones (-hls_delete_threshold): what the reaper's sweep after a
+        # continued playlist keeps too (_stray_segment_names()).
+        "segment_keep_extra": max(1, wrap_segments - visible_segments),
     }
-    if audio_map:
-        # What a restart without the audio map needs to connect the same way: get_live_manifest, which triggers it,
-        # carries neither. Never the -headers string itself, which holds a bearer token.
-        state["input_params"] = {key: params.get(key) for key in ("username", "client_ip") if params.get(key)}
+    # What a restart needs to connect the same way (_restart_ffmpeg_locked()): get_live_manifest, which triggers both
+    # kinds, carries neither. Never the -headers string itself, which holds a bearer token.
+    state["input_params"] = {key: params.get(key) for key in ("username", "client_ip") if params.get(key)}
     return state
 
 
@@ -2150,12 +2176,22 @@ def _unsent_video_restart_due_seconds(segment_seconds: int) -> int:
 
 
 def _restart_in_progress(state: dict, now: float) -> bool:
-    """Whether a restart without the audio map has stopped this instance's ffmpeg on purpose and not yet adopted the new
-    one: a poll that finds that ffmpeg dead meanwhile must not tear the buffer down."""
+    """Whether a restart (without the audio map, or after a stream switch) has stopped this instance's ffmpeg on purpose
+    and not yet adopted the new one: a poll that finds that ffmpeg dead meanwhile must not tear the buffer down."""
     since = state.get("restarting_since")
     return (
         isinstance(since, (int, float)) and not isinstance(since, bool) and 0 <= now - since < _RESTART_MARKER_SECONDS
     )
+
+
+def _dead_only_for_a_restart(state: dict, fresh: dict, now: float) -> bool:
+    """Whether a buffer `state` whose ffmpeg was found dead is only between a restart's kill and its adoption, as
+    `fresh` (re-read after) shows: still marked, or already adopted from that very instance. Its manifest is then not
+    "ended": the restart after a stream switch keeps the playlist, and a client told "ended" stops waiting at the
+    tail."""
+    if _restart_in_progress(fresh, now) and _same_buffer_instance(fresh, state):
+        return True
+    return fresh.get("restarted_from") == {"pid": state.get("pid"), "started_at": state.get("started_at")}
 
 
 def _read_log_head(channel_dir: Path) -> str:
@@ -2204,6 +2240,97 @@ def _restart_without_audio_map_locked(channel_uuid, lock_token, state, settings_
     ):
         return False
 
+    def announce():
+        logger.warning(
+            "timeshift_buffer: channel %s has written no playlist %ds after its start and its ffmpeg found no picture "
+            "size for a video stream -- most likely one the programme lists and never sends; restarting it once with "
+            "ffmpeg's own choice of streams (one audio track)",
+            channel_uuid,
+            int(_shared_now() - current["started_at"]),
+        )
+
+    def adopted(fresh):
+        fresh["restarted_without_audio_map"] = True
+
+    return _restart_ffmpeg_locked(
+        channel_uuid,
+        lock_token,
+        current,
+        settings_dict,
+        logger,
+        use_audio_map=False,
+        continue_playlist=False,
+        on_adopt=adopted,
+        what="without the audio map",
+        announce=announce,
+    )
+
+
+# How long a restart after a stream switch runs its new ffmpeg beside the frozen old one before killing the old one: the
+# new connection is in the proxy's client list well inside it (it is one local HTTP request), and a refused one (a
+# stream limit counting the old connection) has exited by then.
+_OVERLAP_SECONDS = 1.5
+
+
+def _is_stopped(pid) -> bool:
+    """Whether the process is stopped by a signal (state T in /proc/<pid>/stat); False when that cannot be read."""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[0] == "T"
+    except (OSError, IndexError):
+        return False
+
+
+def _signal_tracked_ffmpeg(state: dict, sig) -> bool:
+    """Sends `sig` to the buffer's ffmpeg process group, unless its pid now belongs to another process (the start time
+    changed, as _stop_ffmpeg() checks). True when it was sent."""
+    pid = state.get("pid")
+    if not pid:
+        return False
+    ticks = state.get("pid_start_ticks")
+    if ticks is not None:
+        actual = _proc_start_ticks(pid)
+        if actual is not None and actual != ticks:
+            return False
+    try:
+        os.killpg(pid, sig)
+    except OSError:
+        return False
+    return True
+
+
+def _restart_ffmpeg_locked(
+    channel_uuid,
+    lock_token,
+    current,
+    settings_dict,
+    logger,
+    *,
+    use_audio_map,
+    continue_playlist,
+    on_adopt,
+    what,
+    announce,
+    on_kept=None,
+) -> bool:
+    """The part both restarts share, under the channel's start lock and after each has checked its own conditions on
+    `current`: mark the state, replace the instance's ffmpeg with a new one spawned with the stored connection params,
+    and adopt it into the same state (viewers, heartbeats and access token kept). `announce()` logs what is about to
+    happen once the mark is in; `on_adopt(fresh)` adds what the kind of restart records. True when the new ffmpeg was
+    adopted; on a failure the marker is cleared and the old ffmpeg is either still running (resumed) or dead, and then
+    the buffer fails as a dead one.
+
+    Without the audio map (no playlist yet, `continue_playlist` False) the old ffmpeg is killed first. After a stream
+    switch the new one starts while the old one is only frozen (SIGSTOP), and the old one is killed once the new one has
+    run for _OVERLAP_SECONDS: the frozen one writes nothing more, but its connection keeps the proxy's channel from
+    having no client, which with Dispatcharr's default channel shutdown delay of 0 stops the channel at once; a new
+    connection then found it stopping, or started it again on its first stream (docs/TIMESHIFT.md, "A stream switch
+    that changes the video format (0.8.18)"). A new ffmpeg that exits inside the overlap (a stream limit that still
+    counts the old connection refuses it) is not tried again without the old one: killing the old one first empties
+    the channel just the same, and checked live, the proxy then started it again on its first stream and the switch
+    was lost. The old ffmpeg is resumed instead, `on_kept(fresh)` records what the caller needs to not try again, and
+    the buffer goes on as before the switch."""
+
     # Marked first, atomically and only for this instance: from the kill below until the adoption, Redis names a dead
     # ffmpeg, and another viewer's poll in that window would otherwise tear the buffer down as failed
     # (_restart_in_progress()).
@@ -2217,11 +2344,13 @@ def _restart_without_audio_map_locked(channel_uuid, lock_token, state, settings_
     if outcome != "written":
         return False
     current = marked
+    announce()
 
     def clear_mark(fresh):
         if not _same_buffer_instance(fresh, current) or "restarting_since" not in fresh:
             return None
         fresh.pop("restarting_since")
+        fresh.pop("switch_frozen", None)  # resumed (back_out()) or dead
         return fresh
 
     def give_up():
@@ -2230,49 +2359,123 @@ def _restart_without_audio_map_locked(channel_uuid, lock_token, state, settings_
         _update_buffer_state(channel_uuid, clear_mark)
         return False
 
-    logger.warning(
-        "timeshift_buffer: channel %s has written no playlist %ds after its start and its ffmpeg found no picture "
-        "size for a video stream -- most likely one the programme lists and never sends; restarting it once with "
-        "ffmpeg's own choice of streams (one audio track)",
-        channel_uuid,
-        int(_shared_now() - current["started_at"]),
-    )
-    # SIGKILL, not SIGTERM: on SIGTERM the muxer would flush what it holds into a first segment and playlist of this
-    # instance, which a poll could be served before the new ffmpeg's own replace them under the same access token.
-    _stop_ffmpeg(current, logger, first_signal=signal.SIGKILL)
-
     def still_held():
         return _renew_start_buffer_lock(channel_uuid, lock_token)
 
-    if not still_held():
-        # Another start may own the channel by now; it finds this instance dead and starts afresh.
-        return give_up()
-    try:
-        new = _start_ffmpeg(
-            channel_uuid, current.get("input_params") or {}, settings_dict, logger, still_held, use_audio_map=False
+    def spawn(replaces=None):
+        return _start_ffmpeg(
+            channel_uuid,
+            current.get("input_params") or {},
+            settings_dict,
+            logger,
+            still_held,
+            use_audio_map=use_audio_map,
+            continue_playlist=continue_playlist,
+            replaces=replaces,
         )
+
+    def kill_old():
+        # SIGKILL, not SIGTERM: on SIGTERM the muxer would flush what it holds into a segment and playlist of this
+        # instance, which a poll could be served before the new ffmpeg's own replace them under the same access
+        # token. The segment a SIGKILL cuts short was never listed, and a continuing ffmpeg writes its own under the
+        # same number.
+        _stop_ffmpeg(current, logger, first_signal=signal.SIGKILL)
+
+    frozen = continue_playlist and _signal_tracked_ffmpeg(current, signal.SIGSTOP)
+    if not frozen:
+        kill_old()
+
+    def back_out():
+        # Nothing new runs: a frozen old ffmpeg is resumed and the buffer goes on as it was; a killed one leaves it
+        # dead, to fail as such.
+        if frozen:
+            _signal_tracked_ffmpeg(current, signal.SIGCONT)
+        return give_up()
+
+    def keep_old():
+        logger.warning(
+            "timeshift_buffer: the new ffmpeg for %s exited within %.1fs of connecting beside the old one, most likely "
+            "refused by the account's stream limit (Dispatcharr counts both connections unless its user limit setting "
+            "ignores same-channel connections) -- keeping the old one; the buffer goes on in the stream's old format",
+            channel_uuid,
+            _OVERLAP_SECONDS,
+        )
+        _signal_tracked_ffmpeg(current, signal.SIGCONT)
+        # The refused ffmpeg took the owner file over; it names the old one again (_reap_untracked_ffmpeg()).
+        with contextlib.suppress(KeyError, ValueError):
+            _write_owner_file(
+                _channel_dir(current["storage_path"], channel_uuid),
+                current.get("pid"),
+                current.get("pid_start_ticks"),
+                time.time(),
+                logger,
+            )
+
+        def kept(fresh):
+            if not _same_buffer_instance(fresh, current):
+                return None
+            fresh.pop("restarting_since", None)
+            fresh.pop("switch_frozen", None)
+            if on_kept is not None:
+                on_kept(fresh)
+            return fresh
+
+        _update_buffer_state(channel_uuid, kept)
+        return False
+
+    try:
+        if not still_held():
+            # Another start may own the channel by now; it finds this instance as it is and acts on that.
+            return back_out()
+        new = spawn(replaces=(current.get("pid"), current.get("pid_start_ticks")) if frozen else None)
+        if frozen:
+            deadline = time.monotonic() + _OVERLAP_SECONDS
+            while time.monotonic() < deadline and _is_process_alive(new["pid"], new["pid_start_ticks"]):
+                time.sleep(0.1)
+            if not _is_process_alive(new["pid"], new["pid_start_ticks"]):
+                return keep_old()
+            kill_old()
     except _StartLocksLost:
-        return give_up()
+        return (
+            back_out()
+            if frozen and _is_process_alive(current.get("pid"), current.get("pid_start_ticks"))
+            else give_up()
+        )
     except Exception:
-        logger.exception("timeshift_buffer: couldn't restart the buffer for %s without the audio map", channel_uuid)
-        return give_up()
+        logger.exception("timeshift_buffer: couldn't restart the buffer for %s %s", channel_uuid, what)
+        return (
+            back_out()
+            if frozen and _is_process_alive(current.get("pid"), current.get("pid_start_ticks"))
+            else give_up()
+        )
 
     def adopt(fresh):
         if fresh.get("stopping") or not _same_buffer_instance(fresh, current):
             return None
         # What a teardown decided on the old instance needs to follow it here (_teardown_following_a_restart()).
         fresh["restarted_from"] = {"pid": fresh.get("pid"), "started_at": fresh.get("started_at")}
-        for key in ("pid", "pid_start_ticks", "started_at", "playlist_path", "log_path", "audio_map"):
-            fresh[key] = new[key]
-        fresh.pop("input_params", None)
+        for key in (
+            "pid",
+            "pid_start_ticks",
+            "started_at",
+            "playlist_path",
+            "log_path",
+            "audio_map",
+            "segment_keep_extra",
+        ):
+            if key in new:
+                fresh[key] = new[key]
         fresh.pop("restarting_since", None)
-        fresh["restarted_without_audio_map"] = True
+        fresh.pop("switch_frozen", None)
+        on_adopt(fresh)
         return fresh
 
     try:
         held = still_held()
     except Exception:
         _stop_ffmpeg(new, logger)
+        if frozen:
+            kill_old()
         give_up()
         raise
     outcome = _update_buffer_state(channel_uuid, adopt)[0] if held else "lock lost"
@@ -2284,15 +2487,432 @@ def _restart_without_audio_map_locked(channel_uuid, lock_token, state, settings_
             outcome,
         )
         _stop_ffmpeg(new, logger)
+        if frozen:
+            kill_old()  # the instance it belonged to was stopped or replaced as well
         return give_up()
     _forget_cached_manifest(channel_uuid)
     return True
 
 
+# The hash where Dispatcharr's live proxy keeps what a channel is playing; its `stream_id` and `stream_switch_time` are
+# rewritten on every switch to another of the channel's streams, automatic (StreamManager._try_next_stream()) or
+# manual (ChannelService.change_stream_url()), and not on a reconnect to the same stream. Read in apps/proxy/live_proxy
+# at v0.30.0, v0.32.0 and v0.33.0 (redis_keys.py, constants.py).
+_UPSTREAM_METADATA_KEY = "live:channel:{}:metadata"
+# Dispatcharr starts a new client this far behind live (Stream Settings' new_client_behind_seconds, 5 by default), so a
+# new ffmpeg reads the old stream's last seconds first, probes the old format again and is mislabelled as before, unless
+# the switch is at least that old. The margin covers the new stream's connect and the proxy's own switch handling: a
+# restart 1 to 2 s after a manual switch once raced it, and the channel stayed on its old stream.
+_SWITCH_SETTLE_MARGIN_SECONDS = 3.0
+_DEFAULT_NEW_CLIENT_BEHIND_SECONDS = 5.0
+# The first Kodi whose player follows a change of video format in the programme map. Kodi 21's demuxer ignores one in
+# every mode (checked live), so holding the picture for it gains nothing.
+_FIRST_KODI_FOLLOWING_FORMAT_CHANGE = 22
+
+
+def _resolve_kodi_version(params: dict):
+    """start_buffer's `kodi_version` (the major version of the Kodi the addon runs in, sent since addon 0.14.4 and
+    0.13.4) as an int, or None when it is missing or not a plausible one."""
+    value = params.get("kodi_version")
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 999:
+        return value
+    return None
+
+
+def _record_viewer_kodi_version(state: dict, viewer_id, kodi_version) -> dict:
+    """Records the Kodi version `viewer_id` started with (forgetting it when None), and drops the entries of viewers
+    no longer listed, so the map stays as small as `viewers`. Returns `state`, mutated in place."""
+    viewers = state.get("viewers", [])
+    versions = state.get("viewer_kodi_versions")
+    kept = {v: k for v, k in versions.items() if v in viewers} if isinstance(versions, dict) else {}
+    if viewer_id:
+        kept.pop(viewer_id, None)
+        if kodi_version is not None and viewer_id in viewers:
+            kept[viewer_id] = kodi_version
+    if kept:
+        state["viewer_kodi_versions"] = kept
+    else:
+        state.pop("viewer_kodi_versions", None)
+    return state
+
+
+def _stream_switch_needs_hold(state: dict) -> bool:
+    """Whether a switch on this buffer is worth holding its picture for (_freeze_for_stream_switch()): unless every
+    viewer is known to be on a Kodi older than _FIRST_KODI_FOLLOWING_FORMAT_CHANGE. A viewer whose version is not
+    known (an addon older than the one that sends it) counts as one that needs it, and so does a buffer with no listed
+    viewers. A client reading without being listed (no viewer_id, or one the reaper pruned and its next poll has not
+    re-added yet) is not seen at all: beside a listed Kodi 21 viewer, it goes without the hold."""
+    viewers = state.get("viewers") or []
+    versions = state.get("viewer_kodi_versions")
+    if not viewers or not isinstance(versions, dict):
+        return True
+    return any(
+        not isinstance(versions.get(v), int) or versions[v] >= _FIRST_KODI_FOLLOWING_FORMAT_CHANGE for v in viewers
+    )
+
+
+# What _upstream_stream() answers when Redis cannot say: unlike "no stream" (a proxy channel that went away), it must
+# not resume a held buffer.
+_UPSTREAM_UNKNOWN = object()
+
+
+def _upstream_stream(channel_uuid: str):
+    """(stream_id as a str, stream_switch_time as a float) of what Dispatcharr's proxy is playing for the channel;
+    either is None when the proxy has none (no proxy channel, a channel that redirects to its provider, no switch
+    yet). (_UPSTREAM_UNKNOWN, None) when Redis cannot say."""
+    try:
+        values = _redis().hmget(_UPSTREAM_METADATA_KEY.format(channel_uuid), "stream_id", "stream_switch_time")
+    except Exception:
+        return _UPSTREAM_UNKNOWN, None
+    stream_id, switch_time = (v.decode("utf-8", errors="replace") if isinstance(v, bytes) else v for v in values)
+    try:
+        switch_time = float(switch_time) if switch_time else None
+    except (TypeError, ValueError):
+        switch_time = None
+    return stream_id or None, switch_time
+
+
+def _wall_clock() -> float:
+    """This host's clock, the one Dispatcharr stamps `stream_switch_time` with (time.time() in the same container)."""
+    return time.time()
+
+
+def _switch_settle_seconds() -> float:
+    """How old a switch must be before the buffer follows it: the proxy's new-client offset plus a margin."""
+    try:
+        from apps.proxy.live_proxy.config_helper import ConfigHelper
+
+        behind = float(ConfigHelper.new_client_behind_seconds())
+    except Exception:
+        behind = _DEFAULT_NEW_CLIENT_BEHIND_SECONDS
+    return max(0.0, behind) + _SWITCH_SETTLE_MARGIN_SECONDS
+
+
+def _stream_switch_step(state: dict, upstream_stream_id, switch_time, now: float, settle: float) -> str | None:
+    """What a poll that read the proxy's `upstream_stream_id` and `switch_time` should do about the buffer in `state`:
+    "record" the stream the buffer is on, "restart" its ffmpeg because the channel switched streams since the buffer's
+    ffmpeg started, "wait" for a switch to be `settle` seconds old first (its ffmpeg frozen meanwhile), "thaw" an ffmpeg
+    frozen for a switch that went back before it settled, or nothing.
+
+    The first sighting (the proxy writes the id once ffmpeg has connected, after start_buffer returned) is recorded,
+    unless the proxy switched less than `settle` seconds before the buffer started, or after: ffmpeg, joining that far
+    behind live, may then have probed the stream before the switch, and the switch is followed like a later one.
+    `started_at` is Redis TIME and `switch_time` Dispatcharr's own clock: the same clock when Redis shares the host,
+    the usual deployment; otherwise their skew moves that window by as much. A `restarting_since` mark counts only
+    while it is fresh (_restart_in_progress()): one a failed restart left behind must not hold the buffer for good."""
+    if state.get("stopping") or _restart_in_progress(state, now):
+        return None
+    recorded = state.get("upstream_stream_id")
+    if not upstream_stream_id or recorded == upstream_stream_id:
+        # frozen for a switch that went back (or a proxy channel that went away) before it settled
+        return "thaw" if state.get("switch_frozen") else None
+    if recorded is None:
+        started_at = state.get("started_at")
+        switched_since_start = (
+            isinstance(switch_time, float)
+            and isinstance(started_at, (int, float))
+            and switch_time > started_at - settle
+        )
+        if not switched_since_start:
+            return "record"
+    if isinstance(switch_time, float) and now - switch_time < settle:
+        return "wait"
+    return "restart"
+
+
+def _record_upstream_stream_id(channel_uuid: str, state: dict, upstream_stream_id: str) -> None:
+    def record(fresh):
+        if fresh.get("stopping") or not _same_buffer_instance(fresh, state) or fresh.get("upstream_stream_id"):
+            return None
+        fresh["upstream_stream_id"] = upstream_stream_id
+        return fresh
+
+    _update_buffer_state(channel_uuid, record)
+
+
+def _stream_limit_blocks_reconnect(stream_limit, limit_settings) -> bool:
+    """Whether a second connection to the same channel by an account with `stream_limit` would end its first one. With
+    a limit, Dispatcharr counts every connection unless its user limit settings ignore same-channel ones, and over the
+    limit it ends the account's oldest connection by default (`terminate_on_limit_exceeded`, `terminate_oldest`; read in
+    apps/proxy/utils.py at v0.33.0). Checked live with a limit of 1: the restart's new connection ended the old one,
+    the channel was left with no client and stopped, and the buffer ended."""
+    if not isinstance(stream_limit, int) or isinstance(stream_limit, bool) or stream_limit <= 0:
+        return False
+    settings = limit_settings if isinstance(limit_settings, dict) else {}
+    return not settings.get("ignore_same_channel_connections", False)
+
+
+def _account_stream_limit(username: str):
+    """(stream_limit, user limit settings) for the Dispatcharr account the buffer connects as: (None, None) when the
+    account cannot be read (outside Dispatcharr, an unknown account), the settings None when only they cannot."""
+    try:
+        from django.contrib.auth import get_user_model
+
+        stream_limit = get_user_model().objects.filter(username=username).values_list("stream_limit", flat=True).first()
+    except Exception:
+        return None, None
+    try:
+        from core.models import CoreSettings
+
+        limit_settings = CoreSettings.get_user_limits_settings()
+    except Exception:
+        # A limit with settings that cannot be read counts as one that ends the old connection (the safe side): the
+        # buffer then goes on as before rather than possibly being ended.
+        limit_settings = None
+    return stream_limit, limit_settings
+
+
+def _freeze_for_stream_switch(
+    channel_uuid: str, state: dict, upstream_stream_id: str, settings_dict: dict, logger
+) -> None:
+    """Freezes (SIGSTOP) the buffer's ffmpeg while a switch settles, once. Left running, it went on writing the new
+    stream's packets labelled as the old format for those seconds, and Kodi 22, fed them, showed a black picture after
+    the restart's join even though it changed decoder (checked live on an abrupt failover). Frozen, it writes nothing:
+    the client waits at the tail on the last good picture, as through the outage that caused the switch, and its
+    connection keeps the proxy's channel from having no client. A buffer whose account's stream limit rules the restart
+    out is not frozen: the switch is recorded as handled instead (_stream_limit_blocks_reconnect()). Nor is one whose
+    viewers are all on Kodi 21, which cannot follow a format change anyway (_stream_switch_needs_hold()): it plays on
+    until the restart."""
+    if state.get("switch_frozen") == upstream_stream_id:
+        return
+    if not _stream_switch_needs_hold(state):
+        # Every viewer is on Kodi 21: it plays on until the restart, which freezes the old ffmpeg itself and checks
+        # _why_not_follow_stream_switch() under the lock (checked here, it would cost a database read on every poll).
+        return
+    why_not = _why_not_follow_stream_switch(state, settings_dict)
+    if why_not:
+        _record_stream_switch_handled(channel_uuid, state, upstream_stream_id, logger, why_not)
+        return
+
+    def freeze(fresh):
+        if (
+            fresh.get("stopping")
+            or not _same_buffer_instance(fresh, state)
+            or _restart_in_progress(fresh, _shared_now())
+        ):
+            return None
+        fresh["switch_frozen"] = upstream_stream_id
+        return fresh
+
+    if _update_buffer_state(channel_uuid, freeze)[0] == "written" and _signal_tracked_ffmpeg(state, signal.SIGSTOP):
+        logger.info(
+            "timeshift_buffer: channel %s switched to stream %s -- holding its buffer until the switch settles",
+            channel_uuid,
+            upstream_stream_id,
+        )
+
+
+def _thaw_after_stream_switch(channel_uuid: str, state: dict) -> None:
+    """Resumes an ffmpeg frozen for a switch that will not be followed after all."""
+
+    def thaw(fresh):
+        # Not during a restart's overlap: the old ffmpeg resumed then would write into the playlist the new one writes.
+        if (
+            not _same_buffer_instance(fresh, state)
+            or "switch_frozen" not in fresh
+            or _restart_in_progress(fresh, _shared_now())
+        ):
+            return None
+        fresh.pop("switch_frozen")
+        return fresh
+
+    if _update_buffer_state(channel_uuid, thaw)[0] == "written":
+        _signal_tracked_ffmpeg(state, signal.SIGCONT)
+
+
+_STREAM_LIMIT_REASON = (
+    "its buffer's account has a stream limit and Dispatcharr counts a second connection to the same channel against "
+    "it, which would end the buffer's own connection (Dispatcharr's user limit setting to ignore same-channel "
+    "connections lets it follow the switch)"
+)
+_SETTINGS_CHANGED_REASON = "the plugin's storage path or port changed since the buffer started"
+
+
+def _why_not_follow_stream_switch(state: dict, settings_dict: dict) -> str | None:
+    """Why a switch on this buffer cannot be followed at all, or None. Checked before the hold, so a buffer that
+    cannot be restarted is never frozen, and again under the lock."""
+    storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
+    http_port = _int_setting(settings_dict, "http_port", 9192, minimum=1, maximum=65535)
+    if state.get("storage_path") != storage_path or state.get("http_port") != http_port:
+        return _SETTINGS_CHANGED_REASON
+    username = (state.get("input_params") or {}).get("username")
+    if username and _stream_limit_blocks_reconnect(*_account_stream_limit(username)):
+        return _STREAM_LIMIT_REASON
+    return None
+
+
+def _record_stream_switch_handled(channel_uuid: str, state: dict, upstream_stream_id: str, logger, why: str) -> None:
+    """A switch that cannot be followed (`why`) is recorded as handled, so it is not tried again, and the buffer goes
+    on as it was, resumed if it was held for the switch."""
+    logger.info(
+        "timeshift_buffer: channel %s switched streams, but %s -- not restarting; the buffer goes on in the stream's "
+        "old format",
+        channel_uuid,
+        why,
+    )
+
+    def handled(fresh):
+        if fresh.get("stopping") or not _same_buffer_instance(fresh, state):
+            return None
+        fresh["upstream_stream_id"] = upstream_stream_id
+        fresh.pop("switch_frozen", None)
+        return fresh
+
+    _update_buffer_state(channel_uuid, handled)
+    # Resumed whether or not the write landed: nothing else would.
+    if _is_stopped(state.get("pid")):
+        _signal_tracked_ffmpeg(state, signal.SIGCONT)
+
+
+# Channels with a restart thread running in this worker: a poll that lands while one runs does not start another.
+_stream_switch_restarts = set()
+_stream_switch_restarts_lock = threading.Lock()
+
+
+def _start_stream_switch_restart(channel_uuid: str, state: dict, upstream_stream_id: str, settings_dict: dict, logger):
+    """Runs _restart_after_stream_switch() beside the poll that found the switch settled, which answers at once. Run
+    inside it, the restart (a lock, a database read and a token for the new connection, a first audio-map probe on a
+    worker that has not run one, the 1.5 s overlap) could outlast the addon's 5 s limit on that poll, and a refresh
+    the addon gives up on at the live tail ends playback (found by the branch's second review). The restart takes the
+    channel's start lock and re-reads the state itself, so a thread in another worker is harmless."""
+    with _stream_switch_restarts_lock:
+        if channel_uuid in _stream_switch_restarts:
+            return
+        _stream_switch_restarts.add(channel_uuid)
+
+    def run():
+        try:
+            _restart_after_stream_switch(channel_uuid, state, upstream_stream_id, settings_dict, logger)
+        except Exception:
+            logger.exception("timeshift_buffer: couldn't restart the buffer for %s after a stream switch", channel_uuid)
+        finally:
+            with _stream_switch_restarts_lock:
+                _stream_switch_restarts.discard(channel_uuid)
+
+    try:
+        threading.Thread(target=run, name="timeshift_buffer_switch_restart", daemon=True).start()
+    except Exception:
+        with _stream_switch_restarts_lock:
+            _stream_switch_restarts.discard(channel_uuid)
+        raise
+
+
+def _restart_after_stream_switch(
+    channel_uuid: str, state: dict, upstream_stream_id: str, settings_dict: dict, logger
+) -> bool:
+    """Restarts the buffer's ffmpeg after Dispatcharr switched the channel to another of its streams, appending to the
+    same playlist under the same access token, so its client reads on across the join.
+
+    `-c copy` keeps the codec ffmpeg probed at its start: its MPEG-TS demuxer sets a PID's stream type once, so a switch
+    to a stream in another video format (H.264 to HEVC) on the same PID went on being written as the old one, and
+    Kodi froze on the last good picture while the player time ran on and reset every few seconds (a switch onto other
+    PIDs would leave the new video unmapped). A fresh ffmpeg probes the new stream. Every switch restarts, whether the
+    format changed or not: the proxy's own codec fields are filled only for some stream profiles, and on a same-format
+    switch the restart cost about 2 s of playback (docs/TIMESHIFT.md, "A stream switch that changes the video format
+    (0.8.18)"). The caller waits until the switch has settled (_stream_switch_step()).
+
+    Under the channel's start lock, only for the instance `state` describes and only while it is alive and has a
+    playlist (a buffer still waiting for its first is left alone). True when the restart happened."""
+    with _deferred_removals(logger):
+        lock_token = _acquire_start_buffer_lock(channel_uuid)
+        if lock_token is None:
+            return False  # a start, or this same restart from another viewer's poll, is under way
+        try:
+            return _restart_after_stream_switch_locked(
+                channel_uuid, lock_token, state, upstream_stream_id, settings_dict, logger
+            )
+        finally:
+            _release_start_buffer_lock(channel_uuid, lock_token)
+
+
+def _restart_after_stream_switch_locked(channel_uuid, lock_token, state, upstream_stream_id, settings_dict, logger):
+    current = _get_buffer_state(channel_uuid)
+    if not current or current.get("stopping") or not _same_buffer_instance(current, state):
+        return False
+    previous = current.get("upstream_stream_id")
+    if previous == upstream_stream_id:
+        return False  # another poll's restart has already followed this switch
+    why_not = _why_not_follow_stream_switch(current, settings_dict)
+    if why_not:
+        _record_stream_switch_handled(channel_uuid, current, upstream_stream_id, logger, why_not)
+        return False
+    channel_dir = _channel_dir(current["storage_path"], channel_uuid)
+    if not (channel_dir / "live.m3u8").exists() or not _is_process_alive(
+        current.get("pid"), current.get("pid_start_ticks")
+    ):
+        return False
+
+    def announce():
+        logger.info(
+            "timeshift_buffer: channel %s switched from stream %s to %s -- restarting its ffmpeg so the buffer follows "
+            "the new stream's format",
+            channel_uuid,
+            previous if previous is not None else "(the one it started on)",
+            upstream_stream_id,
+        )
+
+    def adopted(fresh):
+        fresh["upstream_stream_id"] = upstream_stream_id
+        fresh["playlist_continued"] = True  # the reaper's stray-segment sweep (_stray_segment_names())
+
+    def kept(fresh):
+        fresh["upstream_stream_id"] = upstream_stream_id  # handled, as far as it can be: not tried again
+
+    return _restart_ffmpeg_locked(
+        channel_uuid,
+        lock_token,
+        current,
+        settings_dict,
+        logger,
+        # A buffer already restarted without the audio map keeps ffmpeg's own pick: its video stream is never sent.
+        use_audio_map=bool(current.get("audio_map")) and not current.get("restarted_without_audio_map"),
+        continue_playlist=True,
+        on_adopt=adopted,
+        what="after a stream switch",
+        announce=announce,
+        on_kept=kept,
+    )
+
+
+_SEGMENT_NAME = re.compile(r"^seg_(\d+)\.ts$")
+
+
+def _stray_segment_names(names, media_sequence: int, keep_extra: int) -> list[str]:
+    """The segment files among `names` that ffmpeg would long have deleted: numbered below the playlist's first listed
+    segment by more than `keep_extra` (its -hls_delete_threshold). A continuing ffmpeg (append_list) rebuilds only the
+    listed segments, so the ones its killed predecessor kept past the list were never deleted by anyone (found by the
+    stream-switch branch's review, reproduced with ffmpeg 6.1: a 3-segment list with 3 kept past it left those 3 behind
+    for good)."""
+    stray = []
+    for name in names:
+        match = _SEGMENT_NAME.match(name)
+        if match and int(match.group(1)) < media_sequence - keep_extra:
+            stray.append(name)
+    return stray
+
+
+def _sweep_stray_segments(state: dict, logger) -> None:
+    """Deletes a continued playlist's stray segment files (_stray_segment_names()); a reaper tick's housekeeping."""
+    keep_extra = state.get("segment_keep_extra")
+    if not state.get("playlist_continued") or not isinstance(keep_extra, int) or isinstance(keep_extra, bool):
+        return
+    channel_dir = _channel_dir(state["storage_path"], state["channel_uuid"])
+    try:
+        _, parsed = _parse_live_playlist_lines((channel_dir / "live.m3u8").read_text().splitlines())
+        names = os.listdir(channel_dir)
+    except OSError:
+        return
+    if not parsed:
+        return
+    for name in _stray_segment_names(names, parsed[0][0], keep_extra):
+        with contextlib.suppress(OSError):
+            (channel_dir / name).unlink()
+
+
 def _teardown_following_a_restart(state: dict, logger) -> bool:
     """_teardown_buffer() for a stop that must end the channel's buffer whichever instance runs it (stop_all, a stop
-    with no viewer_id): one declined because a restart without the audio map adopted its new ffmpeg after `state` was
-    read is repeated once on the instance that restart made, and only that one."""
+    with no viewer_id): one declined because a restart (without the audio map, or after a stream switch) adopted its
+    new ffmpeg after `state` was read is repeated once on the instance that restart made, and only that one."""
     if _teardown_buffer(state, logger) is not False:
         return True
     fresh = _get_buffer_state(state["channel_uuid"])
@@ -2320,6 +2940,10 @@ def _stop_ffmpeg(state: dict, logger, first_signal=signal.SIGTERM):
             return
     try:
         os.killpg(pid, first_signal)
+        if first_signal != signal.SIGKILL and _is_stopped(pid):
+            # One frozen for a stream switch (_freeze_for_stream_switch()) acts on SIGTERM only once resumed; this
+            # would otherwise wait out its 2 s before the SIGKILL.
+            os.killpg(pid, signal.SIGCONT)
     except ProcessLookupError:
         pass  # already gone
     except Exception:
@@ -3854,6 +4478,8 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_trac
                     # _remove_channel_files()).
                     with contextlib.suppress(ValueError, KeyError):
                         _cap_ffmpeg_log(_channel_dir(state.get("storage_path") or reaper_storage_path, uuid))
+                    with contextlib.suppress(ValueError, KeyError):
+                        _sweep_stray_segments(state, logger)
                     stale = _stale_viewers(state, uuid, idle_timeout, tracker)
                     if stale:
                         logger.info(
@@ -4481,6 +5107,7 @@ class Plugin:
         # counting -- see _stop_buffer()'s own comment for exactly what
         # that degrades to.
         viewer_id = _resolve_viewer_id(params)
+        kodi_version = _resolve_kodi_version(params)
 
         existing = _get_buffer_state(channel_uuid)
         is_alive = _is_process_alive(existing.get("pid"), existing.get("pid_start_ticks")) if existing else False
@@ -4583,6 +5210,7 @@ class Plugin:
                         viewers.append(viewer_id)
                     current.setdefault("viewer_heartbeats", {})[viewer_id] = _shared_now()
                     _clear_stopped_viewer(current, viewer_id)
+                    _record_viewer_kodi_version(current, viewer_id, kodi_version)
                 # Retrofits a token onto state left behind by a plugin version
                 # older than the access-token requirement (see
                 # _check_access_token) -- makes this self-healing across an
@@ -4659,6 +5287,7 @@ class Plugin:
 
             state["viewers"] = [viewer_id] if viewer_id else []
             state["viewer_heartbeats"] = {viewer_id: _shared_now()} if viewer_id else {}
+            _record_viewer_kodi_version(state, viewer_id, kodi_version)
             # Required by every request this buffer's own file server serves
             # from here on -- see _check_access_token's own comment for why.
             # token_urlsafe() output is already safe to place directly in a
@@ -4898,10 +5527,10 @@ class Plugin:
             # start_buffer call to notice (see that method's own comment):
             # nothing else will proactively clean this up otherwise, since
             # a dead buffer with no further fetches never goes idle either.
-            # Not while a restart without the audio map has stopped this ffmpeg on purpose, and not when the instance
-            # has been replaced since `state` was read (that restart's new ffmpeg, or another start's): the buffer
-            # this caller polls is not the failed one, so it hears "not ready" and asks again (a replacement with
-            # another token answers its next poll as replaced).
+            # Not while a restart (_restart_ffmpeg_locked()) has stopped this ffmpeg on purpose, and not when the
+            # instance has been replaced since `state` was read (that restart's new ffmpeg, or another start's): the
+            # buffer this caller polls is not the failed one, so it hears "not ready" and asks again (a replacement
+            # with another token answers its next poll as replaced).
             if (
                 _teardown_buffer(state, logger, abort_if=lambda fresh: _restart_in_progress(fresh, _shared_now()))
                 is False
@@ -4952,6 +5581,12 @@ class Plugin:
         # already built successfully and is still returned to the caller
         # either way; only the write-back is skipped.
         self._touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id)
+        if manifest.get("ended"):
+            fresh = _get_buffer_state(channel_uuid)
+            if fresh and _dead_only_for_a_restart(state, fresh, _shared_now()):
+                manifest = {**manifest, "ended": False}
+        else:
+            self._follow_stream_switch(channel_uuid, state, settings_dict, logger)
 
         return {
             "status": "ok",
@@ -4965,6 +5600,30 @@ class Plugin:
             "segment_route_prefix": f"/{channel_uuid}/",
             **manifest,
         }
+
+    @staticmethod
+    def _follow_stream_switch(channel_uuid, state, settings_dict, logger) -> None:
+        """Records the upstream stream a playing buffer is on, or restarts its ffmpeg once the channel has switched to
+        another and the switch has settled (_stream_switch_step(), _restart_after_stream_switch()). A poll is where:
+        the addon polls a playing buffer every few seconds, and a paused one too. Never fails the poll it rides on."""
+        upstream_stream_id, switch_time = _upstream_stream(channel_uuid)
+        if upstream_stream_id is _UPSTREAM_UNKNOWN:
+            return  # Redis could not say: a held buffer stays held, nothing else changes
+        try:
+            # Read from Dispatcharr's config only when a switch is pending, not on every poll.
+            pending = bool(upstream_stream_id) and upstream_stream_id != state.get("upstream_stream_id")
+            settle = _switch_settle_seconds() if pending else 0.0
+            step = _stream_switch_step(state, upstream_stream_id, switch_time, _wall_clock(), settle)
+            if step == "record":
+                _record_upstream_stream_id(channel_uuid, state, upstream_stream_id)
+            elif step == "wait":
+                _freeze_for_stream_switch(channel_uuid, state, upstream_stream_id, settings_dict, logger)
+            elif step == "thaw":
+                _thaw_after_stream_switch(channel_uuid, state)
+            elif step == "restart":
+                _start_stream_switch_restart(channel_uuid, state, upstream_stream_id, settings_dict, logger)
+        except Exception:
+            logger.exception("timeshift_buffer: couldn't follow a stream switch on %s", channel_uuid)
 
     @staticmethod
     def _touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id) -> None:
