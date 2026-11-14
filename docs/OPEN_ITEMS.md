@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**7 open, 418 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**6 open, 419 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,8 +13,6 @@ confirmed. The open ones came from:
 - One from the 2026-10-25 stream-switch re-test on Dispatcharr 0.33.0: a codec-changing switch, documented and deferred.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
-- One from the 2026-11-13 live check of `timeshift_buffer`'s audio-track mapping: a buffer still waiting for its first
-  playlist is reaped as idle, deferred.
 
 Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-23 sweep
 (five read-only reviews by area, 17 findings, the last fixed on 2026-11-04), from the 2026-10-24 sweep
@@ -31,9 +29,9 @@ sweep (eleven findings, all fixed: the release gate, the CI path filter and a `t
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
-| Open: Known gaps, deliberately deferred | 4 |
+| Open: Known gaps, deliberately deferred | 3 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 365 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 366 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -133,21 +131,6 @@ bites is unknown.
 `TROUBLESHOOTING.md`'s "The picture freezes after a channel switches streams, while playback keeps running" (backup
 streams in the same video format; Off or Local mode on Kodi 22). Pick up the ffmpeg restart above if users report it on
 real channels.
-
-#### `timeshift_buffer` reaps a buffer that has not written its first playlist yet as idle
-
-**Opened 2026-11-13, from the live check of the audio-track mapping (`CLOSED_ITEMS.md`, "`timeshift_buffer` 0.8.18's
-audio-track mapping has only been seen on generated streams"); deferred.** A `get_live_manifest` that answers "not
-ready" does not refresh `last_heartbeat`, so to `_reaper_loop()` a buffer whose ffmpeg has not produced a playlist yet
-looks idle from the moment it starts, and it is ended 30 to 45 s in (`idle_timeout_seconds`, 30 by default, plus the
-15 s reaper tick). Seen on the lab's Dispatcharr 0.33.0 with an upstream that answered 18 s late: the buffer was stopped
-while ffmpeg was still waiting for the proxy ("Immediate exit requested"). Harmless at the default settings, because the
-addon gives up on a first playlist at 30 s anyway (`OpenLiveTimeshiftStream()`, "no live playlist after ... giving up";
-`CLOSED_ITEMS.md`, "A channel that is slow to start"), so nobody is still waiting when the reaper acts. It matters if
-the addon's wait is ever made longer, and already on a server whose `idle_timeout_seconds` is set below 30 (it accepts
-down to 1): there a slow channel is torn down while the addon is still polling it (not run). The fix would be to count a
-"not ready" poll as activity (refresh `last_heartbeat` there, as a file fetch does). The measurements are in
-`TIMESHIFT.md`, "A slow upstream (2026-11-13...)".
 
 ### Tooling (tools/)
 

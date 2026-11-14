@@ -48,6 +48,8 @@ Dispatcharr restart for every worker to pick it up.
 - A channel whose stream lists a video track it never sends (some radio services) would not have started with the
   change above. Such a start is now restarted once after about 12 seconds (with the default segment length), with one
   audio track.
+- A channel that takes about 30 seconds to start is no longer ended as idle while Kodi is still waiting for it (with
+  `idle_timeout_seconds` set below 30, a quicker start could be ended too).
 
 ## [0.14.3] - 2026-11-06
 

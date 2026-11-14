@@ -3277,6 +3277,13 @@ time with audio only, and the trigger's pattern matches this ffmpeg's warning. 2
 plugin code (the "merely slow" guard and the run-out marker pass on both). The end-to-end runs with real ffmpeg over
 HTTP are in the closed entry, not CI.
 
+2026-11-13 (still 0.8.18, `CLOSED_ITEMS.md`'s "`timeshift_buffer` reaps a buffer that has not written its first
+playlist yet as idle"): a `get_live_manifest` poll answered "not ready" refreshes `last_heartbeat` and the caller's own
+stamp (`_touch_after_manifest_poll()`, shared with the answered poll), does not register the caller on a replacement
+started while it was answered, and does not bring back a buffer torn down meanwhile. The first of the three fails on
+the code before the fix; the other two pin the guards it shares with the answered poll. The reaper's side was checked
+live, not here.
+
 ## Tools
 
 ### `tools/tests/`
