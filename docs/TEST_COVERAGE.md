@@ -3464,6 +3464,19 @@ committed to a temporary repository with `core.quotepath` on and run through the
 filter); `_fake_git` now checks for the `-z` call. The new gate passes the shipped 0.14.3 set run with that tag's
 plugin sources.
 
+2026-11-15: the four tools fixes from the 2026-11-14 sweep (`docs/CLOSED_ITEMS.md`'s entries of that date).
+`tools/tests/test_check_release_zip.py`: build-machine paths in entry names (a CMake install to `/home/...`, one at the
+top of the zip, two runner work directories, `C/Users/...`) with no blocklist, and ordinary names that must pass;
+one-entry zips written byte by byte (`_descriptor_zip`) carrying a term in the local header's CRC and size fields,
+with and without flag 0x08, and in a signed and an unsigned data descriptor, each read back clean by `zipfile`, with
+matching descriptors passing; a local header's version, flags and method differing from the central directory's; the
+central entry's disk number, internal attributes and low external-attribute bits, with the values real writers set
+(the CoreELEC packager's 0x8000) passing; and a term beyond ASCII in a UTF-8 name stored without the UTF-8 flag, in
+NFD content, in another case, and typed decomposed, with a stray byte that must not join the text around it. 19 cases
+fail on the old gate. `test_ci_build_needed.py`: a root `*.cmake`, `.gitattributes` and `.gitmodules` (4 cases fail on
+the old filter). The new gate passes every shipped set from 0.13.1 to 0.14.4, and the 0.14.4 set with that tag's
+plugin sources.
+
 ### `kodi_smoke_test.py`
 
 `tools/kodi_smoke_test.py` (added 2026-09-29, fixing several real,

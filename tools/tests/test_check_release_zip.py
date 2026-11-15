@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import struct
+import unicodedata
 import warnings
 import zipfile
 import zlib
@@ -969,3 +970,167 @@ def test_an_empty_blocklist_path_is_an_error_not_a_fallback(tmp_path, monkeypatc
         gate.find_blocklist("")
     clean = _zip(tmp_path / "clean.zip", {"a/x.txt": b"hello"})
     assert gate.main(["prog", "--blocklist", "", "--require-blocklist", clean]) == 2
+
+
+# The 2026-11-14 sweep's three gate findings: entry names, the bytes of a local header and data descriptor nothing
+# compared, and blocklist terms beyond ASCII.
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # assembled at run time, as _unix_path() is, so no literal one sits in this file
+        "pvr.dispatcharr-unofficial" + _unix_path(b"home").decode(),  # a CMake install() to an absolute path
+        _unix_path(b"home").decode()[1:],  # at the top of the zip, with no slash in front
+        "pvr.dispatcharr-unofficial/" + "runner" + "/work/repo/addon.xml",
+        "pvr.dispatcharr-unofficial/" + "__w" + "/repo/addon.xml",
+        "pvr.dispatcharr-unofficial/C" + _unix_path(b"Users").decode(),
+    ],
+)
+def test_a_build_machine_path_in_an_entry_name_fails(tmp_path, name):
+    path = _zip(tmp_path / "a.zip", {name: b"<addon/>"})
+    problems = gate.check_zip(path, [])  # CI's gate has no blocklist: the patterns alone must catch it
+    assert any(p.startswith("a.zip: entry name %r holds" % name) for p in problems), problems
+
+
+def test_ordinary_entry_names_pass_the_path_patterns(tmp_path):
+    names = [
+        "pvr.dispatcharr-unofficial/resources/media/icon.png",
+        "pvr.dispatcharr-unofficial/resources/language/resource.language.en_gb/strings.po",
+        "timeshift_buffer/plugin.py",
+    ]
+    assert gate.check_zip(_zip(tmp_path / "a.zip", {n: b"x" for n in names}), []) == []
+
+
+def _descriptor_zip(path, data, flags=0, local_fields=None, descriptor=b"", central=None):
+    """A one-entry deflated zip written byte by byte: `local_fields` (twelve bytes) replace the local header's CRC and
+    sizes, `descriptor` follows the data, and `central` overrides the central entry's (volume, internal, external)
+    attributes."""
+    name, packed = b"addon/readme.txt", _deflate(data)
+    crc = zlib.crc32(data)
+    dos_time, dos_date = gate._dos_time_and_date(_STAMP)
+    fields = local_fields if local_fields is not None else struct.pack("<III", crc, len(packed), len(data))
+    local = struct.pack("<4sHHHHH", b"PK\x03\x04", 20, flags, 8, dos_time, dos_date) + fields
+    local += struct.pack("<HH", len(name), 0) + name + packed + descriptor
+    volume, internal, external = central or (0, 0, 0o100644 << 16)
+    entry = struct.pack(
+        "<4sHHHHHHIII", b"PK\x01\x02", (3 << 8) | 20, 20, flags, 8, dos_time, dos_date, crc, len(packed), len(data)
+    )
+    entry += struct.pack("<HHHHHII", len(name), 0, 0, volume, internal, external, 0) + name
+    end = struct.pack("<4sHHHHIIH", b"PK\x05\x06", 0, 0, 1, 1, len(entry), len(local), 0)
+    path.write_bytes(local + entry + end)
+    return str(path)
+
+
+def _descriptor(data, signed=True):
+    fields = struct.pack("<III", zlib.crc32(data), len(_deflate(data)), len(data))
+    return (b"PK\x07\x08" if signed else b"") + fields
+
+
+@pytest.mark.parametrize(
+    "flags,local_fields,descriptor,wanted",
+    [
+        (0, b"hidden-term!", b"", "different CRC or sizes in its local header"),
+        # under flag 0x08 the local fields may be zero, never anything else
+        (0x08, b"hidden-term!", _descriptor(_TEXT), "different CRC or sizes in its local header"),
+        (0x08, bytes(12), b"PK\x07\x08hidden-term!", "data descriptor that differs"),
+        (0x08, bytes(12), b"hidden-term!", "data descriptor that differs"),
+    ],
+    ids=["local-fields", "local-fields-under-0x08", "signed-descriptor", "unsigned-descriptor"],
+)
+def test_bytes_in_a_local_header_or_data_descriptor_that_nothing_reads_fail(
+    tmp_path, flags, local_fields, descriptor, wanted
+):
+    path = _descriptor_zip(tmp_path / "a.zip", _TEXT, flags, local_fields, descriptor)
+    with zipfile.ZipFile(path) as z:
+        assert z.read("addon/readme.txt") == _TEXT  # zipfile reads neither place
+    problems = gate.check_zip(path, ["hidden-term"])
+    assert any(wanted in p for p in problems), problems
+    assert not any("blocklist term" in p for p in problems)  # the scan alone misses it: the layout check is the catch
+
+
+@pytest.mark.parametrize("signed", [True, False])
+def test_a_data_descriptor_matching_the_central_directory_passes(tmp_path, signed):
+    path = _descriptor_zip(tmp_path / "a.zip", _TEXT, 0x08, bytes(12), _descriptor(_TEXT, signed))
+    assert gate.check_zip(path, []) == []
+    # and with the local fields filled in as well, as some writers do
+    full = _descriptor_zip(tmp_path / "b.zip", _TEXT, 0x08, None, _descriptor(_TEXT, signed))
+    assert gate.check_zip(full, []) == []
+
+
+@pytest.mark.parametrize("offset,label", [(4, "version"), (6, "flags"), (8, "method")])
+def test_a_local_header_field_differing_from_the_central_directory_fails(tmp_path, offset, label):
+    path = tmp_path / "a.zip"
+    _zip(path, {"addon/readme.txt": _TEXT})
+    data = bytearray(path.read_bytes())
+    data[offset] ^= 0x40  # a flag bit no reader acts on, a version and a method nobody uses
+    path.write_bytes(bytes(data))
+    problems = gate.check_zip(str(path), [])
+    assert any("different %s in its local header" % label in p for p in problems), problems
+
+
+@pytest.mark.parametrize(
+    "central,ok",
+    [
+        ((0, 0, 0o100644 << 16), True),
+        ((0, 1, 0o100644 << 16), True),  # the "text" bit
+        ((0, 0, (0o100644 << 16) | 0x8020), True),  # what the CoreELEC packager writes
+        ((0, 0, (0o40755 << 16) | 0x10), True),  # a directory's MS-DOS bit
+        ((1, 0, 0o100644 << 16), False),
+        ((0, 0x6869, 0o100644 << 16), False),
+        ((0, 0, (0o100644 << 16) | 0x6900), False),
+    ],
+)
+def test_central_directory_fields_no_reader_uses_are_pinned(tmp_path, central, ok):
+    path = _descriptor_zip(tmp_path / "a.zip", _TEXT, central=central)
+    problems = gate.check_zip(path, [])
+    assert (problems == []) == ok, problems
+    if not ok:
+        assert any("unexpected bits in its central directory" in p for p in problems), problems
+
+
+def _one_name_zip(path, raw_name, data, flags=0):
+    """A one-entry stored zip whose name is `raw_name` exactly, with or without the UTF-8 flag (0x800)."""
+    crc, (dos_time, dos_date) = zlib.crc32(data), gate._dos_time_and_date(_STAMP)
+    fields = (dos_time, dos_date, crc, len(data), len(data), len(raw_name))
+    local = struct.pack("<4sHHH", b"PK\x03\x04", 20, flags, 0) + struct.pack("<HHIIIHH", *fields, 0) + raw_name + data
+    entry = struct.pack("<4sHHHH", b"PK\x01\x02", 20, 20, flags, 0)
+    entry += struct.pack("<HHIIIHHHHHII", *fields, 0, 0, 0, 0, 0, 0) + raw_name
+    end = struct.pack("<4sHHHHIIH", b"PK\x05\x06", 0, 0, 1, 1, len(entry), len(local), 0)
+    path.write_bytes(local + entry + end)
+    return str(path)
+
+
+_TERM = "josé"
+
+
+def test_a_utf8_entry_name_stored_without_the_utf8_flag_is_checked_as_utf8(tmp_path):
+    # Info-ZIP's zip writes one on Linux; zipfile reads it as cp437 (mojibake), unzip and Kodi as UTF-8
+    path = _one_name_zip(tmp_path / "a.zip", ("addon/" + _TERM + ".txt").encode(), b"x")
+    with zipfile.ZipFile(path) as z:
+        assert _TERM not in z.namelist()[0]
+    assert any("entry name" in p and "blocklist term" in p for p in gate.check_zip(path, [_TERM]))
+    # and flagged as UTF-8 too, in another case
+    flagged = _one_name_zip(tmp_path / "b.zip", ("addon/" + _TERM.upper() + ".txt").encode(), b"x", flags=0x800)
+    assert any("entry name" in p and "blocklist term" in p for p in gate.check_zip(flagged, [_TERM]))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "built by " + unicodedata.normalize("NFD", _TERM),  # how a macOS file path spells it
+        "built by " + _TERM.upper(),  # case beyond ASCII
+        "built by " + _TERM,
+    ],
+    ids=["nfd", "upper-case", "as-typed"],
+)
+def test_a_blocklist_term_beyond_ascii_is_found_in_any_normal_form_or_case(tmp_path, text):
+    path = _zip(tmp_path / "a.zip", {"addon/readme.txt": text.encode()})
+    assert any("blocklist term" in p for p in gate.check_zip(path, [_TERM])), text
+    # a term typed decomposed finds the composed spelling as well
+    assert any("blocklist term" in p for p in gate.check_zip(path, [unicodedata.normalize("NFD", _TERM)])), text
+
+
+def test_a_stray_byte_does_not_join_the_text_around_it_into_a_term(tmp_path):
+    path = _zip(tmp_path / "a.zip", {"addon/readme.txt": b"jo\xffs\xc3\xa9"})
+    assert gate.check_zip(path, [_TERM]) == []

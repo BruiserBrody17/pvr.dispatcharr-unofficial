@@ -11,19 +11,22 @@ CoreELEC), so no platform gets a weaker gate than another. Per zip it checks:
   clock, whose difference from the commit or upload time is its timezone), no zip comment and no entry comment, no
   byte of the file outside its entries, central directory and end record (prepended data or a gap between entries,
   which every unzipper skips and an entry-by-entry scan never reads), no directory entry carrying data, no local
-  header naming its entry differently from the central directory or carrying another time, no encrypted entry, no
-  absolute, `..` or drive-letter entry names, no entry name repeated (compared without case: zipfile reads the last
-  copy and Kodi the first) or holding a control character (zipfile cuts a name at a NUL), no compression method but
-  stored or deflated (the two Kodi reads), no byte of an entry's data that decompression does not return (after a
-  deflate stream's end, past the file's size, or a stored entry longer than its file), no symlink pointing outside the
-  zip, no archive inside the zip (its
-  contents would go unchecked), no debug-symbol or log members (`.pdb`, anything in a `.dSYM` bundle, `.debug`,
-  `.map`, `.log`), no desktop folder metadata (`.DS_Store`, `._*`, `__MACOSX/`, `Thumbs.db`, `desktop.ini`);
+  header or data descriptor that differs from the central directory (its name, time, flags, method, CRC or sizes), no
+  central entry with a disk number, internal attributes or low external-attribute bits beyond the few real writers
+  set, no encrypted entry, no absolute, `..` or drive-letter entry names, no entry name holding a build-machine path
+  or a blocklist term (read as its stored bytes, as UTF-8 and as zipfile reads it), no entry name repeated (compared
+  without case: zipfile reads the last copy and Kodi the first) or holding a control character (zipfile cuts a name
+  at a NUL), no compression method but stored or deflated (the two Kodi reads), no byte of an entry's data that
+  decompression does not return (after a deflate stream's end, past the file's size, or a stored entry longer than
+  its file), no symlink pointing outside the zip, no archive inside the zip (its contents would go unchecked), no
+  debug-symbol or log members (`.pdb`, anything in a `.dSYM` bundle, `.debug`, `.map`, `.log`), no desktop folder
+  metadata (`.DS_Store`, `._*`, `__MACOSX/`, `Thumbs.db`, `desktop.ini`);
 - every member's bytes, as plain text and as UTF-16 (Windows binaries keep wide strings), for build-machine paths
   (`/home/`, `/Users/`, `/root/`, `/var/folders/`, `/media/`, `/run/media/`, `/Volumes/`, a CI runner's work
   directory, a `C:\\` or `C:/` path, a UNC path) except the few known-benign upstream strings in ALLOWED_PATH_STRINGS,
   each with the reason it is safe;
-- every member's bytes for each term of a private blocklist (one term per line, case-insensitive; the file is
+- every member's bytes for each term of a private blocklist (one term per line, case-insensitive, a term with a
+  letter beyond ASCII also matched in the member's text decoded as UTF-8 and normalised to NFC; the file is
   never in the repository: `--blocklist FILE`, else `$PRIVACY_BLOCKLIST`, else `~/.privacy-blocklist.txt`);
   `--require-blocklist` fails when none is found or the one found has no terms, which is how a release is cut -- CI
   has no blocklist and checks the patterns only; a `--blocklist` path or a set `$PRIVACY_BLOCKLIST` that does not
@@ -56,6 +59,7 @@ import re
 import stat
 import struct
 import sys
+import unicodedata
 import zipfile
 import zlib
 
@@ -219,11 +223,36 @@ def find_blocklist(explicit):
     return home if os.path.isfile(home) else None
 
 
-def _views(data):
-    """The three text views a string can hide in: one character per byte, and UTF-16LE at both alignments."""
+def _nfc(text):
+    return unicodedata.normalize("NFC", text)
+
+
+def _views(data, unicode_terms=False):
+    """The text views a string can hide in: one character per byte, and UTF-16LE at both alignments. With a blocklist
+    term beyond ASCII also UTF-8, and every view but the first normalised to NFC: the byte view folds the case of
+    ASCII letters only, and a name written by macOS (NFD, `e` plus a combining accent) never matched a term typed as
+    one character."""
     yield "text", data.decode("latin-1")
-    yield "UTF-16", data.decode("utf-16-le", errors="ignore")
-    yield "UTF-16", data[1:].decode("utf-16-le", errors="ignore")
+    for kind, text in (
+        ("UTF-16", data.decode("utf-16-le", errors="ignore")),
+        ("UTF-16", data[1:].decode("utf-16-le", errors="ignore")),
+    ):
+        yield kind, _nfc(text) if unicode_terms else text
+    if unicode_terms:
+        # errors="replace", not "ignore": dropping a stray byte would join the text on either side of it
+        yield "UTF-8", _nfc(data.decode("utf-8", errors="replace"))
+
+
+def _term_regexes(blocklist_terms):
+    """Each term twice: as characters (NFC, case folded by re) for the decoded views, and as its UTF-8 bytes for the
+    one-character-per-byte view, where a non-ASCII term written as characters never matched UTF-8 content. Case folds
+    only ASCII letters there, since the other "characters" are pieces of multi-byte sequences."""
+    wide = [re.compile(re.escape(_nfc(term)), re.IGNORECASE) for term in blocklist_terms]
+    byte = [
+        re.compile(re.escape(term.encode("utf-8").decode("latin-1")), re.IGNORECASE | re.ASCII)
+        for term in blocklist_terms
+    ]
+    return byte, wide
 
 
 def _context(text, start, end):
@@ -236,18 +265,12 @@ def scan_member(name, data, blocklist_terms):
     problems = []
     allowed = [re.compile(match) for pattern, match, _ in ALLOWED_PATH_STRINGS if re.search(pattern, name)]
     patterns = [(label, re.compile(regex)) for label, regex in FORBIDDEN_PATTERNS]
-    # Each term twice: as characters for the UTF-16 views, and as its UTF-8 bytes for the one-character-per-byte view,
-    # where a non-ASCII term written as characters never matched UTF-8 content. Case folds only ASCII letters there,
-    # since the other "characters" are pieces of multi-byte sequences.
-    wide_terms = [re.compile(re.escape(term), re.IGNORECASE) for term in blocklist_terms]
-    byte_terms = [
-        re.compile(re.escape(term.encode("utf-8").decode("latin-1")), re.IGNORECASE | re.ASCII)
-        for term in blocklist_terms
-    ]
+    byte_terms, wide_terms = _term_regexes(blocklist_terms)
     seen = set()
-    for kind, text in _views(data):
+    for kind, text in _views(data, not all(term.isascii() for term in blocklist_terms)):
         terms = byte_terms if kind == "text" else wide_terms
-        for label, regex in patterns:
+        # the paths are ASCII, so the byte view has them all; the UTF-8 view is there for the terms
+        for label, regex in patterns if kind != "UTF-8" else ():
             for match in regex.finditer(text):
                 if any(a.match(text, match.start()) for a in allowed):
                     continue
@@ -262,6 +285,37 @@ def scan_member(name, data, blocklist_terms):
                 seen.add(("term", index))
                 near = _context(text, match.start(), match.end())
                 problems.append("%s: a blocklist term (%s) near %r" % (name, kind, near))
+    return problems
+
+
+def _stored_name(info):
+    """An entry's name as the bytes the zip stores (zipfile decodes them as UTF-8 under flag 0x800, else as cp437)."""
+    return info.orig_filename.encode("utf-8" if info.flag_bits & 0x800 else "cp437")
+
+
+def scan_name(base, info, blocklist_terms):
+    """Build-machine paths and blocklist terms in an entry's name. A CMake `install()` with an absolute destination
+    puts `.../home/<user>/build/...` in a name, which the member scan never reads. Read three ways: the stored bytes
+    (one character per byte, with a `/` in front so a path at the top of the zip still starts with one), as UTF-8 (what
+    unzip and Kodi show for a UTF-8 name stored without the UTF-8 flag, as Info-ZIP's zip writes one on Linux), and as
+    zipfile reads it (cp437 for that same name)."""
+    raw = _stored_name(info)
+    byte_terms, wide_terms = _term_regexes(blocklist_terms)
+    views = (
+        ("stored bytes", "/" + raw.decode("latin-1"), byte_terms),
+        ("UTF-8", _nfc("/" + raw.decode("utf-8", errors="replace")), wide_terms),
+        ("as zipfile reads it", _nfc("/" + info.orig_filename), wide_terms),
+    )
+    problems = []
+    for label, regex in FORBIDDEN_PATTERNS:
+        if re.search(regex, views[0][1]):
+            problems.append("%s: entry name %r holds %s" % (base, info.orig_filename, label))
+    for index in range(len(blocklist_terms)):
+        kinds = [kind for kind, text, terms in views if terms[index].search(text)]
+        if kinds:
+            problems.append(
+                "%s: entry name %r contains a blocklist term (%s)" % (base, info.orig_filename, ", ".join(kinds))
+            )
     return problems
 
 
@@ -321,10 +375,60 @@ def _dos_time_and_date(date_time):
     return (hour << 11) | (minute << 5) | (second // 2), ((year - 1980) << 9) | (month << 5) | day
 
 
+# Where a local header keeps each field the central directory also has (offset, length, what it is), after the
+# signature; the name and extra-field lengths are checked on their own.
+LOCAL_FIELDS = ((4, 2, "version"), (6, 2, "flags"), (8, 2, "method"), (10, 4, "time"), (14, 12, "CRC or sizes"))
+
+# What the central directory's attribute bits may hold: the MS-DOS attribute byte, and 0x8000, which the CoreELEC
+# packager's zip sets on every entry (seen in every CoreELEC release zip). Anything else is bytes nothing reads.
+EXTERNAL_LOW_BITS = 0x80FF
+
+
+def _local_field_problems(base, info, header):
+    """Local-header fields that differ from the central directory's copy. zipfile reads only the central directory's,
+    and only the name, so the other fields could carry what no check reads (the CRC and sizes, twelve bytes) or what
+    unzip shows instead (the time: the build machine's clock). Under flag 0x08 the CRC and sizes may be zero, with
+    the real ones in the data descriptor."""
+    dos_time, dos_date = _dos_time_and_date(info.date_time)
+    expected = struct.pack(
+        "<BBHHHHIII",
+        info.extract_version,
+        info.reserved,
+        info.flag_bits,
+        info.compress_type,
+        dos_time,
+        dos_date,
+        info.CRC,
+        info.compress_size,
+        info.file_size,
+    )
+    problems = []
+    for offset, length, label in LOCAL_FIELDS:
+        found, wanted = header[offset : offset + length], expected[offset - 4 : offset - 4 + length]
+        if found == wanted or (label == "CRC or sizes" and info.flag_bits & 0x08 and found == bytes(length)):
+            continue
+        problems.append(
+            "%s: entry %s has a different %s in its local header than in the central directory"
+            % (base, info.filename, label)
+        )
+    return problems
+
+
+def _central_field_problems(base, info):
+    """Central-directory fields no reader uses, which could hold a few bytes of anything: the disk number (one disk),
+    the internal attributes (bit 0, "text", only) and the low half of the external attributes."""
+    if info.volume or info.internal_attr & ~1 or info.external_attr & 0xFFFF & ~EXTERNAL_LOW_BITS:
+        return [
+            "%s: entry %s carries unexpected bits in its central directory's disk number or attributes"
+            % (base, info.filename)
+        ]
+    return []
+
+
 def _layout_problems(base, data, archive):
     """Bytes of the file that belong to no entry, the central directory or its end record (prepended data, a gap
     between entries or before the directory, all of which zipfile, Kodi and unzip skip over, so a scan of the entries
-    alone never reads them), and local headers that name their entry differently from the central directory."""
+    alone never reads them), and local headers or data descriptors that differ from the central directory."""
     end_record = len(data) - 22 - len(archive.comment)
     if data[end_record : end_record + 4] != b"PK\x05\x06" or data[end_record - 20 : end_record - 16] == b"PK\x06\x07":
         # zip64 only appears past 65535 entries or 2 GiB, which no release zip comes near
@@ -333,26 +437,31 @@ def _layout_problems(base, data, archive):
     spans = [(archive.start_dir, archive.start_dir + directory_size), (end_record, len(data))]
     problems, listed = [], 0
     for info in archive.infolist():
-        name = info.orig_filename.encode("utf-8" if info.flag_bits & 0x800 else "cp437")
+        name = _stored_name(info)
         listed += 46 + len(name) + len(info.extra) + len(info.comment)
+        problems += _central_field_problems(base, info)
         start = info.header_offset
         header = data[start : start + 30]
         if len(header) < 30 or header[:4] != b"PK\x03\x04":
             continue  # check_zip reports it
-        (flags,) = struct.unpack_from("<H", header, 6)
         name_length, extra_length = struct.unpack_from("<HH", header, 26)
         if data[start + 30 : start + 30 + name_length] != name:
             problems.append("%s: entry %s has a different name in its local header" % (base, info.filename))
-        # zipfile reports only the central directory's time, which the one-timestamp rule reads; a local header can
-        # carry another (the build machine's clock) and unzip shows that one.
-        if struct.unpack_from("<HH", header, 10) != _dos_time_and_date(info.date_time):
-            problems.append(
-                "%s: entry %s has a different time in its local header than in the central directory"
-                % (base, info.filename)
-            )
+        problems += _local_field_problems(base, info, header)
         end = start + 30 + name_length + extra_length + info.compress_size
-        if flags & 0x08:  # a data descriptor follows, with or without its optional signature
-            end += 16 if data[end : end + 4] == b"PK\x07\x08" else 12
+        if info.flag_bits & 0x08:
+            # A data descriptor follows, with or without its optional signature: twelve bytes zipfile never reads,
+            # so they must be the central directory's CRC and sizes.
+            fields = struct.pack("<III", info.CRC, info.compress_size, info.file_size)
+            if data[end : end + 16] == b"PK\x07\x08" + fields:
+                end += 16
+            elif data[end : end + 12] == fields:
+                end += 12
+            else:
+                problems.append(
+                    "%s: entry %s has a data descriptor that differs from the central directory" % (base, info.filename)
+                )
+                end += 16 if data[end : end + 4] == b"PK\x07\x08" else 12
         spans.append((start, end))
     if listed != directory_size:
         problems.append(
@@ -472,10 +581,7 @@ def check_zip(path, blocklist_terms):
             parts = lowered.split("/")
             if parts[-1] in DESKTOP_METADATA or parts[-1].startswith("._") or "__macosx" in parts:
                 problems.append("%s: entry %s is a desktop's folder metadata (Finder or Explorer)" % (base, name))
-            for term in blocklist_terms:
-                if term.lower() in lowered:
-                    problems.append("%s: entry name %s contains a blocklist term" % (base, name))
-                    break
+            problems += scan_name(base, info, blocklist_terms)
             if info.comment:
                 problems.append("%s: entry %s has a comment" % (base, name))
             if info.compress_type not in KODI_COMPRESS_TYPES:
