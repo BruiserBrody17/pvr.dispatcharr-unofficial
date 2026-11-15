@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`aec27d6`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`b37e268`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -217,6 +217,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `08267c4` | `d9b7985` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and source list by hand, and the warm-up named as `Piers`'s) | The open item for Off-mode live TV ending by itself on an Android tablet, with the measured ghost-client timeouts, docs only |
 | `e721e07` | `aa71c6f` (by hand; `OPEN_ITEMS.md`'s counts and source list, and the README item limited to the line `Omega` has) | The 2026-11-14 bug sweep's open items: sixteen of seventeen, the `BRANCHES.md` note being `Piers` only, docs only |
 | `aec27d6` | `697011e` (by hand; the README line `Omega` has, its own counts, and the `BRANCHES.md` note left out) | The 2026-11-14 sweep's stale docs, plus `test_ci_build_needed.py`'s two Kodi-branch cases from `dd77977`, which make that file the same on both |
+| `b37e268` | `0fcf987` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand) | The 2026-11-14 sweep's four tooling findings: the release gate's entry names, local headers and data descriptors, non-ASCII terms, and the CI path filter |
 
 ## Dependencies that differ by Kodi release
 
