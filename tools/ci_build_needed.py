@@ -16,16 +16,20 @@ import subprocess
 import sys
 
 # What the build jobs read: the addon and its metadata, the tests and the glue harness (which drives the plugin too),
-# the top-level CMakeLists.txt, the workflow itself, and the two tools the zip steps call.
+# the top-level CMakeLists.txt and any CMake module beside it (CMakeLists.txt puts the root on CMAKE_MODULE_PATH, so a
+# root FindCURL.cmake would replace CMake's own), the workflow itself, the two tools the zip steps call, and what
+# decides the checkout's own bytes (.gitattributes: line endings on the Windows build; .gitmodules).
 BUILD_RELEVANT = re.compile(
     r"^(src/|tests/|pvr\.dispatcharr-unofficial/|dispatcharr-plugin/|\.github/workflows/"
-    r"|CMakeLists\.txt$"
+    r"|CMakeLists\.txt$|[^/]+\.cmake$|\.gitattributes$|\.gitmodules$"
     r"|tools/(normalize_zip|check_release_zip|ci_build_needed)\.py$)"
 )
 
-# What package-dispatcharr-plugins reads: the plugin directories it zips, the workflow, and the same two zip tools.
+# What package-dispatcharr-plugins reads: the plugin directories it zips, the workflow, the same two zip tools, and
+# .gitattributes, which decides the bytes of the files it zips.
 PLUGINS_RELEVANT = re.compile(
-    r"^(dispatcharr-plugin/|\.github/workflows/|tools/(normalize_zip|check_release_zip|ci_build_needed)\.py$)"
+    r"^(dispatcharr-plugin/|\.github/workflows/|\.gitattributes$"
+    r"|tools/(normalize_zip|check_release_zip|ci_build_needed)\.py$)"
 )
 
 

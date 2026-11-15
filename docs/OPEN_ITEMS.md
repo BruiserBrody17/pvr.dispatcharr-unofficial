@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**19 open, 416 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**15 open, 420 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,9 +13,9 @@ confirmed. The open ones came from:
   recurring rule on a spring-forward day.
 - One from the 2026-11-12 live checks on Kodi 21: timers made on the server showed about 75 s after the realtime event.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
-- Thirteen from the 2026-11-14 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (one MEDIUM,
-  twelve LOW; the seventeenth, a `BRANCHES.md` note, is `Piers` only). Its three documentation findings that held here
-  were fixed on 2026-11-15.
+- Nine from the 2026-11-14 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (one MEDIUM, eight
+  LOW; the seventeenth, a `BRANCHES.md` note, is `Piers` only). Its three documentation findings that held here and its
+  four tooling findings were fixed on 2026-11-15.
 
 Nothing is left from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (nine of its
 eleven findings held here, the other two being `Piers` only; all fixed by 2026-11-12), nor from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
@@ -34,8 +34,8 @@ recording's 20 s retry budget).
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 4 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 363 |
+| Open: Tooling (tools/) | 0 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 367 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -265,43 +265,4 @@ handling in `OnAddonSettingChanged()` are the work. Not started.
 
 ### Tooling (tools/)
 
-#### The release gate does not apply its build-path patterns to entry names
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, reproduced with a crafted zip.** `check_zip()` runs `FORBIDDEN_PATTERNS` only over member contents
-(`scan_member()`); entry names get the absolute, `..`, drive and backslash checks and the blocklist. An entry named
-`pvr.dispatcharr-unofficial/home/<user>/build/...` or `.../runner/work/...` passes CI's gate (no blocklist) and the
-release gate unless a blocklist term is in the name. A CMake `install()` with an absolute destination is the realistic
-way to get one. Fix: run the same patterns over the name (as `/` + `orig_filename`, and over its raw bytes), with a
-test.
-
-#### The release gate does not check a local header's CRC and size fields or a data descriptor
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, reproduced with crafted zips; adversarial only.** `_layout_problems()` compares a local header's name, time
-and extra-field length with the central directory, but not its CRC and size fields (12 bytes), and never reads a data
-descriptor (12 bytes, 16 with its signature); `zipfile` reads neither. A blocklisted term of up to 12 bytes passes in
-either place, and one probe (term in the local fields without flag 0x08) passes the gate while `unzip -t` reports a bad
-CRC. No build tool writes data there, the same class as the 2026-11-10 `compress_size` slack fix. Fix: rebuild the
-expected local header and descriptor from each central entry and compare them byte for byte (the central entry's
-internal attributes, disk number and low external-attribute bits are not pinned either).
-
-#### The release gate can miss a non-ASCII blocklist term
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, latent, reproduced with crafted zips.** The byte search folds case for ASCII only, content is never
-normalised (an NFD spelling, as macOS file paths are, does not match an NFC term), and a UTF-8 entry name stored without
-the UTF-8 flag is read by `zipfile` as cp437, so the name check sees mojibake while `unzip` and Kodi see the real name.
-A term `josé` passed in all three forms. Every term in the current blocklist is ASCII, so nothing slips through today.
-Fix: add a UTF-8-decoded, NFC-normalised, casefolded view, and check names both as stored bytes decoded as UTF-8 and as
-`zipfile` reads them.
-
-#### The CI path filter skips the build for a root `*.cmake` or `.gitattributes` change
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by calling `needs_build()`.** `BUILD_RELEVANT` (`tools/ci_build_needed.py`) does not cover a
-root-level `*.cmake` file, although `CMakeLists.txt` puts the repository root on `CMAKE_MODULE_PATH` (a root
-`FindCURL.cmake` would override CMake's own), nor `.gitattributes`, which decides what the checkout writes (line
-endings on the Windows build). `needs_build()` answers False for both, so `build-unix`, `build-windows` and
-`glue-harness` are skipped. Neither file exists today. Fix: add root `*.cmake`, `.gitattributes` and `.gitmodules` to
-the list, with tests.
+None open.

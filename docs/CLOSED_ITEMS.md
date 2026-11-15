@@ -6,6 +6,55 @@
 
 ### Fixed
 
+#### The release gate does not apply its build-path patterns to entry names
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with a crafted zip.** `check_zip()` runs `FORBIDDEN_PATTERNS` only over member contents
+(`scan_member()`); entry names get the absolute, `..`, drive and backslash checks and the blocklist. An entry named
+`pvr.dispatcharr-unofficial/home/<user>/build/...` or `.../runner/work/...` passes CI's gate (no blocklist) and the
+release gate unless a blocklist term is in the name. A CMake `install()` with an absolute destination is the realistic
+way to get one. Fix: run the same patterns over the name (as `/` + `orig_filename`, and over its raw bytes), with a
+test.
+
+**Fixed 2026-11-15, as proposed.** `scan_name()` runs `FORBIDDEN_PATTERNS` over each name as its stored bytes, with a `/` in front so a path at the top of the zip matches too, and checks blocklist terms in that view, as UTF-8, and as `zipfile` reads it. It replaces the old name check, which only lowercased the name. The crafted zips from the sweep now fail. Every shipped set from 0.13.1 to 0.14.4 still passes with the real blocklist, and the 0.14.4 set passes with `--expect-release` against that tag's plugin sources. Tests: `tools/tests/test_check_release_zip.py` (`docs/TEST_COVERAGE.md`, 2026-11-15).
+
+#### The release gate does not check a local header's CRC and size fields or a data descriptor
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with crafted zips; adversarial only.** `_layout_problems()` compares a local header's name, time
+and extra-field length with the central directory, but not its CRC and size fields (12 bytes), and never reads a data
+descriptor (12 bytes, 16 with its signature); `zipfile` reads neither. A blocklisted term of up to 12 bytes passes in
+either place, and one probe (term in the local fields without flag 0x08) passes the gate while `unzip -t` reports a bad
+CRC. No build tool writes data there, the same class as the 2026-11-10 `compress_size` slack fix. Fix: rebuild the
+expected local header and descriptor from each central entry and compare them byte for byte (the central entry's
+internal attributes, disk number and low external-attribute bits are not pinned either).
+
+**Fixed 2026-11-15, as proposed.** `_local_field_problems()` rebuilds a local header's version, flags, method, time, CRC and sizes from the central entry and compares them byte for byte; under flag 0x08 the CRC and sizes may also be zero. A data descriptor, signed or not, must hold the central directory's CRC and sizes exactly. `_central_field_problems()` pins the central entry's disk number to 0, its internal attributes to the text bit, and the low half of its external attributes to the MS-DOS attribute byte plus 0x8000, which the CoreELEC packager sets on every entry. All four crafted probes fail now, and the shipped sets pass (see the entry above).
+
+#### The release gate can miss a non-ASCII blocklist term
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, latent, reproduced with crafted zips.** The byte search folds case for ASCII only, content is never
+normalised (an NFD spelling, as macOS file paths are, does not match an NFC term), and a UTF-8 entry name stored without
+the UTF-8 flag is read by `zipfile` as cp437, so the name check sees mojibake while `unzip` and Kodi see the real name.
+A term `josé` passed in all three forms. Every term in the current blocklist is ASCII, so nothing slips through today.
+Fix: add a UTF-8-decoded, NFC-normalised, casefolded view, and check names both as stored bytes decoded as UTF-8 and as
+`zipfile` reads them.
+
+**Fixed 2026-11-15, as proposed.** When a term has a letter beyond ASCII, the member scan adds a view of the bytes decoded as UTF-8, with `errors="replace"` so a stray byte cannot join the text around it. That view and the UTF-16 views are NFC-normalised, terms are NFC-normalised too, and `re` matches them without case. Names are read as UTF-8 as well (see the first entry above). A term `josé` now fails all three probe forms, in upper case and typed decomposed too. With an all-ASCII blocklist, as today, the scan is unchanged and no slower.
+
+#### The CI path filter skips the build for a root `*.cmake` or `.gitattributes` change
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by calling `needs_build()`.** `BUILD_RELEVANT` (`tools/ci_build_needed.py`) does not cover a
+root-level `*.cmake` file, although `CMakeLists.txt` puts the repository root on `CMAKE_MODULE_PATH` (a root
+`FindCURL.cmake` would override CMake's own), nor `.gitattributes`, which decides what the checkout writes (line
+endings on the Windows build). `needs_build()` answers False for both, so `build-unix`, `build-windows` and
+`glue-harness` are skipped. Neither file exists today. Fix: add root `*.cmake`, `.gitattributes` and `.gitmodules` to
+the list, with tests.
+
+**Fixed 2026-11-15, as proposed.** `BUILD_RELEVANT` now covers a root `*.cmake`, `.gitattributes` and `.gitmodules`. `PLUGINS_RELEVANT` covers `.gitattributes`, which decides the bytes of the files the plugin zips carry. Tests in `tools/tests/test_ci_build_needed.py`: 4 cases fail on the old filter, and a `*.cmake` below the root still does not build.
+
 #### README's "verified against" and pre-release lines are out of date
 
 **Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against

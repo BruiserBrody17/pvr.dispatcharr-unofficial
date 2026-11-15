@@ -27,6 +27,10 @@ _spec.loader.exec_module(gate)
         "tools/normalize_zip.py",
         "tools/check_release_zip.py",
         "tools/ci_build_needed.py",
+        # the 2026-11-14 sweep's finding: neither exists yet, and a push adding one skipped the builds
+        "FindCURL.cmake",  # the root is on CMAKE_MODULE_PATH
+        ".gitattributes",  # line endings in the Windows build's checkout
+        ".gitmodules",
     ],
 )
 def test_a_path_the_build_reads_triggers_it(path):
@@ -46,6 +50,8 @@ def test_a_path_the_build_reads_triggers_it(path):
         "tools/kodi_smoke_test.py",
         "srcs/readme.txt",  # a directory that only starts like one the build reads
         "CMakeLists.txt.bak",
+        "docs/notes.cmake",  # only the root is on CMAKE_MODULE_PATH
+        "packaging/coreelec/.gitattributes",
     ],
 )
 def test_a_path_no_build_step_reads_does_not(path):
@@ -238,6 +244,7 @@ def test_the_decide_step_runs_with_pipefail_and_the_jobs_build_on_an_empty_answe
         "tools/normalize_zip.py",
         "tools/check_release_zip.py",
         "tools/ci_build_needed.py",
+        ".gitattributes",  # decides the bytes of the files the zips carry
     ],
 )
 def test_a_path_the_plugin_packaging_reads_triggers_it(path):
@@ -250,6 +257,7 @@ def test_a_path_the_plugin_packaging_reads_triggers_it(path):
         "src/DispatcharrClient.cpp",
         "tests/glue/ci.sh",  # builds the addon; the plugin zips are made from dispatcharr-plugin/ alone
         "CMakeLists.txt",
+        "FindCURL.cmake",
         "pvr.dispatcharr-unofficial/addon.xml.in",
         "docs/TIMESHIFT.md",
         "packaging/coreelec/pvr.dispatcharr-unofficial/package.mk",
