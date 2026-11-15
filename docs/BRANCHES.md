@@ -48,7 +48,7 @@ What differs between the branches, beyond comments (a handful of comments name `
 | Release line | `addon.xml.in` and `package.mk` versions, `CHANGELOG.md` |
 | Kodi 22 only | `src/StreamWarmUp.h` (the Off-mode warm-up) and `IsViewerRequestedOpen()` in `src/RecordingVisibility.{h,cpp}`, each with its test; `src/RecordedStreamRegistry.h` and the `InProgressSegmentCache.h` join check (above) with theirs; the matching lines of the root `CMakeLists.txt` and `tests/CMakeLists.txt` |
 | Android link | the root `CMakeLists.txt` links brotli when it is present (Kodi 22's depends build curl with it, Kodi 21's do not) |
-| Release gate and CI path filter | `tools/check_release_zip.py` names the branch's CoreELEC asset (`coreelec-aarch64` on `Piers`, `coreelec-armv7` on `Omega`); `tools/tests/test_version_sync.py` its tag suffix, `test_check_release_zip.py` and `test_ci_build_needed.py` the same; `tools/doc_refs_baseline.txt` each branch's own docs |
+| Release gate and CI path filter | `tools/check_release_zip.py` names the branch's CoreELEC asset (`coreelec-aarch64` on `Piers`, `coreelec-armv7` on `Omega`); `tools/tests/test_version_sync.py` its tag suffix, `test_check_release_zip.py` the same; `tools/doc_refs_baseline.txt` each branch's own docs |
 
 Everything else (the plugins, the rest of `tools/`, the other `src/` files, most docs) is the same file on both and
 cherry-picks cleanly. A handful of small `src/` headers differ in comments only (`CatchUpUtil.h`, `LiveEdgeMargin.h`,
@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`e721e07`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`aec27d6`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -216,6 +216,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `d7edc6a`, `d3e6cf2` | not ported: `Piers` release line | `0.14.4` and its CoreELEC checksum; `Omega` has its own `0.13.4` (`85d5bcf`, `c0b811d`). |
 | `08267c4` | `d9b7985` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and source list by hand, and the warm-up named as `Piers`'s) | The open item for Off-mode live TV ending by itself on an Android tablet, with the measured ghost-client timeouts, docs only |
 | `e721e07` | `aa71c6f` (by hand; `OPEN_ITEMS.md`'s counts and source list, and the README item limited to the line `Omega` has) | The 2026-11-14 bug sweep's open items: sixteen of seventeen, the `BRANCHES.md` note being `Piers` only, docs only |
+| `aec27d6` | `697011e` (by hand; the README line `Omega` has, its own counts, and the `BRANCHES.md` note left out) | The 2026-11-14 sweep's stale docs, plus `test_ci_build_needed.py`'s two Kodi-branch cases from `dd77977`, which make that file the same on both |
 
 ## Dependencies that differ by Kodi release
 
