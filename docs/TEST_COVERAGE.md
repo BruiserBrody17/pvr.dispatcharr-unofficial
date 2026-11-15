@@ -2969,7 +2969,11 @@ stays untested" principle as the rest of that boundary. Covered by two
 new tests, `test_run_get_live_manifest_refreshes_the_calling_viewers_own_heartbeat`
 and `test_run_get_live_manifest_ignores_a_viewer_id_this_buffer_does_not_know_about`
 (the latter confirming `_apply_heartbeat()`'s own existing
-unknown-`viewer_id` no-op still holds through this new call site).
+unknown-`viewer_id` no-op still holds through this new call site). Since
+`timeshift_buffer` `0.6.5` an unknown `viewer_id` is re-added instead (a paused
+viewer only ever calls `get_live_manifest`, so a viewer the reaper dropped
+must come back through it); the test is now
+`test_run_get_live_manifest_re_adds_a_viewer_id_this_buffer_does_not_know_about`.
 
 `_acquire_start_buffer_lock()`/`_release_start_buffer_lock()` (added
 2026-09-29, `timeshift_buffer` `0.6.4`, fixing a real, live-confirmed
