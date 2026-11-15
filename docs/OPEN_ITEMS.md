@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**23 open, 420 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**19 open, 424 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,7 +13,8 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
-- Seventeen from the 2026-11-14 bug-hunting sweep (six read-only reviews by area): one MEDIUM, sixteen LOW.
+- Thirteen from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, seventeen findings): one MEDIUM, twelve
+  LOW. Its four documentation findings were fixed on 2026-11-15.
 
 Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-23 sweep
 (five read-only reviews by area, 17 findings, the last fixed on 2026-11-04), from the 2026-10-24 sweep
@@ -29,10 +30,10 @@ sweep (eleven findings, all fixed: the release gate, the CI path filter and a `t
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 6 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 4 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 367 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 371 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -226,39 +227,6 @@ makes of either, was not checked. Not this addon's bug: the addon and `timeshift
 `CLOSED_ITEMS.md`'s "Pin the live proxy's output format to MPEG-TS". Worth reporting to Dispatcharr once seen: on a
 server nobody else uses (the lab's setting is shared with its other clients), set Default Output Format to HLS, record a
 short programme, and check the file.
-
-#### README's "verified against" and pre-release lines are out of date
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading.** `README.md` says the addon is verified against Dispatcharr `0.32.0`, while every
-live check since 2026-10-24 ran against 0.33.0 and the changelog ships fixes for it; and its Kodi 22 paragraph says
-`0.14.0` is marked a pre-release, which holds for the whole `0.14.x` line. Fix: name 0.33.0 and the `0.14.x` line.
-
-#### Two comments give the timeshift segment length as 6 s; the plugin's default is 2 s
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading.** The comments on the live cold-start wait and on reading a few segments behind the
-tail in `DispatcharrClient.cpp` say `segment_seconds` is "6s by default"; the plugin's default is 2, and the cold-start
-budget is now sized by its 20 s maximum and the 30 s wait. `docs/TIMESHIFT.md` has the same figure in two older
-passages, which are history. Fix: correct the two comments.
-
-#### `TEST_COVERAGE.md` cites a renamed `timeshift_buffer` test and the behaviour it replaced
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading.** `docs/TEST_COVERAGE.md` names
-`test_run_get_live_manifest_ignores_a_viewer_id_this_buffer_does_not_know_about` and says an unknown `viewer_id` is a
-no-op. The test is now `test_run_get_live_manifest_re_adds_a_viewer_id_this_buffer_does_not_know_about` and the plugin
-re-adds such a viewer (0.6.5 on). `tools/check_doc_refs.py` does not check pytest names, which is why it went unseen.
-Fix: correct the sentence; optionally teach the checker backticked `test_*` names.
-
-#### `BRANCHES.md` still says `Omega`'s tag suffix is empty, and `Omega` lacks a path-filter test
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by comparing the branches.** `docs/BRANCHES.md` says the suffix is empty on `Omega` until its next
-release is tagged, but `Omega` has used `-Omega` since 0.13.1. `Piers`'s `tools/tests/test_ci_build_needed.py` has
-`test_the_gate_does_not_depend_on_which_kodi_branch_is_pushed` and a suffixed-tag case (added in `dd77977`) that `Omega`
-lacks, while the "what differs" table describes that file's difference as the branch names only. Fix: reword the
-`BRANCHES.md` note and cherry-pick the test to `Omega`.
 
 ### Known gaps, deliberately deferred
 

@@ -25,9 +25,8 @@ way round, so each branch builds against its own Kodi tree (`KODI_BRANCH` / `KOD
 - **CoreELEC's `package.mk`** names the tag in `PKG_VERSION` (`0.14.0-Piers`), the way CoreELEC's own `pvr.hts` package
   does (`22.9.3-Piers`), because CoreELEC unpacks the tarball into `build/<PKG_NAME>-<PKG_VERSION>` and GitHub names a tag
   archive's top directory after the tag. `tools/tests/test_version_sync.py` ties it to `addon.xml.in` through
-  `RELEASE_TAG_SUFFIX`. On `Omega` the suffix is empty until its next release is tagged (`0.13.0` has no suffix, and its
-  just-set checksum names that tarball); the version-bump commit of that release adds `-Omega` to `PKG_VERSION` and to the
-  test's constant. Confirmed at the first Piers CoreELEC build (2026-10-16): the suffix does not reach the zip. CoreELEC
+  `RELEASE_TAG_SUFFIX`, which is `-Omega` on `Omega` since its `0.13.1` (the `0.13.0` tag predates the suffix).
+  Confirmed at the first Piers CoreELEC build (2026-10-16): the suffix does not reach the zip. CoreELEC
   writes `0.14.0.1` (the numeric version plus its own revision) into `addon.xml` and names the file
   `pvr.dispatcharr-unofficial-0.14.0.1.zip`; the library inside is `pvr.dispatcharr-unofficial.so.0.14.0`.
 

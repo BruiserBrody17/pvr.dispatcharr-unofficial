@@ -18,13 +18,13 @@ and Android (arm/arm64, tested on real 32-bit and 64-bit ARM devices).
 
 **Kodi version**: this branch (`Piers`) is built against Kodi 22 ("Piers"), currently its 22.0 RC1. It has been run on
 Kodi 22.0 RC1 on Windows, macOS, Linux, 64-bit and 32-bit Android and CoreELEC (an ODROID N2+). Audio passthrough, a
-long soak and HEVC have not been checked on Kodi 22. While Kodi 22 is a release candidate, `0.14.0` is marked a
-pre-release on GitHub, so it is not shown as the "latest" release. **Kodi 21 ("Omega") users want the `0.13.x` releases** from the `Omega`
+long soak and HEVC have not been checked on Kodi 22. While Kodi 22 is a release candidate, the `0.14.x` releases are marked
+pre-releases on GitHub, so it is not shown as the "latest" release. **Kodi 21 ("Omega") users want the `0.13.x` releases** from the `Omega`
 branch: Kodi checks the API version a binary addon was built against, and a build for one major version is refused by the
 other. A different Kodi major version than the one a release names has not been tested.
 
 **Status**: pre-1.0 and actively developed by a single maintainer --
-expect occasional rough edges. Verified against Dispatcharr `0.32.0` (and `0.31.0` before it);
+expect occasional rough edges. Verified against Dispatcharr `0.33.0` (and `0.32.0` before it);
 Dispatcharr's own REST API has changed shape across releases before,
 so a real incompatibility against a different version is possible and
 not guaranteed to be caught yet. Bug reports (with the detail requested

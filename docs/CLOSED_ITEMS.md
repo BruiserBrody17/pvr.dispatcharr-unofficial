@@ -6,6 +6,47 @@
 
 ### Fixed
 
+#### README's "verified against" and pre-release lines are out of date
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** `README.md` says the addon is verified against Dispatcharr `0.32.0`, while every
+live check since 2026-10-24 ran against 0.33.0 and the changelog ships fixes for it; and its Kodi 22 paragraph says
+`0.14.0` is marked a pre-release, which holds for the whole `0.14.x` line. Fix: name 0.33.0 and the `0.14.x` line.
+
+**Fixed 2026-11-15, as proposed.** `README.md` now names Dispatcharr `0.33.0` (with `0.32.0` before it) and says the `0.14.x` releases are marked pre-releases.
+
+#### Two comments give the timeshift segment length as 6 s; the plugin's default is 2 s
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** The comments on the live cold-start wait and on reading a few segments behind the
+tail in `DispatcharrClient.cpp` say `segment_seconds` is "6s by default"; the plugin's default is 2, and the cold-start
+budget is now sized by its 20 s maximum and the 30 s wait. `docs/TIMESHIFT.md` has the same figure in two older
+passages, which are history. Fix: correct the two comments.
+
+**Fixed 2026-11-15, as proposed.** Both comments now say 2 s; the two passages in `docs/TIMESHIFT.md` are history and stay as written.
+
+#### `TEST_COVERAGE.md` cites a renamed `timeshift_buffer` test and the behaviour it replaced
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** `docs/TEST_COVERAGE.md` names
+`test_run_get_live_manifest_ignores_a_viewer_id_this_buffer_does_not_know_about` and says an unknown `viewer_id` is a
+no-op. The test is now `test_run_get_live_manifest_re_adds_a_viewer_id_this_buffer_does_not_know_about` and the plugin
+re-adds such a viewer (0.6.5 on). `tools/check_doc_refs.py` does not check pytest names, which is why it went unseen.
+Fix: correct the sentence; optionally teach the checker backticked `test_*` names.
+
+**Fixed 2026-11-15.** The sentence now says the test was renamed and that `timeshift_buffer` 0.6.5 and later re-add an unknown `viewer_id`. The checker extension for backticked `test_*` names was not done.
+
+#### `BRANCHES.md` still says `Omega`'s tag suffix is empty, and `Omega` lacks a path-filter test
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by comparing the branches.** `docs/BRANCHES.md` says the suffix is empty on `Omega` until its next
+release is tagged, but `Omega` has used `-Omega` since 0.13.1. `Piers`'s `tools/tests/test_ci_build_needed.py` has
+`test_the_gate_does_not_depend_on_which_kodi_branch_is_pushed` and a suffixed-tag case (added in `dd77977`) that `Omega`
+lacks, while the "what differs" table describes that file's difference as the branch names only. Fix: reword the
+`BRANCHES.md` note and cherry-pick the test to `Omega`.
+
+**Fixed 2026-11-15.** The `BRANCHES.md` note now says `Omega` has used `-Omega` since 0.13.1. The missing test is in the `Omega` port of this fix.
+
 #### Server-side mode freezes the picture after a stream switch that changes codec (and Kodi 21 does in every mode)
 
 **Opened 2026-10-24 from the Dispatcharr 0.33.0 stream-switch re-test; checked live 2026-10-25 and turned into a design

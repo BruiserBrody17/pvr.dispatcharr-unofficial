@@ -4633,7 +4633,7 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   // here with "live playlist not found" for several real seconds after
   // StartTimeshiftBuffer() returns -- ffmpeg needs to connect to
   // Dispatcharr's live proxy and produce a full first segment
-  // (segment_seconds, 6s by default) before there's anything to report.
+  // (segment_seconds, 2s by default) before there's anything to report.
   // Only a genuinely first-ever start of a channel's buffer (no earlier
   // viewer already has one running) hits this at all now that Open() no
   // longer force-restarts an existing buffer -- reattaching to one already
@@ -4802,7 +4802,7 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   //
   // Deliberately a few segments *behind* totalBytes, not exactly at it:
   // ffmpeg only exposes a segment once it's fully closed (segment_seconds
-  // apart, 6s by default), so sitting exactly at the tail means there's
+  // apart, 2s by default), so sitting exactly at the tail means there's
   // nothing to read until the next segment closes -- confirmed live, this
   // produced a periodic "stream stalled"/rebuffer cycle in Kodi tracking
   // segment_seconds almost exactly, independent of channel bitrate (a
