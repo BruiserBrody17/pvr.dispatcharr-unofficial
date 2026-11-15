@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**6 open, 420 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**23 open, 420 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,6 +13,7 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
+- Seventeen from the 2026-11-14 bug-hunting sweep (six read-only reviews by area): one MEDIUM, sixteen LOW.
 
 Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-23 sweep
 (five read-only reviews by area, 17 findings, the last fixed on 2026-11-04), from the 2026-10-24 sweep
@@ -24,13 +25,13 @@ sweep (eleven findings, all fixed: the release gate, the CI path filter and a `t
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 1 |
-| Open: Fix known, not yet done | 0 |
+| Open: Fix known, not yet done | 8 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 0 |
+| Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 6 |
 | Open: Known gaps, deliberately deferred | 2 |
-| Open: Tooling (tools/) | 0 |
+| Open: Tooling (tools/) | 4 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 367 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
@@ -72,7 +73,105 @@ own HTTP reconnect options through `inputstream.ffmpegdirect` are worth comparin
 
 ### Fix known, not yet done
 
-None open.
+#### A short-bounded call waits out another thread's full-timeout login or token refresh
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); MEDIUM, reproduced in the glue harness.** `EnsureAuthenticated()` takes `m_authFlowMutex` with a plain lock
+whatever bound its caller passed. A caller with the short bound (`ShortRequestTimeoutMs()`: `StopTimeshiftBuffer()` on
+Stop, `CreateCatchupSession()` on catch-up Play, the live tail refresh, the in-progress steady-state lookup) that needs a
+new token therefore waits for any thread already logging in or refreshing with the full timeout, and only then is turned
+away by the transient cooldown. The 2026-10-02 split of the auth mutex (`CLOSED_ITEMS.md`, "m_authMutex held across a
+network round trip") spared a caller that still had a valid token, not one that needs a new one. Repro: a scratch
+glue scenario that opens a live stream, sets the fake to `api_hang=1`, calls `InvalidateAccessToken()`, starts
+`GetRecordings()` on a second thread and 300 ms later calls `CloseLiveTimeshiftStream()` or `CreateCatchupSession()`:
+both took 29.7 s against a 5 s bound with the default 30 s timeout (up to 180 s if the timeout is raised). Fix: make the
+flow mutex timed, have a short-bounded caller `try_lock_for()` its bound and fail as a transient "authentication already
+in progress" without arming the cooldown, keep the plain lock for full-bound callers, and add the scenario to the glue
+harness.
+
+#### A catch-up replay 9 to 30 s after the first Play reuses a session Dispatcharr has deleted
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading Dispatcharr's v0.33.0 source.** `CreateCatchupSession()` reuses a cached session for
+`kMaxCatchupSessionCacheAge` (30 s), sized against the server's 60 s handshake expiry only. Dispatcharr also deletes a
+catch-up session once viewing has genuinely ended: a connection that ran at least 2 s and 64 KiB is followed, 1.5 s
+after it closes plus a 5 s grace, by `_finalize_playback_session_auth()` (`apps/timeshift/views.py`), after which the
+session's URL answers 401 "Invalid or expired playback session". So playing an aired programme for a few seconds,
+stopping, and playing it again between about 9 s and 30 s after the first Play hands Kodi the deleted session's URL, and
+every retry in that window does the same. The cache only exists for Kodi's two calls per Play, about 12 ms apart
+(`CatchupSessionCache.h`). Fix: an age of about 5 s, or reuse each entry once; note the server's lifecycle in that
+header. Not run live.
+
+#### A settings save delivered while the PVR instance is still being constructed is dropped
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading this addon's and Kodi's code.** `CAddonDispatcharr::CreateInstance()` adds the new
+instance to `m_instances` only after its constructor returns, and `SetSetting()` delivers a change only to listed
+instances, answering OK otherwise. Kodi holds only its instance-creation lock across the constructor, and a settings
+save (`CAddonDll::SaveSettings()` then `TransferSettings()`) does not take it, so a save can arrive mid-construction. The
+constructor read every setting at its start and can spend a full request timeout in its version check against a host
+that does not answer. Scenario: the user saves a wrong host, Kodi restarts the addon, and while the new instance waits
+on that host the user corrects it and saves again: no restart is asked for and nothing is applied, so the instance keeps
+using the wrong host until the next settings save or a Kodi restart (settings applied live, such as the timeshift mode,
+are lost the same way). Fix: after registering the instance, compare the settings with what the constructor used and
+apply the live ones; for a changed connection setting, write that setting back so Kodi re-delivers it and the existing
+check answers `ADDON_STATUS_NEED_RESTART`. Or queue deliveries that arrive during construction and replay them.
+
+#### Kodi's connection notice names the configured server, not the one in use
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** `GetConnectionString()` and `GetBackendHostname()` read the saved `host` and `port`
+settings, not the address the client is using, so while an instance is still on an older address (a restart not yet
+done, or the window in "A settings save delivered while the PVR instance is still being constructed is dropped") Kodi's
+connection-state notice and Event Log name a server the addon is not talking to, which points the user at the wrong
+cause. Fix: build both from `m_client.GetConnectionSettings()`, as the realtime thread does.
+
+#### Two series rules can share one Kodi ClientIndex
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with the real header.** `ComputeSeriesRuleClientIndex()` (`TimerIdentity.h`) is
+`std::hash` of (title, `tvg_id`, `epg_source_id`) cut to 30 bits, with nothing to detect two rules landing on the same
+value, and `FindSeriesRuleIndexByClientIndex()` returns the first match. With libstdc++ (fixed seed) the titles
+"Show 13765" and "Show 57079" with no `tvg_id` and no source collide on 64-bit, "Show 1864" and "Show 53313" with `-m32`
+(found after about 55,000 titles, the 30-bit birthday bound). Two colliding rules show in Kodi under one ClientIndex, and
+an edit or delete of the second (`UpdateTimer()`, `DeleteTimer()`) acts on the first. Unlikely by chance (about
+N^2 / 2^31 for N rules), but anyone who can create rules can pick such a pair. Fix: have the lookup answer -1 when more
+than one cached rule matches, so the edit or delete is refused rather than misapplied, with the pair above as a test; or
+probe to the next free index, in list order, when the rules are reported.
+
+#### Pending recording titles are pruned only when an untitled recording arrives
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** `CreateOneTimeRecording()` appends to `m_pendingTitles` for every titled recording it
+creates, but `PruneExpiredPendingTitles()` runs only in `ParseRecordingJson()`'s branch for a recording that arrived
+without a title. Since the guide-based create sends the programme's fields, Dispatcharr returns titled recordings, the
+prune never runs, and the list grows by one small entry per recording for the life of the process. Fix: prune before the
+append as well.
+
+#### `timeshift_buffer`: a last viewer's stop can lose to a stream-switch restart and leave ffmpeg running
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with a pytest against the plugin.** In `_stop_buffer()`'s per-viewer path, the last viewer's
+stop writes the empty viewer list and then calls `_teardown_buffer()`. If a stream-switch restart in another worker adopts
+its new ffmpeg (`_restart_ffmpeg_locked()`) between the two, the teardown is declined as "replaced", the stop answers
+"viewer removed; buffer still active for other viewers", and the new ffmpeg keeps its proxy connection with no viewers
+until the reaper's idle check ends it (`idle_timeout_seconds` plus up to one 15 s tick). `_teardown_following_a_restart()`
+was written for exactly this race but covers only a stop without `viewer_id` and stop-all. The window is one Redis round
+trip, but a user who sees the picture held during a switch is likely to press Stop just then. Repro: a test that injects
+the adoption inside `_teardown_buffer()` ends with no viewers, the new pid and `_stop_ffmpeg()` never called. Fix: when
+the teardown answers False, read the state again and, if it was restarted from the instance just stopped and has no
+viewers, tear it down once, as `_teardown_following_a_restart()` does.
+
+#### `timeshift_buffer`: a viewer re-added after a prune loses its Kodi version
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** `_record_viewer_kodi_version()` drops the version of every viewer not currently
+listed whenever any viewer starts. A viewer the reaper pruned (its polls failed for longer than `idle_timeout_seconds`)
+loses its entry if another device starts the same channel meanwhile, and its next poll re-adds it through
+`_apply_heartbeat()` without one, because the addon sends `kodi_version` only with `start_buffer`. From then on
+`_stream_switch_needs_hold()` counts it as unknown, so a Kodi 21 viewer gets the stream-switch hold that addon 0.13.4 was
+meant to spare it. Fix: drop entries only on a stop and on the reaper's prune, or have the addon send `kodi_version` on
+its heartbeat and manifest polls and have `_apply_heartbeat()` record it.
 
 ### Architectural / concurrency
 
@@ -80,7 +179,18 @@ None open.
 
 ### Design decision needed
 
-None open.
+#### `timeshift_buffer` keeps running in Dispatcharr's other workers after it is disabled or deleted
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading Dispatcharr's v0.33.0 source.** Disabling or deleting a plugin calls its `stop()` only in
+the worker that served the request (`apps/plugins/api_views.py`); the loader tells no other worker. The plugin's other
+workers clean up old threads only in `_stop_orphaned_threads()`, on the first `run()` of a fresh import, and a disabled or
+deleted plugin is never run. So until Dispatcharr restarts, every other worker keeps its file-server listener on the
+segment port (answering 403 and 404, and keeping the port from anything else) and its reaper thread, which goes on
+electing a leader and scrubbing the old `storage_path` every 15 s. The README says to restart Dispatcharr after an
+update, not after disabling or deleting. Options: document the restart for both (cheapest), or have each reaper tick
+check a Redis marker that `stop()` sets for a disable or delete and shut that worker's threads down. Same class as the
+per-worker deploys recorded in `TIMESHIFT.md`.
 
 ### Release, CI and manual testing
 
@@ -117,6 +227,39 @@ makes of either, was not checked. Not this addon's bug: the addon and `timeshift
 server nobody else uses (the lab's setting is shared with its other clients), set Default Output Format to HLS, record a
 short programme, and check the file.
 
+#### README's "verified against" and pre-release lines are out of date
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** `README.md` says the addon is verified against Dispatcharr `0.32.0`, while every
+live check since 2026-10-24 ran against 0.33.0 and the changelog ships fixes for it; and its Kodi 22 paragraph says
+`0.14.0` is marked a pre-release, which holds for the whole `0.14.x` line. Fix: name 0.33.0 and the `0.14.x` line.
+
+#### Two comments give the timeshift segment length as 6 s; the plugin's default is 2 s
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** The comments on the live cold-start wait and on reading a few segments behind the
+tail in `DispatcharrClient.cpp` say `segment_seconds` is "6s by default"; the plugin's default is 2, and the cold-start
+budget is now sized by its 20 s maximum and the 30 s wait. `docs/TIMESHIFT.md` has the same figure in two older
+passages, which are history. Fix: correct the two comments.
+
+#### `TEST_COVERAGE.md` cites a renamed `timeshift_buffer` test and the behaviour it replaced
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** `docs/TEST_COVERAGE.md` names
+`test_run_get_live_manifest_ignores_a_viewer_id_this_buffer_does_not_know_about` and says an unknown `viewer_id` is a
+no-op. The test is now `test_run_get_live_manifest_re_adds_a_viewer_id_this_buffer_does_not_know_about` and the plugin
+re-adds such a viewer (0.6.5 on). `tools/check_doc_refs.py` does not check pytest names, which is why it went unseen.
+Fix: correct the sentence; optionally teach the checker backticked `test_*` names.
+
+#### `BRANCHES.md` still says `Omega`'s tag suffix is empty, and `Omega` lacks a path-filter test
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by comparing the branches.** `docs/BRANCHES.md` says the suffix is empty on `Omega` until its next
+release is tagged, but `Omega` has used `-Omega` since 0.13.1. `Piers`'s `tools/tests/test_ci_build_needed.py` has
+`test_the_gate_does_not_depend_on_which_kodi_branch_is_pushed` and a suffixed-tag case (added in `dd77977`) that `Omega`
+lacks, while the "what differs" table describes that file's difference as the branch names only. Fix: reword the
+`BRANCHES.md` note and cherry-pick the test to `Omega`.
+
 ### Known gaps, deliberately deferred
 
 #### Wake-on-LAN for a Dispatcharr host that sleeps
@@ -139,4 +282,43 @@ handling in `OnAddonSettingChanged()` are the work. Not started.
 
 ### Tooling (tools/)
 
-None open.
+#### The release gate does not apply its build-path patterns to entry names
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with a crafted zip.** `check_zip()` runs `FORBIDDEN_PATTERNS` only over member contents
+(`scan_member()`); entry names get the absolute, `..`, drive and backslash checks and the blocklist. An entry named
+`pvr.dispatcharr-unofficial/home/<user>/build/...` or `.../runner/work/...` passes CI's gate (no blocklist) and the
+release gate unless a blocklist term is in the name. A CMake `install()` with an absolute destination is the realistic
+way to get one. Fix: run the same patterns over the name (as `/` + `orig_filename`, and over its raw bytes), with a
+test.
+
+#### The release gate does not check a local header's CRC and size fields or a data descriptor
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with crafted zips; adversarial only.** `_layout_problems()` compares a local header's name, time
+and extra-field length with the central directory, but not its CRC and size fields (12 bytes), and never reads a data
+descriptor (12 bytes, 16 with its signature); `zipfile` reads neither. A blocklisted term of up to 12 bytes passes in
+either place, and one probe (term in the local fields without flag 0x08) passes the gate while `unzip -t` reports a bad
+CRC. No build tool writes data there, the same class as the 2026-11-10 `compress_size` slack fix. Fix: rebuild the
+expected local header and descriptor from each central entry and compare them byte for byte (the central entry's
+internal attributes, disk number and low external-attribute bits are not pinned either).
+
+#### The release gate can miss a non-ASCII blocklist term
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, latent, reproduced with crafted zips.** The byte search folds case for ASCII only, content is never
+normalised (an NFD spelling, as macOS file paths are, does not match an NFC term), and a UTF-8 entry name stored without
+the UTF-8 flag is read by `zipfile` as cp437, so the name check sees mojibake while `unzip` and Kodi see the real name.
+A term `josé` passed in all three forms. Every term in the current blocklist is ASCII, so nothing slips through today.
+Fix: add a UTF-8-decoded, NFC-normalised, casefolded view, and check names both as stored bytes decoded as UTF-8 and as
+`zipfile` reads them.
+
+#### The CI path filter skips the build for a root `*.cmake` or `.gitattributes` change
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by calling `needs_build()`.** `BUILD_RELEVANT` (`tools/ci_build_needed.py`) does not cover a
+root-level `*.cmake` file, although `CMakeLists.txt` puts the repository root on `CMAKE_MODULE_PATH` (a root
+`FindCURL.cmake` would override CMake's own), nor `.gitattributes`, which decides what the checkout writes (line
+endings on the Windows build). `needs_build()` answers False for both, so `build-unix`, `build-windows` and
+`glue-harness` are skipped. Neither file exists today. Fix: add root `*.cmake`, `.gitattributes` and `.gitmodules` to
+the list, with tests.
