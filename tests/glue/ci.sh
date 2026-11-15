@@ -42,6 +42,11 @@ run "live (failed fetches handed back)" TMO=30 T=120 -- live_outage_handback
 run "live (which notice ends a lost stream)" TMO=30 T=180 -- live_lost_notice
 run "rotated refresh tokens"     TMO=30 T=60 -- auth_refresh_rotated
 run "failed re-authentication, failed groups" TMO=30 T=60 -- auth_reauth_failed
+run "short-bounded stop behind a hung login" TMO=30 T=90 -- auth_flow_wait close
+run "short-bounded catch-up behind a hung login" TMO=30 T=90 -- auth_flow_wait catchup
+run "short-bounded stop after a slow refresh" TMO=30 T=60 -- auth_flow_wait handoff
+run "short-bounded give-up reports no response" TMO=30 T=90 -- auth_flow_wait status
+run "short-bounded give-up, first refresh since a login" TMO=30 T=90 -- auth_flow_wait status_fresh
 run "completed recording"        TMO=30 T=120 -- rec
 run "recording, Range dropped"   TMO=30 T=120 -- rec_range_dropped
 run "recording with no file"     TMO=30 T=120 -- rec_open_missing

@@ -96,7 +96,6 @@ docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
 docs/OPEN_ITEMS.md|function|_dvr_capture_url
 docs/OPEN_ITEMS.md|function|_finalize_playback_session_auth
 docs/OPEN_ITEMS.md|function|_ghost_timeout_for_client
-docs/OPEN_ITEMS.md|function|try_lock_for
 docs/OPEN_ITEMS.md|setting|m_instances
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel

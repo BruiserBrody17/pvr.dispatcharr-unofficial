@@ -2525,6 +2525,95 @@ static void multi_dtor(DispatcharrClient& cl)
   INFO("destroying the client with %zu recorded streams open", cl.OpenRecordedStreamCount());
 }
 
+// A short-bounded authentication behind another thread's login (docs/CLOSED_ITEMS.md, "A short-bounded call waits out
+// another thread's full-timeout login or token refresh"). A background call allowed the full timeout (GetRecordings(),
+// as the recordings thread makes) holds the auth flow lock across its token refresh; a call bounded to the short
+// timeout then needs a token too. `close` and `catchup`: the refresh hangs for the whole timeout, and the stream's stop
+// or the catch-up session must give up within its own bound (both once waited about 30 s on the lock). `handoff`: the
+// refresh takes 2.5 s, and the short call must wait for it and then go on with the token it got, without a refresh of
+// its own. `status`: after a short refresh of its own got no response, a give-up must report that (0), not "nothing
+// known" (-1). `status_fresh`: the same give-up when the hung refresh is the first attempt since the open's successful
+// login, so the last attempt's own status is -1; it must still report 0 (the branch's live check of the outage notice
+// found it reporting -1, and the notice blamed the file server's port).
+static void auth_flow_wait(DispatcharrClient& cl, const std::string& variant)
+{
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  const bool handoff = variant == "handoff";
+  ctl(handoff ? "api_delay_ms=2500" : "api_hang=1");
+  cl.InvalidateAccessToken();
+  const long shortMs = dispatcharr::ShortRequestTimeoutMs(configuredTimeout());
+  long armStatus = -1;
+  if (variant == "status")
+  {
+    // A short refresh of its own times out first (the live reader's, in an outage), arming the cooldown that turns
+    // only short callers away; the background call below then goes ahead and holds the lock.
+    std::string armError;
+    cl.EnsureAuthenticated(armError, shortMs, &armStatus);
+    INFO("status: the arming short refresh reported %ld (%s)", armStatus, armError.c_str());
+  }
+  const long refreshesBefore = fake_stat("POST /api/accounts/token/refresh/");
+  const long stopsBefore = fake_stat("action stop_buffer");
+  std::thread background(
+      [&cl]()
+      {
+        std::vector<dispatcharr::Recording> recordings;
+        std::string e;
+        const long t0 = ms();
+        cl.GetRecordings(recordings, e);
+        INFO("background GetRecordings returned after %ld ms: %s", ms() - t0, e.c_str());
+      });
+  sleep_ms(300);
+  const long t0 = ms();
+  std::string shortError;
+  long shortStatus = -2;
+  const bool status = variant == "status" || variant == "status_fresh";
+  if (status)
+  {
+    cl.EnsureAuthenticated(shortError, shortMs, &shortStatus);
+  }
+  else if (variant == "catchup")
+  {
+    std::string url;
+    if (cl.CreateCatchupSession("uuid", time(nullptr) - 3600, 30, url, shortError))
+      FAIL("CreateCatchupSession succeeded while the API hung");
+  }
+  else
+  {
+    cl.CloseLiveTimeshiftStream();
+  }
+  const long took = ms() - t0;
+  INFO("%s: the short-bounded call (bound %ld ms) took %ld ms: %s", variant.c_str(), shortMs, took, shortError.c_str());
+  // the bound, plus slack for a loaded CI runner; before the fix this was the full 30 s
+  if (took > shortMs + 1500)
+    FAIL("the short-bounded call took %ld ms, its bound is %ld ms", took, shortMs);
+  if ((variant == "catchup" || status) && shortError.find("another sign-in") == std::string::npos)
+    FAIL("the error does not say it gave up on another sign-in: %s", shortError.c_str());
+  // The give-up reports no response (0), which the live give-up reads as the whole server out of reach. -1 ("nothing
+  // known") would have it blame the file server's port.
+  if (variant == "status" && armStatus != 0)
+    FAIL("expected status 0 from the arming refresh, saw %ld", armStatus);
+  if (status && shortStatus != 0)
+    FAIL("expected status 0 from the give-up, saw %ld", shortStatus);
+  background.join();
+  if (handoff)
+  {
+    const long refreshes = fake_stat("POST /api/accounts/token/refresh/") - refreshesBefore;
+    const long stops = fake_stat("action stop_buffer") - stopsBefore;
+    INFO("handoff: %ld refresh(es), %ld stop(s)", refreshes, stops);
+    if (refreshes != 1)
+      FAIL("expected the background refresh alone, saw %ld refreshes", refreshes);
+    if (stops != 1)
+      FAIL("the stop was not sent with the token the background refresh got (%ld stops)", stops);
+  }
+  ctl("api_hang=0");
+  ctl("api_delay_ms=0");
+}
+
 int main(int argc, char** argv)
 {
   InitKodiStub();
@@ -2536,6 +2625,8 @@ int main(int argc, char** argv)
     auto* cl = new DispatcharrClient(cfg());
     if (what == "live")
       live_play(*cl, arg ? atoi(arg) : 8000, false);
+    else if (what == "auth_flow_wait")
+      auth_flow_wait(*cl, arg ? arg : "close");
     else if (what == "live_chaos")
       live_play(*cl, 8000, true);
     else if (what == "live_fault")

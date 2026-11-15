@@ -174,3 +174,20 @@ TEST_CASE("DecideAuthGate proceeds to a refresh or login only when no gate appli
   // no token, no backoff and no blocking cooldown.
   CHECK(DecideAuthGate(false, false, false) == AuthGate::kProceed);
 }
+
+TEST_CASE("RemainingAuthBudgetMs shares one bound between the lock wait and the attempt", "[AuthBackoff]")
+{
+  // No wait: the whole bound is the attempt's, as before.
+  CHECK(RemainingAuthBudgetMs(5000, 0) == 5000);
+  // A wait spends the bound; the attempt gets what is left.
+  CHECK(RemainingAuthBudgetMs(5000, 1200) == 3800);
+  CHECK(RemainingAuthBudgetMs(5000, 4000) == 1000);
+  // Under a second left is no attempt at all (it would only time out and arm the cooldown for the next caller).
+  CHECK(RemainingAuthBudgetMs(5000, 4001) == 0);
+  CHECK(RemainingAuthBudgetMs(5000, 5000) == 0);
+  CHECK(RemainingAuthBudgetMs(5000, 9000) == 0);
+  // A bound shorter than the floor still gets its attempt when it did not wait.
+  CHECK(RemainingAuthBudgetMs(800, 0) == 800);
+  CHECK(RemainingAuthBudgetMs(800, 1) == 0);
+  CHECK(RemainingAuthBudgetMs(0, 0) == 0);
+}
