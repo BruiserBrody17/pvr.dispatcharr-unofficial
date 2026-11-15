@@ -583,10 +583,41 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   // Only a thread that needs a new token waits here, one at a time, across the network calls below. After
   // getting the lock it looks again: whoever held it may have just authenticated, or failed and set a backoff
   // that now answers for this call too.
-  std::lock_guard<std::mutex> flowLock(m_authFlowMutex);
+  //
+  // A caller with a short bound waits for the lock only that long, and the wait comes out of the same bound
+  // (RemainingAuthBudgetMs(), AuthBackoff.h): the thread holding the lock may be in a login that takes the full
+  // connection timeout, and a stream's stop or a catch-up session on Kodi's main thread once waited all of it first
+  // (docs/CLOSED_ITEMS.md, "A short-bounded call waits out another thread's full-timeout login or token refresh").
+  // Giving up on the wait says nothing about the server, so it arms no cooldown and reports no connection state.
+  const bool callerHasShortBound = timeoutMsOverride > 0 && timeoutMsOverride < m_config.timeoutSeconds * 1000L;
+  std::unique_lock<std::timed_mutex> flowLock(m_authFlowMutex, std::defer_lock);
+  long attemptTimeoutMs = timeoutMsOverride;
+  if (callerHasShortBound)
+  {
+    const auto waitStart = std::chrono::steady_clock::now();
+    if (!flowLock.try_lock_for(std::chrono::milliseconds(timeoutMsOverride)))
+    {
+      // No response (0): the sign-in holding the lock has had this caller's whole bound and still has no answer, and
+      // that is the newest thing known about the server. The live give-up reads 0 as the whole server out of reach;
+      // anything else has it blame the file server's port in an outage (docs/CLOSED_ITEMS.md, "A whole-server outage
+      // ends live playback with a notice that blames the file server's port"). Not the last attempt's status: when
+      // the attempt in flight is the first since a success, that is -1 ("nothing known"), and the notice named the
+      // port in the branch's live check.
+      if (httpStatusOut)
+        *httpStatusOut = 0;
+      error = "Gave up waiting for another sign-in to Dispatcharr to finish";
+      return false;
+    }
+    const long waitedMs = static_cast<long>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - waitStart).count());
+    attemptTimeoutMs = RemainingAuthBudgetMs(timeoutMsOverride, waitedMs);
+  }
+  else
+  {
+    flowLock.lock();
+  }
   std::unique_lock<std::mutex> stateLock(m_authStateMutex);
   auto now = std::chrono::steady_clock::now();
-  const bool callerHasShortBound = timeoutMsOverride > 0 && timeoutMsOverride < m_config.timeoutSeconds * 1000L;
 
   // Which gate turns this call away, and in what order: dispatcharr::DecideAuthGate() (AuthBackoff.h, tested). The
   // order is load-bearing; the two comments below say why each gate exists.
@@ -637,6 +668,14 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   case AuthGate::kProceed:
     break;
   }
+  if (callerHasShortBound && attemptTimeoutMs == 0)
+  {
+    if (httpStatusOut)
+      *httpStatusOut =
+          m_transientLoginFailedStatus; // the holder has just finished: what it learnt, as the gate reports
+    error = "Gave up waiting for another sign-in to Dispatcharr to finish";
+    return false;
+  }
 
   const bool haveRefreshToken = !m_refreshToken.empty();
   // Released across the network calls below (m_authFlowMutex alone keeps other authenticators out) and taken
@@ -645,7 +684,7 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   if (haveRefreshToken)
   {
     long refreshHttpStatus = 0;
-    const bool refreshed = RefreshAccessToken(error, &refreshHttpStatus, timeoutMsOverride);
+    const bool refreshed = RefreshAccessToken(error, &refreshHttpStatus, attemptTimeoutMs);
     stateLock.lock();
     if (refreshed)
     {
@@ -695,7 +734,7 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error, long timeoutMsOv
   }
 
   long httpStatus = 0;
-  const bool loggedIn = Login(error, &httpStatus, timeoutMsOverride);
+  const bool loggedIn = Login(error, &httpStatus, attemptTimeoutMs);
   stateLock.lock();
   if (loggedIn)
   {
@@ -2137,7 +2176,7 @@ void DispatcharrClient::DeferAuthenticationAfterUnresponsiveServer(const std::st
 {
   // The flow mutex first, as EnsureAuthenticated() takes them, so a login already in progress finishes (and
   // sets its own state) before this overwrites the cooldown.
-  std::lock_guard<std::mutex> flowLock(m_authFlowMutex);
+  std::lock_guard<std::timed_mutex> flowLock(m_authFlowMutex);
   std::lock_guard<std::mutex> stateLock(m_authStateMutex);
   if (!m_accessToken.empty())
     return; // already authenticated: nothing to defer

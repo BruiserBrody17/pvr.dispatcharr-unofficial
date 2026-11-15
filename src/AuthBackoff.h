@@ -153,6 +153,25 @@ inline bool IsTransientCooldownBlocking(bool cooldownActive, bool armedByShortAt
   return cooldownActive && (!armedByShortAttempt || callerHasShortBound);
 }
 
+// What a short-bounded caller has left for its own refresh or login after waiting `waitedMs` for the auth flow lock,
+// or 0 when that is too little to be worth an attempt. The lock is held across another thread's network calls, which
+// can take the full connection timeout (30 s by default): a caller bounded to the short timeout (a stream's stop, a
+// catch-up session, a live refresh) once waited all of it on the lock first, and then had its own whole bound to
+// spend as well (docs/CLOSED_ITEMS.md, "A short-bounded call waits out another thread's full-timeout login or token
+// refresh"). So the wait comes out of the bound, and what is left is the attempt's (a refresh that fails
+// and falls through to a login gives the login the same again, as it always did). Too little left (under a second, or
+// under the bound itself for a bound shorter than that) means no attempt: a request cut that short would only fail as a
+// timeout and arm the transient cooldown against the next short caller, for a server that never had a fair chance to
+// answer.
+constexpr long kMinAuthAttemptMs = 1000;
+
+constexpr long RemainingAuthBudgetMs(long boundMs, long waitedMs)
+{
+  const long left = boundMs - waitedMs;
+  const long floor = boundMs < kMinAuthAttemptMs ? boundMs : kMinAuthAttemptMs;
+  return left >= floor && left > 0 ? left : 0;
+}
+
 // Which gate of EnsureAuthenticated() turns a call away, in the order they apply once the caller holds the auth flow
 // lock:
 //   kHaveToken        -- a cached token is still valid (looked at again after taking the lock, because the thread

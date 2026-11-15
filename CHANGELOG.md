@@ -10,6 +10,14 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased] -- addon
+
+### Fixed
+
+- Stopping playback, or starting a catch-up programme, while the addon is signing in to Dispatcharr again in the
+  background now waits at most about 5 s for that sign-in. Against a server that had stopped answering, the wait could
+  last the whole connection timeout (30 s by default).
+
 ## [0.13.4] - 2026-11-14
 
 For Kodi 21; Kodi 22 users want `0.14.4` (tag `0.14.4-Piers`), which has the same fixes and one more of Kodi 22's own.

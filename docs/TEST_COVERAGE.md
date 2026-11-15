@@ -254,6 +254,16 @@ pair of tokens; a transport failure/5xx sets the same transient cooldown
 a second full blocking call against a host that just failed to answer
 the first one.
 
+2026-11-15: `RemainingAuthBudgetMs()`, the share of a short bound left for a refresh or login after waiting for the auth
+flow lock (the 2026-11-14 sweep's MEDIUM, `docs/CLOSED_ITEMS.md`'s "A short-bounded call waits out another thread's
+full-timeout login or token refresh"): no wait leaves the whole bound, a wait spends it, under a second left is no attempt, and
+a bound under a second still gets its attempt when it did not wait. The lock wait itself (`try_lock_for()` in
+`EnsureAuthenticated()`) is covered by the glue scenario `auth_flow_wait` (`close`, `catchup`, `handoff`, `status` and
+`status_fresh`, all in CI; the first two fail on the old code at 29.7 s against a 5 s bound, and `status`, from the
+branch's independent review, fails on the branch's first version: its give-up reported -1, which in an outage would have
+had the live give-up blame the file server's port. `status_fresh`, from the branch's live check, fails on the second
+version, which reported the last attempt's status: -1 again when the hung refresh is the first since a login).
+
 ### `CatchupSessionCache`
 
 `CatchupSessionCache` is `ShouldReuseCachedCatchupSession()` (added

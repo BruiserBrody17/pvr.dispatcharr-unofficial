@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**15 open, 420 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**14 open, 421 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,9 +13,9 @@ confirmed. The open ones came from:
   recurring rule on a spring-forward day.
 - One from the 2026-11-12 live checks on Kodi 21: timers made on the server showed about 75 s after the realtime event.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
-- Nine from the 2026-11-14 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (one MEDIUM, eight
-  LOW; the seventeenth, a `BRANCHES.md` note, is `Piers` only). Its three documentation findings that held here and its
-  four tooling findings were fixed on 2026-11-15.
+- Eight from the 2026-11-14 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (all LOW; the
+  seventeenth, a `BRANCHES.md` note, is `Piers` only). Its three documentation findings that held here, its four
+  tooling findings and its one MEDIUM were fixed on 2026-11-15.
 
 Nothing is left from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (nine of its
 eleven findings held here, the other two being `Piers` only; all fixed by 2026-11-12), nor from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
@@ -28,14 +28,14 @@ recording's 20 s retry budget).
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 2 |
-| Open: Fix known, not yet done | 8 |
+| Open: Fix known, not yet done | 7 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 367 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 368 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -90,22 +90,6 @@ taught about HLS (it takes the 302 as a final answer), the setting hidden in Ser
 own HTTP reconnect options through `inputstream.ffmpegdirect` are worth comparing with HLS.
 
 ### Fix known, not yet done
-
-#### A short-bounded call waits out another thread's full-timeout login or token refresh
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); MEDIUM, reproduced in the glue harness.** `EnsureAuthenticated()` takes `m_authFlowMutex` with a plain lock
-whatever bound its caller passed. A caller with the short bound (`ShortRequestTimeoutMs()`: `StopTimeshiftBuffer()` on
-Stop, `CreateCatchupSession()` on catch-up Play, the live tail refresh, the in-progress steady-state lookup) that needs a
-new token therefore waits for any thread already logging in or refreshing with the full timeout, and only then is turned
-away by the transient cooldown. The 2026-10-02 split of the auth mutex (`CLOSED_ITEMS.md`, "m_authMutex held across a
-network round trip") spared a caller that still had a valid token, not one that needs a new one. Repro: a scratch
-glue scenario that opens a live stream, sets the fake to `api_hang=1`, calls `InvalidateAccessToken()`, starts
-`GetRecordings()` on a second thread and 300 ms later calls `CloseLiveTimeshiftStream()` or `CreateCatchupSession()`:
-both took 29.7 s against a 5 s bound with the default 30 s timeout (up to 180 s if the timeout is raised). Fix: make the
-flow mutex timed, have a short-bounded caller `try_lock_for()` its bound and fail as a transient "authentication already
-in progress" without arming the cooldown, keep the plain lock for full-bound callers, and add the scenario to the glue
-harness.
 
 #### A catch-up replay 9 to 30 s after the first Play reuses a session Dispatcharr has deleted
 

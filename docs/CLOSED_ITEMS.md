@@ -6,6 +6,32 @@
 
 ### Fixed
 
+#### A short-bounded call waits out another thread's full-timeout login or token refresh
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); MEDIUM, reproduced in the glue harness.** `EnsureAuthenticated()` takes `m_authFlowMutex` with a plain lock
+whatever bound its caller passed. A caller with the short bound (`ShortRequestTimeoutMs()`: `StopTimeshiftBuffer()` on
+Stop, `CreateCatchupSession()` on catch-up Play, the live tail refresh, the in-progress steady-state lookup) that needs a
+new token therefore waits for any thread already logging in or refreshing with the full timeout, and only then is turned
+away by the transient cooldown. The 2026-10-02 split of the auth mutex (`CLOSED_ITEMS.md`, "m_authMutex held across a
+network round trip") spared a caller that still had a valid token, not one that needs a new one. Repro: a scratch
+glue scenario that opens a live stream, sets the fake to `api_hang=1`, calls `InvalidateAccessToken()`, starts
+`GetRecordings()` on a second thread and 300 ms later calls `CloseLiveTimeshiftStream()` or `CreateCatchupSession()`:
+both took 29.7 s against a 5 s bound with the default 30 s timeout (up to 180 s if the timeout is raised). Fix: make the
+flow mutex timed, have a short-bounded caller `try_lock_for()` its bound and fail as a transient "authentication already
+in progress" without arming the cooldown, keep the plain lock for full-bound callers, and add the scenario to the glue
+harness.
+
+**Fixed 2026-11-15, as proposed, with one addition.** `m_authFlowMutex` is a `std::timed_mutex`. A caller with a short bound waits for it at most that bound (`try_lock_for()`). If the wait runs out, the call fails with "Gave up waiting for another sign-in to Dispatcharr to finish", without arming the cooldown or reporting a connection state. It reports no response (0): the sign-in holding the lock has had the caller's whole bound without an answer. The branch's independent review found that the first version reported -1 ("nothing known") there, which in an outage would have had the live give-up blame the file server's port again. The second version reported the last attempt's status instead, which is still -1 when the attempt in flight is the first since a successful sign-in, and the live check below showed that notice. The addition: a caller that does get the lock spends what is left of the same bound on its own refresh or login (`RemainingAuthBudgetMs()`, `AuthBackoff.h`). With under a second left it makes no attempt, since one cut that short would only time out and arm the cooldown against the next short caller. Full-bound callers still take the plain lock. The glue scenario `auth_flow_wait` is in CI in five variants. `close` and `catchup` (the sweep's repro) took 29.7 s against the 5 s bound on the old code and now give up at 5.0 s. `handoff` has a 2.5 s background refresh: the Close waits for it, sends its stop with the token it got, and makes no refresh of its own (4.7 s). `status` checks that the give-up reports 0 after a short refresh that got no response; it fails on the first version. `status_fresh` checks the same when the hung refresh is the first attempt since the open's login; it fails on the second version. Unit tests: `tests/test_auth_backoff.cpp`.
+
+**Confirmed live 2026-11-15** on the Linux test VM (Kodi 22 RC1, the branch's CI build, server-side timeshift), against a real Dispatcharr behind a fault-injecting proxy that could hold any API request or reset the file server's connections. The recordings refresh was set to one minute, so a background full-timeout token refresh was in flight when the token lapsed. That refresh was held, then:
+- **Stop on a live channel:** the close took 5.0 s. With the pre-fix build the UI stayed blocked 22 s, until the held refresh failed. Neither build sent the stop; the server's orphan reaper removed the buffer within two minutes.
+- **Play on a catch-up programme:** failed after 5.0 s with "Gave up waiting for another sign-in to Dispatcharr to finish". Once the held refresh was let through, the next Play created its session in 0.02 s and played.
+- **Whole-server outage while playing behind live** (API held, file server resetting, from 20 s before the token lapsed): the live stream gave up 42 s in after four failed segment fetches, its manifest refresh reporting the lock-wait give-up. On the second version the notice named the file server's port; on the final one it reads "Can't reach the Dispatcharr server, so this channel stopped...". At the live edge the same outage ends playback without a notice, as designed: the live-tail wait uses the short budget once the refresh has failed.
+- **Only the file server down, the API answering** (the counter-check): the give-up came 33 s in and the notice still named the file server's port. No lock-wait give-up was logged, since every sign-in finished well inside its bound.
+- **The Stop case on an Android phone** (arm64, Kodi 22 RC1, the same build from the Android toolchain, the proxy reached through `adb reverse`): the UI was blocked 6.2 s, against the 24 s left on the held refresh. No stop was sent, the reaper removed the buffer 44 s later, and sign-in recovered on its own once the refresh was let through.
+- **An hour of live playback on a healthy server** (same refresh interval): playback never broke, every one of the 15 token refreshes succeeded, none of about 7,200 requests failed, and no lock-wait give-up was logged.
+
 #### The release gate does not apply its build-path patterns to entry names
 
 **Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against

@@ -359,9 +359,10 @@ public:
   // timeout in the authentication step before its own bounded request even starts -- found by the fifteenth
   // hardening sweep: Close took 30 s, not 5, once the token hint had lapsed during a blackhole).
   // httpStatusOut, if non-null, gets on failure the HTTP status of the login or token-refresh request this call made,
-  // or of the one that armed the transient cooldown that turned it away (0 for no response); -1 when nothing is known
-  // (the login backoff after a rejected login). A whole-server outage outlasts the token, and the live give-up's notice
-  // reads the server's state from this (RefreshLiveManifest()).
+  // or of the one that armed the transient cooldown that turned it away (0 for no response); 0 too when a short-bounded
+  // call gave up waiting for another thread's sign-in, which had its whole bound without an answer; -1 when nothing is
+  // known (the login backoff after a rejected login). A whole-server outage outlasts the token, and the live give-up's
+  // notice reads the server's state from this (RefreshLiveManifest()).
   bool EnsureAuthenticated(std::string& error, long timeoutMsOverride = 0, long* httpStatusOut = nullptr);
   // Forgets the cached access token's freshness hint so the next authenticated
   // call refreshes it first. For a wake from suspend: the hint is a
@@ -1353,7 +1354,8 @@ private:
   // to be held and take the state mutex only to write their result. Neither needs to be recursive: nothing
   // under the flow mutex re-enters EnsureAuthenticated() (they call Request() without auth and without retry).
   std::mutex m_authStateMutex;
-  std::mutex m_authFlowMutex;
+  // Timed: a short-bounded caller waits for it no longer than its bound (EnsureAuthenticated()).
+  std::timed_mutex m_authFlowMutex;
   std::string m_accessToken;
   std::string m_refreshToken;
   std::chrono::steady_clock::time_point m_accessTokenExpiry;
