@@ -96,7 +96,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`08267c4`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`e721e07`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -216,6 +216,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `73f5f1c` | `a20d1b1` (`git cherry-pick -x`; `MANUAL_TESTING.md` by hand, its Kodi 22 passages are not on `Omega`) | The test deployment's lineup size dropped from docs and comments, after the 0.13.4/0.14.4 pre-tag audit, docs only |
 | `d7edc6a`, `d3e6cf2` | not ported: `Piers` release line | `0.14.4` and its CoreELEC checksum; `Omega` has its own `0.13.4` (`85d5bcf`, `c0b811d`). |
 | `08267c4` | `d9b7985` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts and source list by hand, and the warm-up named as `Piers`'s) | The open item for Off-mode live TV ending by itself on an Android tablet, with the measured ghost-client timeouts, docs only |
+| `e721e07` | `aa71c6f` (by hand; `OPEN_ITEMS.md`'s counts and source list, and the README item limited to the line `Omega` has) | The 2026-11-14 bug sweep's open items: sixteen of seventeen, the `BRANCHES.md` note being `Piers` only, docs only |
 
 ## Dependencies that differ by Kodi release
 
