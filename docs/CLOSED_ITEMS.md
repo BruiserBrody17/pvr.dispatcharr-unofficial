@@ -47,6 +47,14 @@ A replay inside 5 s of the POST could not be produced on Kodi 22: a catch-up str
 before that made Kodi treat the next `Player.Open` of the same programme as already playing (`IsPlayingEpgTag()`), so
 the addon was not asked. The reuse path itself is the baseline's 12 s replay above.
 
+**Confirmed live on Kodi 21.3 2026-11-16** (the `Omega` port; Linux, the same server, forwarder and steps, another aired
+programme on a catch-up channel):
+- **Baseline (the `Omega` CI build before the port):** the first Play logged a cache miss, then a cache hit 29 ms later,
+  and one POST: Kodi 21's two calls. A replay at 20 s logged a cache hit, got 401 "Invalid or expired playback session"
+  and never started.
+- **The port (its CI build), same steps:** every Play, including replays 20 s and 10 s after the first, logged a miss
+  then a hit 16 to 45 ms later, POSTed one new session and played. No 401 in any run.
+
 #### `timeshift_buffer` keeps running in Dispatcharr's other workers after it is disabled or deleted
 
 **Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
