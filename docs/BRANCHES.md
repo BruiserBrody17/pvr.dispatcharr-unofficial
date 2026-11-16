@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`d5b4531`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`f990f2c`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -219,6 +219,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `aec27d6` | `697011e` (by hand; the README line `Omega` has, its own counts, and the `BRANCHES.md` note left out) | The 2026-11-14 sweep's stale docs, plus `test_ci_build_needed.py`'s two Kodi-branch cases from `dd77977`, which make that file the same on both |
 | `b37e268` | `0fcf987` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts by hand) | The 2026-11-14 sweep's four tooling findings: the release gate's entry names, local headers and data descriptors, non-ASCII terms, and the CI path filter |
 | `d5b4531` | `f4caf1e` (`git cherry-pick -x`; `CHANGELOG.md`, `OPEN_ITEMS.md`'s counts and the glue driver by hand, the driver taking only the new scenario) | The 2026-11-14 sweep's MEDIUM: a short-bounded caller's wait for another thread's sign-in is bounded, and its give-up reports no response |
+| `f990f2c` | `0aa2706` (`git cherry-pick -x`, without `[skip ci]`; `CHANGELOG.md` and `OPEN_ITEMS.md`'s counts by hand) | `timeshift_buffer` 0.8.19: a disable or delete stops the plugin in every Dispatcharr worker, through a stop token in Redis. The plugin, its tests and `TIMESHIFT.md` are the same files on both, so the live check made with `Piers` covers `Omega` too. |
 
 ## Dependencies that differ by Kodi release
 
