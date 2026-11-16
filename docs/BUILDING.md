@@ -259,7 +259,13 @@ Windows build machine, not just a CI-specific patch.
    )
    foreach ($a in $archives) {
      $local = "$downloads\$($a.file)"
-     Invoke-WebRequest -Uri "https://mirrors.kodi.tv/build-deps/win32/$($a.file)" -OutFile $local
+     $url = "https://mirrors.kodi.tv/build-deps/win32/$($a.file)"
+     # mirrors.kodi.tv redirects to a random mirror, and not every mirror's certificate chains to a root Windows
+     # trusts out of the box: retry, each attempt gets a new pick (the SHA256 check below still guards the file)
+     for ($try = 1; ; $try++) {
+       try { Invoke-WebRequest -Uri $url -OutFile $local; break }
+       catch { if ($try -ge 5) { throw }; Start-Sleep -Seconds 3 }
+     }
      $actual = (Get-FileHash -Algorithm SHA256 -Path $local).Hash.ToLowerInvariant()
      if ($actual -ne $a.sha256) { throw "SHA256 mismatch for $($a.file): expected $($a.sha256), got $actual" }
      $registered = $local.Replace('\', '/')   # forward slashes: a backslash is an invalid escape in Kodi's generated CMake script
