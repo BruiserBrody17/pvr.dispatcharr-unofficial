@@ -4016,6 +4016,83 @@ onto different PIDs;
 and a buffer kept for over an hour before a switch, where the sweep has real leftovers to delete (the real-ffmpeg test
 covers the rule).
 
+## A disable or delete reaches every worker (0.8.19)
+
+*2026-11-15. Closes `docs/CLOSED_ITEMS.md`'s "`timeshift_buffer` keeps running in Dispatcharr's other workers after it
+is disabled or deleted".*
+
+Dispatcharr calls a plugin's `stop()` on a disable or delete in the one worker process that served the request
+(`PluginEnabledAPIView` and `PluginDeleteAPIView`, `apps/plugins/api_views.py`, v0.33.0); the loader tells no other
+worker. Each worker runs its own file-server listener (`SO_REUSEPORT`, see "Guarded state writes and stale-listener
+cleanup" above) and its own reaper, and until 0.8.19 the other workers' copies ran on until Dispatcharr restarted: the
+listeners answered 403 and 404 on the segment port and kept it from anything else, and the reapers went on electing a
+leader and scrubbing the old `storage_path` every 15 s. `_stop_orphaned_threads()` did not help, since it runs on the
+first `run()` of a fresh import and a disabled or deleted plugin is never run.
+
+`stop()` now writes a fresh random token to `timeshift_buffer:stop_token` (`_REDIS_STOP_TOKEN_KEY`, a 24 h TTL) for
+every reason but `reload`, twice: before its teardown, so the other workers stop reaping and scrubbing while it runs, and
+again at the end of its `finally`. Every `run()` reads the key and keeps what it read as the worker's adopted token
+(`_adopt_stop_token()`, one GET per action), before it ensures the listener and the reaper. Every reaper reads the key at
+the top of its tick, before the leader election, and when it holds a token its worker has not adopted stops its own
+module's file server and returns, so a worker that was not leading stops too. Since only an enabled plugin's `run()`
+is called, adopting a token amounts to "this worker has run an action since that stop"; after a re-enable the first
+action in each worker adopts the token and restarts whatever its reaper had stopped (the reaper that stopped left
+`_reaper_thread` dead and `_http_server` cleared).
+
+**Why two writes, and why a token rather than a marker: two rounds of the branch's independent review.** Dispatcharr
+commits the disable only after `stop()` returns (`PluginEnabledAPIView` holds the row under `select_for_update()`
+across it), so `run_action()` still sees the plugin enabled for the whole teardown, about 2 s per buffer plus the
+scrub. Actions keep arriving in that window while anyone is watching: heartbeats, manifest polls, and the `stop_buffer`
+the addon sends after the teardown's own fatal manifest. The stopping worker's reaper has already ended by then, since
+`stop()` sets its stop event first, so such an action there starts a new one.
+- The first version deleted a `timeshift_buffer:stopped` marker whenever a reaper started, so one such action in the
+  stopping worker undid the stop for every worker.
+- The second version wrote a never-deleted token once, before the teardown. An action in the window, in any worker,
+  adopted it and kept that worker running.
+- The final write leaves a token that no action in the window can have adopted. What is left is the gap from `stop()`
+  returning to Dispatcharr's commit (one `suspend_schedules()` and the save).
+
+The reaper re-checks the token under `_http_server_lock` before it stops the listener (`_stop_for_stop_token()`), since
+`run()` adopts before `_ensure_http_server_running()` takes that lock. An action that adopted while the reaper was
+deciding keeps its listener, and one that adopts while the reaper holds the lock finds the listener gone and starts it
+again. It may still find the reaper alive and return without starting a new one, so that worker is without a reaper
+until its next action, which matters little while the leader's reaper runs elsewhere.
+
+What it does not cover, on purpose:
+- **An action that passes Dispatcharr's enabled check between `stop()`'s last write and the commit.** It keeps its
+  worker running until a restart, as before 0.8.19.
+- **A quick disable and re-enable.** A worker that runs no action between the two still finds a token it has not
+  adopted on its reaper's next tick, stops, and is without a listener until its next action. A worker that does run
+  one adopts the token first and keeps its threads. Clients see nothing of it while another worker still listens: the
+  kernel hands a new connection only to a socket in the `SO_REUSEPORT` group that is still listening, so fetches are
+  refused only if every worker has stopped (seen live: no refused fetch across two quick toggles).
+- **A `stop()` that cannot reach Redis.** The token is best effort and its failure is logged; the teardown goes on. With
+  neither write landing, nothing stops an action that ran during the teardown from keeping its worker running, the
+  stopping worker included (its reaper ended first, so such an action starts a new listener and reaper there), as
+  before 0.8.19. A `run()` that cannot read the token keeps the one it had (logged at most once a minute), so its
+  reaper may stop the threads and the next `run()` restarts them.
+- **Workers still running 0.8.18 or older.** Their reapers do not read the key, so the first deploy of 0.8.19 still
+  needs the Dispatcharr restart the README already asks for.
+
+No token (never stopped, expired, or a flushed Redis) stops nothing. A missing reason (something other than Dispatcharr
+calling `stop()`) writes the tokens too, matching the full teardown `stop()` already does for it; if the plugin is in
+fact still enabled, each worker's next action restarts its threads.
+
+**Confirmed live 2026-11-16** on a real Dispatcharr 0.33.0 with several workers, the branch's plugin deployed to every one
+(the module's md5 checked in each), observed by a throwaway probe plugin. The probe read each worker's listening
+sockets on the segment port from `/proc/net/tcp6` and `/proc/<pid>/fd`, read the `timeshift*` threads and each
+module's adopted token, and wrapped `_stop_for_stop_token()` and `_mark_plugin_stopped()` to log each call to a Redis
+list. The results are in `docs/CLOSED_ITEMS.md`'s entry. Two things the unit tests could not show:
+- **The race the second write is for happens every time.** Simulated viewers (three viewer ids on six to nine polling
+  threads) kept polling `get_live_manifest` through a real buffer while the plugin was disabled. In each of four rounds,
+  and in the delete run, actions in other workers adopted the first token during the teardown and were stopped only by
+  the second. In two of the rounds and in the delete run, the stopping worker's own action did the same.
+- **Dispatcharr re-imports the module.** This happens in the worker that serves an enable or disable, and a reload
+  while the plugin is disabled drops the module from every worker. The threads of the earlier import run on beside a
+  module that has adopted nothing, or beside none. Each such thread acts on its own import's globals, so its reaper still stopped its own listener on
+  the new token. It is also why a wrapper on the module's functions sometimes missed `stop()`: the probe's Redis
+  failure had to be injected in `core.utils.RedisClient.get_client` instead, for callers in this module only.
+
 ## The plugin's moving parts
 
 *(moved from `dispatcharr-plugin/timeshift_buffer/README.md`, which now keeps only the user-facing summary)*

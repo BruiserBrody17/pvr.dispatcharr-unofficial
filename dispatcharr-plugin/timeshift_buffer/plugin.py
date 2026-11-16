@@ -143,6 +143,15 @@ from urllib.parse import parse_qs, unquote, urlparse
 _REDIS_PREFIX = "timeshift_buffer:"
 _REDIS_LEADER_KEY = _REDIS_PREFIX + "reaper_leader"
 _REDIS_LEADER_TTL = 30  # seconds; the reaper thread renews this while alive
+# A fresh random token written by stop() on a disable or delete, which Dispatcharr delivers to the one worker
+# that served that request only (apps/plugins/api_views.py, v0.33.0). Each worker adopts the current token whenever it
+# runs an action (_adopt_stop_token()), which only an enabled plugin does, and its reaper stops that worker's file
+# server and itself once the key holds a token the worker never adopted (_reaper_loop()). Never deleted: a marker that
+# a re-enabled worker cleared was also cleared by the disabling worker's own actions while its teardown ran (the
+# disable commits only after stop() returns), which undid the stop for every worker. The TTL only bounds how long a
+# deleted plugin leaves the key behind: every live reaper reads it within a tick, and a key that expires stops nothing.
+_REDIS_STOP_TOKEN_KEY = _REDIS_PREFIX + "stop_token"
+_REDIS_STOP_TOKEN_TTL = 24 * 3600
 _REDIS_START_BUFFER_LOCK_PREFIX = _REDIS_PREFIX + "start_lock:"
 # Generous relative to how long _start_buffer()'s own locked section ever
 # actually takes (a handful of Redis round-trips plus one ffmpeg spawn) --
@@ -191,6 +200,8 @@ _reaper_thread = None
 _reaper_stop_event = None
 # Held across _ensure_reaper_running()'s check-then-start, see its comment.
 _reaper_lock = threading.Lock()
+# The stop token this worker last saw while running an action (see _REDIS_STOP_TOKEN_KEY); None when there was none.
+_adopted_stop_token = None
 # Updated on every run() call (see _ensure_reaper_running()'s own comment
 # for the real bug this fixes), read fresh on every reaper tick via the
 # lambda that closes over this name -- a plain module-level rebind is
@@ -4445,6 +4456,13 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_trac
             client = _redis()
             if client is None:
                 raise RuntimeError("no Redis client available")
+            stop_token = client.get(_REDIS_STOP_TOKEN_KEY)
+            # Checked before leadership, so a worker that is not the leader stops too: its listener holds the
+            # segment port either way. The http server and the adopted token are this module's own, so a reaper
+            # left by an earlier import stops that import's listener, not the current one's.
+            if _is_new_stop_token(stop_token, _adopted_stop_token) and _stop_for_stop_token(stop_token, logger):
+                stop_event.set()
+                break
             got_leadership = client.set(_REDIS_LEADER_KEY, my_token, nx=True, ex=_REDIS_LEADER_TTL)
             if not got_leadership:
                 current = client.get(_REDIS_LEADER_KEY)
@@ -4558,6 +4576,67 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_trac
         stop_event.wait(15)
 
 
+def _decode_token(value):
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def _is_new_stop_token(current, adopted) -> bool:
+    """Whether the stop token in Redis is one this worker has not adopted, i.e. a stop() since its last action. No
+    token (never stopped, expired, or Redis flushed) stops nothing."""
+    current = _decode_token(current)
+    return current is not None and current != adopted
+
+
+def _stop_for_stop_token(stop_token, logger) -> bool:
+    """Stops this module's file server unless the worker adopted `stop_token` since the reaper read it. Re-checked
+    under the server lock, which run()'s _ensure_http_server_running() takes after adopting: an action that adopted
+    first keeps its listener, and one that adopts while this holds the lock finds the listener gone and starts it
+    again, instead of relying on a listener this then stops."""
+    with _http_server_lock:
+        if not _is_new_stop_token(stop_token, _adopted_stop_token):
+            return False
+        logger.info(
+            "timeshift_buffer: the plugin was disabled or deleted in another worker; stopping this worker's file "
+            "server and reaper"
+        )
+        _stop_http_server_locked(logger)
+        return True
+
+
+def _mark_plugin_stopped(reason, logger) -> None:
+    """Tells the other workers' reapers that the plugin was disabled or deleted (see _REDIS_STOP_TOKEN_KEY). Best
+    effort: with Redis unreachable they keep running until Dispatcharr restarts, as before 0.8.19."""
+    try:
+        _redis().set(_REDIS_STOP_TOKEN_KEY, f"{reason}:{uuid.uuid4().hex}", ex=_REDIS_STOP_TOKEN_TTL)
+    except Exception:
+        logger.exception(
+            "timeshift_buffer: couldn't tell the other workers the plugin stopped; their file servers and reapers "
+            "keep running until Dispatcharr restarts"
+        )
+
+
+_adopt_failures = _LogThrottle()
+
+
+def _adopt_stop_token(logger) -> None:
+    """Every run() (one GET), so that a worker whose reaper was still alive across a quick disable and re-enable takes
+    the new token on its first action and its reaper does not then stop the listener that action relied on. Adopting
+    only in this worker is the point: an action that raced a disable keeps at most its own worker running. On a
+    failure the previous token is kept, so the reaper may stop this worker's threads and the next run() restarts
+    them."""
+    global _adopted_stop_token
+    try:
+        _adopted_stop_token = _decode_token(_redis().get(_REDIS_STOP_TOKEN_KEY))
+        _adopt_failures.reset()
+    except Exception:
+        log, suppressed = _adopt_failures.check()
+        if log:
+            logger.exception(
+                "timeshift_buffer: couldn't read the plugin's stop token (%d similar failure(s) since the last report)",
+                suppressed,
+            )
+
+
 _orphans_swept = False
 
 
@@ -4660,7 +4739,7 @@ def _ensure_reaper_running(settings_dict, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "0.8.18"
+    version = "0.8.19"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."
@@ -4923,6 +5002,8 @@ class Plugin:
             if logger:
                 logger.warning("timeshift_buffer: couldn't create storage_path %s: %s", storage_path, exc)
         _stop_orphaned_threads(logger)
+        # Before either thread is ensured: a reaper this starts must not find a token its worker has not adopted.
+        _adopt_stop_token(logger)
         _ensure_http_server_running(
             storage_path, _int_setting(settings_dict, "http_port", 9192, minimum=1, maximum=65535), logger
         )
@@ -4978,6 +5059,8 @@ class Plugin:
         reason = context.get("reason")
         try:
             if reason != "reload":
+                # First, so the other workers' reapers stop reaping and scrubbing while this one tears down.
+                _mark_plugin_stopped(reason, logger)
                 self._stop_all(logger)
                 # Also scrub anything already-orphaned at the moment of
                 # teardown -- _stop_all() above only touches what's still
@@ -4989,6 +5072,11 @@ class Plugin:
             # Always, also when Redis is unreachable and the teardown above raised: the listener of a plugin that was
             # just disabled or deleted must not stay bound in this worker until Dispatcharr restarts.
             _stop_http_server(logger)
+            if reason != "reload":
+                # Again, last: Dispatcharr commits the disable only after stop() returns, so an action in any worker
+                # (this one included, whose reaper stop() ended) can run during the teardown above and adopt the first
+                # token. This one stops those workers too; what is left is the gap to Dispatcharr's commit.
+                _mark_plugin_stopped(reason, logger)
 
     # -- action implementations --------------------------------------------
     #

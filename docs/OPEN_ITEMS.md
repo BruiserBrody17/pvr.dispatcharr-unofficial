@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**14 open, 429 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**13 open, 430 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,8 +13,8 @@ confirmed. The open ones came from:
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
-- Eight from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, seventeen findings), all LOW. Its
-  four documentation and four tooling findings and its one MEDIUM were fixed on 2026-11-15.
+- Seven from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, seventeen findings), all LOW. Its
+  four documentation and four tooling findings, its one MEDIUM and its one design question were closed on 2026-11-15.
 
 Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-23 sweep
 (five read-only reviews by area, 17 findings, the last fixed on 2026-11-04), from the 2026-10-24 sweep
@@ -28,12 +28,12 @@ sweep (eleven findings, all fixed: the release gate, the CI path filter and a `t
 | Open: Needs a live check | 1 |
 | Open: Fix known, not yet done | 7 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 1 |
+| Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 376 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 377 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -164,18 +164,7 @@ None open.
 
 ### Design decision needed
 
-#### `timeshift_buffer` keeps running in Dispatcharr's other workers after it is disabled or deleted
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading Dispatcharr's v0.33.0 source.** Disabling or deleting a plugin calls its `stop()` only in
-the worker that served the request (`apps/plugins/api_views.py`); the loader tells no other worker. The plugin's other
-workers clean up old threads only in `_stop_orphaned_threads()`, on the first `run()` of a fresh import, and a disabled or
-deleted plugin is never run. So until Dispatcharr restarts, every other worker keeps its file-server listener on the
-segment port (answering 403 and 404, and keeping the port from anything else) and its reaper thread, which goes on
-electing a leader and scrubbing the old `storage_path` every 15 s. The README says to restart Dispatcharr after an
-update, not after disabling or deleting. Options: document the restart for both (cheapest), or have each reaper tick
-check a Redis marker that `stop()` sets for a disable or delete and shut that worker's threads down. Same class as the
-per-worker deploys recorded in `TIMESHIFT.md`.
+None open.
 
 ### Release, CI and manual testing
 

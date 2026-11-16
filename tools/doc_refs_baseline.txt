@@ -168,6 +168,9 @@ docs/TIMESHIFT.md|function|SeekTimeRelative
 docs/TIMESHIFT.md|function|UpdatePlayState
 docs/TIMESHIFT.md|function|UpdateTimeshiftProgressData
 docs/TIMESHIFT.md|function|WaitForTimeshiftPlaylistReady
+docs/TIMESHIFT.md|function|run_action
+docs/TIMESHIFT.md|function|select_for_update
+docs/TIMESHIFT.md|function|suspend_schedules
 docs/TIMESHIFT.md|setting|enable_live_timeshift
 docs/TIMESHIFT.md|setting|timeshift_buffer
 docs/TROUBLESHOOTING_DETAIL.md|function|FindChannelAndBlockIndex

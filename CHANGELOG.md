@@ -18,6 +18,17 @@ compare against.
   background now waits at most about 5 s for that sign-in. Against a server that had stopped answering, the wait could
   last the whole connection timeout (30 s by default).
 
+## `timeshift_buffer` [0.8.19] - Unreleased
+
+Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
+Dispatcharr restart for every worker to pick it up.
+
+### Fixed
+
+- **Disabling or deleting the plugin now stops it in every Dispatcharr worker** within about 20 s. Before, only one
+  worker stopped, and the others kept the plugin's file-server port open and its background cleanup running until
+  Dispatcharr restarted.
+
 ## [0.14.4] - 2026-11-14
 
 For Kodi 22 only, and still built against Kodi 22.0 RC1, so it is a pre-release like `0.14.3`; Kodi 21 users want

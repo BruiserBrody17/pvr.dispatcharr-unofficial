@@ -4415,6 +4415,251 @@ def test_plugin_stop_still_tears_down_buffers_for_every_other_reason(monkeypatch
     assert calls == ["reaper_stop_event.set", "teardown", "scrub", "stop_http_server"]
 
 
+# ---------------------------------------------------------------------
+# The stop token (2026-11-14 sweep): Dispatcharr calls stop() on a disable or delete in one worker only, so stop()
+# writes a fresh token to Redis and every other worker's reaper, finding a token its worker never adopted, stops that
+# worker's file server and itself. Workers adopt the token on every run().
+# ---------------------------------------------------------------------
+
+_STOP_KEY = timeshift_buffer_plugin._REDIS_STOP_TOKEN_KEY
+
+
+class _OneTickEvent(threading.Event):
+    """Ends a real _reaper_loop after one tick; records whether the loop got as far as its between-tick wait."""
+
+    def __init__(self):
+        super().__init__()
+        self.waits = []
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        self.set()
+        return True
+
+
+def _stub_reaper_work(monkeypatch, calls):
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_stop_http_server_locked", lambda logger: calls.append("stop_http_server")
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: calls.append("reap") or [])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: calls.append("scrub") or [])
+
+
+@pytest.mark.parametrize("leader_value", [None, "someone-else"])
+@pytest.mark.parametrize("adopted", [None, "disable:old"])
+def test_reaper_loop_stops_its_worker_on_a_stop_token_it_never_adopted(monkeypatch, leader_value, adopted):
+    client = _FakeReaperRedisClient(leader_value=leader_value)
+    client.store[_STOP_KEY] = b"disable:new"
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_adopted_stop_token", adopted)
+    calls = []
+    _stub_reaper_work(monkeypatch, calls)
+    stop_event = _OneTickEvent()
+
+    timeshift_buffer_plugin._reaper_loop(lambda: {"idle_timeout_seconds": 30}, _FakeLogger(), stop_event)
+
+    assert calls == ["stop_http_server"]  # no reaping or scrubbing
+    assert stop_event.is_set()
+    assert stop_event.waits == []  # left at once, not after another 15 s tick
+    assert client.store.get(timeshift_buffer_plugin._REDIS_LEADER_KEY) == leader_value  # took no leadership
+
+
+@pytest.mark.parametrize("stored", [None, b"disable:seen"])
+def test_reaper_loop_keeps_running_without_a_new_stop_token(monkeypatch, stored):
+    client = _FakeReaperRedisClient()
+    if stored is not None:
+        client.store[_STOP_KEY] = stored
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_adopted_stop_token", "disable:seen")
+    calls = []
+    _stub_reaper_work(monkeypatch, calls)
+    stop_event = _OneTickEvent()
+
+    timeshift_buffer_plugin._reaper_loop(lambda: {"idle_timeout_seconds": 30}, _FakeLogger(), stop_event)
+
+    assert calls == ["reap", "scrub"]
+    assert stop_event.waits == [15]
+
+
+@pytest.mark.parametrize("reason", ["disable", "delete", "shutdown", None])
+def test_plugin_stop_writes_a_fresh_stop_token_before_and_after_tearing_down(monkeypatch, reason):
+    client = _FakeReaperRedisClient()
+    client.store[_STOP_KEY] = "disable:earlier"
+    calls = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_reaper_stop_event", None)
+
+    def teardown(state, logger, **kw):
+        calls.append(("teardown", client.store[_STOP_KEY]))
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", teardown)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: [{"channel_uuid": _UUID}])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: [])
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_stop_http_server", lambda logger: calls.append(("listener", client.store[_STOP_KEY]))
+    )
+
+    context = {"logger": _FakeLogger(), "settings": {}}
+    if reason is not None:
+        context["reason"] = reason
+    timeshift_buffer_plugin.Plugin().stop(context)
+
+    (_, during), (_, at_listener) = calls
+    assert during.startswith(f"{reason}:") and during != "disable:earlier"  # written before the teardown
+    assert at_listener == during
+    last = client.store[_STOP_KEY]
+    assert last.startswith(f"{reason}:") and last != during  # and a new one once stop() is done
+
+
+def test_plugin_stop_writes_no_stop_token_on_a_reload(monkeypatch):
+    client = _FakeReaperRedisClient()
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_reaper_stop_event", None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_http_server", lambda logger: None)
+
+    timeshift_buffer_plugin.Plugin().stop({"logger": _FakeLogger(), "settings": {}, "reason": "reload"})
+
+    assert _STOP_KEY not in client.store
+
+
+def test_plugin_stop_still_tears_down_when_the_stop_token_cannot_be_written(monkeypatch):
+    class _NoWrites(_FakeReaperRedisClient):
+        def set(self, key, value, nx=False, ex=None):
+            raise ConnectionError("redis refused the write")
+
+    calls = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: _NoWrites())
+    monkeypatch.setattr(timeshift_buffer_plugin, "_reaper_stop_event", None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger, **kw: calls.append("teardown"))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: [{"channel_uuid": _UUID}])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: calls.append("scrub") or [])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_http_server", lambda logger: calls.append("stop_http_server"))
+    logger = _FakeLogger()
+
+    timeshift_buffer_plugin.Plugin().stop({"logger": logger, "settings": {}, "reason": "disable"})
+
+    assert calls == ["teardown", "scrub", "stop_http_server"]
+    assert any(level == "exception" and "other workers" in msg for level, msg in logger.calls)
+
+
+def _run_lifecycle_only(monkeypatch, client, order=None):
+    """Plugin.run() with its real token adoption and everything else it does before dispatching stubbed."""
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_orphaned_threads", lambda logger: None)
+
+    def ensure(name):
+        def record(*a, **k):
+            if order is not None:
+                order.append((name, timeshift_buffer_plugin._adopted_stop_token))
+
+        return record
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ensure_http_server_running", ensure("http"))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ensure_reaper_running", ensure("reaper"))
+    monkeypatch.setattr(timeshift_buffer_plugin.Path, "mkdir", lambda *a, **k: None)
+    return timeshift_buffer_plugin.Plugin().run("no_such_action", {}, {"settings": {}, "logger": _FakeLogger()})
+
+
+def test_run_adopts_the_stop_token_before_ensuring_its_threads(monkeypatch):
+    """A worker whose reaper outlived a quick disable and re-enable takes the new token on its first action, so its
+    reaper does not then stop the listener that action relied on; a reaper run() starts never sees a token its worker
+    has not adopted."""
+    client = _FakeReaperRedisClient()
+    client.store[_STOP_KEY] = b"disable:new"
+    monkeypatch.setattr(timeshift_buffer_plugin, "_adopted_stop_token", "disable:old")
+    order = []
+
+    _run_lifecycle_only(monkeypatch, client, order)
+
+    assert order == [("http", "disable:new"), ("reaper", "disable:new")]
+
+
+def test_an_action_racing_the_teardown_still_stops_once_stop_returns(monkeypatch):
+    """The 0.8.19 review's race: stop() runs before Dispatcharr commits the disable, so an action can reach run() in
+    any worker while the teardown runs, the stopping worker included (its reaper already ended, so the real
+    _ensure_reaper_running() starts a new one there). Such an action adopts the first token. The first version of this
+    fix deleted its marker at exactly that point; the second kept the racing worker running. stop()'s last write must
+    leave a token that worker never adopted, and one a worker that adopted only the earlier token also stops on."""
+    client = _FakeReaperRedisClient()
+    client.store[_STOP_KEY] = "disable:earlier"
+    started = []
+
+    class _FakeThread:
+        def __init__(self, target, args, name, daemon):
+            pass
+
+        def start(self):
+            started.append(True)
+
+        def is_alive(self):
+            return True
+
+    def racing_action():
+        monkeypatch.setattr(timeshift_buffer_plugin, "_reaper_thread", None)
+        timeshift_buffer_plugin.Plugin().run("no_such_action", {}, {"settings": {}, "logger": _FakeLogger()})
+        return [{"channel_uuid": _UUID}]
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_adopted_stop_token", "disable:earlier")
+    monkeypatch.setattr(timeshift_buffer_plugin, "_reaper_stop_event", None)
+    monkeypatch.setattr(timeshift_buffer_plugin.threading, "Thread", _FakeThread)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_orphaned_threads", lambda logger: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_ensure_http_server_running", lambda *a, **k: None)
+    monkeypatch.setattr(timeshift_buffer_plugin.Path, "mkdir", lambda *a, **k: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", racing_action)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", lambda s, logger, **kw: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_scrub_orphaned_dirs", lambda *a, **k: [])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_stop_http_server", lambda logger: None)
+
+    timeshift_buffer_plugin.Plugin().stop({"logger": _FakeLogger(), "settings": {}, "reason": "disable"})
+
+    assert started == [True]  # the racing action started a reaper in the stopping worker
+    raced = timeshift_buffer_plugin._adopted_stop_token
+    assert raced.startswith("disable:") and raced != "disable:earlier"  # and adopted the first token
+    assert timeshift_buffer_plugin._is_new_stop_token(client.store[_STOP_KEY], raced)
+    assert timeshift_buffer_plugin._is_new_stop_token(client.store[_STOP_KEY], "disable:earlier")
+
+
+def test_reaper_keeps_the_listener_of_an_action_that_adopted_while_it_decided(monkeypatch):
+    """The review's second finding: a run() that adopts the new token between the reaper's read and its stopping the
+    listener relied on that listener. The reaper re-checks under the server lock and carries on with its tick."""
+    client = _FakeReaperRedisClient()
+    client.store[_STOP_KEY] = "disable:new"
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_adopted_stop_token", "disable:old")
+    calls = []
+    _stub_reaper_work(monkeypatch, calls)
+
+    class _AdoptOnAcquire:
+        def __enter__(self):
+            timeshift_buffer_plugin._adopted_stop_token = "disable:new"  # the racing run(), done adopting
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_http_server_lock", _AdoptOnAcquire())
+    stop_event = _OneTickEvent()
+
+    timeshift_buffer_plugin._reaper_loop(lambda: {"idle_timeout_seconds": 30}, _FakeLogger(), stop_event)
+
+    assert calls == ["reap", "scrub"]
+    assert stop_event.waits == [15]
+
+
+def test_run_keeps_the_adopted_token_when_redis_cannot_be_read(monkeypatch):
+    class _NoReads(_FakeReaperRedisClient):
+        def get(self, key):
+            raise ConnectionError("redis is unreachable")
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_adopted_stop_token", "disable:old")
+    order = []
+
+    result = _run_lifecycle_only(monkeypatch, _NoReads(), order)
+
+    assert order == [("http", "disable:old"), ("reaper", "disable:old")]
+    assert result["status"] == "error"  # the unknown action still reaches dispatch
+
+
 # -- _resolve_viewer_id ----------------------------------------------------
 
 
