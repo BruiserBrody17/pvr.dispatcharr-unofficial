@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**13 open, 431 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**14 open, 431 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -14,6 +14,8 @@ confirmed. The open ones came from:
   recurring rule on a spring-forward day.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
 - One follow-up to issue #1 from 2026-11-16: DVB subtitles and teletext in Server-side mode.
+- One observation from the 2026-11-16 live check of the catch-up session cache: Kodi 22 reading two finished
+  recordings end to end at start.
 - Six from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, seventeen findings), all LOW. Its
   four documentation and four tooling findings, its one MEDIUM and its one design question were closed on 2026-11-15,
   the catch-up session reuse on 2026-11-16.
@@ -27,7 +29,7 @@ sweep (eleven findings, all fixed: the release gate, the CI path filter and a `t
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 2 |
+| Open: Needs a live check | 3 |
 | Open: Fix known, not yet done | 6 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
@@ -103,6 +105,28 @@ and the proxy's side; rerun the muxer comparison with the container's ffmpeg 8.1
 muxer change on a branch, with the plugin owning deletion and the restart's playlist, tests, the behaviour review,
 and a live check like 0.8.18's (generated and real channels, Kodi 21 and 22, subtitles on through pause, rewind and a
 stream switch).
+
+#### Kodi 22 reads two finished recordings end to end at start
+
+**Opened 2026-11-16, seen during the live check of the catch-up session cache (`CLOSED_ITEMS.md`, "A catch-up replay 9
+to 30 s after the first Play reuses a session Dispatcharr has deleted"); one observation, not chased.** Kodi 22.0-RC1
+(Linux) started on the lab profile, with a logging forwarder between the addon and a real Dispatcharr 0.33.0 and
+nothing played: within its first three minutes, two finished recordings' `/api/channels/recordings/<id>/file/` were
+read from byte 0 to a few GB each, in consecutive 256 KiB `Range` requests (thousands per recording),
+while every other finished recording got 3 to 6 requests. 256 KiB is the addon's
+`GetStreamReadChunkSize()`, so these are the addon's `ReadRecordedStream()` reads on a stream Kodi opened and kept
+reading. Kodi 22's stream-details probe (the thumbnail loader, `docs/API_NOTES.md`) is the likely caller, but which
+component kept reading was not checked: a demuxer scanning for a duration or stream it could not find, or Kodi's
+file cache reading ahead for as long as the probe held the stream open. Nor was it checked what set those two recordings apart (length, a missing index,
+codecs), whether it happens at every start or once per recording, or whether Kodi 21 does the same. Cost on a real
+setup: gigabytes from the server's disk and network at each Kodi start, on a client that is only browsing.
+
+**Next:** at a Kodi 22 start, log which thread opens the two recordings and calls `ReadRecordedStream()` (the addon's open logging, Kodi's debug log for
+`CVideoThumbLoader` and the cache) and whether `CloseRecordedStream()` comes when the reading stops; compare the two recordings'
+`ffprobe` output with a recording that got 3 requests; repeat a start to see whether it recurs; and check Kodi 21 on
+the same profile. If the probe is the reader, see whether the addon can cap or refuse a stream-details open (it cannot
+tell a probe from Play today; `CLOSED_ITEMS.md`, "Kodi 22's thumbnail loader made the "no file for this recording"
+notice pop up while browsing", has how far that got).
 
 ### Fix known, not yet done
 
