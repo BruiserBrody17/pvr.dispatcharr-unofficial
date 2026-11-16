@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`f2d31f2`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`b338e0d`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -223,6 +223,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `ec3d226` | `0233d0c` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts by hand) | The open item for DVB subtitles and teletext in Server-side mode; the plugin is the same file on both. |
 | `5f7bbca` | `257dca5` (`git cherry-pick -x`, without `[skip ci]`; the comment above `EnsureAuthenticated()`, `OPEN_ITEMS.md`'s counts and the doc-ref baseline by hand, and a note in the `CLOSED_ITEMS.md` entry on what it means on Kodi 21) | The 2026-11-14 sweep's catch-up session reuse: the cache age drops from 30 s to 5 s, so a replay after Dispatcharr has ended the first session gets a new one instead of a 401. |
 | `f2d31f2` | not ported: seen on Kodi 22 only | The open item for Kodi 22 reading two finished recordings end to end at start; port it if Kodi 21 does the same. |
+| `b338e0d` | `be1c14e` (by hand: the same paragraph, placed after `Omega`'s port note in the `CLOSED_ITEMS.md` entry) | The Kodi 21 live check of the catch-up session cache age. |
 
 ## Dependencies that differ by Kodi release
 
