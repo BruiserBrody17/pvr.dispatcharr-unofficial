@@ -3786,7 +3786,7 @@ Three details keep the restart safe against another request for the same channel
   a first segment and playlist (read as a file, the stuck command cuts one at the end), which a poll could be served (and a worker could have cached) under the access token the new
   instance keeps, with different bytes behind the same segment names.
 - A stop that must end the channel's buffer whichever instance runs it (`stop_all` on disable, a stop with no
-  `viewer_id`) and that read the state just before the restart adopted its ffmpeg used to be declined as "replaced",
+  `viewer_id`, and from 0.8.19 a last viewer's stop that leaves nobody listed) and that read the state just before the restart adopted its ffmpeg used to be declined as "replaced",
   leaving the new ffmpeg running. The adopted state records `restarted_from`, and such a stop follows it once
   (`_teardown_following_a_restart()`).
 
@@ -3944,8 +3944,8 @@ for every buffer, not only for one started with the audio map.
 **Only Kodi 22 pays for the hold.** Kodi 21 cannot follow a change of video format in any mode (below), so the hold
 bought it nothing and cost it about 8 s of frozen picture on every switch, a same-format one included. The addon now
 sends the major version of the Kodi it runs in with `start_buffer` (`kodi_version`, read with `kodi::KodiVersion()`;
-addon 0.14.4 and 0.13.4). The plugin keeps it per viewer (`viewer_kodi_versions`, entries for viewers no longer listed
-dropped on each start) and holds a buffer only when one of its viewers is on Kodi 22 or later, or does not say
+addon 0.14.4 and 0.13.4). The plugin keeps it per viewer (`viewer_kodi_versions`; from 0.8.19 an entry goes with its viewer's stop
+rather than with another viewer's start, so a viewer the reaper pruned keeps its version for its re-adding poll) and holds a buffer only when one of its viewers is on Kodi 22 or later, or does not say
 (`_stream_switch_needs_hold()`): an older addon gets the hold as before, and so does a buffer with no listed viewers.
 A client reading without being listed (no `viewer_id`, or a viewer the reaper pruned that its next poll has not
 re-added yet) is not seen: beside a listed Kodi 21 viewer it goes without the hold (found by the review; rare, since a

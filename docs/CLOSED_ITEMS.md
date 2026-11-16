@@ -6,6 +6,45 @@
 
 ### Fixed
 
+#### `timeshift_buffer`: a last viewer's stop can lose to a stream-switch restart and leave ffmpeg running
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with a pytest against the plugin.** In `_stop_buffer()`'s per-viewer path, the last viewer's
+stop writes the empty viewer list and then calls `_teardown_buffer()`. If a stream-switch restart in another worker adopts
+its new ffmpeg (`_restart_ffmpeg_locked()`) between the two, the teardown is declined as "replaced", the stop answers
+"viewer removed; buffer still active for other viewers", and the new ffmpeg keeps its proxy connection with no viewers
+until the reaper's idle check ends it (`idle_timeout_seconds` plus up to one 15 s tick). `_teardown_following_a_restart()`
+was written for exactly this race but covers only a stop without `viewer_id` and stop-all. The window is one Redis round
+trip, but a user who sees the picture held during a switch is likely to press Stop just then. Repro: a test that injects
+the adoption inside `_teardown_buffer()` ends with no viewers, the new pid and `_stop_ffmpeg()` never called. Fix: when
+the teardown answers False, read the state again and, if it was restarted from the instance just stopped and has no
+viewers, tear it down once, as `_teardown_following_a_restart()` does.
+
+**Fixed 2026-11-16 in `timeshift_buffer` 0.8.19, as suggested.** The per-viewer path's teardown goes through
+`_teardown_following_a_restart()`, which now takes `abort_if` and applies it to both attempts, so it follows the
+restart once and still leaves a buffer that has a viewer again. The sweep's repro, with its assertions inverted, is the
+regression test (`docs/TEST_COVERAGE.md`'s `timeshift_buffer` section); a second test pins the "viewer again" case. Not
+run live: the window is one Redis round trip.
+
+#### `timeshift_buffer`: a viewer re-added after a prune loses its Kodi version
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** `_record_viewer_kodi_version()` drops the version of every viewer not currently
+listed whenever any viewer starts. A viewer the reaper pruned (its polls failed for longer than `idle_timeout_seconds`)
+loses its entry if another device starts the same channel meanwhile, and its next poll re-adds it through
+`_apply_heartbeat()` without one, because the addon sends `kodi_version` only with `start_buffer`. From then on
+`_stream_switch_needs_hold()` counts it as unknown, so a Kodi 21 viewer gets the stream-switch hold that addon 0.13.4 was
+meant to spare it. Fix: drop entries only on a stop and on the reaper's prune, or have the addon send `kodi_version` on
+its heartbeat and manifest polls and have `_apply_heartbeat()` record it.
+
+**Fixed 2026-11-16 in `timeshift_buffer` 0.8.19, the first way.** `_record_viewer_kodi_version()` no longer drops
+other viewers' entries, and `stop_buffer` drops the stopping viewer's (`_forget_viewer_kodi_version()`). The reaper's
+prune never touched the map, so a pruned viewer's entry is there when its next poll re-adds it. What stays behind is
+the entry of a viewer pruned that never returns, which goes with the buffer. The second way (the addon sending
+`kodi_version` on every poll) was not taken: it needs an addon change on both branches for the same result. Tests in
+`docs/TEST_COVERAGE.md`'s `timeshift_buffer` section, one of them the whole path through `Plugin.run` (prune, another
+start, the re-adding heartbeat, no hold). Not run live.
+
 #### A catch-up replay 9 to 30 s after the first Play reuses a session Dispatcharr has deleted
 
 **Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against

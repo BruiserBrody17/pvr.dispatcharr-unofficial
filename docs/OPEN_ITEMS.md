@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**14 open, 431 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**12 open, 433 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -16,9 +16,9 @@ confirmed. The open ones came from:
 - One follow-up to issue #1 from 2026-11-16: DVB subtitles and teletext in Server-side mode.
 - One observation from the 2026-11-16 live check of the catch-up session cache: Kodi 22 reading two finished
   recordings end to end at start.
-- Six from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, seventeen findings), all LOW. Its
+- Four from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, seventeen findings), all LOW. Its
   four documentation and four tooling findings, its one MEDIUM and its one design question were closed on 2026-11-15,
-  the catch-up session reuse on 2026-11-16.
+  the catch-up session reuse and the two `timeshift_buffer` findings on 2026-11-16.
 
 Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-23 sweep
 (five read-only reviews by area, 17 findings, the last fixed on 2026-11-04), from the 2026-10-24 sweep
@@ -30,14 +30,14 @@ sweep (eleven findings, all fixed: the release gate, the CI path filter and a `t
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 3 |
-| Open: Fix known, not yet done | 6 |
+| Open: Fix known, not yet done | 4 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 378 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 380 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -175,31 +175,6 @@ creates, but `PruneExpiredPendingTitles()` runs only in `ParseRecordingJson()`'s
 without a title. Since the guide-based create sends the programme's fields, Dispatcharr returns titled recordings, the
 prune never runs, and the list grows by one small entry per recording for the life of the process. Fix: prune before the
 append as well.
-
-#### `timeshift_buffer`: a last viewer's stop can lose to a stream-switch restart and leave ffmpeg running
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, reproduced with a pytest against the plugin.** In `_stop_buffer()`'s per-viewer path, the last viewer's
-stop writes the empty viewer list and then calls `_teardown_buffer()`. If a stream-switch restart in another worker adopts
-its new ffmpeg (`_restart_ffmpeg_locked()`) between the two, the teardown is declined as "replaced", the stop answers
-"viewer removed; buffer still active for other viewers", and the new ffmpeg keeps its proxy connection with no viewers
-until the reaper's idle check ends it (`idle_timeout_seconds` plus up to one 15 s tick). `_teardown_following_a_restart()`
-was written for exactly this race but covers only a stop without `viewer_id` and stop-all. The window is one Redis round
-trip, but a user who sees the picture held during a switch is likely to press Stop just then. Repro: a test that injects
-the adoption inside `_teardown_buffer()` ends with no viewers, the new pid and `_stop_ffmpeg()` never called. Fix: when
-the teardown answers False, read the state again and, if it was restarted from the instance just stopped and has no
-viewers, tear it down once, as `_teardown_following_a_restart()` does.
-
-#### `timeshift_buffer`: a viewer re-added after a prune loses its Kodi version
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading.** `_record_viewer_kodi_version()` drops the version of every viewer not currently
-listed whenever any viewer starts. A viewer the reaper pruned (its polls failed for longer than `idle_timeout_seconds`)
-loses its entry if another device starts the same channel meanwhile, and its next poll re-adds it through
-`_apply_heartbeat()` without one, because the addon sends `kodi_version` only with `start_buffer`. From then on
-`_stream_switch_needs_hold()` counts it as unknown, so a Kodi 21 viewer gets the stream-switch hold that addon 0.13.4 was
-meant to spare it. Fix: drop entries only on a stop and on the reaper's prune, or have the addon send `kodi_version` on
-its heartbeat and manifest polls and have `_apply_heartbeat()` record it.
 
 ### Architectural / concurrency
 

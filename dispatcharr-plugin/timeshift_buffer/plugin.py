@@ -2531,11 +2531,16 @@ def _resolve_kodi_version(params: dict):
 
 
 def _record_viewer_kodi_version(state: dict, viewer_id, kodi_version) -> dict:
-    """Records the Kodi version `viewer_id` started with (forgetting it when None), and drops the entries of viewers
-    no longer listed, so the map stays as small as `viewers`. Returns `state`, mutated in place."""
-    viewers = state.get("viewers", [])
+    """Records the Kodi version `viewer_id` started with (forgetting it when None). Returns `state`, mutated in place.
+
+    Other viewers' entries are kept even when they are not listed: one the reaper pruned (its polls failed for longer
+    than idle_timeout_seconds) is re-added by its next poll (_apply_heartbeat()), which carries no version, so dropping
+    its entry here, as this did until 0.8.19, turned a Kodi 21 viewer into an unknown one and gave it the stream-switch
+    hold (the 2026-11-14 sweep). An entry goes with its viewer's stop_buffer (_forget_viewer_kodi_version()) or with
+    the buffer; what is left between is a viewer pruned that never came back."""
     versions = state.get("viewer_kodi_versions")
-    kept = {v: k for v, k in versions.items() if v in viewers} if isinstance(versions, dict) else {}
+    kept = dict(versions) if isinstance(versions, dict) else {}
+    viewers = state.get("viewers", [])
     if viewer_id:
         kept.pop(viewer_id, None)
         if kodi_version is not None and viewer_id in viewers:
@@ -2544,6 +2549,16 @@ def _record_viewer_kodi_version(state: dict, viewer_id, kodi_version) -> dict:
         state["viewer_kodi_versions"] = kept
     else:
         state.pop("viewer_kodi_versions", None)
+    return state
+
+
+def _forget_viewer_kodi_version(state: dict, viewer_id) -> dict:
+    """Drops `viewer_id`'s entry from viewer_kodi_versions, for its stop_buffer. Returns `state`, mutated in place."""
+    versions = state.get("viewer_kodi_versions")
+    if isinstance(versions, dict):
+        versions.pop(viewer_id, None)
+        if not versions:
+            state.pop("viewer_kodi_versions", None)
     return state
 
 
@@ -2920,16 +2935,17 @@ def _sweep_stray_segments(state: dict, logger) -> None:
             (channel_dir / name).unlink()
 
 
-def _teardown_following_a_restart(state: dict, logger) -> bool:
+def _teardown_following_a_restart(state: dict, logger, abort_if=None) -> bool:
     """_teardown_buffer() for a stop that must end the channel's buffer whichever instance runs it (stop_all, a stop
-    with no viewer_id): one declined because a restart (without the audio map, or after a stream switch) adopted its
-    new ffmpeg after `state` was read is repeated once on the instance that restart made, and only that one."""
-    if _teardown_buffer(state, logger) is not False:
+    with no viewer_id, a last viewer's stop): one declined because a restart (without the audio map, or after a stream
+    switch) adopted its new ffmpeg after `state` was read is repeated once on the instance that restart made, and only
+    that one. `abort_if` is _teardown_buffer()'s, applied to both attempts."""
+    if _teardown_buffer(state, logger, abort_if=abort_if) is not False:
         return True
     fresh = _get_buffer_state(state["channel_uuid"])
     if not fresh or fresh.get("restarted_from") != {"pid": state.get("pid"), "started_at": state.get("started_at")}:
         return False
-    return _teardown_buffer(fresh, logger)
+    return _teardown_buffer(fresh, logger, abort_if=abort_if)
 
 
 def _stop_ffmpeg(state: dict, logger, first_signal=signal.SIGTERM):
@@ -5476,6 +5492,7 @@ class Plugin:
                 if viewer_id in current_viewers:
                     current_viewers.remove(viewer_id)
                     current.get("viewer_heartbeats", {}).pop(viewer_id, None)
+                _forget_viewer_kodi_version(current, viewer_id)
                 # Recorded even when the viewer was not listed (its start_buffer may have been the one refused while
                 # another start held the lock): either way a heartbeat it still has in flight must not add it back.
                 _record_stopped_viewer(current, viewer_id, _shared_now())
@@ -5507,7 +5524,10 @@ class Plugin:
             # under it (2026-10-23 bug sweep). Its reads now refresh its own
             # stamp when they carry its viewer_id (_touch_heartbeat(), 0.8.17),
             # so it stays listed; a client whose reads do not is still exposed.
-            if _teardown_buffer(state, logger, abort_if=lambda fresh: bool(fresh.get("viewers"))) is False:
+            # A stream-switch restart in another worker can adopt its new ffmpeg between the write above and this
+            # teardown; declined as "replaced", the new ffmpeg then kept its proxy connection with no viewers until
+            # the reaper's idle check (the 2026-11-14 sweep), so the teardown follows the restart.
+            if _teardown_following_a_restart(state, logger, abort_if=lambda fresh: bool(fresh.get("viewers"))) is False:
                 return {
                     "status": "ok",
                     "message": "viewer removed; buffer still active for other viewers",

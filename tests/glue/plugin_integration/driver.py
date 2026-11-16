@@ -331,6 +331,9 @@ def main():
             len(ffmpegs()),
             flush=True,
         )
+        if not ffmpegs():
+            problem("a stop for an unknown viewer tore down a buffer two real viewers still hold")
+        # A stop without a viewer_id is unconditional by design (an older addon, the plugin's own Stop button).
         s2 = w[1].call("stop_buffer", {"channel_uuid": ch})["res"]
         print(
             "stop without viewer_id:",
@@ -340,9 +343,15 @@ def main():
             len(ffmpegs()),
             flush=True,
         )
-        if not ffmpegs():
-            problem("a stop for an unknown/absent viewer tore down a buffer two real viewers still hold")
-        # concurrent stop of A and B from different workers, then a start racing them
+        if ffmpegs():
+            problem("a stop without a viewer_id left the buffer's ffmpeg running")
+        # Concurrent stops of A and B from different workers, then a start racing them: the per-viewer last-stop
+        # teardown. A and B start again first, since the stop above ended their buffer.
+        w[0].call("start_buffer", {"channel_uuid": ch, "viewer_id": "A"})
+        time.sleep(1)
+        w[1].call("start_buffer", {"channel_uuid": ch, "viewer_id": "B"})
+        if len(ffmpegs()) != 1:
+            problem("A and B starting again left %d ffmpegs, expected one" % len(ffmpegs()))
         res = {}
         ts = [
             threading.Thread(
@@ -372,8 +381,13 @@ def main():
             len(ffmpegs()),
             flush=True,
         )
+        stopped = [k for k, v in res.items() if v.get("message") == "Buffer stopped"]
+        if len(stopped) != 1:
+            problem("the concurrent stops of A and B answered %s; exactly one should stop the buffer" % res)
         time.sleep(2)
         print("ffmpegs now", len(ffmpegs()), w[1].call("list_buffers")["res"].get("message"), flush=True)
+        if r3.get("status") == "ok" and len(ffmpegs()) != 1:
+            problem("after C started, %d ffmpegs run, expected one" % len(ffmpegs()))
     elif SCEN == "many":
         # max_concurrent_buffers=3 across two workers, 6 channels started concurrently
         chans = ["%08d-0000-0000-0000-000000000000" % i for i in range(6)]
