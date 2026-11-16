@@ -6,6 +6,59 @@
 
 ### Fixed
 
+#### Two series rules can share one Kodi ClientIndex
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, reproduced with the real header.** `ComputeSeriesRuleClientIndex()` (`TimerIdentity.h`) is
+`std::hash` of (title, `tvg_id`, `epg_source_id`) cut to 30 bits, with nothing to detect two rules landing on the same
+value, and `FindSeriesRuleIndexByClientIndex()` returns the first match. With libstdc++ (fixed seed) the titles
+"Show 13765" and "Show 57079" with no `tvg_id` and no source collide on 64-bit, "Show 1864" and "Show 53313" with `-m32`
+(found after about 55,000 titles, the 30-bit birthday bound). Two colliding rules show in Kodi under one ClientIndex, and
+an edit or delete of the second (`UpdateTimer()`, `DeleteTimer()`) acts on the first. Unlikely by chance (about
+N^2 / 2^31 for N rules), but anyone who can create rules can pick such a pair. Fix: have the lookup answer -1 when more
+than one cached rule matches, so the edit or delete is refused rather than misapplied, with the pair above as a test; or
+probe to the next free index, in list order, when the rules are reported.
+
+**Fixed 2026-11-16 by refusing the ambiguous case.** `FindSeriesRuleIndexByClientIndex()` now answers
+`kAmbiguousSeriesRuleIndex` when rules with different identities share the index (the same identity listed twice is
+still one rule), and `UpdateTimer()` and `DeleteTimer()` refuse with a warning notification that sends the user to
+Dispatcharr, before any request. Probing to a free index was not taken: the assignment would depend on the list as
+loaded, and a reload between `GetTimers()` and the edit could hand the index to the other rule, the misapplied delete
+this closes. A unit test finds a colliding pair at runtime (the pair depends on the standard library and the pointer
+width) and fails on the old code. The glue harness's `functional` seeds the pair it finds (`seed_colliding_rules`): an
+edit and a delete of the second rule must be refused with no POST or DELETE sent and both rules left. On the old lookup
+it fails five ways, and the edit and delete together removed both rules from the server. The branch's review read
+Kodi 22's timer container (`PVRTimers.cpp`, matched by client and ClientIndex): Kodi keeps one timer for the pair, the
+rule listed later, so the other is not shown at all; the refusal still covers the one it shows.
+
+#### Pending recording titles are pruned only when an untitled recording arrives
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** `CreateOneTimeRecording()` appends to `m_pendingTitles` for every titled recording it
+creates, but `PruneExpiredPendingTitles()` runs only in `ParseRecordingJson()`'s branch for a recording that arrived
+without a title. Since the guide-based create sends the programme's fields, Dispatcharr returns titled recordings, the
+prune never runs, and the list grows by one small entry per recording for the life of the process. Fix: prune before the
+append as well.
+
+**Fixed 2026-11-16.** `AddPendingTitle()` (`PendingTitleLookup.h`) prunes before it appends, and the TTL is one
+constant there (`kPendingTitleTtl`, 3 minutes) for both call sites. A unit test adds a hundred expired entries and one
+new one and expects one left; it does not compile against the old code (the function is new), and the old append
+had no prune.
+
+#### Kodi's connection notice names the configured server, not the one in use
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading.** `GetConnectionString()` and `GetBackendHostname()` read the saved `host` and `port`
+settings, not the address the client is using, so while an instance is still on an older address (a restart not yet
+done, or the window in "A settings save delivered while the PVR instance is still being constructed is dropped") Kodi's
+connection-state notice and Event Log name a server the addon is not talking to, which points the user at the wrong
+cause. Fix: build both from `m_client.GetConnectionSettings()`, as the realtime thread does.
+
+**Fixed 2026-11-16.** Both now read the client's own connection settings (`DispatcharrClient::GetConnectionSettings()`),
+fixed at construction, as the realtime thread already did. The glue harness's `functional` scenario saves a different
+host and port after construction and checks both still name the server in use; on the old code it fails with the
+saved values.
+
 #### `timeshift_buffer`: a last viewer's stop can lose to a stream-switch restart and leave ffmpeg running
 
 **Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against

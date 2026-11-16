@@ -3,6 +3,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <string>
+#include <unordered_map>
+
 using namespace dispatcharr;
 
 TEST_CASE("ComputeSeriesRuleClientIndex is deterministic for the same input", "[TimerIdentity]")
@@ -401,14 +404,54 @@ TEST_CASE("FindSeriesRuleIndexByClientIndex is the exact reverse of ComputeSerie
   CHECK(rules[static_cast<std::size_t>(idx)].tvgId == "tvg.original");
 }
 
-TEST_CASE("FindSeriesRuleIndexByClientIndex returns the first match on a hash collision", "[TimerIdentity]")
+TEST_CASE("FindSeriesRuleIndexByClientIndex returns the first of one rule listed twice", "[TimerIdentity]")
 {
-  // Not a realistic scenario (two different rules hashing identically),
-  // but the function's own contract is "first match wins", matching
-  // std::find_if-style semantics.
-  std::vector<FakeRule> rules = {{"Show A", "tvg.a"}, {"Show A", "tvg.a"}};
+  // The same identity twice is one rule, not a collision; 0 and -1 are both "unpinned".
+  std::vector<FakeRule> rules = {{"Show A", "tvg.a", 0}, {"Show A", "tvg.a", -1}};
   unsigned int clientIndex = ComputeSeriesRuleClientIndex("Show A", "tvg.a", 0);
   CHECK(FindSeriesRuleIndexByClientIndex(rules, clientIndex) == 0);
+}
+
+namespace
+{
+// Two titles whose rules (no tvg_id, no source) hash to the same ClientIndex. Searched rather than hard-coded: the pair
+// depends on the standard library's std::hash and the pointer width ("Show 13765"/"Show 57079" with 64-bit libstdc++,
+// "Show 1864"/"Show 53313" with -m32), which the sweep that found this reached by about 55,000 titles.
+bool FindCollidingTitles(std::string& a, std::string& b)
+{
+  std::unordered_map<unsigned int, int> seen;
+  for (int i = 0; i < 400000; ++i)
+  {
+    const std::string title = "Show " + std::to_string(i);
+    auto inserted = seen.emplace(ComputeSeriesRuleClientIndex(title, "", 0), i);
+    if (!inserted.second)
+    {
+      a = "Show " + std::to_string(inserted.first->second);
+      b = title;
+      return true;
+    }
+  }
+  return false;
+}
+} // namespace
+
+TEST_CASE("FindSeriesRuleIndexByClientIndex reports two different rules sharing a ClientIndex as ambiguous",
+          "[TimerIdentity]")
+{
+  // The 2026-11-14 sweep: the first match won, so an edit or delete of the second rule acted on the first.
+  std::string a, b;
+  REQUIRE(FindCollidingTitles(a, b));
+  const unsigned int clientIndex = ComputeSeriesRuleClientIndex(a, "", 0);
+  REQUIRE(ComputeSeriesRuleClientIndex(b, "", 0) == clientIndex);
+  std::vector<FakeRule> rules = {{"Other Show", "tvg.o"}, {a, ""}, {b, ""}};
+  CHECK(FindSeriesRuleIndexByClientIndex(rules, clientIndex) == kAmbiguousSeriesRuleIndex);
+  // Either order, and the unrelated rule is still found.
+  std::vector<FakeRule> reversed = {{b, ""}, {a, ""}, {"Other Show", "tvg.o"}};
+  CHECK(FindSeriesRuleIndexByClientIndex(reversed, clientIndex) == kAmbiguousSeriesRuleIndex);
+  CHECK(FindSeriesRuleIndexByClientIndex(rules, ComputeSeriesRuleClientIndex("Other Show", "tvg.o", 0)) == 0);
+  // With only one of the pair listed, it is found.
+  std::vector<FakeRule> single = {{"Other Show", "tvg.o"}, {b, ""}};
+  CHECK(FindSeriesRuleIndexByClientIndex(single, clientIndex) == 1);
 }
 
 TEST_CASE("FindSeriesRuleIndexByClientIndex distinguishes two rules sharing title+tvgId but pinned to "

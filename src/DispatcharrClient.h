@@ -1899,7 +1899,8 @@ private:
   // dispatcharr::FindPendingTitleForRecording()'s own comment
   // (PendingTitleLookup.h) for the real corruption path that opened.
   // Entries expire after a few minutes regardless
-  // (pruned in GetRecordings()) since Dispatcharr's own enrichment should
+  // (dispatcharr::kPendingTitleTtl, pruned on every add and on every
+  // untitled recording parsed) since Dispatcharr's own enrichment should
   // have long since caught up by then, and to avoid an unbounded cache.
   struct PendingTitle
   {

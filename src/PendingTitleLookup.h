@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <utility>
 #include <vector>
 
 namespace dispatcharr
@@ -28,6 +29,20 @@ void PruneExpiredPendingTitles(std::vector<EntryT>& entries, std::chrono::steady
   entries.erase(
       std::remove_if(entries.begin(), entries.end(), [&](const EntryT& e) { return now - e.insertedAt > ttl; }),
       entries.end());
+}
+
+// How long an entry is kept: Dispatcharr's own enrichment has long since caught up by then.
+constexpr std::chrono::minutes kPendingTitleTtl{3};
+
+// Appends `entry`, pruning expired ones first. The prune used to run only when an untitled recording was parsed, which
+// a guide-based create (it sends the programme's fields, so Dispatcharr answers with a title) never produces, so the
+// list grew by one entry per recording for the life of the process (the 2026-11-14 sweep).
+template <typename EntryT>
+void AddPendingTitle(std::vector<EntryT>& entries, EntryT entry, std::chrono::steady_clock::time_point now,
+                     std::chrono::steady_clock::duration ttl)
+{
+  PruneExpiredPendingTitles(entries, now, ttl);
+  entries.push_back(std::move(entry));
 }
 
 // Finds the entry for `recordingId`, or nullptr if none match. Deliberately

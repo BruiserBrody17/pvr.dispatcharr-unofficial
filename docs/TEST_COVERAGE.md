@@ -545,6 +545,13 @@ guide (its full guide) was completely unaffected.
 
 2026-11-02: `ConnectionReportLatch::RequestResend()` (`tests/test_connection_report.cpp`): the delivered state is handed out once more on request (and only once), a lost connection is resent as lost, a request before anything was delivered sends nothing early and does not release a held `CONNECTED`, and a real change after a request is delivered as a change and uses the request up. The wiring (`ResendConnectionReport()` from `OnSystemWake()` and the recording-refresh tick) is the glue harness's `connection_resend` scenario: the stub drops every `ConnectionStateChange()` until the startup report has been attempted, as Kodi does while the client's calls are blocked, then a wake must bring `connected` to Kodi; on the code before the fix nothing arrived in 10 s. In CI. That Kodi drops the callback in that window, and ignores a state equal to the one it holds, was read in the Kodi 22 RC1 source (on Kodi 21 only `CPVRClient::Stop()` blocks the calls), not reproduced (`docs/CLOSED_ITEMS.md`, "A connection state Kodi ignores while its PVR manager is stopped...").
 
+
+2026-11-16: the connection string and backend hostname Kodi shows with these reports (`GetConnectionString()`,
+`GetBackendHostname()`) come from the client's own connection settings, not the saved ones (`docs/CLOSED_ITEMS.md`,
+"Kodi's connection notice names the configured server, not the one in use"). Not unit-tested (Kodi-facing); the glue
+harness's `functional` scenario saves a different host and port after construction and expects both to still name the
+server in use, and fails on the old code with the saved values.
+
 ### `CurlCallbacks` and `RedirectPolicy`
 
 `CurlCallbacks` also gained `BoundedStringSink`/`BoundedWriteCallback` and the three
@@ -970,6 +977,12 @@ rather than depending
 on the real, private `PendingTitle` type directly. The mutex guarding
 the real cache, and the vector mutation itself, stay in
 `ParseRecordingJson()` -- neither is available to a free function.
+
+2026-11-16: `AddPendingTitle()` prunes expired entries before it appends, and `kPendingTitleTtl` (3 minutes) is the one
+TTL both call sites use (`docs/CLOSED_ITEMS.md`, "Pending recording titles are pruned only when an untitled recording
+arrives"): a guide-based create gets a titled recording back, so the prune in `ParseRecordingJson()`'s untitled branch
+never ran and the list grew by one entry per recording. The tests add a hundred expired entries and one new one (one
+left) and keep entries still inside the TTL.
 
 ### `PluginRunResult`
 
@@ -2062,6 +2075,15 @@ title and `tvg_id` (confirmed live; `docs/CLOSED_ITEMS.md`, "Deleting a pinned s
 beside it"), the mirror of `HasPinnedSiblingSeriesRule()`. The tests pin both directions, two sources that leave each
 other alone, and a lone rule. The wiring is the glue harness's `functional`, which seeds the pair: on the code before
 the fix it fails five ways (the pinned delete accepted, its DELETE sent, both rules gone, and the same after a re-key).
+
+2026-11-16: `FindSeriesRuleIndexByClientIndex()` answers `kAmbiguousSeriesRuleIndex` when two rules with different
+identities share a ClientIndex (`docs/CLOSED_ITEMS.md`, "Two series rules can share one Kodi ClientIndex"); before, the
+first match won, so an edit or delete of the second acted on the first. The unit test searches "Show <n>" titles for a
+colliding pair at runtime (the pair depends on the standard library's `std::hash` and the pointer width), checks both
+orders and that an unrelated rule is still found, and fails on the old code; the old "first match on a collision" case
+became "one rule listed twice", which is still the first. The wiring is the glue harness's `functional`, which seeds
+the pair it finds into the fake (`seed_colliding_rules`): an edit and a delete of the second rule must be refused with
+no POST or DELETE sent, and both rules must remain.
 
 ### `TimerRequestBuilder`
 

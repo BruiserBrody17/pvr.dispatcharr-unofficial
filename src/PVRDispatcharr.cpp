@@ -2215,8 +2215,14 @@ PVR_ERROR PVRDispatcharr::GetBackendHostname(std::string& hostname)
 try
 {
   // The host as configured, without the scheme, port or IPv6 brackets GetConnectionString() adds. Only returned to
-  // Kodi's PVR information screen, never logged: a hostname can identify a deployment.
-  hostname = kodi::addon::GetSettingString("host", "127.0.0.1");
+  // Kodi's PVR information screen, never logged: a hostname can identify a deployment. The client's host, not the saved
+  // setting: until a host change's restart, the instance is still talking to the old one (the 2026-11-14 sweep).
+  std::string host;
+  int port = 0;
+  bool useHttps = false, verifySsl = true;
+  int timeoutSeconds = 0;
+  m_client.GetConnectionSettings(host, port, useHttps, verifySsl, timeoutSeconds);
+  hostname = host;
   return PVR_ERROR_NO_ERROR;
 }
 catch (...)
@@ -2229,9 +2235,14 @@ PVR_ERROR PVRDispatcharr::GetConnectionString(std::string& connection)
 try
 {
   // FormatHostForUrl() brackets an IPv6 literal, so "[::1]:9191" reads as
-  // host and port instead of "::1:9191".
-  connection = dispatcharr::FormatHostForUrl(kodi::addon::GetSettingString("host", "127.0.0.1")) + ":" +
-               std::to_string(kodi::addon::GetSettingInt("port", 9191));
+  // host and port instead of "::1:9191". The address in use, as GetBackendHostname() above: Kodi's connection-state
+  // notice and Event Log name it.
+  std::string host;
+  int port = 0;
+  bool useHttps = false, verifySsl = true;
+  int timeoutSeconds = 0;
+  m_client.GetConnectionSettings(host, port, useHttps, verifySsl, timeoutSeconds);
+  connection = dispatcharr::FormatHostForUrl(host) + ":" + std::to_string(port);
   return PVR_ERROR_NO_ERROR;
 }
 catch (...)
@@ -4714,6 +4725,21 @@ void PVRDispatcharr::LogUnencodableTimerIdOnce(std::atomic<bool>& logged, const 
             kind, id);
 }
 
+namespace
+{
+// UpdateTimer() and DeleteTimer() on a series rule whose ClientIndex two rules share (kAmbiguousSeriesRuleIndex).
+void LogAmbiguousSeriesRuleIndex(const char* action)
+{
+  kodi::Log(ADDON_LOG_WARNING,
+            "pvr.dispatcharr-unofficial: not %s a series rule: two rules share its timer index in Kodi, so which one "
+            "was meant is unknown",
+            action);
+  kodi::QueueNotification(QUEUE_WARNING, "",
+                          "Two series rules share one timer in Kodi, so this one was left unchanged. Edit or delete "
+                          "it in Dispatcharr instead.");
+}
+} // namespace
+
 PVR_ERROR PVRDispatcharr::GetTimersAmount(int& amount)
 try
 {
@@ -5409,9 +5435,11 @@ try
     bool foundOldRule = false;
     std::string oldTitle, oldTvgId;
     int oldEpgSourceId = 0;
+    bool ambiguous = false;
     {
       std::lock_guard<std::mutex> lock(m_dataMutex);
       int ruleIdx = dispatcharr::FindSeriesRuleIndexByClientIndex(m_cachedTimerRules, timer.GetClientIndex());
+      ambiguous = ruleIdx == dispatcharr::kAmbiguousSeriesRuleIndex;
       if (ruleIdx >= 0)
       {
         const TimerRule& old = m_cachedTimerRules[static_cast<std::size_t>(ruleIdx)];
@@ -5455,7 +5483,7 @@ try
         }
       }
     }
-    if (!foundInCache)
+    if (!foundInCache && !ambiguous)
       tvgId = channelFound ? m_client.ResolveSeriesRuleTvgId(epgDataId, channelTvgId) : "";
     // The pinned source is only meaningful for the tvg_id it was pinned with -- see
     // dispatcharr::ResolveSeriesRuleSourceOnEdit().
@@ -5486,9 +5514,18 @@ try
     // the replacement and then have to delete the original, and that delete removes every upcoming recording on the
     // channel (see IsSeriesRuleSafeToDeleteFromKodi()). An edit that keeps the identity is an in-place upsert and
     // goes through.
-    if (foundOldRule &&
-        dispatcharr::ShouldReplaceSeriesRuleOnEdit(oldTitle, oldTvgId, oldEpgSourceId, newTitle, tvgId, epgSourceId) &&
-        !dispatcharr::IsSeriesRuleSafeToDeleteFromKodi(oldTitle))
+    if (ambiguous)
+    {
+      // See kAmbiguousSeriesRuleIndex: which of the two rules sharing this ClientIndex Kodi means is unknown, and the
+      // channel-derived fallback would upsert a rule with its mode and description reset.
+      LogAmbiguousSeriesRuleIndex("editing");
+      ok = false;
+      error = "two series rules share this timer's index in Kodi";
+    }
+    else if (foundOldRule &&
+             dispatcharr::ShouldReplaceSeriesRuleOnEdit(oldTitle, oldTvgId, oldEpgSourceId, newTitle, tvgId,
+                                                        epgSourceId) &&
+             !dispatcharr::IsSeriesRuleSafeToDeleteFromKodi(oldTitle))
     {
       kodi::Log(ADDON_LOG_WARNING,
                 "pvr.dispatcharr-unofficial: not editing a series rule that has no title in a way that changes its "
@@ -6091,9 +6128,11 @@ try
     int epgSourceId = 0;
     bool foundInCache = false;
     bool siblingTaken = false;
+    bool ambiguous = false;
     {
       std::lock_guard<std::mutex> lock(m_dataMutex);
       int ruleIdx = dispatcharr::FindSeriesRuleIndexByClientIndex(m_cachedTimerRules, timer.GetClientIndex());
+      ambiguous = ruleIdx == dispatcharr::kAmbiguousSeriesRuleIndex;
       if (ruleIdx >= 0)
       {
         const TimerRule& cached = m_cachedTimerRules[static_cast<std::size_t>(ruleIdx)];
@@ -6104,7 +6143,13 @@ try
         siblingTaken = dispatcharr::SeriesRuleDeleteTakesSibling(m_cachedTimerRules, title, tvgId, epgSourceId);
       }
     }
-    if (!foundInCache)
+    if (ambiguous)
+    {
+      LogAmbiguousSeriesRuleIndex("deleting");
+      ok = false;
+      error = "two series rules share this timer's index in Kodi";
+    }
+    else if (!foundInCache)
     {
       // Not deleted by guessing: a rule that is not in the freshly loaded cache is either already
       // gone or the load failed, and the old fallback (re-deriving title and tvg_id from Kodi's
