@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**13 open, 422 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**14 open, 422 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -13,6 +13,7 @@ confirmed. The open ones came from:
   recurring rule on a spring-forward day.
 - One from the 2026-11-12 live checks on Kodi 21: timers made on the server showed about 75 s after the realtime event.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
+- One follow-up to issue #1 from 2026-11-16: DVB subtitles and teletext in Server-side mode.
 - Seven from the 2026-11-14 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (all LOW; the
   seventeenth, a `BRANCHES.md` note, is `Piers` only). Its three documentation findings that held here, its four
   tooling findings, its one MEDIUM and its one design question were closed on 2026-11-15.
@@ -27,7 +28,7 @@ recording's 20 s retry budget).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 2 |
+| Open: Needs a live check | 3 |
 | Open: Fix known, not yet done | 7 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
@@ -88,6 +89,36 @@ format setting; if it is added, the fork commit needs the tests updated (the sig
 taught about HLS (it takes the 302 as a final answer), the setting hidden in Server-side mode, and a decision on making
 `inputstream.ffmpegdirect` (an optional import) required in Off mode. If the log shows a dropped connection, ffmpeg's
 own HTTP reconnect options through `inputstream.ffmpegdirect` are worth comparing with HLS.
+
+#### `timeshift_buffer`: DVB subtitles and teletext never reach Kodi in Server-side mode
+
+**Opened 2026-11-16, a follow-up to issue #1 (every audio track, fixed in 0.8.18); a local ffmpeg experiment, nothing
+live yet.** The buffer's `hls` muxer hands any subtitle stream to a WebVTT muxer that refuses DVB subtitles and
+teletext, so 0.8.18 leaves subtitles out (`docs/TIMESHIFT.md`, "Every audio track, not just the first (0.8.18)").
+The `hls` muxer replaced the `segment` muxer in 0.8.0 because `segment` restarted every PID's continuity counter at
+each file, a "Packet corrupt" at every splice of the addon's byte stream; the docs recorded no flag that stops that.
+`segment` with `-individual_header_trailer 0` keeps one MPEG-TS muxer across its files. Measured with ffmpeg 6.1 on a
+generated source (video, two audio languages, plus a DVB subtitle or a teletext stream; the raw inputs of the plugin's
+own subtitle tests), mapping `0:v:0?`, every usable audio track and `0:s?`, 2 s segments:
+- `hls`: the start fails ("Exactly one WebVTT stream is needed").
+- `segment`, default: the subtitle stream is in every segment, but the ten files concatenated show 43 continuity
+  breaks and ffmpeg reports 3 corrupt packets.
+- `segment` with `-individual_header_trailer 0`: the subtitle stream is in every segment, no continuity break, no
+  corrupt packet. Each segment still starts with SDT, PAT and PMT and opens on its own.
+
+The addon passes Kodi whatever streams arrive, so only the plugin would change. What `segment` lacks and the plugin
+would have to take over from `hls`: deleting segments (it never deletes; `-segment_wrap` recycles names, which 0.8.0
+moved away from), and continuing the playlist after a stream-switch restart (`append_list`): a restarted `segment`
+writes a fresh list whose `#EXT-X-MEDIA-SEQUENCE` starts at 0 even with `-segment_start_number`, so the sequence would
+come from the file name and the plugin would keep the older entries itself. Also to settle: which subtitle streams
+can be mapped without failing a start (a text subtitle from an HLS source was not tried).
+
+**Next, live, before building anything:** find a real channel carrying DVB subtitles or teletext (probe through
+Dispatcharr's proxy, as for the audio check) and see whether Kodi 21 and 22 show them in Off mode, which proves Kodi
+and the proxy's side; rerun the muxer comparison with the container's ffmpeg 8.1.2 through a probe plugin. Then the
+muxer change on a branch, with the plugin owning deletion and the restart's playlist, tests, the behaviour review,
+and a live check like 0.8.18's (generated and real channels, Kodi 21 and 22, subtitles on through pause, rewind and a
+stream switch).
 
 ### Fix known, not yet done
 
