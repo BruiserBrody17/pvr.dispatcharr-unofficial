@@ -700,7 +700,23 @@ jobs:
           )
           foreach ($a in $archives) {
             $local = "$downloads/$($a.file)"
-            Invoke-WebRequest -Uri "https://mirrors.kodi.tv/build-deps/win32/$($a.file)" -OutFile $local
+            $url = "https://mirrors.kodi.tv/build-deps/win32/$($a.file)"
+            # mirrors.kodi.tv redirects each request to a mirror picked at random, and
+            # not every mirror's certificate chains to a root Windows trusts
+            # out of the box (2026-11-16: one such mirror failed most Windows
+            # builds). Each attempt gets a new pick; the SHA256 check below
+            # still guards the file, whichever mirror served it.
+            for ($try = 1; ; $try++) {
+              try {
+                Invoke-WebRequest -Uri $url -OutFile $local
+                break
+              }
+              catch {
+                if ($try -ge 5) { throw }
+                Write-Host "Download of $($a.file) failed (attempt $try of 5), retrying: $($_.Exception.Message)"
+                Start-Sleep -Seconds 3
+              }
+            }
             $actual = (Get-FileHash -Algorithm SHA256 -Path $local).Hash.ToLowerInvariant()
             if ($actual -ne $a.sha256) {
               throw "SHA256 mismatch for $($a.file): expected $($a.sha256), got $actual"
