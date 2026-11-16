@@ -3300,6 +3300,20 @@ switch settles and the settled poll restarts it as usual (the restart's own SIGS
 check), and a Kodi 22 viewer beside a Kodi 21 one still gets the hold. On the addon side, the glue scenario
 `live_stop_token` checks `start_buffer` carries the version the stub Kodi reports (`kodi_stub.cpp`, `pvr_stub.cpp`).
 
+0.8.19 (`docs/TIMESHIFT.md`'s "A disable or delete reaches every worker"), against `_FakeReaperRedisClient`: a reaper
+that finds a stop token its worker has not adopted (none adopted, or an older one) stops this module's file server and
+returns without taking leadership, reaping, scrubbing or waiting out another tick, whether or not another worker
+leads, and one that finds no token or the adopted one reaps and scrubs as before; `stop()` writes a new token before
+its teardown and another at its end for `disable`, `delete`, `shutdown` and no reason, none for `reload`, and still
+tears down, scrubs and stops the listener when the writes fail; `run()` adopts the token before ensuring either
+thread, and keeps the one it had when Redis cannot be read. From the branch's two review rounds: an action that runs
+during the teardown (in the stopping worker, so the real `_ensure_reaper_running()` starts a reaper there) adopts the
+first token, and the token `stop()` leaves is one it never adopted; it fails on both earlier versions of the branch. A
+reaper whose server-lock re-check finds the token adopted meanwhile keeps the listener and finishes its tick; it fails
+on the second version. Six of the nine test behaviour 0.8.18 lacked; the no-new-token, reload and failed-read cases pin
+behaviour it already had. That every other worker's listener and reaper go away after a disable or delete was checked
+live across several workers (`docs/CLOSED_ITEMS.md`'s entry), not here.
+
 ## Tools
 
 ### `tools/tests/`

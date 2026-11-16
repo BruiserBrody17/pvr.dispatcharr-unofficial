@@ -6,6 +6,59 @@
 
 ### Fixed
 
+#### `timeshift_buffer` keeps running in Dispatcharr's other workers after it is disabled or deleted
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading Dispatcharr's v0.33.0 source.** Disabling or deleting a plugin calls its `stop()` only in
+the worker that served the request (`apps/plugins/api_views.py`); the loader tells no other worker. The plugin's other
+workers clean up old threads only in `_stop_orphaned_threads()`, on the first `run()` of a fresh import, and a disabled or
+deleted plugin is never run. So until Dispatcharr restarts, every other worker keeps its file-server listener on the
+segment port (answering 403 and 404, and keeping the port from anything else) and its reaper thread, which goes on
+electing a leader and scrubbing the old `storage_path` every 15 s. The README says to restart Dispatcharr after an
+update, not after disabling or deleting. Options: document the restart for both (cheapest), or have each reaper tick
+check a Redis marker that `stop()` sets for a disable or delete and shut that worker's threads down. Same class as the
+per-worker deploys recorded in `TIMESHIFT.md`.
+
+**Fixed 2026-11-15 in `timeshift_buffer` 0.8.19, with a Redis marker (the user's choice of the two options), in the
+form of a stop token.** `stop()` writes a fresh random token to `timeshift_buffer:stop_token` (24 h TTL) for every reason
+but `reload`, before its teardown and again at its end. Every `run()` adopts the token it reads, and every reaper reads
+the key at the top of each tick, before the leader election, and stops its own module's file server and itself when
+the key holds a token its worker has not adopted, re-checking under the server lock so an action that just adopted
+keeps its listener. The branch's independent review refuted two earlier versions. The disable commits only after
+`stop()` returns, so actions keep reaching `run()` in every worker for the whole teardown, and the stopping worker's
+reaper has already ended. A deleted marker was cleared by such an action in the stopping worker, which undid the stop
+everywhere. A single token written first was adopted by such actions in any worker, which kept those workers running.
+Left open on purpose: an action between `stop()`'s last write and the commit keeps its worker running; a worker with no
+action between a quick disable and re-enable is without a listener until its next action; and workers still on 0.8.18
+do not read the key, so the first deploy still needs a restart (`docs/TIMESHIFT.md`, "A disable or delete reaches every
+worker"). Unit tests in `docs/TEST_COVERAGE.md`.
+
+**Confirmed live 2026-11-16** on a real Dispatcharr 0.33.0 with several workers, the branch's plugin in every one, with a
+throwaway probe plugin reading each worker's listening sockets, threads and adopted token. The method is in
+`TIMESHIFT.md`.
+- **Disable with nothing playing:** the serving worker wrote both tokens and stopped. The other workers' reapers stopped
+  on their next tick, and no listener was left 11 s after the request.
+- **Disable while a real buffer was being polled, four rounds:** no listener or `timeshift*` thread was left in any
+  worker 8 to 19 s after the request, at most 14.7 s after the second write. Every round had workers that adopted the
+  first token during the teardown, so without the second write they would have kept running. The buffer's ffmpeg was
+  gone each time.
+- **Delete, same load:** no listener after 13 s and no thread after 17 s, the same race again.
+- **Re-enable:** the token persisted (24 h TTL). The first action in each worker adopted it and restarted the listener
+  and reaper, which then survived further ticks. The leader key had expired while the plugin was disabled.
+- **Quick toggle** (re-enabled 2.5 s after the disable returned, twice): one or two workers stopped before the
+  re-enable and came back on their next action, within 5 s. No segment fetch was refused, since the other workers
+  still listened.
+- **Reload ×24 across the workers on a warm buffer:** the token was unchanged and the buffer survived, with all 173
+  manifest calls answered. Five segment fetches were reset when each worker's listener closed for the reload, which
+  0.8.18's `stop()` already did.
+- **Both token writes failing** (injected in the Redis client for this module's calls only): the token was unchanged and
+  the buffer was torn down. Every worker's listener survived, the stopping worker's included, restarted by actions
+  during the teardown. This is the documented Redis gap, now worded in `TIMESHIFT.md` to include the stopping worker.
+
+Afterwards the lab went back to 0.8.18 with its saved settings and the probe was deleted (its run then answered 404).
+One quick-toggle attempt hung in the test script's own `start_buffer` retry loop, with no output kept, and did not
+happen again from the same state.
+
 #### A short-bounded call waits out another thread's full-timeout login or token refresh
 
 **Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
