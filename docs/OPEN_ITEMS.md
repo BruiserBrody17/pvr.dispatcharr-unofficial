@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**14 open, 422 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**13 open, 423 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -14,9 +14,10 @@ confirmed. The open ones came from:
 - One from the 2026-11-12 live checks on Kodi 21: timers made on the server showed about 75 s after the realtime event.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
 - One follow-up to issue #1 from 2026-11-16: DVB subtitles and teletext in Server-side mode.
-- Seven from the 2026-11-14 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (all LOW; the
+- Six from the 2026-11-14 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (all LOW; the
   seventeenth, a `BRANCHES.md` note, is `Piers` only). Its three documentation findings that held here, its four
-  tooling findings, its one MEDIUM and its one design question were closed on 2026-11-15.
+  tooling findings, its one MEDIUM and its one design question were closed on 2026-11-15, the catch-up session reuse on
+  2026-11-16.
 
 Nothing is left from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (nine of its
 eleven findings held here, the other two being `Piers` only; all fixed by 2026-11-12), nor from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
@@ -29,14 +30,14 @@ recording's 20 s retry budget).
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 3 |
-| Open: Fix known, not yet done | 7 |
+| Open: Fix known, not yet done | 6 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 0 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 369 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 370 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -121,19 +122,6 @@ and a live check like 0.8.18's (generated and real channels, Kodi 21 and 22, sub
 stream switch).
 
 ### Fix known, not yet done
-
-#### A catch-up replay 9 to 30 s after the first Play reuses a session Dispatcharr has deleted
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading Dispatcharr's v0.33.0 source.** `CreateCatchupSession()` reuses a cached session for
-`kMaxCatchupSessionCacheAge` (30 s), sized against the server's 60 s handshake expiry only. Dispatcharr also deletes a
-catch-up session once viewing has genuinely ended: a connection that ran at least 2 s and 64 KiB is followed, 1.5 s
-after it closes plus a 5 s grace, by `_finalize_playback_session_auth()` (`apps/timeshift/views.py`), after which the
-session's URL answers 401 "Invalid or expired playback session". So playing an aired programme for a few seconds,
-stopping, and playing it again between about 9 s and 30 s after the first Play hands Kodi the deleted session's URL, and
-every retry in that window does the same. The cache only exists for Kodi's two calls per Play, about 12 ms apart
-(`CatchupSessionCache.h`). Fix: an age of about 5 s, or reuse each entry once; note the server's lifecycle in that
-header. Not run live.
 
 #### A settings save delivered while the PVR instance is still being constructed is dropped
 

@@ -70,3 +70,27 @@ TEST_CASE("ShouldReuseCachedCatchupSession is false when both channel ids are em
   const auto now = std::chrono::steady_clock::now();
   CHECK_FALSE(ShouldReuseCachedCatchupSession("", 1000, 30, now, "", 1000, 30, now, kMaxAge));
 }
+
+TEST_CASE("A session cached 12 ms earlier is reused (Kodi 21's second call for the same Play)", "[CatchupSessionCache]")
+{
+  const auto cachedAt = std::chrono::steady_clock::now();
+  CHECK(ShouldReuseCachedCatchupSession("uuid-a", 1000, 30, cachedAt, "uuid-a", 1000, 30,
+                                        cachedAt + std::chrono::milliseconds(12), kCatchupSessionCacheMaxAge));
+}
+
+TEST_CASE("A replay of the same programme 6.5 s after the POST gets a new session", "[CatchupSessionCache]")
+{
+  // Dispatcharr can delete a session 6.5 s after its stream closes (kCatchupSessionCacheMaxAge's comment), and the
+  // stream closes after the POST at the earliest; the old 30 s age handed the deleted URL to a replay in that window.
+  const auto cachedAt = std::chrono::steady_clock::now();
+  CHECK_FALSE(ShouldReuseCachedCatchupSession("uuid-a", 1000, 30, cachedAt, "uuid-a", 1000, 30,
+                                              cachedAt + std::chrono::milliseconds(6500), kCatchupSessionCacheMaxAge));
+}
+
+TEST_CASE("kCatchupSessionCacheMaxAge stays under Dispatcharr's earliest session deletion", "[CatchupSessionCache]")
+{
+  // _STATS_RECONNECT_SETTLE_SECONDS + _STATS_DISCONNECT_GRACE_SECONDS in Dispatcharr v0.33.0, counted from the
+  // stream's close, which is always after the POST that cached the session.
+  constexpr auto kEarliestDeletion = std::chrono::milliseconds(1500) + std::chrono::seconds(5);
+  STATIC_CHECK(kCatchupSessionCacheMaxAge < kEarliestDeletion);
+}

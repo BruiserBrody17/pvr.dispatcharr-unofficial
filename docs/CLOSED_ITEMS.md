@@ -6,6 +6,50 @@
 
 ### Fixed
 
+#### A catch-up replay 9 to 30 s after the first Play reuses a session Dispatcharr has deleted
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading Dispatcharr's v0.33.0 source.** `CreateCatchupSession()` reuses a cached session for
+`kMaxCatchupSessionCacheAge` (30 s), sized against the server's 60 s handshake expiry only. Dispatcharr also deletes a
+catch-up session once viewing has genuinely ended: a connection that ran at least 2 s and 64 KiB is followed, 1.5 s
+after it closes plus a 5 s grace, by `_finalize_playback_session_auth()` (`apps/timeshift/views.py`), after which the
+session's URL answers 401 "Invalid or expired playback session". So playing an aired programme for a few seconds,
+stopping, and playing it again between about 9 s and 30 s after the first Play hands Kodi the deleted session's URL, and
+every retry in that window does the same. The cache only exists for Kodi's two calls per Play, about 12 ms apart
+(`CatchupSessionCache.h`). Fix: an age of about 5 s, or reuse each entry once; note the server's lifecycle in that
+header. Not run live.
+
+**Fixed 2026-11-16 by shortening the age.** Reading the same source again moved the earliest deletion earlier than
+the entry says: a connection counts as viewing (not a startup probe) when it yielded 64 KiB *or* ran 2 s
+(`_is_timeshift_startup_probe()`, `apps/timeshift/views.py`), so the deadline can fall 6.5 s after the stream closes.
+A stream closes after the POST that cached its session, so the cache age is now 5 s (`kCatchupSessionCacheMaxAge`,
+`CatchupSessionCache.h`, with the server's timings in its comment, and a compile-time test that it stays under them).
+The other suggestion, reusing each entry once, was built and then dropped after the branch's review: the age alone
+keeps every reuse safe, and a replay given a new session leaves the old one's client registered until its grace ends,
+which counts against a per-user stream limit (`check_user_stream_limits()`, `apps/proxy/utils.py`; with the default
+`terminate_on_limit_exceeded` Dispatcharr ends the old client, without it the replay is refused). The review also found
+that Kodi 22 asks only once per Play (`PlayEpgTag()` no longer calls `GetEpgTagStreamProperties()` in 22.0 RC1; the
+call is `CPVRPlaybackState::ResolveEPG()`), so on `Piers` the cache only serves a replay of the same programme within
+5 s; Kodi 21 still asks twice, about 12 ms apart. Unit tests in `docs/TEST_COVERAGE.md`'s `CatchupSessionCache`
+section; the 6.5 s replay and the age check fail on the old code. The glue harness passed.
+
+**Confirmed live 2026-11-16** on Kodi 22.0-RC1 (Linux) against a real Dispatcharr 0.33.0, through a logging forwarder
+between the addon and the server, playing one aired programme on a catch-up channel over JSON-RPC (`Player.Open` by
+`broadcastid`, Stop after about 8 s, then `Player.Open` again):
+- **Baseline (the `Piers` tip's CI build):** each first Play logged one cache miss and one POST, never a second call,
+  which is Kodi 22's single call per Play. A replay 12 s after the first Play logged a cache hit and played, since the
+  first stream had closed only 5 s earlier. A replay at 20 s logged a cache hit, both of Kodi's requests for the reused
+  URL got 401 `{"error": "Invalid or expired playback session"}`, and playback never started: the reported bug.
+- **This change (the PR's CI build), same steps:** the replay at 20 s logged a cache miss, POSTed a new session and
+  played; a replay 8 s after the first POST did the same. No 401 in any run.
+
+A replay inside 5 s of the POST could not be produced on Kodi 22: a catch-up stream took about 7 s to start, and a Stop
+before that made Kodi treat the next `Player.Open` of the same programme as already playing (`IsPlayingEpgTag()`), so
+the addon was not asked. The reuse path itself is the baseline's 12 s replay above.
+
+**Ported to `Omega` 2026-11-16** (cherry-pick of the `Piers` fix). On Kodi 21 the cache still absorbs the second call of
+every Play (about 12 ms apart, confirmed live on 2026-09-29), and a replay after 5 s gets a session of its own.
+
 #### `timeshift_buffer` keeps running in Dispatcharr's other workers after it is disabled or deleted
 
 **Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
