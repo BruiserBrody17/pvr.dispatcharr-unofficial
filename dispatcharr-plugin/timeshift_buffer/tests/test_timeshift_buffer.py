@@ -3357,7 +3357,8 @@ def test_run_start_buffer_records_the_viewers_kodi_version(monkeypatch, tmp_path
     assert saved["viewer_kodi_versions"] == {"v1": 21}
 
 
-def test_run_start_buffer_reattach_records_the_kodi_version_and_forgets_departed_viewers(monkeypatch, tmp_path):
+def test_run_start_buffer_reattach_records_the_kodi_version_and_keeps_an_unlisted_viewers(monkeypatch, tmp_path):
+    # "gone" is not listed: a viewer the reaper pruned, whose next poll re-adds it without a version (0.8.19).
     store = _shared_state(
         monkeypatch,
         {
@@ -3376,7 +3377,7 @@ def test_run_start_buffer_reattach_records_the_kodi_version_and_forgets_departed
     result, _logger = _run(monkeypatch, "start_buffer", params, {}, tmp_path)
 
     assert result["already_running"] is True
-    assert store["s"]["viewer_kodi_versions"] == {"v2": 21, "v1": 22}
+    assert store["s"]["viewer_kodi_versions"] == {"v2": 21, "gone": 22, "v1": 22}
 
 
 def test_run_start_buffer_releases_the_lock_even_when_the_locked_call_errors(monkeypatch, tmp_path):
@@ -4818,6 +4819,98 @@ def _stored(client, uuid=_UUID):
 
 def _seed(client, state, uuid=_UUID):
     client.store[timeshift_buffer_plugin._buffer_key(uuid)] = json.dumps(state)
+
+
+def test_last_viewer_stop_follows_a_restart_adopted_mid_teardown(state_redis, monkeypatch):
+    """The 2026-11-14 sweep: a stream-switch restart in another worker adopting its new ffmpeg between the last
+    viewer's stop and its teardown made the teardown decline as "replaced", and the new ffmpeg ran on with no viewers
+    until the reaper's idle check."""
+    _seed(
+        state_redis,
+        {
+            "channel_uuid": _UUID,
+            "pid": 111,
+            "started_at": 1000.0,
+            "last_heartbeat": 1000.0,
+            "storage_path": "/nonexistent",
+            "http_port": 9192,
+            "playlist_route": f"/{_UUID}/live.m3u8",
+            "access_token": "tok",
+            "viewers": ["A"],
+            "viewer_heartbeats": {"A": 1000.0},
+        },
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1001.0)
+    stopped = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_stop_ffmpeg", lambda state, logger, first_signal=None: stopped.append(state["pid"])
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_remove_channel_files", lambda state, logger: None)
+    real_teardown = timeshift_buffer_plugin._teardown_buffer
+    adopted = []
+
+    def teardown_after_adoption(state, logger, **kw):
+        if not adopted:  # the restart's adopt() (_restart_ffmpeg_locked()) lands once, just before the first teardown
+            fresh = _stored(state_redis)
+            fresh["restarted_from"] = {"pid": fresh["pid"], "started_at": fresh["started_at"]}
+            fresh["pid"], fresh["started_at"] = 222, 1000.5
+            _seed(state_redis, fresh)
+            adopted.append(True)
+        return real_teardown(state, logger, **kw)
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", teardown_after_adoption)
+
+    result = timeshift_buffer_plugin.Plugin()._stop_buffer(
+        {"channel_uuid": _UUID, "viewer_id": "A", "access_token": "tok"}, {}, _FakeLogger()
+    )
+
+    assert result["message"] == "Buffer stopped"
+    assert stopped == [222]
+    assert timeshift_buffer_plugin._buffer_key(_UUID) not in state_redis.store
+
+
+def test_last_viewer_stop_does_not_follow_a_restart_that_has_a_viewer_again(state_redis, monkeypatch):
+    _seed(
+        state_redis,
+        {
+            "channel_uuid": _UUID,
+            "pid": 111,
+            "started_at": 1000.0,
+            "last_heartbeat": 1000.0,
+            "storage_path": "/nonexistent",
+            "access_token": "tok",
+            "viewers": ["A"],
+            "viewer_heartbeats": {"A": 1000.0},
+        },
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1001.0)
+    stopped = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_stop_ffmpeg", lambda state, logger, first_signal=None: stopped.append(state["pid"])
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_remove_channel_files", lambda state, logger: None)
+    real_teardown = timeshift_buffer_plugin._teardown_buffer
+    adopted = []
+
+    def teardown_after_adoption_and_a_new_viewer(state, logger, **kw):
+        if not adopted:
+            fresh = _stored(state_redis)
+            fresh["restarted_from"] = {"pid": fresh["pid"], "started_at": fresh["started_at"]}
+            fresh["pid"], fresh["started_at"] = 222, 1000.5
+            fresh["viewers"] = ["B"]
+            _seed(state_redis, fresh)
+            adopted.append(True)
+        return real_teardown(state, logger, **kw)
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_teardown_buffer", teardown_after_adoption_and_a_new_viewer)
+
+    result = timeshift_buffer_plugin.Plugin()._stop_buffer(
+        {"channel_uuid": _UUID, "viewer_id": "A", "access_token": "tok"}, {}, _FakeLogger()
+    )
+
+    assert result["message"] == "viewer removed; buffer still active for other viewers"
+    assert stopped == []
+    assert _stored(state_redis)["pid"] == 222
 
 
 def test_update_buffer_state_writes_the_mutated_state(state_redis):
@@ -9515,17 +9608,67 @@ def test_resolve_kodi_version(value, expected):
     assert timeshift_buffer_plugin._resolve_kodi_version(params) == expected
 
 
-def test_record_viewer_kodi_version_keeps_only_listed_viewers():
-    state = {"viewers": ["a", "b"], "viewer_kodi_versions": {"a": 21, "old": 22, "b": 22}}
+def test_record_viewer_kodi_version_keeps_other_viewers_entries():
+    # "pruned" is not listed: the reaper dropped it, and its next poll re-adds it without a version.
+    state = {"viewers": ["a", "b"], "viewer_kodi_versions": {"a": 21, "pruned": 21, "b": 22}}
 
     timeshift_buffer_plugin._record_viewer_kodi_version(state, "b", None)  # restarted with an addon that sends none
-    assert state["viewer_kodi_versions"] == {"a": 21}
+    assert state["viewer_kodi_versions"] == {"a": 21, "pruned": 21}
 
-    timeshift_buffer_plugin._record_viewer_kodi_version(state, "a", None)
-    assert "viewer_kodi_versions" not in state
+    timeshift_buffer_plugin._record_viewer_kodi_version(state, "c", 22)  # not listed: nothing recorded for it
+    assert state["viewer_kodi_versions"] == {"a": 21, "pruned": 21}
 
     timeshift_buffer_plugin._record_viewer_kodi_version(state, None, 21)  # no viewer_id: nothing to record
+    assert state["viewer_kodi_versions"] == {"a": 21, "pruned": 21}
+
+    timeshift_buffer_plugin._forget_viewer_kodi_version(state, "a")
+    timeshift_buffer_plugin._forget_viewer_kodi_version(state, "pruned")
     assert "viewer_kodi_versions" not in state
+
+
+def test_a_pruned_kodi_21_viewer_re_added_after_another_start_keeps_its_version(monkeypatch, tmp_path):
+    """The 2026-11-14 sweep: another device's start dropped the pruned viewer's entry, its next poll re-added it
+    without one, and from then on a stream switch held the picture for a Kodi 21 viewer."""
+    store = _shared_state(
+        monkeypatch,
+        {
+            "channel_uuid": _UUID,
+            "pid": 12345,
+            "http_port": 9192,
+            "playlist_route": f"/{_UUID}/live.m3u8",
+            "access_token": "tok123",
+            "viewers": [],  # v1 pruned by the reaper
+            "viewer_heartbeats": {},
+            "viewer_kodi_versions": {"v1": 21},
+        },
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, *_a: True)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1000.0)
+
+    _run(monkeypatch, "start_buffer", {"channel_uuid": _UUID, "viewer_id": "v2", "kodi_version": 21}, {}, tmp_path)
+    _run(monkeypatch, "heartbeat", {"channel_uuid": _UUID, "viewer_id": "v1", "access_token": "tok123"}, {}, tmp_path)
+
+    assert sorted(store["s"]["viewers"]) == ["v1", "v2"]
+    assert store["s"]["viewer_kodi_versions"] == {"v1": 21, "v2": 21}
+    assert timeshift_buffer_plugin._stream_switch_needs_hold(store["s"]) is False
+
+
+def test_run_stop_buffer_forgets_the_viewers_kodi_version(monkeypatch, tmp_path):
+    store = _shared_state(
+        monkeypatch,
+        {
+            "channel_uuid": _UUID,
+            "viewers": ["v1", "v2"],
+            "viewer_heartbeats": {"v1": 1, "v2": 1},
+            "viewer_kodi_versions": {"v1": 21, "v2": 22},
+        },
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1000.0)
+
+    _run(monkeypatch, "stop_buffer", {"channel_uuid": _UUID, "viewer_id": "v1"}, {}, tmp_path)
+
+    assert store["s"]["viewers"] == ["v2"]
+    assert store["s"]["viewer_kodi_versions"] == {"v2": 22}
 
 
 @pytest.mark.parametrize(

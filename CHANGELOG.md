@@ -30,6 +30,10 @@ Dispatcharr restart for every worker to pick it up.
 - **Disabling or deleting the plugin now stops it in every Dispatcharr worker** within about 20 s. Before, only one
   worker stopped, and the others kept the plugin's file-server port open and its background cleanup running until
   Dispatcharr restarted.
+- **Stopping the last viewer during a stream switch** now stops the buffer. If the switch restarted ffmpeg at that
+  moment, the new ffmpeg kept running, with its provider connection, until the idle timeout ended it.
+- **A Kodi 21 viewer whose connection dropped for a while** no longer gets the picture held on stream switches
+  meant only for Kodi 22, after another device opened the same channel in the meantime.
 
 ## [0.13.4] - 2026-11-14
 

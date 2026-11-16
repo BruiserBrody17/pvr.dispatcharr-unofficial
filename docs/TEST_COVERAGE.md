@@ -3300,7 +3300,8 @@ and the proxy's behaviour behind each guard, were checked live, not here.
 
 2026-11-13 (still 0.8.18, `docs/TIMESHIFT.md`'s "Only Kodi 22 pays for the hold"): `_resolve_kodi_version()` takes
 a plain int from 1 to 999 and nothing else (no string, bool, float or 0); `_record_viewer_kodi_version()` records a
-viewer's version, forgets it when a later start sends none, and drops entries for viewers no longer listed;
+viewer's version, forgets it when a later start sends none, and drops entries for viewers no longer listed (kept
+from 0.8.19, below);
 `_stream_switch_needs_hold()` is false only when every listed viewer is known to be on Kodi 21, and true for one on 22
 or later, for a viewer whose addon did not say and for a buffer with no viewers. `start_buffer` records the version on
 a fresh start and on a reattach. Through the switch rig: a buffer watched only from Kodi 21 is not held while the
@@ -3321,6 +3322,14 @@ reaper whose server-lock re-check finds the token adopted meanwhile keeps the li
 on the second version. Six of the nine test behaviour 0.8.18 lacked; the no-new-token, reload and failed-read cases pin
 behaviour it already had. That every other worker's listener and reaper go away after a disable or delete was checked
 live across several workers (`docs/CLOSED_ITEMS.md`'s entry), not here.
+
+Also 0.8.19, two LOW findings from the 2026-11-14 sweep (`docs/CLOSED_ITEMS.md`): against `_FakeStateRedis`, a last
+viewer's stop whose teardown a stream-switch restart's adoption lands just before follows the restart and stops the new
+ffmpeg (it answered "still active for other viewers" and stopped nothing), and one whose adopted state has a viewer
+again leaves it running. `_record_viewer_kodi_version()` now keeps other viewers' entries, listed or not, and
+`stop_buffer` forgets the stopping viewer's (`_forget_viewer_kodi_version()`); through `Plugin.run`, a Kodi 21 viewer the
+reaper pruned keeps its version across another device's start and its own re-adding poll, so the buffer is still not
+held for a switch. Five tests fail on the previous plugin; the "has a viewer again" case passes on both.
 
 ## Tools
 
