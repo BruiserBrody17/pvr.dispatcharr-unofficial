@@ -306,6 +306,14 @@ call) settled it directly: `CreateCatchupSession` logged a cache *miss*
 for the first call, then a cache *hit* exactly 12ms later for the
 second, confirming the redundant POST is genuinely skipped now.
 
+The 30 s age turned out to be too long (`CLOSED_ITEMS.md`, "A catch-up replay 9 to 30 s after the first Play reuses a
+session Dispatcharr has deleted", fixed 2026-11-16): Dispatcharr deletes a catch-up session 6.5 s after a viewing
+connection closes, so a replay of the same programme inside the window was handed a URL that answered 401. The age is
+now `kCatchupSessionCacheMaxAge` (5 s) in `CatchupSessionCache.h`, and `DispatcharrClient` holds the cache as a
+`CatchupSessionCacheEntry` from that header. New tests pin a reuse 12 ms later (Kodi 21's second call), no reuse for a
+replay 6.5 s later, and the age staying under 6.5 s (a compile-time check against Dispatcharr's two constants); the
+last two fail on the old code. Kodi 22 asks once per Play, so on `Piers` the cache only serves a quick replay.
+
 ### `CatchUpUtil`
 
 `CatchUpUtil` also gained `IsLikelySeekProbe()`/`ComputeShortGiveUpPosition()`

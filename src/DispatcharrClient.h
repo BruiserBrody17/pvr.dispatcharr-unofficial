@@ -69,6 +69,7 @@
 
 #include "ApiKeyRecovery.h"
 #include "CatchUpUtil.h"
+#include "CatchupSessionCache.h"
 #include "ConnectionReport.h"
 #include "DvrAccess.h"
 #include "RecordedStreamRegistry.h"
@@ -1498,30 +1499,12 @@ private:
   // libcurl build/version.
   void* m_probeCurlShareState = nullptr;
 
-  // Caches the last successful CreateCatchupSession() result so a
-  // second call with the exact same (channelUuid, programmeStart,
-  // durationMinutes) within a short window can reuse it instead of
-  // creating (and immediately discarding) a redundant Dispatcharr
-  // catch-up session -- see dispatcharr::ShouldReuseCachedCatchupSession()'s
-  // own comment (CatchupSessionCache.h) for the real, live-confirmed bug
-  // this fixes and why kMaxCatchupSessionCacheAge is well under
-  // Dispatcharr's own handshake-expiry window. Guarded by its own mutex
-  // rather than m_apiKeyMutex/the auth mutexes -- unrelated state, and
-  // CreateCatchupSession() itself already calls EnsureAuthenticated()
-  // (which takes the auth mutexes internally) before ever touching this, so
-  // reusing either existing mutex here would risk a confusing,
-  // unnecessary lock-ordering dependency between otherwise-unrelated
-  // state for no real benefit.
-  struct CatchupSessionCacheState
-  {
-    std::string channelUuid;
-    time_t programmeStart = 0;
-    int durationMinutes = 0;
-    std::string playbackUrl;
-    std::chrono::steady_clock::time_point cachedAt; // default-constructed == "never cached"
-  };
+  // Caches the last successful CreateCatchupSession() result so Kodi 21's second call for the same Play reuses it
+  // instead of creating a redundant Dispatcharr catch-up session, for at most kCatchupSessionCacheMaxAge
+  // (CatchupSessionCache.h has why). Its own mutex rather than the auth ones: unrelated state, and
+  // CreateCatchupSession() calls EnsureAuthenticated() (which takes those) between its two uses of this.
   std::mutex m_catchupSessionCacheMutex;
-  CatchupSessionCacheState m_catchupSessionCache;
+  dispatcharr::CatchupSessionCacheEntry m_catchupSessionCache;
 
   // What every open recorded stream shares, so the registry can hold both kinds and a call can tell which it was given.
   // Each state object owns its own locks: two streams must not wait on each other's reads, and a stream that Close

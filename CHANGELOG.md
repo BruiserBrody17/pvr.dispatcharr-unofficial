@@ -14,6 +14,8 @@ compare against.
 
 ### Fixed
 
+- Playing an aired programme again a few seconds after stopping it no longer fails. Between about 7 and 30 s after
+  the first Play, the replay was handed a catch-up session Dispatcharr had already ended.
 - Stopping playback, or starting a catch-up programme, while the addon is signing in to Dispatcharr again in the
   background now waits at most about 5 s for that sign-in. Against a server that had stopped answering, the wait could
   last the whole connection timeout (30 s by default).

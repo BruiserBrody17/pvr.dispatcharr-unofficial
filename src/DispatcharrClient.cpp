@@ -105,11 +105,6 @@ constexpr const char* kLogosPath = "/api/channels/logos/";
 // window for as long as it's actively used, rather than embedding a
 // short-lived JWT directly in the stream URL.
 constexpr const char* kCatchupSessionsPath = "/api/catchup/sessions/";
-// Well under Dispatcharr's own catch-up-session handshake expiry
-// (HANDSHAKE_TTL_SECONDS = 60s, apps/timeshift/sessions.py) -- see
-// dispatcharr::ShouldReuseCachedCatchupSession()'s own comment
-// (CatchupSessionCache.h) for what this exists to avoid.
-constexpr std::chrono::seconds kMaxCatchupSessionCacheAge{30};
 constexpr const char* kApiKeyGeneratePath = "/api/accounts/api-keys/generate/";
 // GET on this same route returns the caller's own current key without
 // touching it (APIKeyViewSet.list(), apps/accounts/api_views.py) --
@@ -1179,41 +1174,33 @@ std::string DispatcharrClient::GetChannelLogoUrl(int logoId) const
 bool DispatcharrClient::CreateCatchupSession(const std::string& channelUuid, time_t programmeStart, int durationMinutes,
                                              std::string& playbackUrlOut, std::string& error)
 {
-  // Fix for a real, confirmed, live-quantified bug (see docs/OPEN_ITEMS.md's
-  // 2026-09-29 live check): Kodi's own CPVRGUIActionsPlayback::PlayEpgTag()
-  // calls GetEpgTagStreamProperties() twice for the exact same catch-up
-  // play, with identical (channelUuid, programmeStart, durationMinutes)
-  // both times -- confirmed live to cost roughly 30% of the total delay
-  // before playback actually starts. A cache hit skips straight past
-  // EnsureAuthenticated() and the network entirely, not just the POST
-  // itself -- there's nothing left to do once the exact same session is
-  // already known good.
+  // Kodi 21 asks twice per catch-up Play with identical arguments (CatchupSessionCache.h); a cache hit skips
+  // EnsureAuthenticated() and the network entirely, not just the POST.
   {
     std::lock_guard<std::mutex> lock(m_catchupSessionCacheMutex);
+    const dispatcharr::CatchupSessionCacheEntry& cached = m_catchupSessionCache;
     if (dispatcharr::ShouldReuseCachedCatchupSession(
-            m_catchupSessionCache.channelUuid, m_catchupSessionCache.programmeStart,
-            m_catchupSessionCache.durationMinutes, m_catchupSessionCache.cachedAt, channelUuid, programmeStart,
-            durationMinutes, std::chrono::steady_clock::now(), kMaxCatchupSessionCacheAge))
+            cached.channelUuid, cached.programmeStart, cached.durationMinutes, cached.cachedAt, channelUuid,
+            programmeStart, durationMinutes, std::chrono::steady_clock::now(), dispatcharr::kCatchupSessionCacheMaxAge))
     {
       kodi::Log(ADDON_LOG_DEBUG,
                 "pvr.dispatcharr-unofficial: CreateCatchupSession: cache hit for channel=%s "
                 "start=%lld duration=%d, skipping a redundant POST",
                 channelUuid.c_str(), static_cast<long long>(programmeStart), durationMinutes);
-      playbackUrlOut = m_catchupSessionCache.playbackUrl;
+      playbackUrlOut = cached.playbackUrl;
       return true;
     }
     kodi::Log(ADDON_LOG_DEBUG,
               "pvr.dispatcharr-unofficial: CreateCatchupSession: cache miss for channel=%s start=%lld "
               "duration=%d (cached: channel=%s start=%lld duration=%d)",
-              channelUuid.c_str(), static_cast<long long>(programmeStart), durationMinutes,
-              m_catchupSessionCache.channelUuid.c_str(), static_cast<long long>(m_catchupSessionCache.programmeStart),
-              m_catchupSessionCache.durationMinutes);
+              channelUuid.c_str(), static_cast<long long>(programmeStart), durationMinutes, cached.channelUuid.c_str(),
+              static_cast<long long>(cached.programmeStart), cached.durationMinutes);
   }
 
   // Kodi calls this on its main thread while it prepares playback (CApplicationPlay::ResolvePath() ->
-  // CPVRPlaybackState::OnPreparePlayback(), and PlayEpgTag() before that), so a hung server froze the UI for the whole
-  // configured timeout. The POST measured about 0.3 s against a real instance (docs/TEST_COVERAGE.md), so the short
-  // bound (RequestTimeout.h) costs a slow-but-working server nothing.
+  // CPVRPlaybackState::OnPreparePlayback(), and on Kodi 21 PlayEpgTag() before that), so a hung server froze the UI for
+  // the whole configured timeout. The POST measured about 0.3 s against a real instance (docs/TEST_COVERAGE.md), so the
+  // short bound (RequestTimeout.h) costs a slow-but-working server nothing.
   if (!EnsureAuthenticated(error, ShortRequestTimeoutMs()))
     return false;
 

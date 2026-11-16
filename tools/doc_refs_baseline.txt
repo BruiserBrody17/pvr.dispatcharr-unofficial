@@ -30,6 +30,7 @@ docs/CLOSED_ITEMS.md|function|GetClientCapabilities
 docs/CLOSED_ITEMS.md|function|GetText
 docs/CLOSED_ITEMS.md|function|GetTimezoneBias
 docs/CLOSED_ITEMS.md|function|IsApiKeyValidFor
+docs/CLOSED_ITEMS.md|function|IsPlayingEpgTag
 docs/CLOSED_ITEMS.md|function|MatchDayOfWeek
 docs/CLOSED_ITEMS.md|function|PlatformSupportsAddon
 docs/CLOSED_ITEMS.md|function|ProvidesStreamForMetaDataExtraction
@@ -43,6 +44,7 @@ docs/CLOSED_ITEMS.md|function|_channel_stopping_response
 docs/CLOSED_ITEMS.md|function|_compute_forward_seek_target
 docs/CLOSED_ITEMS.md|function|_find_in_progress_recording_id
 docs/CLOSED_ITEMS.md|function|_find_matching_recording
+docs/CLOSED_ITEMS.md|function|_is_timeshift_startup_probe
 docs/CLOSED_ITEMS.md|function|_layout_problems
 docs/CLOSED_ITEMS.md|function|_local_field_problems
 docs/CLOSED_ITEMS.md|function|_match_recording_by_title
@@ -62,6 +64,7 @@ docs/CLOSED_ITEMS.md|function|check_realtime_update_push
 docs/CLOSED_ITEMS.md|function|check_release_contents
 docs/CLOSED_ITEMS.md|function|check_section_titles
 docs/CLOSED_ITEMS.md|function|check_settings
+docs/CLOSED_ITEMS.md|function|check_user_stream_limits
 docs/CLOSED_ITEMS.md|function|check_zip
 docs/CLOSED_ITEMS.md|function|discover_plugins
 docs/CLOSED_ITEMS.md|function|get_id
@@ -94,7 +97,6 @@ docs/CLOSED_ITEMS.md|setting|validate_redirect_urls
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
 docs/OPEN_ITEMS.md|function|_dvr_capture_url
-docs/OPEN_ITEMS.md|function|_finalize_playback_session_auth
 docs/OPEN_ITEMS.md|function|_ghost_timeout_for_client
 docs/OPEN_ITEMS.md|setting|m_instances
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
