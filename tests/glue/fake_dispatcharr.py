@@ -680,6 +680,14 @@ class H(BaseHTTPRequestHandler):
                             if src is not None:
                                 rule["epg_source_id"] = src
                             DB["series"].append(rule)
+                if k == "seed_colliding_rules":
+                    # Two channel-less rules "Show <a>" and "Show <b>" whose ClientIndex collides; the driver finds the
+                    # numbers, since the pair depends on its std::hash.
+                    with DBL:
+                        for n in v[0].split(","):
+                            DB["series"].append(
+                                {"tvg_id": "", "mode": "all", "title": "Show " + n, "title_mode": "exact"}
+                            )
                 if k == "seed_empty_title_rule":
                     # A description-only, channel-less series rule, as Dispatcharr's web interface can make one.
                     with DBL:

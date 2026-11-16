@@ -53,6 +53,34 @@ TEST_CASE("PruneExpiredPendingTitles is a no-op on an empty list", "[PendingTitl
 }
 
 // ---------------------------------------------------------------------
+// AddPendingTitle
+// ---------------------------------------------------------------------
+
+TEST_CASE("AddPendingTitle prunes expired entries before appending", "[PendingTitleLookup]")
+{
+  // The 2026-11-14 sweep: titled recordings only ever appended, so the list grew for the life of the process.
+  auto now = std::chrono::steady_clock::now();
+  std::vector<FakeEntry> entries;
+  for (int i = 0; i < 100; ++i)
+    AddPendingTitle(entries, FakeEntry{i, "Old", now - std::chrono::minutes(10)}, now - std::chrono::minutes(10),
+                    kPendingTitleTtl);
+  REQUIRE(entries.size() == 100);
+  AddPendingTitle(entries, FakeEntry{100, "New", now}, now, kPendingTitleTtl);
+  REQUIRE(entries.size() == 1);
+  CHECK(entries[0].recordingId == 100);
+}
+
+TEST_CASE("AddPendingTitle keeps entries still inside the TTL", "[PendingTitleLookup]")
+{
+  auto now = std::chrono::steady_clock::now();
+  std::vector<FakeEntry> entries = {{1, "Fresh", now - std::chrono::minutes(1)}};
+  AddPendingTitle(entries, FakeEntry{2, "New", now}, now, kPendingTitleTtl);
+  REQUIRE(entries.size() == 2);
+  CHECK(FindPendingTitleForRecording(entries, 1) != nullptr);
+  CHECK(FindPendingTitleForRecording(entries, 2) != nullptr);
+}
+
+// ---------------------------------------------------------------------
 // FindPendingTitleForRecording
 // ---------------------------------------------------------------------
 

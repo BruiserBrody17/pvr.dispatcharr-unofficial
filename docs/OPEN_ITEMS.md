@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**12 open, 433 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**9 open, 436 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -16,9 +16,10 @@ confirmed. The open ones came from:
 - One follow-up to issue #1 from 2026-11-16: DVB subtitles and teletext in Server-side mode.
 - One observation from the 2026-11-16 live check of the catch-up session cache: Kodi 22 reading two finished
   recordings end to end at start.
-- Four from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, seventeen findings), all LOW. Its
-  four documentation and four tooling findings, its one MEDIUM and its one design question were closed on 2026-11-15,
-  the catch-up session reuse and the two `timeshift_buffer` findings on 2026-11-16.
+- One from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, seventeen findings), LOW. Its four
+  documentation and four tooling findings, its one MEDIUM and its one design question were closed on 2026-11-15, the
+  catch-up session reuse, the two `timeshift_buffer` findings, the shared series-rule index, the pending titles and the
+  connection notice on 2026-11-16.
 
 Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-23 sweep
 (five read-only reviews by area, 17 findings, the last fixed on 2026-11-04), from the 2026-10-24 sweep
@@ -30,14 +31,14 @@ sweep (eleven findings, all fixed: the release gate, the CI path filter and a `t
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 3 |
-| Open: Fix known, not yet done | 4 |
+| Open: Fix known, not yet done | 1 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 380 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 383 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -145,36 +146,6 @@ are lost the same way). Fix: after registering the instance, compare the setting
 apply the live ones; for a changed connection setting, write that setting back so Kodi re-delivers it and the existing
 check answers `ADDON_STATUS_NEED_RESTART`. Or queue deliveries that arrive during construction and replay them.
 
-#### Kodi's connection notice names the configured server, not the one in use
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading.** `GetConnectionString()` and `GetBackendHostname()` read the saved `host` and `port`
-settings, not the address the client is using, so while an instance is still on an older address (a restart not yet
-done, or the window in "A settings save delivered while the PVR instance is still being constructed is dropped") Kodi's
-connection-state notice and Event Log name a server the addon is not talking to, which points the user at the wrong
-cause. Fix: build both from `m_client.GetConnectionSettings()`, as the realtime thread does.
-
-#### Two series rules can share one Kodi ClientIndex
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, reproduced with the real header.** `ComputeSeriesRuleClientIndex()` (`TimerIdentity.h`) is
-`std::hash` of (title, `tvg_id`, `epg_source_id`) cut to 30 bits, with nothing to detect two rules landing on the same
-value, and `FindSeriesRuleIndexByClientIndex()` returns the first match. With libstdc++ (fixed seed) the titles
-"Show 13765" and "Show 57079" with no `tvg_id` and no source collide on 64-bit, "Show 1864" and "Show 53313" with `-m32`
-(found after about 55,000 titles, the 30-bit birthday bound). Two colliding rules show in Kodi under one ClientIndex, and
-an edit or delete of the second (`UpdateTimer()`, `DeleteTimer()`) acts on the first. Unlikely by chance (about
-N^2 / 2^31 for N rules), but anyone who can create rules can pick such a pair. Fix: have the lookup answer -1 when more
-than one cached rule matches, so the edit or delete is refused rather than misapplied, with the pair above as a test; or
-probe to the next free index, in list order, when the rules are reported.
-
-#### Pending recording titles are pruned only when an untitled recording arrives
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading.** `CreateOneTimeRecording()` appends to `m_pendingTitles` for every titled recording it
-creates, but `PruneExpiredPendingTitles()` runs only in `ParseRecordingJson()`'s branch for a recording that arrived
-without a title. Since the guide-based create sends the programme's fields, Dispatcharr returns titled recordings, the
-prune never runs, and the list grows by one small entry per recording for the life of the process. Fix: prune before the
-append as well.
 
 ### Architectural / concurrency
 

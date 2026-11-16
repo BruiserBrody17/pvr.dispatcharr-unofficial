@@ -1609,7 +1609,6 @@ Recording DispatcharrClient::ParseRecordingJson(const json& item, time_t now)
     // Dispatcharr's own async enrichment has caught up, and why it's
     // matched by recording id.
     std::lock_guard<std::mutex> lock(m_pendingTitlesMutex);
-    constexpr auto kPendingTitleTtl = std::chrono::minutes(3);
     // The prune and by-recording-id lookup itself live in
     // dispatcharr::PruneExpiredPendingTitles()/FindPendingTitleForRecording()
     // (PendingTitleLookup.h) so both are unit-testable standalone -- see
@@ -1938,7 +1937,8 @@ bool DispatcharrClient::CreateOneTimeRecording(int channelId, time_t start, time
   if (!title.empty() && recordingId > 0)
   {
     std::lock_guard<std::mutex> lock(m_pendingTitlesMutex);
-    m_pendingTitles.push_back({recordingId, title, std::chrono::steady_clock::now()});
+    const auto now = std::chrono::steady_clock::now();
+    AddPendingTitle(m_pendingTitles, PendingTitle{recordingId, title, now}, now, kPendingTitleTtl);
   }
   return true;
 }

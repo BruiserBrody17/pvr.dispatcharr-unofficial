@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 #include <curl/curl.h>
 #include <map>
 #include <mutex>
@@ -546,6 +547,19 @@ int main(int argc, char** argv)
       PVR_ERROR he = abi::BackendHostname(I(), host);
       if (he != PVR_ERROR_NO_ERROR || host != "127.0.0.1")
         FAIL("the backend hostname was '%s' (err %d), expected the bare configured host", host.c_str(), (int)he);
+      // A saved change the instance has not restarted for: both still name the server in use, not the new setting
+      // (the 2026-11-14 sweep). Nothing else in the addon reads host or port after construction.
+      set("host", "other.invalid");
+      set("port", "1");
+      const std::string inUse = "127.0.0.1:" + std::to_string(g_port);
+      const std::string conn = abi::ConnectionString(I());
+      std::string hostAfter;
+      abi::BackendHostname(I(), hostAfter);
+      set("host", "127.0.0.1");
+      set("port", std::to_string(g_port));
+      if (conn != inUse || hostAfter != "127.0.0.1")
+        FAIL("after a saved host change the addon named '%s' / '%s', expected the server in use '%s'", conn.c_str(),
+             hostAfter.c_str(), inUse.c_str());
     }
     // Radio: the fake's one radio channel (id 7, group 2, which also holds TV channels) is in the radio list only,
     // and the group is listed under both kinds with the members split the same way.
@@ -902,6 +916,63 @@ int main(int argc, char** argv)
           FAIL("deleting a titled series rule did not reach the server");
         if (http("/__db").find("Show 3-5") != std::string::npos)
           FAIL("the deleted series rule 'Show 3-5' is still on the server");
+      }
+    }
+    // Two rules sharing one ClientIndex (a 30-bit hash with no collision handling, the 2026-11-14 sweep): an edit or
+    // delete of either is refused before any request, since which one Kodi means is unknown. Before, both acted on the
+    // first rule listed.
+    {
+      auto stat = [&](const char* key) -> long
+      {
+        const std::string s = http("/__stats");
+        const std::string k = std::string("\"") + key + "\": ";
+        const size_t at = s.find(k);
+        return at == std::string::npos ? 0 : atol(s.c_str() + at + k.size());
+      };
+      std::unordered_map<unsigned int, int> seen;
+      int a = -1, b = -1;
+      for (int i = 0; i < 400000 && b < 0; ++i)
+      {
+        auto ins = seen.emplace(dispatcharr::ComputeSeriesRuleClientIndex("Show " + std::to_string(i), "", 0), i);
+        if (!ins.second)
+        {
+          a = ins.first->second;
+          b = i;
+        }
+      }
+      if (b < 0)
+        FAIL("no colliding pair of series-rule titles was found");
+      else
+      {
+        ctl("seed_colliding_rules=" + std::to_string(a) + "," + std::to_string(b));
+        const unsigned int index = dispatcharr::ComputeSeriesRuleClientIndex("Show " + std::to_string(b), "", 0);
+        Collected got;
+        A()->GetTimers(I(), (PVR_HANDLE)&got);
+        const PVR_TIMER* second = nullptr;
+        for (const auto& x : got.timers)
+          if (x.iTimerType == 2 && x.iClientIndex == index && abi::str(x.strTitle) == "Show " + std::to_string(b))
+            second = &x;
+        if (!second)
+          FAIL("the second of the colliding series rules was not listed as a timer");
+        else
+        {
+          const long deletes = stat("DELETE /api/channels/series-rules/");
+          const long posts = stat("POST /api/channels/series-rules/");
+          PVR_TIMER edit = *second;
+          edit.iPreventDuplicateEpisodes = 1;
+          if (A()->UpdateTimer(I(), &edit) == PVR_ERROR_NO_ERROR)
+            FAIL("an edit of a series rule whose index another rule shares was accepted");
+          PVR_TIMER del = *second;
+          if (A()->DeleteTimer(I(), &del, false) == PVR_ERROR_NO_ERROR)
+            FAIL("a series rule whose index another rule shares was deleted");
+          if (stat("DELETE /api/channels/series-rules/") != deletes ||
+              stat("POST /api/channels/series-rules/") != posts)
+            FAIL("a refused edit or delete of a colliding series rule still reached the server");
+          const std::string db = http("/__db");
+          for (int n : {a, b})
+            if (db.find("\"Show " + std::to_string(n) + "\"") == std::string::npos)
+              FAIL("the colliding series rule 'Show %d' is gone from the server", n);
+        }
       }
     }
     // A series rule delete names the rule exactly: Dispatcharr keys a rule by (tvg_id, title, epg_source_id), and the

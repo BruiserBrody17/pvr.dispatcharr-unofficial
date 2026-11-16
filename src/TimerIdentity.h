@@ -400,22 +400,40 @@ inline bool IsSeriesRuleSafeToDeleteFromKodi(const std::string& title)
 // hashes to `clientIndex` via ComputeSeriesRuleClientIndex() above -- the
 // reverse lookup needed to recover that originally-stored identity.
 // Returns -1 if none match (e.g. the rule was already deleted
-// server-side since GetTimers() last cached it), in which case callers
-// should fall back to today's channel-derived value rather than fail
-// outright. RuleT needs title/tvgId/epgSourceId members (duck-typed via
+// server-side since GetTimers() last cached it), in which case UpdateTimer()
+// re-derives the identity from the channel and DeleteTimer() deletes
+// nothing. RuleT needs title/tvgId/epgSourceId members (duck-typed via
 // the template, matching this project's own convention for
 // SegmentLookup.h/LiveEdgeMargin.h/CatchUpUtil.h) so this stays
 // independent of DispatcharrClient.h's own (heavier) TimerRule type; see
 // ../tests/test_timer_identity.cpp.
+//
+// Returns kAmbiguousSeriesRuleIndex when two rules with different identities hash to the same ClientIndex: the 30-bit
+// hash has no collision handling, so Kodi shows both under one index and an edit or delete of the second used to act on
+// the first (the 2026-11-14 sweep; "Show 13765" and "Show 57079" collide with 64-bit libstdc++). Callers refuse the
+// edit or delete rather than guess. Two entries with the same identity are one rule listed twice, not a collision.
+constexpr int kAmbiguousSeriesRuleIndex = -2;
+
 template <typename RuleT>
 int FindSeriesRuleIndexByClientIndex(const std::vector<RuleT>& rules, unsigned int clientIndex)
 {
+  int found = -1;
   for (std::size_t i = 0; i < rules.size(); ++i)
   {
-    if (ComputeSeriesRuleClientIndex(rules[i].title, rules[i].tvgId, rules[i].epgSourceId) == clientIndex)
-      return static_cast<int>(i);
+    if (ComputeSeriesRuleClientIndex(rules[i].title, rules[i].tvgId, rules[i].epgSourceId) != clientIndex)
+      continue;
+    if (found < 0)
+    {
+      found = static_cast<int>(i);
+      continue;
+    }
+    const RuleT& first = rules[static_cast<std::size_t>(found)];
+    const bool sameSource =
+        (first.epgSourceId > 0 ? first.epgSourceId : 0) == (rules[i].epgSourceId > 0 ? rules[i].epgSourceId : 0);
+    if (first.title != rules[i].title || first.tvgId != rules[i].tvgId || !sameSource)
+      return kAmbiguousSeriesRuleIndex;
   }
-  return -1;
+  return found;
 }
 
 // Whether a series rule's own cached channelId (this addon's "no channel"

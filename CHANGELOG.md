@@ -14,6 +14,11 @@ compare against.
 
 ### Fixed
 
+- Editing or deleting a series rule in Kodi can no longer act on a different rule. In rare cases two rules shared one
+  timer in Kodi; the addon now refuses to change either and asks you to do it in Dispatcharr.
+- After changing the server address in the settings, Kodi's connection notices and PVR information screen name the
+  server the addon is still connected to until it restarts, not the new address.
+- A small internal list of recording titles no longer grows for as long as Kodi runs.
 - Playing an aired programme again a few seconds after stopping it no longer fails. Between about 7 and 30 s after
   the first Play, the replay was handed a catch-up session Dispatcharr had already ended.
 - Stopping playback, or starting a catch-up programme, while the addon is signing in to Dispatcharr again in the
