@@ -1723,6 +1723,26 @@ scan stops at a term's first byte) is `kUnsupported`; four tests pin the repeate
 at -O2 before), the skipped operands, the declines and a term whose first byte fills the text, and the new matcher
 agreed with the old on 6,000,000 random query/text pairs.
 
+### `SettingsDuringConstruction`
+
+`ConstructionDeliveryTracker`, the bookkeeping behind re-delivering a settings save that arrived while a PVR instance
+was still being constructed (`docs/CLOSED_ITEMS.md`, "A settings save delivered while the PVR instance is still being
+constructed is dropped", 2026-11-16). Templated on the thread id so the tests use plain ints; `CAddonDispatcharr`
+(`addon.cpp`) uses `std::thread::id` under its own `m_instancesMutex`. The tests pin: a delivery from another thread
+during a construction is reported once at its end; the constructor's own writes (same thread) are not; deliveries
+before or after a construction are not; two concurrent constructions are tracked separately (one's own write counts
+against the other); ending a construction that was never begun changes nothing.
+
+The rest is wiring. `PVRDispatcharr::RequestSettingsRedelivery()` waits on its tracked thread for Kodi's first
+`*Amount()` call (`m_kodiAskedForBackendProperties`), which only Kodi's PVR GUI info thread makes, after the PVR manager
+has finished loading the client, then writes the hidden `settings_redelivery`. The glue harness's `settings_redelivery`
+scenario covers it: no write within 2.5 s while the addon's own background channel load runs, nor after Kodi-style
+`GetChannelGroups()`, `GetChannels()`, `GetTimers()` and `GetRecordings()` calls, then the write within about a second of
+the first `GetChannelsAmount()`; and a second instance destroyed while its re-delivery waits goes in milliseconds and
+writes nothing. With the wait removed it fails twice; with the flag set in `GetChannels()` (the first version) it fails
+the load check. `addon.cpp` is not built by the glue harness, so `CreateInstance()`/`SetSetting()` and Kodi's
+re-delivery, restart dialog and restart are live-checked.
+
 ### `SocketWait`
 
 `SocketWait` is `WaitForSocketReady()` (added 2026-10-02): the socket wait behind `WebSocketClient`, `poll()` on POSIX (no 1024-descriptor limit; `select()`/`FD_SET` was undefined behaviour past it and for `CURL_SOCKET_BAD`), refusing an invalid socket up front; tested with socketpairs, including a descriptor numbered 1500.

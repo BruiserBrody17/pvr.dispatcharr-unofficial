@@ -67,7 +67,6 @@ docs/CLOSED_ITEMS.md|function|check_settings
 docs/CLOSED_ITEMS.md|function|check_user_stream_limits
 docs/CLOSED_ITEMS.md|function|check_zip
 docs/CLOSED_ITEMS.md|function|discover_plugins
-docs/CLOSED_ITEMS.md|function|get_id
 docs/CLOSED_ITEMS.md|function|gmtime_r
 docs/CLOSED_ITEMS.md|function|library_kind
 docs/CLOSED_ITEMS.md|function|line_version
@@ -87,6 +86,7 @@ docs/CLOSED_ITEMS.md|setting|channel_init_grace_period
 docs/CLOSED_ITEMS.md|setting|channel_shutdown_delay
 docs/CLOSED_ITEMS.md|setting|dvr_settings
 docs/CLOSED_ITEMS.md|setting|escaped_exception_ctor
+docs/CLOSED_ITEMS.md|setting|m_instances
 docs/CLOSED_ITEMS.md|setting|m_lowspeedtime
 docs/CLOSED_ITEMS.md|setting|new_client_behind_seconds
 docs/CLOSED_ITEMS.md|setting|redis_chunk_ttl
@@ -96,9 +96,11 @@ docs/CLOSED_ITEMS.md|setting|user_edited
 docs/CLOSED_ITEMS.md|setting|validate_redirect_urls
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|close_old_connections
 docs/DISPATCHARR_SOURCE_REVIEW.md|function|log_system_event
+docs/OPEN_ITEMS.md|function|CreateChannelEpg
+docs/OPEN_ITEMS.md|function|GetWindow
+docs/OPEN_ITEMS.md|function|WaitForUpdateFinish
 docs/OPEN_ITEMS.md|function|_dvr_capture_url
 docs/OPEN_ITEMS.md|function|_ghost_timeout_for_client
-docs/OPEN_ITEMS.md|setting|m_instances
 docs/PVR_HTS_COMPARISON.md|function|SendSubscribe
 docs/PVR_HTS_COMPARISON.md|function|SwitchToChannel
 docs/PVR_HTS_COMPARISON.md|function|profile_chain_work

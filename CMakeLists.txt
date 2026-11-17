@@ -173,6 +173,7 @@ set(DISPATCHARR_HEADERS
     src/WebSocketHandshake.h
     src/StreamSeek.h
     src/SegmentAppendOffsets.h
+    src/SettingsDuringConstruction.h
     src/PendingTitleLookup.h
     src/RecordingVisibility.h
     src/Staleness.h

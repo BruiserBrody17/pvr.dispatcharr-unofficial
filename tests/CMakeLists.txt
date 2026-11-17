@@ -57,6 +57,7 @@ add_executable(pvr_dispatcharr_tests
   test_timezone_util.cpp
   test_epg_tag_util.cpp
   test_redirect_policy.cpp
+  test_settings_during_construction.cpp
   test_sha1.cpp
   test_string_util.cpp
   test_date_time_format.cpp

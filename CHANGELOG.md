@@ -14,6 +14,9 @@ compare against.
 
 ### Fixed
 
+- Settings saved while the addon is still starting (for example, correcting the server address while it waits on the
+  wrong one) are no longer ignored until the next save or a Kodi restart. Kodi applies them, or asks to restart the
+  addon, once it has finished starting it.
 - Editing or deleting a series rule in Kodi can no longer act on a different rule. In rare cases two rules shared one
   timer in Kodi; the addon now refuses to change either and asks you to do it in Dispatcharr.
 - After changing the server address in the settings, Kodi's connection notices and PVR information screen name the

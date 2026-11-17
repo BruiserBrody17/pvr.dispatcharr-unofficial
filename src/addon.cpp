@@ -1,10 +1,12 @@
 #include "ExceptionGuard.h"
 #include "PVRDispatcharr.h"
+#include "SettingsDuringConstruction.h"
 
 #include <kodi/AddonBase.h>
 
 #include <algorithm>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 class CAddonDispatcharr : public kodi::addon::CAddonBase
@@ -19,14 +21,25 @@ public:
       kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: creating PVR client instance");
       // Kodi's thunk catches nothing (ExceptionGuard.h); the constructor has already stopped whatever it started.
       PVRDispatcharr* pvr = nullptr;
+      const std::thread::id thisThread = std::this_thread::get_id();
+      bool redeliver = false;
       try
       {
+        {
+          std::lock_guard<std::mutex> lock(m_instancesMutex);
+          m_constructions.BeginConstruction(thisThread);
+        }
         pvr = new PVRDispatcharr(instance);
         std::lock_guard<std::mutex> lock(m_instancesMutex);
         m_instances.push_back(pvr);
+        redeliver = m_constructions.EndConstruction(thisThread);
       }
       catch (...)
       {
+        {
+          std::lock_guard<std::mutex> lock(m_instancesMutex);
+          m_constructions.EndConstruction(thisThread);
+        }
         LogEscaped("creating the PVR client instance");
         delete pvr;
         // hdl is Kodi's instance->hdl, which CInstancePVRClient's constructor already set to the object just freed;
@@ -35,6 +48,19 @@ public:
         return ADDON_STATUS_UNKNOWN;
       }
       hdl = pvr;
+      // A save that came in meanwhile reached no instance (SettingsDuringConstruction.h). Started here, after the
+      // instance is registered, so the re-delivery reaches it; never fails CreateInstance(), the instance is fine.
+      if (redeliver)
+      {
+        try
+        {
+          pvr->RequestSettingsRedelivery();
+        }
+        catch (...)
+        {
+          LogEscaped("asking for the settings again");
+        }
+      }
       return ADDON_STATUS_OK;
     }
     return ADDON_STATUS_UNKNOWN;
@@ -73,9 +99,10 @@ public:
   ADDON_STATUS SetSetting(const std::string& settingName, const kodi::addon::CSettingValue& settingValue) override
   {
     std::lock_guard<std::mutex> lock(m_instancesMutex);
-    // No instance yet (or already destroyed): nothing to apply live to --
-    // the eventual/next construction reads the new value from settings
-    // itself, same as it always has.
+    // No instance yet (or already destroyed): nothing to apply live to. The next construction reads the new value
+    // itself, and one already under way that read it too early has it delivered again once it is registered
+    // (CreateInstance()).
+    m_constructions.OnDelivery(std::this_thread::get_id());
     ADDON_STATUS status = ADDON_STATUS_OK;
     for (auto* pvr : m_instances)
     {
@@ -112,6 +139,7 @@ private:
 
   std::mutex m_instancesMutex;
   std::vector<PVRDispatcharr*> m_instances;
+  dispatcharr::ConstructionDeliveryTracker<std::thread::id> m_constructions;
 };
 
 ADDONCREATOR(CAddonDispatcharr)
