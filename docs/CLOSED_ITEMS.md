@@ -67,8 +67,12 @@ script's own thread, mid-construction). Without the fix nothing happened and the
 it, once the PVR manager had started, the addon logged the re-delivery, Kodi showed its restart dialog, and after OK it
 logged "Recreating PVR client" (not "Creating"), built one new instance, and that one connected on the working port; the
 channels came back. The restart then sometimes hung Kodi's GUI in a deadlock of Kodi's own, which an ordinary settings
-save reaches too (`OPEN_ITEMS.md`, "Kodi: the GUI can deadlock right after a PVR client restart"). Kodi 21 is checked
-with the `Omega` port.
+save reaches too (`OPEN_ITEMS.md`, "Kodi: the GUI can deadlock right after a PVR client restart").
+
+Live on Kodi 21.3 (Linux, the CI build of the `Omega` port), 2026-11-16, the same steps: without the port the save was
+lost the same way. With it, in four runs out of four the addon logged one re-delivery after the PVR manager had started,
+Kodi showed its restart dialog, recreated the client once, the new instance connected on the working port and the whole
+channel list loaded; the GUI did not hang in any of them.
 
 #### Two series rules can share one Kodi ClientIndex
 

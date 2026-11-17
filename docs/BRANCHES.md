@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`a052589`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`252d6a7`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -227,6 +227,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `5719693` | `c7556fc` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and sweep line by hand) | The 2026-11-14 sweep's two `timeshift_buffer` findings (0.8.19): a last viewer's stop follows a stream-switch restart, and a viewer re-added after a prune keeps its Kodi version. |
 | `733d9a2` | `ee882fc` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts and sweep line by hand) | The 2026-11-14 sweep's three addon findings: the connection notice names the server in use, a series-rule timer two rules share is refused, and expired pending titles are pruned on every add. |
 | `a052589` | `66d1be4` (`git cherry-pick -x`) | The Windows CI job retries its build-dependency downloads: `mirrors.kodi.tv` redirects to a random mirror, and one now chains to a root Windows does not trust out of the box. |
+| `252d6a7` | `578c1f9` (`git cherry-pick -x`; the include list and `OPEN_ITEMS.md`'s counts resolved by hand) | A settings save delivered while the PVR instance is still being constructed is re-delivered once Kodi has queried the new instance; live-checked on Kodi 21.3 before the merge. |
 
 ## Dependencies that differ by Kodi release
 

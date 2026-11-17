@@ -161,7 +161,8 @@ finishing, destroys its `CPVRGUIProgressHandler`, whose thread is waiting for th
 Kodi had not seen (a client that started unreachable and then connected, with a large lineup):
 an ordinary settings save answered with NEED_RESTART hung it in 2 of 6 runs without the re-delivery code and 5 of 10
 with it, and 0 of 6 when no addon was enabled during startup, so the timing around it matters. Kodi 21's
-`EpgContainer.cpp` has the same wait, but Kodi 21 was not run. Not this addon's bug; worth reporting to Kodi with the
+`EpgContainer.cpp` has the same wait; on Kodi 21.3 the same restart did not hang in 4 runs without the re-delivery code
+and 4 with it, too few to say it cannot. Not this addon's bug; worth reporting to Kodi with the
 three stacks. Nothing here works around it.
 
 #### Dispatcharr schedules a recurring rule's occurrence that starts inside a spring-forward gap to end before it starts
