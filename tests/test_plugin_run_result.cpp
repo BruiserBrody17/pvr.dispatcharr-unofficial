@@ -104,3 +104,68 @@ TEST_CASE("UnwrapPluginRunResult hands back a deeply nested result on a 1 MiB th
   CHECK(ok);
   CHECK(result["status"] == "ok");
 }
+
+// Dispatcharr 0.34.0 sends a plugin's own {"status": "error"} result as an HTTP 500 with the result alongside the
+// failed envelope (src/PluginRunResult.h, IsPluginRunErrorEnvelope()); the start retry, the cold-start wait and the
+// replaced-buffer check all read a field of that result.
+TEST_CASE("UnwrapPluginRunResult hands back the result a 0.34 error envelope carries", "[PluginRunResult]")
+{
+  json response = {
+      {"success", false},
+      {"error", "another start of this channel is running"},
+      {"result", {{"status", "error"}, {"message", "another start of this channel is running"}, {"retryable", true}}}};
+
+  json result;
+  std::string error;
+  bool ok = UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error);
+
+  CHECK_FALSE(ok);
+  CHECK(error == "another start of this channel is running");
+  CHECK(result["status"] == "error");
+  CHECK(result["retryable"] == true);
+}
+
+TEST_CASE("UnwrapPluginRunResult leaves resultOut null on a failed envelope whose result is not an object",
+          "[PluginRunResult]")
+{
+  json response = {{"success", false}, {"error", "boom"}, {"result", "a string"}};
+
+  json result = {{"stale", true}};
+  std::string error;
+  bool ok = UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error);
+
+  CHECK_FALSE(ok);
+  CHECK(error == "boom");
+  CHECK(result.is_null());
+}
+
+TEST_CASE("UnwrapPluginRunResult sets resultOut to null on a failed envelope with no result", "[PluginRunResult]")
+{
+  json response = {{"success", false}, {"error", "Plugin is disabled"}};
+
+  json result = {{"stale", true}};
+  std::string error;
+  CHECK_FALSE(UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error));
+  CHECK(result.is_null());
+}
+
+TEST_CASE("IsPluginRunErrorEnvelope recognises only Dispatcharr 0.34's error-with-result shape", "[PluginRunResult]")
+{
+  // The 0.34 shape: PluginRunAPIView's answer to a PluginActionResultError.
+  CHECK(IsPluginRunErrorEnvelope(
+      {{"success", false}, {"error", "dead"}, {"result", {{"status", "error"}, {"fatal", true}}}}));
+
+  // The other non-2xx answers carry no result: a disabled plugin, a timed-out wait, an exception in run().
+  CHECK_FALSE(IsPluginRunErrorEnvelope({{"success", false}, {"error", "Plugin is disabled"}}));
+  CHECK_FALSE(IsPluginRunErrorEnvelope(
+      {{"success", false}, {"error", "Plugin action timed out waiting for a response"}, {"task_id", "t"}}));
+  CHECK_FALSE(IsPluginRunErrorEnvelope({{"success", false}, {"error", "x"}, {"result", nullptr}}));
+  // A proxy's or Django's own error page, and anything that is not an object.
+  CHECK_FALSE(IsPluginRunErrorEnvelope({{"detail", "x"}}));
+  CHECK_FALSE(IsPluginRunErrorEnvelope(json()));
+  CHECK_FALSE(IsPluginRunErrorEnvelope(json::array({1})));
+  // "success" must be a real false, not missing or another type.
+  CHECK_FALSE(IsPluginRunErrorEnvelope({{"result", {{"status", "error"}}}}));
+  CHECK_FALSE(IsPluginRunErrorEnvelope({{"success", 0}, {"result", {{"status", "error"}}}}));
+  CHECK_FALSE(IsPluginRunErrorEnvelope({{"success", true}, {"result", {{"status", "ok"}}}}));
+}

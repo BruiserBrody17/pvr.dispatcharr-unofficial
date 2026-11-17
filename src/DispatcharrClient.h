@@ -1341,10 +1341,20 @@ private:
   // unknown. Login() uses it so EnsureAuthenticated() can distinguish a
   // genuine credential rejection from a transient network/server failure
   // (dispatcharr::ShouldCountTowardLoginBackoff(), AuthBackoff.h); the
-  // other callers act on a 404 or on "no response".
+  // other callers act on a 404 or on "no response". `errorBodyOut`, if
+  // non-null, receives a non-2xx response's body when it parses as JSON
+  // (null otherwise); only RequestPluginRun() uses it.
   bool Request(const std::string& method, const std::string& path, const nlohmann::json& body,
                nlohmann::json& responseOut, std::string& error, bool withAuth = true, int retryOnAuthFailure = 1,
-               long* httpStatusOut = nullptr, long timeoutMsOverride = 0);
+               long* httpStatusOut = nullptr, long timeoutMsOverride = 0, nlohmann::json* errorBodyOut = nullptr);
+
+  // POST to a plugin's run/ endpoint through Request(), which also accepts Dispatcharr 0.34's HTTP 500 that carries
+  // the plugin's own error result (dispatcharr::IsPluginRunErrorEnvelope(), PluginRunResult.h): that body becomes
+  // `responseOut` and the call returns true, so the caller's UnwrapPluginRunResult() reads its "retryable", "fatal"
+  // and status as it read them in the 200 an older Dispatcharr sent. `httpStatusOut` then says 200 too: the plugin
+  // answered, and a caller must not take its answer for the server being out of reach (IsDispatcharrOutOfReach()).
+  bool RequestPluginRun(const char* path, const nlohmann::json& body, nlohmann::json& responseOut, std::string& error,
+                        long* httpStatusOut = nullptr, long timeoutMsOverride = 0);
 
   // Calls the timeshift_buffer plugin's run/ endpoint for `action` and
   // unwraps a {status, http_port, playlist_route} response shape. Only

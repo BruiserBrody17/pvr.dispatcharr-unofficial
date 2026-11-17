@@ -412,7 +412,12 @@ the addon-side call, not assumed from `Plugins.md` alone:
   `"success"`/`"error"` -- so a plugin-level *logical* failure (e.g. the
   plugin's own `max_concurrent_buffers` cap) comes back as a normal HTTP
   200 with `"result": {"status": "error", ...}`, not as a non-2xx status.
-  `StartTimeshiftBuffer()` has to check both layers.
+  `StartTimeshiftBuffer()` has to check both layers. Dispatcharr 0.34.0
+  changed this: such a result now comes back as an HTTP 500 with
+  `"success": false` and the same `"result"` alongside, which
+  `RequestPluginRun()` hands on as if it were the 200
+  (`CLOSED_ITEMS.md`, "Dispatcharr 0.34 answers a plugin's own error with
+  an HTTP 500").
 - **The permission requirement**: `permission_classes_by_method["POST"] =
   [IsAdmin]` in `apps/accounts/permissions.py`, confirmed by tracing the
   actual mixin the view uses -- the plugin run endpoint requires an admin

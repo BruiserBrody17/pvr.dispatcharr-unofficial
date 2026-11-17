@@ -1739,6 +1739,31 @@ static void silent_open(DispatcharrClient& cl, bool inProgress)
 // A channel whose provider is slow to deliver its first segment: the plugin keeps answering "live playlist not found"
 // (ffmpeg alive, no `fatal`) for 25 s, longer than the 15 s the cold-start loop used to wait. The open must wait it out
 // (ColdStartTryLimit()) instead of failing with a playback error and succeeding on the viewer's second try.
+// The plugin answers start_buffer `retryable` (another start of the channel holds its lock, or its buffer is still
+// stopping) for 2 s: the open must retry until it is let in, and send no stop_buffer for the refused starts.
+static void live_start_retryable(DispatcharrClient& cl)
+{
+  ctl("start_retryable_ms=2000");
+  std::string err;
+  const long t0 = ms();
+  const bool ok = cl.OpenLiveTimeshiftStream("uuid", err);
+  const long took = ms() - t0;
+  const long starts = action_count("start_buffer");
+  const long stops = action_count("stop_buffer");
+  INFO("retryable start ok=%d in %ld ms, %ld start_buffer, %ld stop_buffer, err=%s", ok, took, starts, stops,
+       err.c_str());
+  if (!ok)
+    FAIL("an open whose first starts were answered retryable for 2 s failed: %s", err.c_str());
+  else
+  {
+    if (starts < 3)
+      FAIL("only %ld start_buffer call(s): the retryable answers were not retried", starts);
+    if (stops != 0)
+      FAIL("%ld stop_buffer call(s) during an open that only met retryable refusals", stops);
+    cl.CloseLiveTimeshiftStream();
+  }
+}
+
 static void live_late_start(DispatcharrClient& cl)
 {
   ctl("manifest_not_ready_ms=25000");
@@ -2683,6 +2708,8 @@ int main(int argc, char** argv)
       live_slow_open(*cl);
     else if (what == "live_late_start")
       live_late_start(*cl);
+    else if (what == "live_start_retryable")
+      live_start_retryable(*cl);
     else if (what == "ip_cascade")
       ip_cascade(*cl);
     else if (what == "live_reopen")

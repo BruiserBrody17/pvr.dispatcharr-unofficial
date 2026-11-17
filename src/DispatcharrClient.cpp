@@ -335,7 +335,7 @@ int DispatcharrClient::PerformWithSafeRedirects(void* curlPtr, const std::string
 
 bool DispatcharrClient::Request(const std::string& method, const std::string& path, const json& body, json& responseOut,
                                 std::string& error, bool withAuth, int retryOnAuthFailure, long* httpStatusOut,
-                                long timeoutMsOverride)
+                                long timeoutMsOverride, json* errorBodyOut)
 {
   // Serialized before curl_easy_init(), and through TrySerializeJsonBody()
   // rather than a plain body.dump() -- see that function's own comment
@@ -466,7 +466,7 @@ bool DispatcharrClient::Request(const std::string& method, const std::string& pa
     std::string refreshError;
     if (EnsureAuthenticated(refreshError, timeoutMsOverride))
       return Request(method, path, body, responseOut, error, withAuth, retryOnAuthFailure - 1, httpStatusOut,
-                     timeoutMsOverride);
+                     timeoutMsOverride, errorBodyOut);
     // The request was never retried, so nothing is known about its answer: -1, not the first attempt's 401, which a
     // caller could read as the server refusing the resource for good when the re-login only hit an outage or a
     // backoff (docs/CLOSED_ITEMS.md, "A 401 whose re-authentication fails is reported to the caller as a 401").
@@ -480,6 +480,12 @@ bool DispatcharrClient::Request(const std::string& method, const std::string& pa
   {
     error = "Dispatcharr returned HTTP " + std::to_string(httpCode) + ": " +
             dispatcharr::SanitizeServerErrorBody(responseBody);
+    if (errorBodyOut)
+    {
+      std::string ignoredParseError;
+      if (responseBody.empty() || !dispatcharr::ParseJsonResponseBody(responseBody, *errorBodyOut, ignoredParseError))
+        *errorBodyOut = json();
+    }
     return false;
   }
 
@@ -490,6 +496,26 @@ bool DispatcharrClient::Request(const std::string& method, const std::string& pa
   }
 
   return dispatcharr::ParseJsonResponseBody(responseBody, responseOut, error);
+}
+
+bool DispatcharrClient::RequestPluginRun(const char* path, const json& body, json& responseOut, std::string& error,
+                                         long* httpStatusOut, long timeoutMsOverride)
+{
+  long httpStatus = -1;
+  json errorBody;
+  const bool ok = Request("POST", path, body, responseOut, error, /*withAuth=*/true, /*retryOnAuthFailure=*/1,
+                          &httpStatus, timeoutMsOverride, &errorBody);
+  if (!ok && httpStatus >= 400 && dispatcharr::IsPluginRunErrorEnvelope(errorBody))
+  {
+    responseOut = std::move(errorBody);
+    error.clear();
+    if (httpStatusOut)
+      *httpStatusOut = 200;
+    return true;
+  }
+  if (httpStatusOut)
+    *httpStatusOut = httpStatus;
+  return ok;
 }
 
 bool DispatcharrClient::Login(std::string& error, long* httpStatusOut, long timeoutMsOverride)
@@ -1250,21 +1276,18 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action, con
   };
 
   json response;
-  // Request() already turns any non-2xx (403 disabled-plugin/non-admin
+  // RequestPluginRun() turns any non-2xx (403 disabled-plugin/non-admin
   // account, 404 plugin-not-installed, 500 exception inside the plugin's
   // own run()) into a failure here, with the raw response body folded into
-  // `error` -- confirmed against apps/plugins/api_views.py's
-  // PluginRunAPIView that every one of those paths pairs "success": false
-  // with a matching non-2xx status, never 200. So this call only needs to
-  // handle the 200 case below: PluginRunAPIView always wraps whatever the
-  // plugin's own run() returned inside a top-level "result" key (alongside
-  // its own "success": true), and the plugin can still report its own
+  // `error` (apps/plugins/api_views.py's PluginRunAPIView pairs each with
+  // "success": false). What reaches the parsing below is the plugin's own
+  // answer, wrapped in a top-level "result" key: a success, or its own
   // *logical* failure (e.g. hitting max_concurrent_buffers, or a buffer
   // that's genuinely gone -- see docs/TIMESHIFT.md's "concurrent-stream
-  // limit" section) as a normal 200 response with "result": {"status":
-  // "error", ...} rather than an exception -- that's the case the
-  // "result" parsing below actually exists to catch.
-  if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
+  // limit" section) as {"status": "error", ...}. Before Dispatcharr 0.34
+  // that failure came in a 200; 0.34 sends it as a 500 with the result
+  // still attached, which RequestPluginRun() hands on the same way.
+  if (!RequestPluginRun(kTimeshiftPluginRunPath, body, response, error))
     return false;
 
   json result;
@@ -1406,8 +1429,7 @@ bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, cons
       {"params", params},
   };
   json response;
-  if (!Request("POST", kTimeshiftPluginRunPath, body, response, error, /*withAuth=*/true, /*retryOnAuthFailure=*/1,
-               nullptr, ShortRequestTimeoutMs()))
+  if (!RequestPluginRun(kTimeshiftPluginRunPath, body, response, error, nullptr, ShortRequestTimeoutMs()))
     return false;
   json result;
   return UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error);
@@ -1639,10 +1661,11 @@ bool DispatcharrClient::GetRecordingEdl(int recordingId, std::vector<RecordingEd
 
   json response;
   // Same response shape as CallTimeshiftPluginAction()'s own comment
-  // describes: Request() already turns any non-2xx (plugin not installed/
+  // describes: RequestPluginRun() turns any non-2xx (plugin not installed/
   // enabled, non-admin account, exception inside the plugin's own run())
-  // into a failure here, so only the 200 case needs handling below.
-  if (!Request("POST", kRecordingEdlPluginRunPath, body, response, error))
+  // into a failure here, except the plugin's own error result, which
+  // UnwrapPluginRunResult() below reports.
+  if (!RequestPluginRun(kRecordingEdlPluginRunPath, body, response, error))
     return false;
 
   json result;
@@ -4406,8 +4429,7 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
       {"params", params},
   };
   json response;
-  if (!Request("POST", kTimeshiftPluginRunPath, body, response, error, /*withAuth=*/true, /*retryOnAuthFailure=*/1,
-               httpStatusOut, requestTimeoutMs))
+  if (!RequestPluginRun(kTimeshiftPluginRunPath, body, response, error, httpStatusOut, requestTimeoutMs))
     return false;
   json result;
   if (!UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error))

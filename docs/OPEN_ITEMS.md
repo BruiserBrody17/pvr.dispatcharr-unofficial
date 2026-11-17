@@ -4,12 +4,13 @@
 
 ## Status at a glance
 
-**9 open, 437 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**10 open, 438 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
 - One from the Kodi 22 work on `Piers`: what remains of Kodi 22 support.
+- One from the 2026-11-17 review of Dispatcharr 0.34.0: plugin actions running in Celery workers.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One upstream note on Kodi from the 2026-11-16 live check of the settings re-delivery: a GUI deadlock after a PVR
@@ -30,7 +31,7 @@ the design question on 2026-11-15, the other seven on 2026-11-16).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 3 |
+| Open: Needs a live check | 4 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
@@ -45,6 +46,48 @@ the design question on 2026-11-15, the other seven on 2026-11-16).
 ## Open
 
 ### Needs a live check
+
+#### Dispatcharr 0.34 runs plugin actions in Celery workers, so `timeshift_buffer`'s file server and ffmpeg move there
+
+**Opened 2026-11-17, from a source review of Dispatcharr 0.34.0 against 0.33.0; partly checked live the same day
+(below).** Up to 0.33,
+`PluginRunAPIView` called `PluginManager.run_action()` in the web worker that took the request. 0.34 queues every `run/`
+action as `run_plugin_action_task` on a `plugins` queue and waits for it (`DISPATCHARR_PLUGIN_RUN_SYNC_TIMEOUT_SECONDS`,
+default 55 s, then a 504). The default prefork worker now takes that queue as well as `celery`
+(`-Q celery,plugins`, `--autoscale`, `docker/uwsgi.ini` and `docker/entrypoint.celery.sh`). `timeshift_buffer` starts its
+file server, its reaper thread and each buffer's ffmpeg from inside an action (`_ensure_http_server_running()`,
+`_ensure_reaper_running()`, `_start_buffer()`), so all three now live in Celery child processes. To check against a real
+0.34 server:
+- Start, play, pause, seek and stop a buffer; two viewers on one channel; a stream switch.
+- A Celery child exiting: autoscale shrinking the pool after a burst, or the 512 MB recycle
+  (`CELERY_WORKER_MAX_MEMORY_PER_CHILD`). Its file server goes with it until the next action starts one in another
+  child, and the addon's segment reads fail in between. ffmpeg runs in its own session and should survive.
+- Action latency while an M3U or EPG refresh occupies the same worker pool: heartbeats and manifest polls queue
+  behind it once the pool is at its maximum (`CELERY_MAX_WORKERS`, default 6).
+- A deployment that runs Celery in its own container: the file server's port has to be published on that container,
+  not the web one. If so, the plugin README's port instructions need a line.
+- Side effects to note, not fix: every action is now recorded in the plugin's task history and broadcast to open web
+  UIs as `plugin_task_complete`, and every `{"status": "error"}` result logs a failed Celery task.
+
+**Seen live 2026-11-17** (Dispatcharr 0.34.0 in one container, a throwaway read-only probe plugin reading `/proc`, Kodi
+22 RC1 playing a disposable channel through a logging forwarder):
+- The file server's listening sockets belong to Celery children of the default `-Q celery,plugins` worker, one per
+  child that has run a `timeshift_buffer` action (two at rest, four after the pool grew), and to no uwsgi worker; the
+  buffer's ffmpeg is a child of the Celery child that started it. In one container the port answers as before.
+- From the client's own network, an action took 40 to 70 ms; Celery's routing is not a visible cost.
+- **Pool saturation:** twelve parallel 20 s probe actions held all six children for about 40 s. The addon's manifest
+  polls then took up to 40 s to be answered and its heartbeats up to 30 s (three timed out at the client's 2 s). Playback
+  did not stop (151 segment reads over 4 minutes, all good; segments come from the file server, not Celery), but the
+  plugin's idle timeout is 30 s, so a longer saturation could reap a buffer that is being watched. Whether a real M3U
+  or EPG refresh ever holds all six children is not known.
+- The pool did not shrink within 3.5 minutes of the burst, so a child exiting under a running buffer was not seen.
+- Not checked: a separate Celery container, the 512 MB recycle.
+
+The 0.34 plugin sandbox does not apply: it is enforced only for a manifest declaring `manifest_version` 2, and ours
+declare none (version 0, `apps/plugins/capabilities.py`'s `MANIFEST_SCHEMA_POLICIES`). Its import wrappers are still
+installed for every plugin (`apps/plugins/sandbox.py`) but only check permissions, which version 0 always passes. 0.34's
+persistent services (`persistent_service`, `network_listener`) are where the file server and reaper would belong long
+term; that needs manifest version 1 and Dispatcharr 0.34.0 or later.
 
 #### Off-mode live TV ends by itself on an Android tablet; an HLS output option was suggested
 

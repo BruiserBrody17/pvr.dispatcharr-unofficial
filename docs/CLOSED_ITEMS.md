@@ -6,6 +6,58 @@
 
 ### Fixed
 
+#### Dispatcharr 0.34 answers a plugin's own error with an HTTP 500, which the addon took for a failed call
+
+**Opened 2026-11-17, from a source review of Dispatcharr 0.34.0 against 0.33.0; confirmed by reading Dispatcharr's
+source and reproduced in the glue harness.** 0.34 runs a plugin `run/` action as a Celery task
+(`apps/plugins/tasks.py`'s `run_plugin_action_task`). When the action's result has `"status": "error"`, the task raises
+`PluginActionResultError`, a class that exists so the result survives the trip through Celery, and `PluginRunAPIView`
+answers HTTP 500 with `{"success": false, "error": ..., "result": <the plugin's result>}`. Up to 0.33 the same result
+came back as a 200 inside `{"success": true, "result": ...}`, and `Request()` turns any non-2xx into a failure without
+reading the body. So three signals the `timeshift_buffer` plugin sends in such a result were lost:
+- `retryable` on `start_buffer` (a start lock held by another start, the channel's buffer still stopping): the start
+  gave up at once instead of retrying briefly. Reaching `max_concurrent_buffers` is not one of these; it never carried
+  `retryable`.
+- The not-ready answer during a cold start ("live playlist not found", no `fatal`): the open used the shorter
+  no-answer budget, so a channel slow to produce its first segment failed to open at about 15 s (the 2026-10-12
+  `ColdStartTryLimit()` fix, undone).
+- `fatal` on `get_live_manifest` (the buffer was replaced after its ffmpeg died): not seen, so the stream ended only
+  through the segment-failure path, with no notice. The give-up's refresh also reported a 500, which
+  `IsDispatcharrOutOfReach()` reads as the server being out of reach.
+
+The `recording_edl` plugin's error results (recording not found) took the same path; there that only changed the
+logged message.
+
+**Fixed 2026-11-17.** `DispatcharrClient::RequestPluginRun()`, used by the four `run/` callers, asks `Request()` for a
+non-2xx body (its new `errorBodyOut`) and, when `dispatcharr::IsPluginRunErrorEnvelope()` (`PluginRunResult.h`)
+recognizes the 0.34 shape (`success` a real `false`, `result` an object), hands that body on as the response and
+reports status 200: the plugin answered. `UnwrapPluginRunResult()` now keeps the `result` object of a failed envelope
+too, so the callers read `retryable`, `fatal` and the status unchanged. Every other non-2xx (403 disabled or not an
+admin, 404 not installed, 504 from 0.34's 55 s wait, 500 from an exception, which carries no `result`) still fails as
+before. Unit-tested (`tests/test_plugin_run_result.cpp`: the envelope's shapes, the result kept, a non-object result
+dropped). The glue fake's `plugin_v034_errors=1` sends the plugin's error results in the 0.34 shape, and CI runs
+`live_late_start`, `live_fatal_ends tail` and `live_paused_replaced` with it: all three fail without the fix (the open
+gives up at 14.5 s with the 500 as its error; the dead buffer ends without a notice and its later reads answer -1 after
+1 s; the replaced buffer is not seen) and pass with it. A fourth, `live_start_retryable` (the fake's
+`start_retryable_ms`), answers `start_buffer` `retryable` for 2 s and checks the open is retried in and sends no
+`stop_buffer`; CI runs it in both shapes. The status 200 reported for an adopted answer matters only to the give-up
+notice after 30 s of segment failures, which no scenario reaches in the 0.34 shape.
+
+**Confirmed live 2026-11-17** against a real Dispatcharr 0.34.0 (single container) from Kodi 22 RC1 on a Linux test
+client, the PR's CI build against the `Piers` tip's (same `src/`), with a logging forwarder between Kodi and the server
+and a disposable channel fed by a paced local test stream:
+- The answers themselves, called directly: `get_live_manifest` on a channel with no buffer, an unknown action and
+  `recording_edl`'s unknown recording each came back HTTP 500 `{"success": false, "error": ..., "result": {...}}`, the
+  result intact (`fatal: true` included); a successful action stayed a 200.
+- A channel whose first segment took about 24 s: the old build gave up at 15 s ("no live playlist after 30 tries and
+  15s ... HTTP 500", Kodi's error dialog); the fix played at 24.7 s after 43 "live playlist not found" 500s.
+- `start_buffer` sent while the channel's previous buffer was stopping: the old build failed at once with the 500 as its
+  error; the fix got HTTP 500 `retryable` ("currently stopping"), retried 0.57 s later, started the buffer, and sent no
+  `stop_buffer`.
+- The buffer stopped server-side under a playing viewer: the old build ended the stream about 7 s later through the
+  "ffmpeg has exited" path with no notice; the fix took the first `fatal: true` answer, ended the stream and showed
+  "This channel's timeshift buffer can't be read from Dispatcharr any more".
+
 #### A settings save delivered while the PVR instance is still being constructed is dropped
 
 **Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against

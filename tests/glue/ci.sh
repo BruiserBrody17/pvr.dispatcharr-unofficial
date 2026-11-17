@@ -34,6 +34,12 @@ run "live (silent server at open)" TMO=5 T=120 -- live_silent_open
 run "live (silent server, 30 s timeout)" TMO=30 T=120 -- live_silent_open
 run "live (file server unreachable)" TMO=30 T=120 -- live_fileserver_unreachable
 run "live (first segment after 25 s)" TMO=30 T=120 -- live_late_start
+# The same plugin answers sent the way Dispatcharr 0.34 sends a plugin's own error (an HTTP 500 with the result).
+run "live (start retried while the plugin answers retryable)" TMO=30 T=60 -- live_start_retryable
+run "live (start retried while the plugin answers retryable, 0.34 error replies)" TMO=30 T=60 CTL="plugin_v034_errors=1" -- live_start_retryable
+run "live (first segment after 25 s, 0.34 error replies)" TMO=30 T=120 CTL="plugin_v034_errors=1" -- live_late_start
+run "live (buffer dies at the tail, 0.34 error replies)" TMO=30 T=120 CTL="plugin_v034_errors=1" -- live_fatal_ends tail
+run "live (paused viewer whose buffer was replaced, 0.34 error replies)" TMO=30 T=120 CTL="plugin_v034_errors=1" -- live_paused_replaced
 run "live (refresh throttle on 429)" TMO=30 T=120 -- live_refresh_throttle
 run "live (6 s API latency)"     TMO=30 T=300 -- live_slow_open
 run "live (recycled segment, then 404s)" TMO=30 T=120 -- live_segment_recycled

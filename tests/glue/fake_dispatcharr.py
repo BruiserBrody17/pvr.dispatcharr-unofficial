@@ -23,7 +23,7 @@ counts = collections.Counter()
 lock = threading.Lock()
 CTL = collections.defaultdict(str)
 CTL.update({"seg_ms": "300", "window": "12", "ip_seg_ms": "300"})
-T0 = {"live": None, "ip": time.time()}
+T0 = {"live": None, "ip": time.time(), "first_start": None}
 LIVE_FROZEN_AT = {"n": None}
 IP_FROZEN_AT = {"n": None}
 PROXY = {
@@ -531,6 +531,13 @@ class H(BaseHTTPRequestHandler):
     def J(self, code, obj):
         return self.send(code, json.dumps(obj).encode())
 
+    def plugin_error(self, result):
+        """A plugin action's own {"status": "error"} result. plugin_v034_errors=1 sends it the way Dispatcharr 0.34.0
+        does (apps/plugins/tasks.py's PluginActionResultError): HTTP 500, "success": false, the result alongside."""
+        if CTL["plugin_v034_errors"] == "1":
+            return self.J(500, {"success": False, "error": result.get("message", ""), "result": result})
+        return self.J(200, {"success": True, "result": result})
+
     def ranged(self, data, head=False, ignore_range=False, total_override=None):
         rng = self.headers.get("Range")
         total = len(data) if total_override is None else total_override
@@ -802,8 +809,22 @@ class H(BaseHTTPRequestHandler):
                 counts["action " + str(act)] += 1
             if act == "start_buffer":
                 LAST_START["params"] = params
+                # The plugin's start lock held by another start of the channel, or its buffer still stopping: it answers
+                # `retryable` for this many ms after the first start_buffer.
+                if ctl_int("start_retryable_ms"):
+                    with lock:
+                        if T0["first_start"] is None:
+                            T0["first_start"] = time.time()
+                    if (time.time() - T0["first_start"]) * 1000 < ctl_int("start_retryable_ms"):
+                        return self.plugin_error(
+                            {
+                                "status": "error",
+                                "retryable": True,
+                                "message": "another start of this channel is running",
+                            }
+                        )
                 if CTL["start_fail"] == "1":
-                    return self.J(200, {"success": True, "result": {"status": "error", "message": "limit"}})
+                    return self.plugin_error({"status": "error", "message": "limit"})
                 if T0["live"] is None:
                     T0["live"] = time.time()
                 return self.J(
@@ -833,21 +854,15 @@ class H(BaseHTTPRequestHandler):
                     time.sleep(40)
                     return self.J(503, {})
                 if CTL["live_fatal"] == "1":
-                    return self.J(
-                        200, {"success": True, "result": {"status": "error", "fatal": True, "message": "dead"}}
-                    )
+                    return self.plugin_error({"status": "error", "fatal": True, "message": "dead"})
                 # A channel whose provider is slow to deliver its first segment: the plugin answers "not there yet",
                 # without `fatal`, for this many ms after the buffer started.
                 if T0["live"] is not None and (time.time() - T0["live"]) * 1000 < ctl_int("manifest_not_ready_ms", 0):
-                    return self.J(
-                        200,
+                    return self.plugin_error(
                         {
-                            "success": True,
-                            "result": {
-                                "status": "error",
-                                "message": "live playlist not found -- the buffer may not have produced any segments",
-                            },
-                        },
+                            "status": "error",
+                            "message": "live playlist not found -- the buffer may not have produced any segments",
+                        }
                     )
                 if CTL["manifest_500"] == "1":
                     return self.J(500, {"detail": "x"})
