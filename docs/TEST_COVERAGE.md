@@ -997,6 +997,15 @@ in, then the plugin's own inner `{"status", "message"}` result.
 2026-10-19: it takes the response as an rvalue and moves the inner result out instead of copying it; a 100000-deep
 result comes back on a 1 MiB thread stack, which crashed with the copy (see `RecordingParser` below for the mechanism).
 
+2026-11-17: `IsPluginRunErrorEnvelope()` recognizes Dispatcharr 0.34's HTTP 500 that carries a plugin's own error
+result, and `UnwrapPluginRunResult()` keeps the `result` object of a failed envelope (`docs/CLOSED_ITEMS.md`'s
+"Dispatcharr 0.34 answers a plugin's own error with an HTTP 500"). Unit-tested: the 0.34 shape and the non-2xx answers
+that are not it (no result, a null result, a `success` that is missing, `0` or `true`, a non-object body), and the
+result kept or dropped on a failed envelope. In the glue harness, the fake's `plugin_v034_errors=1` sends the plugin's
+error results in the 0.34 shape, and CI runs `live_late_start`, `live_fatal_ends tail` and `live_paused_replaced` with it;
+all three fail on the code before the fix. `live_start_retryable` (`start_retryable_ms`) covers the `retryable` start in
+both shapes.
+
 ### `PluginUrlUtil`
 
 2026-11-04: `BuildTimeshiftSegmentUrl()` builds the live segment URL with the buffer's token and `&viewer_id=<id>`

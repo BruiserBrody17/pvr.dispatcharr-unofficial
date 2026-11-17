@@ -14,6 +14,10 @@ compare against.
 
 ### Fixed
 
+- Server-side timeshift reads the timeshift plugin's "not ready yet", "try again" and "buffer replaced" answers
+  correctly on Dispatcharr 0.34.0, which reports them as server errors. Before, the addon gave up on channels slow to
+  start, did not wait when the same channel was still starting or stopping elsewhere, and ended a buffer that was gone
+  without saying why.
 - Settings saved while the addon is still starting (for example, correcting the server address while it waits on the
   wrong one) are no longer ignored until the next save or a Kodi restart. Kodi applies them, or asks to restart the
   addon, once it has finished starting it.
