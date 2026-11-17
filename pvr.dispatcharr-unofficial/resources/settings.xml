@@ -377,6 +377,18 @@
           <control type="edit" format="string" />
           <visible>false</visible>
         </setting>
+        <!-- Written by the addon only to make Kodi deliver every setting again, when a save arrived while the PVR
+             instance was being created and so reached no instance (src/SettingsDuringConstruction.h). Its value means
+             nothing and nothing reads it. -->
+        <setting id="settings_redelivery" type="string" label="30124" help="30125">
+          <level>2</level>
+          <default></default>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <control type="edit" format="string" />
+          <visible>false</visible>
+        </setting>
       </group>
     </category>
 

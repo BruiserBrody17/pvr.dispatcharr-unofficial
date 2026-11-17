@@ -6,6 +6,74 @@
 
 ### Fixed
 
+#### A settings save delivered while the PVR instance is still being constructed is dropped
+
+**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
+the code before it was filed); LOW, confirmed by reading this addon's and Kodi's code.** `CAddonDispatcharr::CreateInstance()` adds the new
+instance to `m_instances` only after its constructor returns, and `SetSetting()` delivers a change only to listed
+instances, answering OK otherwise. Kodi holds only its instance-creation lock across the constructor, and a settings
+save (`CAddonDll::SaveSettings()` then `TransferSettings()`) does not take it, so a save can arrive mid-construction. The
+constructor read every setting at its start and can spend a full request timeout in its version check against a host
+that does not answer. Scenario: the user saves a wrong host, Kodi restarts the addon, and while the new instance waits
+on that host the user corrects it and saves again: no restart is asked for and nothing is applied, so the instance keeps
+using the wrong host until the next settings save or a Kodi restart (settings applied live, such as the timeshift mode,
+are lost the same way). Fix: after registering the instance, compare the settings with what the constructor used and
+apply the live ones; for a changed connection setting, write that setting back so Kodi re-delivers it and the existing
+check answers `ADDON_STATUS_NEED_RESTART`. Or queue deliveries that arrive during construction and replay them.
+
+**Fixed 2026-11-16, the first way, with one change the fix as filed missed.** `CAddonDispatcharr` records, per
+construction, whether a delivery came in from another thread while the constructor ran
+(`ConstructionDeliveryTracker`, `SettingsDuringConstruction.h`; the constructor's own setting writes come back on its
+own thread and are not counted). If one did, the registered instance writes a hidden setting, `settings_redelivery`,
+and Kodi then delivers every setting again, so the existing `OnAddonSettingChanged()` applies the live ones and answers
+`ADDON_STATUS_NEED_RESTART` for a changed connection setting, compared with what the constructor read. Comparing the
+settings directly and then writing would not have worked: each restart branch records the new value as it answers, so
+the write's own delivery would have found nothing changed. The write is on the instance's tracked thread, never in
+`CreateInstance()`: Kodi handles NEED_RESTART on the writing thread with a modal OK dialog, then queues the restart as
+a job (`CPVRClients::RequestRestart()`).
+
+The change from the fix as filed is when the write happens. Reading Kodi 21's and 22's PVR code showed two windows in
+which a restart goes wrong. Before the client is in Kodi's client map, which happens only after every enabled PVR client
+has been created (`CPVRClients::UpdateClients()`; two runs of it are not serialised), the restart job finds the client
+not created and creates it again, a second instance beside the first. While the PVR manager is still loading channels,
+timers and recordings, a restart that stops it leaves the client marked known on Kodi 22
+(`CPVRManager::UpdateComponents()` returns on the state change without clearing `m_knownClients`, and `Process()`
+returns before `ResetProperties()`), so the next start loads nothing from the new instance; Kodi 21 clears the list on
+every abort. (The second came from the branch's review; the first version of the fix waited for the first channel or
+group call, which falls inside that load.) So the write waits for Kodi's PVR GUI info thread, which the manager starts
+only after the load and which asks every client for its backend properties once as it starts
+(`CPVRGUIInfo::UpdateBackendCache()`). Those are the only callers of the `*Amount()` methods on both versions, and the
+first such call releases the write. The load and that thread run whether or not the client reached its server: only a
+client that reports `PVR_CONNECTION_STATE_CONNECTING` first is skipped, and this addon never does. If no such call comes
+within five minutes, the addon logs a warning to save the settings again and writes nothing. While the settings dialog
+is open, Kodi gives the write to the dialog and nothing is re-delivered; the dialog's own save then delivers everything,
+and a cancelled dialog leaves the change for the next save.
+
+Left as it is, because it is Kodi's and not this change's: a settings save, from the dialog or a script, that lands
+after `CreateInstance()` returns but before the client-map insert reaches the instance, and a connection change answers
+NEED_RESTART at once, so the same duplicate-instance window applies to it. With only this PVR addon enabled the window is
+milliseconds, and the OK dialog stands between the save and the restart.
+
+Unit tests for the tracker. The glue harness's `settings_redelivery` scenario checks that the write waits through the
+addon's own background load and through Kodi-style group, channel, timer and recording loads, comes within about a second
+of the first amount call, and that an instance destroyed while waiting ends the wait at once and writes nothing. With
+the wait removed it fails twice, and with the first version's signal it fails on the load check. `CAddonDispatcharr`
+itself is not built by the glue harness, so the thread bookkeeping in `CreateInstance()`/`SetSetting()` and Kodi's side
+were checked live.
+
+Live on Kodi 22 RC1 (Linux, a build of the branch), 2026-11-16: the addon pointed at a port that accepts and never
+answers, and a script addon saved the working port while the constructor waited on it (Kodi delivered it from the
+script's own thread, mid-construction). Without the fix nothing happened and the addon kept trying the dead port. With
+it, once the PVR manager had started, the addon logged the re-delivery, Kodi showed its restart dialog, and after OK it
+logged "Recreating PVR client" (not "Creating"), built one new instance, and that one connected on the working port; the
+channels came back. The restart then sometimes hung Kodi's GUI in a deadlock of Kodi's own, which an ordinary settings
+save reaches too (`OPEN_ITEMS.md`, "Kodi: the GUI can deadlock right after a PVR client restart").
+
+Live on Kodi 21.3 (Linux, the CI build of the `Omega` port), 2026-11-16, the same steps: without the port the save was
+lost the same way. With it, in four runs out of four the addon logged one re-delivery after the PVR manager had started,
+Kodi showed its restart dialog, recreated the client once, the new instance connected on the working port and the whole
+channel list loaded; the GUI did not hang in any of them.
+
 #### Two series rules can share one Kodi ClientIndex
 
 **Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against

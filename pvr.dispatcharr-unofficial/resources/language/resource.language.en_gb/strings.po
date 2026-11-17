@@ -432,3 +432,11 @@ msgstr ""
 msgctxt "#30123"
 msgid "Whole words (anywhere in the title)"
 msgstr ""
+
+msgctxt "#30124"
+msgid "Settings re-delivery (internal)"
+msgstr ""
+
+msgctxt "#30125"
+msgid "Used by the addon itself to have Kodi apply a settings change made while it was starting. Not shown."
+msgstr ""

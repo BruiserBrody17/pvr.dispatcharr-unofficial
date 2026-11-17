@@ -4,24 +4,24 @@
 
 ## Status at a glance
 
-**8 open, 428 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**8 open, 429 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
+- One upstream note on Kodi from the 2026-11-16 live check of the settings re-delivery: a GUI deadlock after a PVR
+  client restart.
 - One from the 2026-11-12 live checks on Kodi 21: timers made on the server showed about 75 s after the realtime event.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
 - One follow-up to issue #1 from 2026-11-16: DVB subtitles and teletext in Server-side mode.
-- One from the 2026-11-14 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (LOW; the
-  seventeenth, a `BRANCHES.md` note, is `Piers` only). Its three documentation findings that held here, its four
-  tooling findings, its one MEDIUM and its one design question were closed on 2026-11-15, the catch-up session reuse,
-  the two `timeshift_buffer` findings, the shared series-rule index, the pending titles and the connection notice on
-  2026-11-16.
 
-Nothing is left from the 2026-11-10 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (nine of its
-eleven findings held here, the other two being `Piers` only; all fixed by 2026-11-12), nor from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
+Nothing is left from the 2026-11-14 bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (sixteen of its
+seventeen findings held here, the seventeenth, a `BRANCHES.md` note, being `Piers` only; all fixed: the documentation and
+tooling findings, the MEDIUM and the design question on 2026-11-15, the other seven on 2026-11-16), from the 2026-11-10
+bug-hunting sweep, made on `Piers` and checked against `Omega`'s code (nine of its
+eleven findings held here, the other two being `Piers` only; all fixed by 2026-11-12), from the 2026-10-18 read-only audit, made on `Piers` and checked against `Omega`'s code (all 21 findings
 held here), from the 2026-10-19 live check of four audit fixes on `Piers`, from the 2026-10-23 sweep, made on `Piers`
 and checked against `Omega`'s code (all 17 findings held here, the last fixed on 2026-11-04), from the 2026-10-24 sweep (one reviewer
 over the whole project, seven findings), or from the 2026-10-31 sweep, made on `Piers` and checked against `Omega`'s
@@ -31,14 +31,14 @@ recording's 20 s retry budget).
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 3 |
-| Open: Fix known, not yet done | 1 |
+| Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 0 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 2 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 3 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 375 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 376 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -124,21 +124,7 @@ stream switch).
 
 ### Fix known, not yet done
 
-#### A settings save delivered while the PVR instance is still being constructed is dropped
-
-**Opened 2026-11-14, from the 2026-11-14 bug-hunting sweep (six read-only reviews by area, each finding checked against
-the code before it was filed); LOW, confirmed by reading this addon's and Kodi's code.** `CAddonDispatcharr::CreateInstance()` adds the new
-instance to `m_instances` only after its constructor returns, and `SetSetting()` delivers a change only to listed
-instances, answering OK otherwise. Kodi holds only its instance-creation lock across the constructor, and a settings
-save (`CAddonDll::SaveSettings()` then `TransferSettings()`) does not take it, so a save can arrive mid-construction. The
-constructor read every setting at its start and can spend a full request timeout in its version check against a host
-that does not answer. Scenario: the user saves a wrong host, Kodi restarts the addon, and while the new instance waits
-on that host the user corrects it and saves again: no restart is asked for and nothing is applied, so the instance keeps
-using the wrong host until the next settings save or a Kodi restart (settings applied live, such as the timeshift mode,
-are lost the same way). Fix: after registering the instance, compare the settings with what the constructor used and
-apply the live ones; for a changed connection setting, write that setting back so Kodi re-delivers it and the existing
-check answers `ADDON_STATUS_NEED_RESTART`. Or queue deliveries that arrive during construction and replay them.
-
+None open.
 
 ### Architectural / concurrency
 
@@ -153,6 +139,22 @@ None open.
 None open.
 
 ### Upstream (Dispatcharr) or documentation accuracy
+
+#### Kodi: the GUI can deadlock right after a PVR client restart
+
+**Opened 2026-11-16, from the live check of the settings re-delivery (`CLOSED_ITEMS.md`, "A settings save delivered
+while the PVR instance is still being constructed is dropped"); reproduced on Kodi 22 RC1, backtrace taken with gdb.**
+Right after Kodi's PVR manager reports "Started" again following a client restart (the NEED_RESTART dialog's OK), Kodi's
+main thread can stop for good: it holds the GUI lock while drawing a home-screen PVR widget, reaches a channel with no
+guide yet, and `CPVREpgContainer::CreateChannelEpg()` waits in `WaitForUpdateFinish()` for the guide update. That update,
+finishing, destroys its `CPVRGUIProgressHandler`, whose thread is waiting for the GUI lock in
+`CGUIWindowManager::GetWindow()`. No addon code is on any of the three stacks. It took a restart that brings channels
+Kodi had not seen (a client that started unreachable and then connected, with a large lineup):
+an ordinary settings save answered with NEED_RESTART hung it in 2 of 6 runs without the re-delivery code and 5 of 10
+with it, and 0 of 6 when no addon was enabled during startup, so the timing around it matters. Kodi 21's
+`EpgContainer.cpp` has the same wait; on Kodi 21.3 the same restart did not hang in 4 runs without the re-delivery code
+and 4 with it, too few to say it cannot. Not this addon's bug; worth reporting to Kodi with the
+three stacks. Nothing here works around it.
 
 #### Dispatcharr schedules a recurring rule's occurrence that starts inside a spring-forward gap to end before it starts
 

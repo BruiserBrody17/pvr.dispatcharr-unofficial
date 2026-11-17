@@ -23,6 +23,7 @@
 #include "ServerOffsetCrossCheck.h"
 #include "Staleness.h"
 #include "StreamPropertyUtil.h"
+#include "SettingsDuringConstruction.h"
 #include "StringUtil.h"
 #include "TimeUtil.h"
 #include "TimeZoneUtil.h"
@@ -937,6 +938,54 @@ void PVRDispatcharr::ResendConnectionReport()
 {
   m_connectionLatch.RequestResend();
   ScheduleConnectionReport();
+}
+
+void PVRDispatcharr::RequestSettingsRedelivery()
+{
+  // Never on the thread in CreateInstance(): an addon-side write makes Kodi deliver every setting on the writing thread
+  // (CAddonDll::SaveSettings() then TransferSettings()), and a connection setting that differs from what the
+  // constructor read answers ADDON_STATUS_NEED_RESTART, which Kodi handles on that same thread with a modal OK dialog
+  // before it queues the restart as a job (CAddonStatusHandler with sameThread; CPVRClients::RequestRestart() only
+  // submits it, on Kodi 21 and 22).
+  //
+  // Nor straight after CreateInstance() returns: Kodi adds the client to its client map only once it has created every
+  // enabled PVR client (CPVRClients::UpdateClients()), and a restart job that runs before then finds the client not
+  // created and creates it again, a second instance of this addon beside the first. Nor while Kodi's PVR manager is
+  // still loading channels, timers and recordings: on Kodi 22 a restart that stops it there leaves the client marked
+  // known (CPVRManager::UpdateComponents() returns without clearing m_knownClients, and Process() returns before
+  // ResetProperties()), so the next start loads nothing from the new instance. So this waits for Kodi's GUI info
+  // thread, which the PVR manager starts only after that load and which asks every client for its backend properties
+  // once when it starts (CPVRGUIInfo::UpdateBackendCache(), Kodi 21 and 22): those are the only callers of the
+  // *Amount() methods, which set m_kodiAskedForBackendProperties. The load and that thread run whether or not the
+  // client reached its server; only a client reporting PVR_CONNECTION_STATE_CONNECTING first is skipped, and this
+  // addon never reports it.
+  //
+  // Each branch of OnAddonSettingChanged() compares with what it last applied, so settings the save did not change pass
+  // through as no-ops. The value written does not matter: Kodi saves and re-delivers on every write, changed or not.
+  // While this addon's settings dialog is open Kodi gives the write to the dialog instead and nothing is re-delivered;
+  // the dialog's own save then delivers everything, and a cancelled dialog leaves the change for the next save.
+  TrackDetachedThread(
+      [this]()
+      {
+        const auto deadline = std::chrono::steady_clock::now() + dispatcharr::kSettingsRedeliveryMaxWait;
+        while (!m_kodiAskedForBackendProperties.load())
+        {
+          if (std::chrono::steady_clock::now() >= deadline)
+          {
+            kodi::Log(ADDON_LOG_WARNING,
+                      "pvr.dispatcharr-unofficial: a settings save arrived while the PVR instance was being created, "
+                      "and Kodi did not finish starting it in time to deliver the settings again -- save the settings "
+                      "once more to apply them");
+            return;
+          }
+          if (!SleepUnlessShuttingDown(std::chrono::seconds(1)))
+            return;
+        }
+        kodi::Log(ADDON_LOG_INFO,
+                  "pvr.dispatcharr-unofficial: a settings save arrived while the PVR instance was being "
+                  "created -- asking Kodi to deliver the settings again");
+        kodi::addon::SetSettingString("settings_redelivery", "1");
+      });
 }
 
 void PVRDispatcharr::ReportConnectionToKodi()
@@ -3072,6 +3121,7 @@ void PVRDispatcharr::SaveRecordingEpgLinksIfDirty()
 PVR_ERROR PVRDispatcharr::GetChannelGroupsAmount(int& amount)
 try
 {
+  m_kodiAskedForBackendProperties = true;
   EnsureChannelsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
   // Real, confirmed bug found via a project-wide review (a 40th-pass
@@ -3164,6 +3214,7 @@ catch (...)
 PVR_ERROR PVRDispatcharr::GetChannelsAmount(int& amount)
 try
 {
+  m_kodiAskedForBackendProperties = true;
   EnsureChannelsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
   // See GetChannelGroupsAmount()'s own comment above -- the channels-side
@@ -3900,6 +3951,7 @@ catch (...)
 PVR_ERROR PVRDispatcharr::GetRecordingsAmount(bool deleted, int& amount)
 try
 {
+  m_kodiAskedForBackendProperties = true;
   if (deleted)
   {
     amount = 0; // Dispatcharr recording trash/undelete not implemented here
@@ -4743,6 +4795,7 @@ void LogAmbiguousSeriesRuleIndex(const char* action)
 PVR_ERROR PVRDispatcharr::GetTimersAmount(int& amount)
 try
 {
+  m_kodiAskedForBackendProperties = true;
   EnsureRecordingsLoaded();
   EnsureTimerRulesLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);

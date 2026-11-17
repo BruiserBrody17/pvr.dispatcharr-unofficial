@@ -47,6 +47,11 @@ public:
   // background thread -- deliberately left out of scope here).
   ADDON_STATUS OnAddonSettingChanged(const std::string& settingName, const kodi::addon::CSettingValue& settingValue);
 
+  // Called from CAddonDispatcharr::CreateInstance() once this instance is registered, when a settings save came in
+  // while it was being constructed and so reached no instance (SettingsDuringConstruction.h). Writes a hidden setting
+  // on a thread of its own, which makes Kodi deliver every setting again, now to this instance.
+  void RequestSettingsRedelivery();
+
   // --- General ---
   PVR_ERROR GetCapabilities(kodi::addon::PVRCapabilities& capabilities) override;
   PVR_ERROR GetBackendName(std::string& name) override;
@@ -564,6 +569,9 @@ private:
   std::mutex m_shutdownMutex;
   std::condition_variable m_shutdownCv;
   std::atomic<bool> m_shuttingDown{false};
+  // Set by Kodi's first call of an *Amount() method, which only its PVR GUI info thread makes, and only once the PVR
+  // manager has finished loading this client (RequestSettingsRedelivery()).
+  std::atomic<bool> m_kodiAskedForBackendProperties{false};
   // Waits up to `duration`; returns false when the instance began shutting down first.
   bool SleepUnlessShuttingDown(std::chrono::seconds duration);
   std::mutex m_detachedThreadsMutex;

@@ -1747,6 +1747,62 @@ int main(int argc, char** argv)
     if (setting("api_key") != ownerStampsKey)
       FAIL("api_key is '%s', not the account's key", setting("api_key").c_str());
   }
+  else if (what == "settings_redelivery")
+  {
+    // A save that reached no instance during construction is delivered again by an addon-side write
+    // (SettingsDuringConstruction.h), but only once Kodi's PVR GUI info thread asks for the backend's amounts: before
+    // the PVR manager has finished loading the client, a restart could create a second instance
+    // (CPVRClients::UpdateClients()) or, on Kodi 22, leave the new one unloaded (CPVRManager::UpdateComponents()).
+    auto written = []
+    {
+      std::lock_guard<std::mutex> g(g_setMu);
+      auto it = g_settings.find("settings_redelivery");
+      return it == g_settings.end() ? std::string() : it->second;
+    };
+    pvr->RequestSettingsRedelivery();
+    // Long enough for the addon's own background channel load, which must not count as Kodi's.
+    sleep_ms(2500);
+    if (!written().empty())
+      FAIL("the settings were asked for again before Kodi asked for anything");
+    // The PVR manager's own load (groups, channels) comes before its GUI info thread starts, and must not release it.
+    Collected loaded;
+    A()->GetChannelGroups(I(), (PVR_HANDLE)&loaded, false);
+    A()->GetChannels(I(), (PVR_HANDLE)&loaded, false);
+    A()->GetTimers(I(), (PVR_HANDLE)&loaded);
+    A()->GetRecordings(I(), (PVR_HANDLE)&loaded, false);
+    sleep_ms(1500);
+    if (!written().empty())
+      FAIL("the settings were asked for again during the PVR manager's load");
+    int n = 0;
+    A()->GetChannelsAmount(I(), &n);
+    long w0 = ms();
+    while (written().empty() && ms() - w0 < 5000)
+      sleep_ms(50);
+    INFO("re-delivery write %ld ms after the first amount call: '%s'", ms() - w0, written().c_str());
+    if (written() != "1")
+      FAIL("Kodi's first amount call did not release the re-delivery");
+
+    // An instance destroyed while its re-delivery still waits ends the wait at once and writes nothing.
+    {
+      std::lock_guard<std::mutex> g(g_setMu);
+      g_settings.erase("settings_redelivery");
+    }
+    KODI_ADDON_INSTANCE_STRUCT* inst2 = MakePvrInstanceStruct();
+    PVRDispatcharr* pvr2;
+    {
+      kodi::addon::IInstanceInfo info(inst2);
+      pvr2 = new PVRDispatcharr(info);
+    }
+    pvr2->RequestSettingsRedelivery();
+    sleep_ms(300);
+    long dd0 = ms();
+    delete pvr2;
+    INFO("second instance destroyed in %ld ms with its re-delivery waiting", ms() - dd0);
+    if (ms() - dd0 > 3000)
+      FAIL("destroying the instance waited out its re-delivery (%ld ms)", ms() - dd0);
+    if (!written().empty())
+      FAIL("a destroyed instance's re-delivery wrote the setting");
+  }
   else if (what == "dtor_busy")
   {
     // destroy while Kodi-facing calls are idle but the addon's own threads are mid-fetch (slow server)
