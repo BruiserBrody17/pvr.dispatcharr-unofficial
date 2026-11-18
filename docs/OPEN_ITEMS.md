@@ -90,6 +90,12 @@ file server, its reaper thread and each buffer's ffmpeg from inside an action (`
   buffer (the pool shrinking, or the 512 MB recycle); a deployment with Celery in its own container. Start, play, pause
   and stop were seen on 0.34 (this item, and the live checks of the 500-with-result reading and of the keep-alive).
 
+**0.34.1 reviewed 2026-11-18** (source diff against 0.34.0): it changes only plugin sockets used as context managers,
+where a plugin's file-field uploads are stored and how a plugin's data directory is named (`apps/plugins/sandbox.py`,
+`apps/plugins/api_views.py`). Nothing above changes: the action queue, its timeout, the 500-with-result answer and the
+worker setup are as in 0.34.0, and neither plugin opens a socket with `with`, declares a file field or uses its data
+directory.
+
 The 0.34 plugin sandbox does not apply: it is enforced only for a manifest declaring `manifest_version` 2, and ours
 declare none (version 0, `apps/plugins/capabilities.py`'s `MANIFEST_SCHEMA_POLICIES`). Its import wrappers are still
 installed for every plugin (`apps/plugins/sandbox.py`) but only check permissions, which version 0 always passes. 0.34's
