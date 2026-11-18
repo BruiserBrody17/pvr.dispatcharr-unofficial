@@ -14,6 +14,9 @@ compare against.
 
 ### Fixed
 
+- Server-side timeshift keeps playing while Dispatcharr 0.34.0 is busy with other work, such as matching guide data to
+  many channels at once. Before, a paused channel's buffer was ended after about 30 seconds, so playback stopped on
+  resume, and a channel watched live could stop after a few seconds.
 - Server-side timeshift reads the timeshift plugin's "not ready yet", "try again" and "buffer replaced" answers
   correctly on Dispatcharr 0.34.0, which reports them as server errors. Before, the addon gave up on channels slow to
   start, did not wait when the same channel was still starting or stopping elsewhere, and ended a buffer that was gone

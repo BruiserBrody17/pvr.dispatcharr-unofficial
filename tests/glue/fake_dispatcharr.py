@@ -2,6 +2,7 @@
 # Fake Dispatcharr + timeshift_buffer plugin + recording endpoints, for the stream-path glue harness.
 # Content is self-describing: every 8-byte record is struct('>II', tag, index) so the harness can
 # verify every byte it reads.  Runtime knobs via GET /__ctl?k=v ; counters via GET /__stats.
+# idle_reap_ms: the plugin's idle reaper (LIVE_IDLE below); a reaped buffer counts "tsbuf reaped".
 import base64
 import contextlib
 import datetime
@@ -32,7 +33,12 @@ TOKEN = {"v": "tok1"}
 REFRESH = {"n": 0}
 LAST_STOP = {"params": None}  # the params of the last stop_buffer, for /__laststop
 LAST_START = {"params": None}  # the params of the last start_buffer, for /__laststart
+# The plugin's idle reaper (idle_reap_ms): the buffer is ended once nothing showed interest in it for that long, where
+# interest is a file-server request or a heartbeat/get_live_manifest action at the moment it is handled. Checked lazily,
+# on the next such event, which ends the same way for the client as a reaper thread ticking in between.
+LIVE_IDLE = {"last": None, "reaped": False}
 LAST_SEGMENT_VIEWER = {"v": None}  # the viewer_id query param of the last segment request, for /__lastsegviewer
+LAST_KEEPALIVE_VIEWER = {"v": None}  # the same for the last live.m3u8 request (the keep-alive), /__lastkeepaliveviewer
 LAST_HEARTBEAT = {"params": None}  # the params of the last heartbeat, for /__lastheartbeat
 WS_PUSHED = []  # realtime messages pushed through /__ctl?ws_push= (every connected client gets all of them)
 REC_SIZE = 3 * 1024 * 1024 + 5
@@ -63,6 +69,19 @@ def rec_bytes(start, end):  # [start, end) of the completed recording
         out += struct.pack(">II", 0xC0FFEE00, k)
     off = start - first * 8
     return bytes(out[off : off + (end - start)])
+
+
+def touch_live():
+    """One sign of interest in the live buffer; False once the reaper has ended it."""
+    reap_ms = ctl_int("idle_reap_ms")
+    now = time.time()
+    with lock:
+        if reap_ms and LIVE_IDLE["last"] is not None and (now - LIVE_IDLE["last"]) * 1000 > reap_ms:
+            if not LIVE_IDLE["reaped"]:
+                counts["tsbuf reaped"] += 1
+            LIVE_IDLE["reaped"] = True
+        LIVE_IDLE["last"] = now
+        return not LIVE_IDLE["reaped"]
 
 
 def live_count():
@@ -592,7 +611,7 @@ class H(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         key = method + " " + p
         if p.startswith("/tsbuf/"):
-            key = method + " /tsbuf/seg"
+            key = method + (" /tsbuf/playlist" if p.endswith("/live.m3u8") else " /tsbuf/seg")
         if "/hls/seg_" in p:
             key = method + " /hls/seg"
         with lock:
@@ -609,6 +628,8 @@ class H(BaseHTTPRequestHandler):
             return self.J(200, LAST_START["params"])
         if p == "/__lastsegviewer":
             return self.J(200, {"viewer_id": LAST_SEGMENT_VIEWER["v"]})
+        if p == "/__lastkeepaliveviewer":
+            return self.J(200, {"viewer_id": LAST_KEEPALIVE_VIEWER["v"]})
         if p == "/__lastheartbeat":
             return self.J(200, LAST_HEARTBEAT["params"])
         if p == "/__ctl":
@@ -793,6 +814,8 @@ class H(BaseHTTPRequestHandler):
                 counts["action " + str(act)] += 1
             if act == "start_buffer":
                 LAST_START["params"] = params
+                with lock:
+                    LIVE_IDLE.update(last=None, reaped=False)
                 # The plugin's start lock held by another start of the channel, or its buffer still stopping: it answers
                 # `retryable` for this many ms after the first start_buffer.
                 if ctl_int("start_retryable_ms"):
@@ -830,6 +853,7 @@ class H(BaseHTTPRequestHandler):
             if act == "heartbeat":
                 with lock:
                     LAST_HEARTBEAT["params"] = params
+                touch_live()
                 if ctl_int("heartbeat_delay_ms"):  # holds the read that sent it, with its state lock released
                     time.sleep(ctl_int("heartbeat_delay_ms") / 1000.0)
                 return self.J(200, {"success": True, "result": {"status": "ok"}})
@@ -837,7 +861,7 @@ class H(BaseHTTPRequestHandler):
                 if CTL["manifest_hang"] == "1":  # answers start_buffer, then goes silent
                     time.sleep(40)
                     return self.J(503, {})
-                if CTL["live_fatal"] == "1":
+                if CTL["live_fatal"] == "1" or not touch_live():
                     return self.plugin_error({"status": "error", "fatal": True, "message": "dead"})
                 # A channel whose provider is slow to deliver its first segment: the plugin answers "not there yet",
                 # without `fatal`, for this many ms after the buffer started.
@@ -887,6 +911,13 @@ class H(BaseHTTPRequestHandler):
             if q.get("token", [""])[0] != TOKEN["v"]:
                 return self.send(403, b"bad token")
             LAST_SEGMENT_VIEWER["v"] = q.get("viewer_id", [None])[0]
+            if p.endswith("/live.m3u8"):  # only ever asked for by the keep-alive's HEAD
+                LAST_KEEPALIVE_VIEWER["v"] = q.get("viewer_id", [None])[0]
+                if not touch_live():
+                    return self.send(404, b"nf", head=method == "HEAD")
+                return self.send(200, b"#EXTM3U\n", "application/vnd.apple.mpegurl", head=method == "HEAD")
+            if LIVE_IDLE["reaped"]:
+                return self.send(404, b"nf")
             st = ctl_int("seg_status", 0)
             if st:
                 return self.send(st, b"x")
@@ -907,6 +938,7 @@ class H(BaseHTTPRequestHandler):
                     counts["tsbuf recycled 404"] += 1
                 return self.send(404, b"nf")
             s = cands[-1]
+            touch_live()
             return self.ranged(seg_bytes(0x5E000000, s, seg_size(s)), method == "HEAD", CTL["seg_norange"] == "1")
         if (
             p != "/api/channels/recordings/"

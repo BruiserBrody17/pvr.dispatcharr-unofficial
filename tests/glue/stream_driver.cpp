@@ -708,6 +708,121 @@ static void live_paused_replaced(DispatcharrClient& cl)
   cl.CloseLiveTimeshiftStream();
 }
 
+static long stat_count(const char* key)
+{
+  const auto stats = nlohmann::json::parse(http("/__stats"), nullptr, false);
+  return stats.is_object() && stats.contains(key) ? stats[key].get<long>() : 0;
+}
+
+// A paused viewer while Dispatcharr's task pool is busy (Dispatcharr 0.34 runs plugin actions as Celery tasks beside
+// its own guide work; docs/CLOSED_ITEMS.md, "A paused viewer's timeshift buffer can be ended while Dispatcharr's task
+// pool is busy"). The fake holds every API answer for 18 s, as a full queue does, while its file server answers at
+// once, and ends the buffer after 14 s with no sign of interest, as the plugin's reaper does after its idle timeout.
+// The pause's polls and heartbeats only land late, so the buffer survives only if the addon's keep-alive reaches the
+// file server, naming this viewer; the resume then plays on.
+static void live_paused_queue_stall(DispatcharrClient& cl)
+{
+  ctl("window=400"); // the paused position must still be on disk after the pause
+  ctl("idle_reap_ms=14000");
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  std::vector<uint8_t> buf(1 << 16);
+  if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) <= 0)
+    FAIL("the first read delivered nothing");
+
+  ctl("api_delay_ms=18000");
+  const long start = ms();
+  while (ms() - start < 22000)
+  {
+    cl.GetLiveTimeshiftStreamLength();
+    cl.GetLiveTimeshiftStreamDurationMs();
+    sleep_ms(250);
+  }
+  ctl("api_delay_ms=0");
+  const long keepAlives = stat_count("HEAD /tsbuf/playlist");
+  const auto keepAlive = nlohmann::json::parse(http("/__lastkeepaliveviewer"), nullptr, false);
+  const std::string viewer =
+      keepAlive.is_object() && keepAlive["viewer_id"].is_string() ? keepAlive["viewer_id"].get<std::string>() : "";
+  const long t0 = ms();
+  int n = -1;
+  while (n < 0 && ms() - t0 < 10000)
+    n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+  const long reaped = stat_count("tsbuf reaped");
+  INFO("paused_queue_stall: %ld keep-alive(s), viewer '%s', reaped %ld, resume read answered %d in %ld ms", keepAlives,
+       viewer.c_str(), reaped, n, ms() - t0);
+  if (keepAlives < 1)
+    FAIL("no keep-alive reached the file server in a 22 s pause");
+  if (viewer.empty())
+    FAIL("the keep-alive did not name the viewer");
+  if (reaped != 0)
+    FAIL("the buffer was reaped during the pause");
+  if (n <= 0)
+    FAIL("the resume read answered %d, not data", n);
+  cl.CloseLiveTimeshiftStream();
+}
+
+// The same busy task pool under a viewer waiting at the live edge: every forced refresh of the tail wait times out,
+// which used to read as an outage and end the wait on its short budget with a 0 (Kodi then ends playback at the next
+// stall) while the buffer was alive (docs/CLOSED_ITEMS.md, "A paused viewer's timeshift buffer can be ended while
+// Dispatcharr's task pool is busy"). The file server's answer must make it a stall: no 0 in 25 s of held API answers,
+// nothing reaped, and the stream reads on once the answers flow again.
+static void live_edge_queue_stall(DispatcharrClient& cl)
+{
+  ctl("window=400");
+  ctl("idle_reap_ms=14000");
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  std::vector<uint8_t> buf(1 << 16);
+  // Read up to the live edge: the fake adds a segment every 300 ms, so a reader there gets each one as it comes.
+  int n = 0;
+  const long s0 = ms();
+  while (ms() - s0 < 5000)
+    n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+
+  ctl("api_delay_ms=18000");
+  int zeros = 0;
+  long firstZero = -1;
+  const long t0 = ms();
+  while (ms() - t0 < 25000)
+  {
+    n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n == 0)
+    {
+      if (zeros++ == 0)
+        firstZero = ms() - t0;
+      sleep_ms(200);
+    }
+  }
+  ctl("api_delay_ms=0");
+  long data = 0;
+  const long r0 = ms();
+  while (data == 0 && ms() - r0 < 15000)
+  {
+    n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+    if (n > 0)
+      data += n;
+  }
+  const long reaped = stat_count("tsbuf reaped");
+  INFO("edge_queue_stall: %d zero(s) (first at %ld ms), %ld keep-alive(s), reaped %ld, %ld bytes after the stall",
+       zeros, firstZero, stat_count("HEAD /tsbuf/playlist"), reaped, data);
+  if (zeros != 0)
+    FAIL("the tail wait answered 0 %d time(s), the first %ld ms into the stall: Kodi would end playback", zeros,
+         firstZero);
+  if (reaped != 0)
+    FAIL("the buffer was reaped during the stall");
+  if (data == 0)
+    FAIL("no data was read once the API answered again");
+  cl.CloseLiveTimeshiftStream();
+}
+
 // A buffer the server has given up on (the plugin answers `fatal`) must end the stream: Kodi ends a PVR channel only
 // on a 0, and treats -1 as a read to try again, so a fatal stream that answered -1 left the player buffering with no
 // message until someone stopped it (seen live on Kodi 22.0 RC1, docs/CLOSED_ITEMS.md). `tail`: the reader is waiting
@@ -2055,6 +2170,10 @@ int main(int argc, char** argv)
       live_stop_token(*cl);
     else if (what == "live_paused_replaced")
       live_paused_replaced(*cl);
+    else if (what == "live_paused_queue_stall")
+      live_paused_queue_stall(*cl);
+    else if (what == "live_edge_queue_stall")
+      live_edge_queue_stall(*cl);
     else if (what == "live_fatal_ends")
       live_fatal_ends(*cl, arg ? arg : "tail");
     else if (what == "live_tail_ended")

@@ -1589,6 +1589,13 @@ private:
     // uses this to send one on an interval (kHeartbeatInterval, local to
     // that function) instead of on every single read.
     std::chrono::steady_clock::time_point lastHeartbeatSent{};
+    // When MaybeSendLiveTimeshiftKeepAlive() next owes the file server a request: pushed an interval out by every
+    // segment read and answered keep-alive, so a viewer that is playing never sends one.
+    std::chrono::steady_clock::time_point nextKeepAliveAt{};
+    // When a keep-alive last ended, and when one last got an answer: the live tail wait's evidence that the buffer is
+    // alive while the plugin's actions go unanswered (DecideTailWaitFileServerCheck()).
+    std::chrono::steady_clock::time_point lastKeepAliveAttemptAt{};
+    std::chrono::steady_clock::time_point lastKeepAliveAnsweredAt{};
     void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
     // Set once a manifest says the plugin's ffmpeg has exited (`ended`): the buffer is
     // frozen, so a read at the tail ends the stream instead of waiting, while a read
@@ -1864,6 +1871,15 @@ private:
   // is actually due; called from RefreshInProgressRecordingManifest(),
   // which GetStreamTimes()'s polling keeps reaching through a pause.
   void MaybeSendInProgressHlsKeepAlive();
+  // Keeps the live timeshift buffer, and this viewer on it, alive through the plugin's file server while nothing else
+  // reaches it: a pause, or a wait at the live edge (TimeshiftFileServerKeepAlive.h). Cheap no-op unless one is due;
+  // takes m_liveStateMutex itself, so a caller holding it releases it first. Called from PollLiveManifest(), which
+  // GetStreamTimes() keeps reaching through a pause, and from ReadLiveTimeshiftStreamOnce().
+  void MaybeSendLiveTimeshiftKeepAlive();
+  // The request itself, shared by that and the live tail wait. `forTailWait` asks for an answer now rather than on the
+  // schedule (DecideTailWaitFileServerCheck()); true when the file server answered for this buffer, just now or within
+  // the last interval. Takes m_liveStateMutex itself.
+  bool SendLiveTimeshiftKeepAlive(bool forTailWait);
 
   // A tiny HEAD request to learn one segment's total byte size via
   // Content-Length -- HLS playlists carry each segment's duration

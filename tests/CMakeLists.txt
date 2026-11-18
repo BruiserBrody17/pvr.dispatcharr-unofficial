@@ -118,6 +118,7 @@ add_executable(pvr_dispatcharr_tests
   test_timer_request_builder.cpp
   test_segment_fetch_failure.cpp
   test_hls_viewer_keep_alive.cpp
+  test_timeshift_file_server_keep_alive.cpp
   test_catchup_session_cache.cpp
   test_catchup_session_request.cpp
   test_padding_push.cpp

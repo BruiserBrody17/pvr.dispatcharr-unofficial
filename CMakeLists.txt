@@ -187,6 +187,7 @@ set(DISPATCHARR_HEADERS
     src/ChannelRenumbering.h
     src/InProgressSegmentCache.h
     src/HlsViewerKeepAlive.h
+    src/TimeshiftFileServerKeepAlive.h
     src/EpgProgramMatch.h
     src/TimerRequestBuilder.h
 )

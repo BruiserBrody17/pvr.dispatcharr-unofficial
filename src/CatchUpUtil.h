@@ -246,9 +246,11 @@ constexpr int64_t kLiveStallWaitBudgetMs = 70000;
 
 // The budget for one tail-wait episode on the live buffer. Only a plugin that is answering (the last refresh got a
 // manifest, so the buffer is alive and ended would have stopped the wait) earns the long one; a refresh that failed
-// (Dispatcharr or the network is down) keeps the short budget, so an outage still ends as fast as before. A likely seek
-// probe never waits at all (DecideTailWaitOutcome()). A buffer whose segments are so long that the ordinary budget
-// already exceeds this keeps the ordinary one.
+// (Dispatcharr or the network is down) keeps the short budget, so an outage still ends as fast as before. A refresh
+// that failed while the plugin's file server answered for the buffer counts as answering: Dispatcharr 0.34's busy task
+// pool, not an outage (DecideTailWaitFileServerCheck(), TimeshiftFileServerKeepAlive.h). A likely seek probe never
+// waits at all (DecideTailWaitOutcome()). A buffer whose segments are so long that the ordinary budget already exceeds
+// this keeps the ordinary one.
 inline int64_t ComputeLiveTailWaitBudgetMs(bool likelySeekProbe, int64_t normalBudgetMs, bool lastRefreshAnswered)
 {
   if (likelySeekProbe || !lastRefreshAnswered)
