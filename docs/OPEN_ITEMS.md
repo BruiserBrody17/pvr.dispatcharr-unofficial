@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**10 open, 438 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**11 open, 439 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -17,8 +17,8 @@ confirmed. The open ones came from:
   client restart.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
 - One follow-up to issue #1 from 2026-11-16: DVB subtitles and teletext in Server-side mode.
-- One observation from the 2026-11-16 live check of the catch-up session cache: Kodi 22 reading two finished
-  recordings end to end at start.
+- Two from the 2026-11-18 live checks: Dispatcharr 0.34 leaking each plugin action's Redis connections, and Dispatcharr
+  giving two overlapping recordings of one programme the same file.
 
 Nothing is left from the 2026-10-18 read-only audit of the whole project (28 findings), from the 2026-10-23 sweep
 (five read-only reviews by area, 17 findings, the last fixed on 2026-11-04), from the 2026-10-24 sweep
@@ -31,16 +31,16 @@ the design question on 2026-11-15, the other seven on 2026-11-16).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 4 |
+| Open: Needs a live check | 3 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 0 |
+| Open: Design decision needed | 1 |
 | Open: Release, CI and manual testing | 1 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 3 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 4 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 385 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 44 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
 ## Open
@@ -86,9 +86,25 @@ file server, its reaper thread and each buffer's ffmpeg from inside an action (`
   which also has what in Dispatcharr's source can hold the pool that long: bulk guide assignment, not a scheduled
   refresh on its own). A channel opened during such a burst still waits in the queue.
 - The pool did not shrink within 3.5 minutes of the burst, so a child exiting under a running buffer was not seen.
-- Still open: a seek, two viewers on one channel and a stream switch on 0.34; a Celery child exiting under a running
-  buffer (the pool shrinking, or the 512 MB recycle); a deployment with Celery in its own container. Start, play, pause
-  and stop were seen on 0.34 (this item, and the live checks of the 500-with-result reading and of the keep-alive).
+- Still open after that check: a seek, two viewers on one channel and a stream switch on 0.34 (checked 2026-11-18,
+  below); a Celery child exiting under a running buffer (the pool shrinking, or the 512 MB recycle); a deployment with
+  Celery in its own container. Start, play, pause and stop were seen on 0.34 (this item, and the live checks of the
+  500-with-result reading and of the keep-alive).
+
+**Checked live 2026-11-18** (Dispatcharr 0.34.1 in one container, `timeshift_buffer` 0.8.18, a disposable channel with
+two upstream streams, Kodi 22 RC1 on Linux with the `Piers` build through a logging forwarder, Kodi 21.3 on Windows with
+the `Omega` build, a throwaway read-only probe plugin reading `/proc`):
+- Seek: back 60 s, forward 40 s, and past the live edge (clamped to the tail) each landed where asked and played on;
+  every plugin action and file-server read in that window was answered.
+- Two viewers on one channel (Kodi 22 and Kodi 21): one buffer and one ffmpeg, `list_buffers` counting two viewers.
+  The second viewer's 40 s pause and resume, then its stop, left the first playing and the buffer running with one
+  viewer. The file server was then listening in two Celery children.
+- A stream switch (Dispatcharr's `next_stream`) under the Kodi 22 viewer: the old ffmpeg was frozen at once, and the
+  new one, started by the restart thread in the same Celery child that held the old one, took over about 10 s later;
+  the old one was gone. Kodi held the last picture for about 8 s, logged the usual missing SPS/PPS at the join and
+  played on. A second switch, with both viewers on, was under way when every plugin action began failing: that is
+  "Dispatcharr 0.34 leaks two Redis connections per plugin action" (Design decision needed), not the switch.
+- Still open: a Celery child exiting under a running buffer, and a deployment with Celery in its own container.
 
 **0.34.1 reviewed 2026-11-18** (source diff against 0.34.0): it changes only plugin sockets used as context managers,
 where a plugin's file-field uploads are stored and how a plugin's data directory is named (`apps/plugins/sandbox.py`,
@@ -163,28 +179,6 @@ muxer change on a branch, with the plugin owning deletion and the restart's play
 and a live check like 0.8.18's (generated and real channels, Kodi 21 and 22, subtitles on through pause, rewind and a
 stream switch).
 
-#### Kodi 22 reads two finished recordings end to end at start
-
-**Opened 2026-11-16, seen during the live check of the catch-up session cache (`CLOSED_ITEMS.md`, "A catch-up replay 9
-to 30 s after the first Play reuses a session Dispatcharr has deleted"); one observation, not chased.** Kodi 22.0-RC1
-(Linux) started on the lab profile, with a logging forwarder between the addon and a real Dispatcharr 0.33.0 and
-nothing played: within its first three minutes, two finished recordings' `/api/channels/recordings/<id>/file/` were
-read from byte 0 to a few GB each, in consecutive 256 KiB `Range` requests (thousands per recording),
-while every other finished recording got 3 to 6 requests. 256 KiB is the addon's
-`GetStreamReadChunkSize()`, so these are the addon's `ReadRecordedStream()` reads on a stream Kodi opened and kept
-reading. Kodi 22's stream-details probe (the thumbnail loader, `docs/API_NOTES.md`) is the likely caller, but which
-component kept reading was not checked: a demuxer scanning for a duration or stream it could not find, or Kodi's
-file cache reading ahead for as long as the probe held the stream open. Nor was it checked what set those two recordings apart (length, a missing index,
-codecs), whether it happens at every start or once per recording, or whether Kodi 21 does the same. Cost on a real
-setup: gigabytes from the server's disk and network at each Kodi start, on a client that is only browsing.
-
-**Next:** at a Kodi 22 start, log which thread opens the two recordings and calls `ReadRecordedStream()` (the addon's open logging, Kodi's debug log for
-`CVideoThumbLoader` and the cache) and whether `CloseRecordedStream()` comes when the reading stops; compare the two recordings'
-`ffprobe` output with a recording that got 3 requests; repeat a start to see whether it recurs; and check Kodi 21 on
-the same profile. If the probe is the reader, see whether the addon can cap or refuse a stream-details open (it cannot
-tell a probe from Play today; `CLOSED_ITEMS.md`, "Kodi 22's thumbnail loader made the "no file for this recording"
-notice pop up while browsing", has how far that got).
-
 ### Fix known, not yet done
 
 None open.
@@ -195,7 +189,35 @@ None open.
 
 ### Design decision needed
 
-None open.
+#### Dispatcharr 0.34 leaks two Redis connections per plugin action, so Server-side mode stops working after about 2,000 actions
+
+**Opened 2026-11-18, during the live check of the Celery item above (its "Checked live 2026-11-18"); measured against
+Dispatcharr 0.34.1, the cause read in its source and a server traceback, not confirmed in Celery's own code.** Partway
+through that check, with two viewers on one buffer, `run/` calls for every plugin (`timeshift_buffer` and a probe
+plugin alike) began failing with Django's bare HTML 500: at first now and then, and within about three minutes every
+time. Other API calls kept working, and a plugin import got a 502. The server's log has `OSError: [Errno 24] Too many
+open files` in the uwsgi workers, raised while kombu opened a new Redis connection inside
+`run_plugin_action_task.apply_async()` (`PluginRunAPIView._run_via_worker()`, `apps/plugins/api_views.py`). That call
+sits before the view's `try`, hence HTML rather than the JSON error the view returns for a failed action. After a
+container restart the probe plugin counted each uwsgi worker's descriptors through `/proc`: 3 to 7 Redis sockets at
+rest, 141 to 167 after 300 `list_buffers` calls (about two per call), and none released after two idle minutes. The
+workers' limit is 1024 (the entrypoint's `ulimit -n` does not reach them), so the web workers stop dispatching
+plugin actions after about 2,000 calls in all, until Dispatcharr restarts. The likely cause, read in the configuration:
+uwsgi runs Django under gevent (`gevent = 400`, `docker/uwsgi.ini`), whose monkey-patching makes Celery's per-thread
+producer and result-backend state per greenlet, and every request is a new greenlet. Up to 0.33 an action ran in the
+web worker itself and opened no such connection.
+
+Why this addon reaches it quickly: a Kodi 22 viewer at the live edge polls `get_live_manifest` two to three times a
+second (1,229 polls and 55 heartbeats in the check's first 9.5 minutes), so one viewer alone can use up a freshly
+started server in about a quarter of an hour; a paused viewer's heartbeats would take hours. Once it happens,
+Server-side mode can neither start, poll nor stop a buffer. A running buffer still played from the file server, the
+addon's `stop_buffer` failed, and the plugin's reaper ended the buffer about 45 s after the viewers stopped.
+`recording_edl` fails the same way.
+
+**To decide:** report it to Dispatcharr (traceback and counts above). And whether the addon should make fewer `run/`
+calls on 0.34: read the live playlist from the plugin's file server (which the keep-alive already reaches, outside the
+queue) rather than through `get_live_manifest`, or space the live-edge polls. Either only slows the leak; until
+Dispatcharr fixes it, a restart is the only cure.
 
 ### Release, CI and manual testing
 
@@ -220,6 +242,20 @@ with it, and 0 of 6 when no addon was enabled during startup, so the timing arou
 `EpgContainer.cpp` has the same wait; on Kodi 21.3 the same restart did not hang in 4 runs without the re-delivery code
 and 4 with it, too few to say it cannot. Not this addon's bug; worth reporting to Kodi with the
 three stacks. Nothing here works around it.
+
+#### Dispatcharr gives two overlapping recordings of one programme the same output file
+
+**Opened 2026-11-18, from closing "Kodi 22 reads two finished recordings end to end at start" (`CLOSED_ITEMS.md`); seen
+on the lab's server (recorded under 0.33.0) and read in the `v0.34.1` source.** `_build_output_paths()`
+(`apps/channels/tasks.py`) renders a recording's path from the DVR templates, and avoids a clash only with an MKV that
+already exists and is not empty when the recording starts. The MKV is written by the remux at the end, so two
+recordings running at once whose templates render the same path both get it. Here it was one programme on two
+channels, started within 2 ms of each other, through the TV fallback template, whose file name is the start time. Both
+remuxes reported success, and left one file of tens of GB that ffmpeg reads with structural
+errors and two of each stream; both recordings list that one file. Not this addon's bug (it plays what the server
+serves), but one of the two recordings is lost outright, and Kodi 22 reads a third of the damaged file to make a
+thumbnail. Worth reporting to Dispatcharr: reserve the path when a recording starts (an empty placeholder would not be
+enough, since the check skips empty files), or add the recording id to a name that clashes with a running recording's.
 
 #### Dispatcharr schedules a recurring rule's occurrence that starts inside a spring-forward gap to end before it starts
 
