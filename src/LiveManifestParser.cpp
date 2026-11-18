@@ -1,6 +1,7 @@
 #include "LiveManifestParser.h"
 
 #include "JsonFieldUtil.h"
+#include "JsonResponse.h"
 
 #include <nlohmann/json.hpp>
 
@@ -78,6 +79,37 @@ int64_t OldestLiveManifestSequence(const nlohmann::json& segmentsArray)
       oldest = sequence;
   }
   return oldest;
+}
+
+bool IsValidManifestRouteName(const std::string& name)
+{
+  if (name.empty() || name.size() > 64 || name.front() == '.')
+    return false;
+  for (const char c : name)
+  {
+    const bool ok =
+        (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+    if (!ok)
+      return false;
+  }
+  return name.find("..") == std::string::npos;
+}
+
+bool WrapManifestRouteAnswer(bool transferOk, long httpStatus, const std::string& body, nlohmann::json& envelopeOut)
+{
+  if (!transferOk || httpStatus != 200)
+    return false;
+  nlohmann::json parsed;
+  std::string parseError;
+  if (!ParseJsonResponseBody(body, parsed, parseError) || !parsed.is_object())
+    return false;
+  const auto status = parsed.find("status");
+  if (status == parsed.end() || !status->is_string())
+    return false;
+  envelopeOut = nlohmann::json::object();
+  envelopeOut["success"] = true;
+  envelopeOut["result"] = std::move(parsed);
+  return true;
 }
 
 } // namespace dispatcharr

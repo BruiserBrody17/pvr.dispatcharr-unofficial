@@ -741,7 +741,7 @@ static long stat_count(const char* key)
 // pool is busy"). The fake holds every API answer for 18 s, as a full queue does, while its file server answers at
 // once, and ends the buffer after 14 s with no sign of interest, as the plugin's reaper does after its idle timeout.
 // The pause's polls and heartbeats only land late, so the buffer survives only if the addon's keep-alive reaches the
-// file server, naming this viewer; the resume then plays on.
+// file server, naming this viewer (or, with the manifest route, its polls do); the resume then plays on.
 static void live_paused_queue_stall(DispatcharrClient& cl)
 {
   ctl("window=400"); // the paused position must still be on disk after the pause
@@ -765,10 +765,17 @@ static void live_paused_queue_stall(DispatcharrClient& cl)
     sleep_ms(250);
   }
   ctl("api_delay_ms=0");
-  const long keepAlives = stat_count("HEAD /tsbuf/playlist");
-  const auto keepAlive = nlohmann::json::parse(http("/__lastkeepaliveviewer"), nullptr, false);
-  const std::string viewer =
-      keepAlive.is_object() && keepAlive["viewer_id"].is_string() ? keepAlive["viewer_id"].get<std::string>() : "";
+  // With a plugin that names its manifest route (CTL="manifest_route=1") the pause's polls go to the file server and
+  // are its sign of interest, so no HEAD is due; either kind of request must name the viewer.
+  const long keepAlives = stat_count("HEAD /tsbuf/playlist") + stat_count("GET /tsbuf/manifest");
+  const auto viewerOf = [](const char* path)
+  {
+    const auto j = nlohmann::json::parse(http(path), nullptr, false);
+    return j.is_object() && j["viewer_id"].is_string() ? j["viewer_id"].get<std::string>() : std::string();
+  };
+  std::string viewer = viewerOf("/__lastkeepaliveviewer");
+  if (viewer.empty())
+    viewer = viewerOf("/__lastrouteviewer");
   const long t0 = ms();
   int n = -1;
   while (n < 0 && ms() - t0 < 10000)
@@ -1784,6 +1791,109 @@ static void live_refresh_throttle(DispatcharrClient& cl)
   ctl("manifest_status=429");
   poll("answering 429");
   ctl("manifest_status=0");
+  cl.CloseLiveTimeshiftStream();
+}
+
+// timeshift_buffer 0.8.19 serves the manifest from its file server too (plugin.py's _MANIFEST_ROUTE_NAME), because each
+// plugin action leaks two Redis connections in a Dispatcharr 0.34 worker and a viewer at the live edge polls two to
+// three times a second (docs/OPEN_ITEMS.md, "Dispatcharr 0.34 leaks two Redis connections per plugin action"). Once a
+// manifest names the route (manifest_route=1), the polls must go there and not to the action, name the viewer, and a
+// paused viewer polled that way needs no keep-alive HEAD, nor a playing one the heartbeat action. While the route fails
+// (route_status=503) the action answers, the route is tried again only after kManifestRouteRetryDelay, and reads go on;
+// once it answers again the polls go back to it.
+static void live_manifest_route(DispatcharrClient& cl)
+{
+  ctl("manifest_route=1");
+  ctl("window=400");
+  std::string err;
+  if (!cl.OpenLiveTimeshiftStream("uuid", err))
+  {
+    FAIL("open: %s", err.c_str());
+    return;
+  }
+  std::vector<uint8_t> buf(1 << 16);
+  auto play = [&](long forMs)
+  {
+    long bytes = 0;
+    const long t0 = ms();
+    while (ms() - t0 < forMs)
+    {
+      const int n = cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size());
+      if (n > 0)
+        bytes += n;
+      cl.GetLiveTimeshiftStreamLength();
+    }
+    return bytes;
+  };
+  auto pause = [&](long forMs)
+  {
+    const long t0 = ms();
+    while (ms() - t0 < forMs)
+    {
+      cl.GetLiveTimeshiftStreamLength();
+      cl.GetLiveTimeshiftStreamDurationMs();
+      sleep_ms(20);
+    }
+  };
+
+  play(3000); // up to the live edge
+  long actions = live_manifest_requests(), routes = stat_count("GET /tsbuf/manifest");
+  const long heartbeats = stat_count("action heartbeat");
+  long bytes = play(12000); // longer than the 10 s heartbeat interval
+  long dActions = live_manifest_requests() - actions, dRoutes = stat_count("GET /tsbuf/manifest") - routes;
+  const long dHeartbeats = stat_count("action heartbeat") - heartbeats;
+  INFO("route, playing 12 s: %ld route poll(s), %ld action poll(s), %ld heartbeat action(s), %ld bytes", dRoutes,
+       dActions, dHeartbeats, bytes);
+  if (dRoutes < 12 || dActions != 0)
+    FAIL("playing at the live edge polled the route %ld time(s) and the action %ld time(s) in 12 s", dRoutes, dActions);
+  if (dHeartbeats != 0)
+    FAIL("%ld heartbeat action(s) were sent while the route refreshed the viewer", dHeartbeats);
+  if (bytes == 0)
+    FAIL("nothing was read while the route answered");
+  const auto routeViewer = nlohmann::json::parse(http("/__lastrouteviewer"), nullptr, false);
+  const auto segViewer = nlohmann::json::parse(http("/__lastsegviewer"), nullptr, false);
+  if (!routeViewer.is_object() || !routeViewer["viewer_id"].is_string() ||
+      routeViewer["viewer_id"] != segViewer["viewer_id"])
+    FAIL("the route poll did not name the viewer its segment reads name");
+
+  const long keepAlives = stat_count("HEAD /tsbuf/playlist");
+  actions = live_manifest_requests();
+  routes = stat_count("GET /tsbuf/manifest");
+  pause(12000);
+  dActions = live_manifest_requests() - actions;
+  dRoutes = stat_count("GET /tsbuf/manifest") - routes;
+  const long dKeepAlives = stat_count("HEAD /tsbuf/playlist") - keepAlives;
+  INFO("route, paused 12 s: %ld route poll(s), %ld action poll(s), %ld keep-alive(s)", dRoutes, dActions, dKeepAlives);
+  if (dRoutes < 12 || dActions != 0)
+    FAIL("a paused viewer polled the route %ld time(s) and the action %ld time(s) in 12 s", dRoutes, dActions);
+  if (dKeepAlives != 0)
+    FAIL("a paused viewer polled through the route still sent %ld keep-alive(s)", dKeepAlives);
+
+  ctl("route_status=503");
+  actions = live_manifest_requests();
+  routes = stat_count("GET /tsbuf/manifest");
+  bytes = play(5000);
+  dActions = live_manifest_requests() - actions;
+  dRoutes = stat_count("GET /tsbuf/manifest") - routes;
+  INFO("route answering 503: %ld route poll(s), %ld action poll(s), %ld bytes", dRoutes, dActions, bytes);
+  if (dRoutes > 1)
+    FAIL("a failing route was tried %ld times in 5 s, inside its retry delay", dRoutes);
+  if (dActions < 4)
+    FAIL("only %ld action poll(s) answered while the route failed", dActions);
+  if (bytes == 0)
+    FAIL("nothing was read while the route failed");
+
+  ctl("route_status=0");
+  play(7000); // past the retry delay
+  actions = live_manifest_requests();
+  routes = stat_count("GET /tsbuf/manifest");
+  bytes = play(3000);
+  dActions = live_manifest_requests() - actions;
+  dRoutes = stat_count("GET /tsbuf/manifest") - routes;
+  INFO("route back: %ld route poll(s), %ld action poll(s), %ld bytes", dRoutes, dActions, bytes);
+  if (dRoutes < 3 || dActions != 0)
+    FAIL("once the route answered again it was polled %ld time(s) and the action %ld time(s) in 3 s", dRoutes,
+         dActions);
   cl.CloseLiveTimeshiftStream();
 }
 
@@ -2823,6 +2933,8 @@ int main(int argc, char** argv)
       live_fileserver_unreachable(*cl);
     else if (what == "live_refresh_throttle")
       live_refresh_throttle(*cl);
+    else if (what == "live_manifest_route")
+      live_manifest_route(*cl);
     else if (what == "live_slow_open")
       live_slow_open(*cl);
     else if (what == "live_late_start")

@@ -92,3 +92,35 @@ TEST_CASE("A wait at the live tail asks the file server once the manifest goes u
           TailWaitFileServerCheck::kUnknown);
   }
 }
+
+TEST_CASE("The manifest route is tried once a manifest named it, and again a retry delay after a failure",
+          "[timeshift_keep_alive]")
+{
+  const Clock::time_point now = Clock::time_point{} + std::chrono::hours(1);
+  CHECK(ShouldTryManifestRoute(true, Clock::time_point{}, now));
+  CHECK_FALSE(ShouldTryManifestRoute(false, Clock::time_point{}, now)); // an older plugin names none
+  const Clock::time_point retryAt = now + kManifestRouteRetryDelay;
+  CHECK_FALSE(ShouldTryManifestRoute(true, retryAt, now));
+  CHECK_FALSE(ShouldTryManifestRoute(true, retryAt, retryAt - std::chrono::milliseconds(1)));
+  CHECK(ShouldTryManifestRoute(true, retryAt, retryAt));
+  // Longer than the tail wait's quarter-second refreshes, so a failing route costs one extra round trip per delay.
+  CHECK(kManifestRouteRetryDelay >= std::chrono::seconds(1));
+  // A failed attempt adds less than the short request timeout's 5 s floor to the action that follows it.
+  CHECK(kManifestRouteTimeout < std::chrono::seconds(5));
+}
+
+TEST_CASE("The heartbeat action is skipped while the file server refreshes the viewer through the manifest route",
+          "[timeshift_keep_alive]")
+{
+  const Clock::time_point now = Clock::time_point{} + std::chrono::hours(1);
+  constexpr auto kInterval = std::chrono::seconds(10);
+  // An older plugin (no route): reads may not refresh this viewer, so the action is always sent.
+  CHECK(ShouldSendTimeshiftHeartbeatAction(false, now, now, kInterval));
+  // The route known but the file server never answered (it has failed since the first manifest): sent.
+  CHECK(ShouldSendTimeshiftHeartbeatAction(true, Clock::time_point{}, now, kInterval));
+  // Answered within the interval: the route poll or keep-alive already refreshed the viewer.
+  CHECK_FALSE(ShouldSendTimeshiftHeartbeatAction(true, now, now, kInterval));
+  CHECK_FALSE(ShouldSendTimeshiftHeartbeatAction(true, now - kInterval + std::chrono::milliseconds(1), now, kInterval));
+  // Not answered for a whole interval (the route failing, its retry delay running): sent again.
+  CHECK(ShouldSendTimeshiftHeartbeatAction(true, now - kInterval, now, kInterval));
+}

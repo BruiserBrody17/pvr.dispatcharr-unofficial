@@ -43,6 +43,12 @@ run "live (first segment after 25 s, 0.34 error replies)" TMO=30 T=120 CTL="plug
 run "live (buffer dies at the tail, 0.34 error replies)" TMO=30 T=120 CTL="plugin_v034_errors=1" -- live_fatal_ends tail
 run "live (paused viewer whose buffer was replaced, 0.34 error replies)" TMO=30 T=120 CTL="plugin_v034_errors=1" -- live_paused_replaced
 run "live (refresh throttle on 429)" TMO=30 T=120 -- live_refresh_throttle
+# timeshift_buffer 0.8.19's manifest route: polled instead of the action, and the action again while it fails.
+run "live (manifest from the file server)" TMO=30 T=120 -- live_manifest_route
+run "live (buffer dies at the tail, manifest route)" TMO=30 T=120 CTL="manifest_route=1" -- live_fatal_ends tail
+run "live (buffer dies behind the tail, manifest route)" TMO=30 T=120 CTL="manifest_route=1" -- live_fatal_ends behind
+run "live (paused viewer whose buffer was replaced, manifest route)" TMO=30 T=120 CTL="manifest_route=1" -- live_paused_replaced
+run "live (paused through a busy task pool, manifest route)" TMO=30 T=120 CTL="manifest_route=1" -- live_paused_queue_stall
 run "live (6 s API latency)"     TMO=30 T=300 -- live_slow_open
 run "live (recycled segment, then 404s)" TMO=30 T=120 -- live_segment_recycled
 run "live (a read in a gap)"     TMO=30 T=60 -- live_read_gap

@@ -12,6 +12,14 @@ compare against.
 
 ## [Unreleased] -- addon
 
+### Changed
+
+- Server-side mode with `timeshift_buffer` 0.8.19: while a channel plays or is paused, the addon reads its buffer from
+  the plugin's own file server instead of sending Dispatcharr a plugin request several times a second. Dispatcharr
+  0.34 loses a little with every plugin request and stops running them all after a few thousand, until it is
+  restarted; one viewer used to get there in about a quarter of an hour. Starting and stopping a channel still go
+  through Dispatcharr. With an older plugin nothing changes.
+
 ### Fixed
 
 - Server-side timeshift keeps playing while Dispatcharr 0.34.0 is busy with other work, such as matching guide data to
@@ -39,6 +47,12 @@ compare against.
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
 Dispatcharr restart for every worker to pick it up.
+
+### Changed
+
+- **The buffer server also answers a buffer's manifest** (`/<channel>/manifest.json`, with the buffer's token, on the
+  same port as its segments), so the addon can follow a playing channel without a Dispatcharr plugin request, each of
+  which costs Dispatcharr 0.34 server resources it does not give back until a restart.
 
 ### Fixed
 

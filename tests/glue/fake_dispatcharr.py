@@ -43,6 +43,7 @@ LAST_START = {"params": None}  # the params of the last start_buffer, for /__las
 # on the next such event, which ends the same way for the client as a reaper thread ticking in between.
 LIVE_IDLE = {"last": None, "reaped": False}
 LAST_SEGMENT_VIEWER = {"v": None}  # the viewer_id query param of the last segment request, for /__lastsegviewer
+LAST_ROUTE_VIEWER = {"v": None}  # the same for the last manifest-route GET, /__lastrouteviewer
 LAST_KEEPALIVE_VIEWER = {"v": None}  # the same for the last live.m3u8 request (the keep-alive), /__lastkeepaliveviewer
 LAST_HEARTBEAT = {"params": None}  # the params of the last heartbeat, for /__lastheartbeat
 WS_PUSHED = []  # realtime messages pushed through /__ctl?ws_push= (every connected client gets all of them)
@@ -91,6 +92,50 @@ def touch_live():
             LIVE_IDLE["reaped"] = True
         LIVE_IDLE["last"] = now
         return not LIVE_IDLE["reaped"]
+
+
+def live_manifest_answer():
+    """The timeshift_buffer plugin's answer to one manifest poll, whether it came as the get_live_manifest action or
+    as a GET of the file server's manifest route: ("ok", result) or ("error", result). Counts as interest in the
+    buffer (touch_live())."""
+    if CTL["live_fatal"] == "1" or not touch_live():
+        return "error", {"status": "error", "fatal": True, "message": "dead"}
+    # A channel whose provider is slow to deliver its first segment: the plugin answers "not there yet", without
+    # `fatal`, for this many ms after the buffer started.
+    if T0["live"] is not None and (time.time() - T0["live"]) * 1000 < ctl_int("manifest_not_ready_ms", 0):
+        return "error", {
+            "status": "error",
+            "message": "live playlist not found -- the buffer may not have produced any segments",
+        }
+    n = live_count()
+    w = ctl_int("window", 12)
+    segs = []
+    for s in range(max(0, n - w), n):
+        sz = seg_size(s)
+        if CTL["bad_size_from"] != "" and s >= ctl_int("bad_size_from"):
+            sz += 8
+        segs.append(
+            {
+                "filename": "seg_%05d.ts" % (s % 1000),
+                "sequence": s,
+                "byte_size": sz,
+                "duration_ms": ctl_int("seg_ms", 300),
+            }
+        )
+    if CTL["live_empty"] == "1":
+        segs = []
+    result = {
+        "status": "ok",
+        "http_port": ctl_int("fs_port", 0) or PORT,
+        "segment_route_prefix": "/tsbuf/u/",
+        "segments": segs,
+        "ended": CTL["live_ended"] == "1",
+    }
+    # manifest_route=1: a timeshift_buffer 0.8.19 or later, which names its file server's manifest route (the default
+    # is an older plugin, so every other scenario keeps polling the action).
+    if CTL["manifest_route"] == "1":
+        result["manifest_route_name"] = CTL["manifest_route_name"] or "manifest.json"
+    return "ok", result
 
 
 def live_count():
@@ -620,7 +665,13 @@ class H(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         key = method + " " + p
         if p.startswith("/tsbuf/"):
-            key = method + (" /tsbuf/playlist" if p.endswith("/live.m3u8") else " /tsbuf/seg")
+            key = method + (
+                " /tsbuf/playlist"
+                if p.endswith("/live.m3u8")
+                else " /tsbuf/manifest"
+                if p.endswith("/manifest.json")
+                else " /tsbuf/seg"
+            )
         if "/hls/seg_" in p:
             key = method + " /hls/seg"
         if p.startswith("/proxy/ts/stream/"):
@@ -641,6 +692,8 @@ class H(BaseHTTPRequestHandler):
             return self.J(200, LAST_START["params"])
         if p == "/__lastsegviewer":
             return self.J(200, {"viewer_id": LAST_SEGMENT_VIEWER["v"]})
+        if p == "/__lastrouteviewer":
+            return self.J(200, {"viewer_id": LAST_ROUTE_VIEWER["v"]})
         if p == "/__lastkeepaliveviewer":
             return self.J(200, {"viewer_id": LAST_KEEPALIVE_VIEWER["v"]})
         if p == "/__lastheartbeat":
@@ -877,55 +930,26 @@ class H(BaseHTTPRequestHandler):
                 if CTL["manifest_hang"] == "1":  # answers start_buffer, then goes silent
                     time.sleep(40)
                     return self.J(503, {})
-                if CTL["live_fatal"] == "1" or not touch_live():
-                    return self.plugin_error({"status": "error", "fatal": True, "message": "dead"})
-                # A channel whose provider is slow to deliver its first segment: the plugin answers "not there yet",
-                # without `fatal`, for this many ms after the buffer started.
-                if T0["live"] is not None and (time.time() - T0["live"]) * 1000 < ctl_int("manifest_not_ready_ms", 0):
-                    return self.plugin_error(
-                        {
-                            "status": "error",
-                            "message": "live playlist not found -- the buffer may not have produced any segments",
-                        }
-                    )
+                kind, result = live_manifest_answer()
+                if kind == "error":
+                    return self.plugin_error(result)
                 if CTL["manifest_500"] == "1":
                     return self.J(500, {"detail": "x"})
                 if ctl_int("manifest_status"):  # any other status, e.g. a proxy's 429
                     return self.J(ctl_int("manifest_status"), {"detail": "x"})
-                n = live_count()
-                w = ctl_int("window", 12)
-                segs = []
-                for s in range(max(0, n - w), n):
-                    sz = seg_size(s)
-                    if CTL["bad_size_from"] != "" and s >= ctl_int("bad_size_from"):
-                        sz += 8
-                    segs.append(
-                        {
-                            "filename": "seg_%05d.ts" % (s % 1000),
-                            "sequence": s,
-                            "byte_size": sz,
-                            "duration_ms": ctl_int("seg_ms", 300),
-                        }
-                    )
-                if CTL["live_empty"] == "1":
-                    segs = []
-                return self.J(
-                    200,
-                    {
-                        "success": True,
-                        "result": {
-                            "status": "ok",
-                            "http_port": ctl_int("fs_port", 0) or PORT,
-                            "segment_route_prefix": "/tsbuf/u/",
-                            "segments": segs,
-                            "ended": CTL["live_ended"] == "1",
-                        },
-                    },
-                )
+                return self.J(200, {"success": True, "result": result})
             return self.J(200, {"success": True, "result": {"status": "ok"}})
         if p.startswith("/tsbuf/"):
             if q.get("token", [""])[0] != TOKEN["v"]:
                 return self.send(403, b"bad token")
+            if p.endswith("/manifest.json"):  # the manifest route (timeshift_buffer 0.8.19)
+                with lock:
+                    LAST_ROUTE_VIEWER["v"] = q.get("viewer_id", [None])[0]
+                if method != "GET" or CTL["manifest_route"] != "1":
+                    return self.send(404, b"nf", head=method == "HEAD")  # an older plugin's file server
+                if ctl_int("route_status"):  # route_status=<n>: the route answers that, e.g. a 503 while Redis is down
+                    return self.send(ctl_int("route_status"), b"x")
+                return self.J(200, live_manifest_answer()[1])
             LAST_SEGMENT_VIEWER["v"] = q.get("viewer_id", [None])[0]
             if p.endswith("/live.m3u8"):  # only ever asked for by the keep-alive's HEAD
                 LAST_KEEPALIVE_VIEWER["v"] = q.get("viewer_id", [None])[0]

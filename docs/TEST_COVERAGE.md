@@ -948,6 +948,13 @@ own cumulative total, and two sufficiently huge values summed is signed
 int64 overflow, undefined behavior in C++. No real HLS segment is ever
 legitimately anywhere near the new, generous 1 TiB-per-segment ceiling.
 
+2026-11-18: `IsValidManifestRouteName()` and `WrapManifestRouteAnswer()` (`tests/test_live_manifest_parser.cpp`), for
+`timeshift_buffer` 0.8.19's manifest route (`docs/TIMESHIFT.md`, "The manifest from the file server (0.8.19)"): a plain
+file name is accepted and anything that would change the URL refused (a slash, a query, `..`, a leading dot, a space, a
+percent escape, a NUL, over 64 characters); only a 200 whose body is a JSON object with a string `status` is wrapped as
+the action's envelope, the plugin's own error answers included, and a transport failure, any other status, a playlist, an
+array, a missing or non-string `status` and a number the parser throws on leave the output untouched.
+
 ### `M3u8SegmentParser`
 
 `M3u8SegmentParser` is the pure parsing core of
@@ -1052,6 +1059,17 @@ is not repeated within the retry delay, a dead buffer is never alive. In the glu
 (the fake's `idle_reap_ms` and `api_delay_ms`) fails on the code before the fix (the buffer is reaped during the pause
 and the resume read answers 0), and `live_edge_queue_stall` fails on the code before the tail-wait part (the wait
 answers 0 five seconds into the stall).
+
+2026-11-18: `ShouldTryManifestRoute()` and `ShouldSendTimeshiftHeartbeatAction()`, the addon's half of the manifest
+route (`docs/TIMESHIFT.md`, "The manifest from the file server (0.8.19)"): the route is tried once a manifest named it and
+the retry delay after a failure has run out, never with an older plugin, and an attempt's own bound
+(`kManifestRouteTimeout`) stays under the short request timeout's floor; the heartbeat action is skipped only while the
+route is known and the file server answered within the interval. In the glue harness, `live_manifest_route` (the fake's
+`manifest_route=1` and `route_status`, in CI) plays at the live edge for 12 s with no `get_live_manifest` or heartbeat
+action and the route naming the viewer, pauses 12 s with no action and no keep-alive HEAD, then sees the action answer
+while the route answers 503 (one route attempt in 5 s, reads going on) and the polls go back to the route after the
+delay. With an unsafe route name (`manifest_route_name=..%2Fx`) it fails as an older plugin would, every poll on the
+action. CI also runs `live_fatal_ends` (both), `live_paused_replaced` and `live_paused_queue_stall` with the route on.
 
 ### `PluginUrlUtil`
 
@@ -3443,6 +3461,19 @@ again leaves it running. `_record_viewer_kodi_version()` now keeps other viewers
 `stop_buffer` forgets the stopping viewer's (`_forget_viewer_kodi_version()`); through `Plugin.run`, a Kodi 21 viewer the
 reaper pruned keeps its version across another device's start and its own re-adding poll, so the buffer is still not
 held for a switch. Five tests fail on the previous plugin; the "has a viewer again" case passes on both.
+
+2026-11-18 (still 0.8.19, `docs/TIMESHIFT.md`'s "The manifest from the file server (0.8.19)"): the file server's manifest
+route, over a real loopback socket in `test_http_handler.py` with the poll itself monkeypatched: a good token gets the
+poll's answer as JSON (with this request's viewer, token and the process's latest settings, marked as from the file
+server, and no second state write), the plugin's error answers pass through as a 200, a missing or wrong token or an
+unknown buffer is a 403 with no poll, a non-canonical uuid or any other path is an ordinary file request, HEAD is not
+served, and a poll that raises or a token that cannot be read is a 503 (logged without the token). In
+`test_timeshift_buffer.py`: the action's answer names the route, and a poll from the file server adds a new viewer only
+below the read cap, refreshes a listed one and writes nothing for a replaced buffer's token, where the action adds one
+whatever the count, both for the write alone and for the whole poll (`_answer_live_manifest_poll()` with only the
+manifest build mocked, which fails with the flag dropped on its answered path). The route's settings come from the
+latest action through Redis (`_publish_settings()`, `_route_settings()`), falling back to the process's own copy
+before anything is published, for a value that is not JSON and while Redis is down, where publishing never raises.
 
 ## Tools
 

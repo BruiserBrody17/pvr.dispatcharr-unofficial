@@ -94,4 +94,42 @@ inline TailWaitFileServerCheck DecideTailWaitFileServerCheck(bool fatal,
   return TailWaitFileServerCheck::kProbe;
 }
 
+// The manifest route (timeshift_buffer 0.8.19, plugin.py's _MANIFEST_ROUTE_NAME): the same answer as the
+// get_live_manifest action, from the file server. Polled instead of the action once a manifest has named it, because
+// from Dispatcharr 0.34 each action leaks two Redis connections in the uwsgi worker that dispatches it, and a viewer at
+// the live edge polls two to three times a second (docs/OPEN_ITEMS.md, "Dispatcharr 0.34 leaks two Redis connections
+// per plugin action"). After a failed attempt the action answers instead, and the route is tried again only this long
+// after: a failure means the buffer is gone (the action then says so), the file server is out of reach (so are the
+// segments), or Redis is, none of which a quarter-second retry at the live tail would see change, and each failed
+// attempt is a round trip spent before the action's own.
+constexpr std::chrono::seconds kManifestRouteRetryDelay{10};
+// One route attempt's own bound, connection included. Shorter than the short request timeout (5 s at the least) the
+// action then gets in full: an attempt that fails holds the thread Kodi's player or GetStreamTimes() waits on, so a
+// file server that does not answer would otherwise double that wait once per retry delay (found by the branch's
+// review). The route answers from Redis and the files' stat()s; three seconds is far beyond what that takes.
+constexpr std::chrono::milliseconds kManifestRouteTimeout{3000};
+
+// Whether a refresh tries the manifest route first: a manifest has named one, and the retry delay after the last failed
+// attempt has run out. A zero `retryAt` (never failed) counts as run out, the convention of Staleness.h.
+inline bool ShouldTryManifestRoute(bool routeKnown, std::chrono::steady_clock::time_point retryAt,
+                                   std::chrono::steady_clock::time_point now)
+{
+  return routeKnown && now >= retryAt;
+}
+
+// Whether a live read owes the plugin its heartbeat action, once `interval` has passed since the last one was due. Not
+// while the plugin's manifest route is known (so the plugin is 0.8.19 or later) and the file server answered for this
+// viewer within that interval: a route poll and a keep-alive name the viewer and write the same refresh the action
+// does (plugin.py's _apply_read_heartbeat()), so the action would add nothing but one more Redis connection leaked by a
+// Dispatcharr 0.34 worker (kManifestRouteRetryDelay above). With an older plugin, or while the route fails, it is sent.
+inline bool ShouldSendTimeshiftHeartbeatAction(bool manifestRouteKnown,
+                                               std::chrono::steady_clock::time_point lastFileServerAnswerAt,
+                                               std::chrono::steady_clock::time_point now,
+                                               std::chrono::steady_clock::duration interval)
+{
+  if (!manifestRouteKnown || lastFileServerAnswerAt == std::chrono::steady_clock::time_point{})
+    return true;
+  return now - lastFileServerAnswerAt >= interval;
+}
+
 } // namespace dispatcharr

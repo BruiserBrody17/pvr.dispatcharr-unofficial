@@ -14,6 +14,7 @@ test_timeshift_buffer.py is (recording_edl's plugin.py shares the filename).
 
 import http.client
 import importlib.util
+import json
 import threading
 from pathlib import Path
 
@@ -909,3 +910,99 @@ def test_the_connection_cap_counts_an_ipv6_host_by_its_64(monkeypatch):
     while server._client_counts and time.monotonic() < deadline:
         time.sleep(0.05)  # the handler threads give their slots back as they finish
     assert server._client_counts == {}  # every slot came back under the same key it was taken with
+
+
+# -- the manifest route (GET /<uuid>/manifest.json) ---------------------------------------------------------------
+
+
+@pytest.fixture()
+def polls(served, monkeypatch):
+    """Records each call the manifest route makes into the shared poll answer, which returns a fixed manifest."""
+    calls = []
+
+    def answer(channel_uuid, viewer_id, supplied_token, settings_dict, logger, from_file_server=False):
+        calls.append((channel_uuid, viewer_id, supplied_token, settings_dict, from_file_server))
+        return {"status": "ok", "segments": [], "http_port": 9192}
+
+    monkeypatch.setattr(plugin.Plugin, "_answer_live_manifest_poll", staticmethod(answer))
+    monkeypatch.setattr(plugin, "_latest_settings_dict", {"http_port": 9192})
+    return calls
+
+
+def test_the_manifest_route_answers_the_get_live_manifest_poll_as_json(served, polls):
+    status, headers, body = _request(served, "GET", f"/{_UUID}/manifest.json?token={_TOKEN}&viewer_id=v1")
+    assert status == 200
+    assert headers["Content-Type"] == "application/json"
+    assert headers["Cache-Control"] == "no-store"
+    assert json.loads(body) == {"status": "ok", "segments": [], "http_port": 9192}
+    # The same poll the action makes, with this request's viewer and token and the process's latest settings.
+    assert polls == [(_UUID, "v1", _TOKEN, {"http_port": 9192}, True)]
+    # The poll itself refreshes the buffer (_touch_after_manifest_poll()); the route adds no second write.
+    assert served.heartbeats == []
+
+
+def test_the_manifest_route_passes_an_error_answer_through_as_200(served, polls, monkeypatch):
+    # "not ready" and "fatal" are the plugin's answers, not the transport's: the addon reads them as it reads the
+    # action's.
+    monkeypatch.setattr(
+        plugin.Plugin,
+        "_answer_live_manifest_poll",
+        staticmethod(lambda *a, **k: {"status": "error", "fatal": True, "message": "ffmpeg exited"}),
+    )
+    status, _, body = _request(served, "GET", f"/{_UUID}/manifest.json?token={_TOKEN}")
+    assert status == 200
+    assert json.loads(body)["fatal"] is True
+
+
+def test_the_manifest_route_needs_the_buffers_token(served, polls):
+    for path in (
+        f"/{_UUID}/manifest.json",
+        f"/{_UUID}/manifest.json?token=wrong",
+        f"/99999999-2222-3333-4444-555555555555/manifest.json?token={_TOKEN}",
+    ):
+        status, _, _ = _request(served, "GET", path)
+        assert status == 403, path
+    assert polls == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"/{_UUID.replace('-', '')}/manifest.json?token={_TOKEN}",
+        f"/{_UUID}/x/manifest.json?token={_TOKEN}",
+        f"/{_UUID}/manifest.json/x?token={_TOKEN}",
+        f"/manifest.json?token={_TOKEN}",
+    ],
+)
+def test_the_manifest_route_is_only_the_canonical_two_part_path(served, polls, path):
+    # Anything else is an ordinary file request, refused as one (a 403 for a uuid no buffer has, else a 404).
+    status, _, _ = _request(served, "GET", path)
+    assert status in (403, 404)
+    assert polls == []
+
+
+def test_the_manifest_route_is_get_only(served, polls):
+    status, _, _ = _request(served, "HEAD", f"/{_UUID}/manifest.json?token={_TOKEN}")
+    assert status == 404
+    assert polls == []
+
+
+def test_the_manifest_route_answers_503_when_the_poll_fails(served, polls, monkeypatch):
+    def fail(*a, **k):
+        raise RuntimeError("redis went away")
+
+    monkeypatch.setattr(plugin.Plugin, "_answer_live_manifest_poll", staticmethod(fail))
+    status, _, _ = _request(served, "GET", f"/{_UUID}/manifest.json?token={_TOKEN}")
+    assert status == 503
+    assert any("manifest route failed" in line for line in served.logger.lines)
+    assert not any(_TOKEN in line for line in served.logger.lines)
+
+
+def test_the_manifest_route_answers_503_when_the_token_cannot_be_checked(served, polls, monkeypatch):
+    def unreadable(uuid):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(plugin, "_get_buffer_state", unreadable)
+    status, _, _ = _request(served, "GET", f"/{_UUID}/manifest.json?token={_TOKEN}")
+    assert status == 503
+    assert polls == []

@@ -34,9 +34,9 @@ the design question on 2026-11-15, the other seven on 2026-11-16).
 | Open: Needs a live check | 3 |
 | Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
-| Open: Design decision needed | 1 |
+| Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 1 |
-| Open: Upstream (Dispatcharr) or documentation accuracy | 4 |
+| Open: Upstream (Dispatcharr) or documentation accuracy | 5 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 385 |
@@ -189,35 +189,7 @@ None open.
 
 ### Design decision needed
 
-#### Dispatcharr 0.34 leaks two Redis connections per plugin action, so Server-side mode stops working after about 2,000 actions
-
-**Opened 2026-11-18, during the live check of the Celery item above (its "Checked live 2026-11-18"); measured against
-Dispatcharr 0.34.1, the cause read in its source and a server traceback, not confirmed in Celery's own code.** Partway
-through that check, with two viewers on one buffer, `run/` calls for every plugin (`timeshift_buffer` and a probe
-plugin alike) began failing with Django's bare HTML 500: at first now and then, and within about three minutes every
-time. Other API calls kept working, and a plugin import got a 502. The server's log has `OSError: [Errno 24] Too many
-open files` in the uwsgi workers, raised while kombu opened a new Redis connection inside
-`run_plugin_action_task.apply_async()` (`PluginRunAPIView._run_via_worker()`, `apps/plugins/api_views.py`). That call
-sits before the view's `try`, hence HTML rather than the JSON error the view returns for a failed action. After a
-container restart the probe plugin counted each uwsgi worker's descriptors through `/proc`: 3 to 7 Redis sockets at
-rest, 141 to 167 after 300 `list_buffers` calls (about two per call), and none released after two idle minutes. The
-workers' limit is 1024 (the entrypoint's `ulimit -n` does not reach them), so the web workers stop dispatching
-plugin actions after about 2,000 calls in all, until Dispatcharr restarts. The likely cause, read in the configuration:
-uwsgi runs Django under gevent (`gevent = 400`, `docker/uwsgi.ini`), whose monkey-patching makes Celery's per-thread
-producer and result-backend state per greenlet, and every request is a new greenlet. Up to 0.33 an action ran in the
-web worker itself and opened no such connection.
-
-Why this addon reaches it quickly: a Kodi 22 viewer at the live edge polls `get_live_manifest` two to three times a
-second (1,229 polls and 55 heartbeats in the check's first 9.5 minutes), so one viewer alone can use up a freshly
-started server in about a quarter of an hour; a paused viewer's heartbeats would take hours. Once it happens,
-Server-side mode can neither start, poll nor stop a buffer. A running buffer still played from the file server, the
-addon's `stop_buffer` failed, and the plugin's reaper ended the buffer about 45 s after the viewers stopped.
-`recording_edl` fails the same way.
-
-**To decide:** report it to Dispatcharr (traceback and counts above). And whether the addon should make fewer `run/`
-calls on 0.34: read the live playlist from the plugin's file server (which the keep-alive already reaches, outside the
-queue) rather than through `get_live_manifest`, or space the live-edge polls. Either only slows the leak; until
-Dispatcharr fixes it, a restart is the only cure.
+None open.
 
 ### Release, CI and manual testing
 
@@ -256,6 +228,40 @@ errors and two of each stream; both recordings list that one file. Not this addo
 serves), but one of the two recordings is lost outright, and Kodi 22 reads a third of the damaged file to make a
 thumbnail. Worth reporting to Dispatcharr: reserve the path when a recording starts (an empty placeholder would not be
 enough, since the check skips empty files), or add the recording id to a name that clashes with a running recording's.
+
+#### Dispatcharr 0.34 leaks two Redis connections per plugin action, so Server-side mode stops working after about 2,000 actions
+
+**Opened 2026-11-18, during the live check of the Celery item above (its "Checked live 2026-11-18"); measured against
+Dispatcharr 0.34.1, the cause read in its source and a server traceback, not confirmed in Celery's own code.** Partway
+through that check, with two viewers on one buffer, `run/` calls for every plugin (`timeshift_buffer` and a probe
+plugin alike) began failing with Django's bare HTML 500: at first now and then, and within about three minutes every
+time. Other API calls kept working, and a plugin import got a 502. The server's log has `OSError: [Errno 24] Too many
+open files` in the uwsgi workers, raised while kombu opened a new Redis connection inside
+`run_plugin_action_task.apply_async()` (`PluginRunAPIView._run_via_worker()`, `apps/plugins/api_views.py`). That call
+sits before the view's `try`, hence HTML rather than the JSON error the view returns for a failed action. After a
+container restart the probe plugin counted each uwsgi worker's descriptors through `/proc`: 3 to 7 Redis sockets at
+rest, 141 to 167 after 300 `list_buffers` calls (about two per call), and none released after two idle minutes. The
+workers' limit is 1024 (the entrypoint's `ulimit -n` does not reach them), so the web workers stop dispatching
+plugin actions after about 2,000 calls in all, until Dispatcharr restarts. The likely cause, read in the configuration:
+uwsgi runs Django under gevent (`gevent = 400`, `docker/uwsgi.ini`), whose monkey-patching makes Celery's per-thread
+producer and result-backend state per greenlet, and every request is a new greenlet. Up to 0.33 an action ran in the
+web worker itself and opened no such connection.
+
+Why this addon reaches it quickly: a Kodi 22 viewer at the live edge polls `get_live_manifest` two to three times a
+second (1,229 polls and 55 heartbeats in the check's first 9.5 minutes), so one viewer alone can use up a freshly
+started server in about a quarter of an hour; a paused viewer's heartbeats would take hours. Once it happens,
+Server-side mode can neither start, poll nor stop a buffer. A running buffer still played from the file server, the
+addon's `stop_buffer` failed, and the plugin's reaper ended the buffer about 45 s after the viewers stopped.
+`recording_edl` fails the same way.
+
+**Decided 2026-11-18 (the user): the addon makes fewer `run/` calls; mitigated on `Piers` (branch
+`live-manifest-file-server`).** `timeshift_buffer` 0.8.19's file server answers the manifest poll itself, and the addon
+polls it there once a manifest names the route, skipping the heartbeat action while the file server answers for the
+viewer; the action stays the fallback (`docs/TIMESHIFT.md`, "The manifest from the file server (0.8.19)"). That leaves
+`start_buffer`, `stop_buffer` and a cold start's polls per viewer, so the leak is slowed, not stopped: it stays open as an
+upstream report to Dispatcharr (traceback and counts above), and until Dispatcharr fixes it a restart is the only cure.
+Confirmed live 2026-11-18 on Kodi 22: 17 minutes at the live edge took 9 `run/` calls instead of about 2,600, and a
+5½-minute pause none (the TIMESHIFT.md section has the full check).
 
 #### Dispatcharr schedules a recurring rule's occurrence that starts inside a spring-forward gap to end before it starts
 
