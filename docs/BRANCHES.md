@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`6e3e0d3`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`0316fc5`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -229,6 +229,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `a052589` | `66d1be4` (`git cherry-pick -x`) | The Windows CI job retries its build-dependency downloads: `mirrors.kodi.tv` redirects to a random mirror, and one now chains to a root Windows does not trust out of the box. |
 | `252d6a7` | `578c1f9` (`git cherry-pick -x`; the include list and `OPEN_ITEMS.md`'s counts resolved by hand) | A settings save delivered while the PVR instance is still being constructed is re-delivered once Kodi has queried the new instance; live-checked on Kodi 21.3 before the merge. |
 | `6e3e0d3` | `908c593` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts resolved by hand) | A plugin's own error result in Dispatcharr 0.34's HTTP 500 is read as the plugin's answer again (retryable start, not-ready cold start, buffer gone); live-checked on `Piers` against a real 0.34.0 server, the glue suite passed on Kodi 21 headers. |
+| `0316fc5` | `0a8f865` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s count, `TEST_COVERAGE.md`'s module index and one declaration in `DispatcharrClient.h` resolved by hand) | A paused or live-edge timeshift viewer keeps its buffer alive through the plugin's file server while Dispatcharr 0.34's task pool is busy; live-checked on `Piers` against a real 0.34.0 server, the glue suite passed on Kodi 21 headers. |
 
 ## Dependencies that differ by Kodi release
 
