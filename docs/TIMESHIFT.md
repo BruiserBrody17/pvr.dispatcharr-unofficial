@@ -4101,6 +4101,90 @@ list. The results are in `docs/CLOSED_ITEMS.md`'s entry. Two things the unit tes
   the new token. It is also why a wrapper on the module's functions sometimes missed `stop()`: the probe's Redis
   failure had to be injected in `core.utils.RedisClient.get_client` instead, for callers in this module only.
 
+## The manifest from the file server (0.8.19)
+
+*2026-11-18. The mitigation chosen for `docs/OPEN_ITEMS.md`'s "Dispatcharr 0.34 leaks two Redis connections per
+plugin action": the user's decision was to make the addon send fewer plugin actions, by reading the manifest from the
+plugin's file server.*
+
+From Dispatcharr 0.34 every `run/` call leaks about two Redis sockets in the uwsgi worker that dispatches it, and the
+workers stop dispatching plugin actions once they reach their 1024-descriptor limit, about 2,000 calls after a
+restart. A viewer at the live edge polled `get_live_manifest` two to three times a second (1,229 polls and 55
+heartbeats in 9.5 minutes, measured on the lab server), so one viewer used up a freshly started server in about a
+quarter of an hour. The poll is the whole cost: nothing in it needs Dispatcharr, only the plugin's Redis state and
+the files under `storage_path`, which the plugin's own file server already reads.
+
+**The plugin.** The file server answers `GET /<channel_uuid>/manifest.json?token=...&viewer_id=...`
+(`_MANIFEST_ROUTE_NAME`, `_BufferRequestHandler._serve_manifest()`) with the same JSON object the action returns
+inside Dispatcharr's envelope, including its own errors ("not ready", `fatal`, "being restarted"), as a 200. Both go
+through one function, `Plugin._answer_live_manifest_poll()`, so the teardown of a failed buffer, the restart of one
+stuck on a video stream that is never sent, the stream-switch follow and the viewer refresh are the same either way.
+The differences:
+- **Access.** The route needs the buffer's token, as its segments do, and no Dispatcharr login. So its viewer refresh
+  is the segment read's (`_apply_read_heartbeat()`: a listed viewer is refreshed, a new one is added only below
+  `_MAX_VIEWERS_ADDED_BY_READS`), not the action's, which adds one whatever the count. A bad or missing token is a 403
+  and a uuid that is not canonical, or any other path, is an ordinary file request. A token holder could already make
+  the buffer's poll happen through the segments' heartbeat; what the route adds is that it can also make the poll's
+  reactions happen (a stream-switch restart, the stuck-video restart, the teardown of an ffmpeg that has died), all
+  of which follow server-side state the caller does not choose.
+- **Settings.** The action gets the plugin's settings with each call. Every action also records them in Redis
+  (`_publish_settings()`), and the route reads them there (`_route_settings()`), falling back to the ones the last
+  action in its own process ran with (`_latest_settings_dict`, as the reaper does). A process's own copy alone moves
+  only when an action runs there, which with the addon on the route is rarely, so a stream switch followed from a
+  stale copy would have seen "storage path or port changed" after a settings change and not followed it (found by the
+  branch's review). A process's file-server listener itself still picks up a changed `storage_path` or `http_port`
+  only when an action runs there, as before; the README's restart after a change covers it.
+- **A disabled plugin.** Dispatcharr's enabled check is on `run/`, not on the file server, so the route answers until
+  the stop token stops each worker's listener (about 20 s, "A disable or delete reaches every worker" above), as the
+  segments do.
+- **Failures.** The route answers 503 when it cannot read the token or the poll raises, and 404 for HEAD. An older
+  plugin's file server answers the path with a 403 or 404 (it is not a servable name).
+- The action's answer names the route (`manifest_route_name`), so a client learns of it from its first manifest.
+
+**The addon.** `RefreshLiveManifest()` asks the route first once a manifest has named it (`IsValidManifestRouteName()`:
+a plain file name, since it goes into the URL unescaped) and the retry delay after its last failure has run out
+(`ShouldTryManifestRoute()`). A 200 whose body is a JSON object with a string `status` is wrapped as the action's
+envelope (`WrapManifestRouteAnswer()`) and goes through the same `UnwrapPluginRunResult()` and merge. Anything else
+(any other status, a transport failure or the route's own 3 s bound running out, `kManifestRouteTimeout`, or a body
+that is not the plugin's) asks the action instead, logged at debug level with the token redacted, and the route is
+tried again 10 s later (`kManifestRouteRetryDelay`): a failing route
+means the buffer is gone (the action then says so, with `fatal`), the file server is out of reach (so are the
+segments), or Redis is, none of which a retry a quarter of a second later at the live tail would find changed. A cold
+start still polls the action until its first manifest arrives.
+
+An answered route poll also counts as an answered keep-alive (`TimeshiftFileServerKeepAlive.h`): it refreshed the buffer
+and the viewer on the file server, so a paused viewer sends no HEAD while its polls go there. And a live read skips its
+heartbeat action (every 10 s) while the route is known and the file server answered within that interval
+(`ShouldSendTimeshiftHeartbeatAction()`): the action would write the same refresh. With an older plugin, or while the
+route fails, both are sent as before. Nothing refreshes the Dispatcharr login while the route answers, so the first
+action after a long stretch of it (a Stop, a fallback refresh) pays for one token refresh within its own short bound.
+
+What is left on `run/` per viewer: `start_buffer`, `stop_buffer`, the cold start's polls, and the action while the route
+fails. That slows the leak to what starting and stopping channels costs; it does not stop it, and `recording_edl` and
+anything else that calls a plugin action still feed it. Only a Dispatcharr fix (or a restart) cures it.
+
+**Confirmed live 2026-11-18** (Kodi 22 RC1 on the Linux test VM with the branch's CI build, Dispatcharr 0.34.1 with
+`timeshift_buffer` 0.8.19, every request counted by a logging TCP forwarder between the addon and the server, a
+disposable two-stream channel):
+- **17 minutes at the live edge:** 9 `run/` calls in all (`start_buffer`, 7 `get_live_manifest` polls in the first
+  5 s while the buffer had no segment yet, 1 heartbeat), against 1,615 route polls, all answered 200. The same stretch
+  before the change would have been about 2,600 calls.
+- **A 5½-minute pause:** no `run/` call. Kodi kept reading at the tail, so its 585 route polls went on and kept the
+  buffer and the viewer refreshed (`list_buffers`: 1 viewer, idle 0 s).
+- **Resume, a seek back two minutes and forward again, Stop:** played through; `stop_buffer` went out on Stop.
+- **Two viewers, mixed protocols:** with a scripted second viewer on the action alone (the pre-route protocol), the
+  buffer counted 2 viewers; Stop in Kodi left it to the other viewer, and it ended when that one stopped.
+- **A stream switch** (`next_stream`) mid-play: played through, still no `run/` call.
+- **Dispatcharr restarted mid-play:** the route's connection was refused and the addon fell back to the action
+  ("asking the get_live_manifest action instead" in its debug log); the restart had dropped the buffer, so the action
+  answered `fatal` and the stream ended with the usual "can't be read any more" notice, as it did before the change.
+- **New addon, old plugin** (0.8.18): 124 `get_live_manifest` polls and 8 heartbeats in 75 s and no route request, the
+  behaviour before the change.
+
+Not checked live: Kodi 21 (until the `Omega` port), Dispatcharr 0.33, and a settings change while the route is in use.
+The Stop after 24 minutes on the route answered within 2 s, but the addon's background login refresh had run seconds
+before it, so the Stop's own token refresh noted above was not exercised.
+
 ## The plugin's moving parts
 
 *(moved from `dispatcharr-plugin/timeshift_buffer/README.md`, which now keeps only the user-facing summary)*

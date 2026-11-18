@@ -151,6 +151,10 @@ _REDIS_LEADER_TTL = 30  # seconds; the reaper thread renews this while alive
 # disable commits only after stop() returns), which undid the stop for every worker. The TTL only bounds how long a
 # deleted plugin leaves the key behind: every live reaper reads it within a tick, and a key that expires stops nothing.
 _REDIS_STOP_TOKEN_KEY = _REDIS_PREFIX + "stop_token"
+# The settings the latest action ran with, for the file server's manifest route (_route_settings()). A day's TTL,
+# renewed by every action, so a removed plugin leaves nothing for long.
+_REDIS_SETTINGS_KEY = _REDIS_PREFIX + "settings"
+_REDIS_SETTINGS_TTL_SECONDS = 86400
 _REDIS_STOP_TOKEN_TTL = 24 * 3600
 _REDIS_START_BUFFER_LOCK_PREFIX = _REDIS_PREFIX + "start_lock:"
 # Generous relative to how long _start_buffer()'s own locked section ever
@@ -764,6 +768,56 @@ def _apply_read_heartbeat(state: dict, now: float, viewer_id, supplied_token):
 # the log, and ask for it concurrently, since the token is the only access control here.
 _SERVABLE_NAME_RE = re.compile(r"(live\.m3u8|seg_[0-9]+\.ts)")
 
+# The file server's one route that is not a file: GET /<channel_uuid>/manifest.json?token=...&viewer_id=... answers
+# exactly what the get_live_manifest action does (Plugin._answer_live_manifest_poll()), as JSON. From Dispatcharr 0.34
+# every plugin action is a Celery task, and each one leaks two Redis connections in the uwsgi worker that dispatches it,
+# so a viewer at the live edge, which polls the manifest two to three times a second, ran the workers out of file
+# descriptors in about a quarter of an hour and every plugin action failed after that (docs/OPEN_ITEMS.md,
+# "Dispatcharr 0.34 leaks two Redis connections per plugin action"). The file server costs Dispatcharr nothing and
+# answers outside its task queue. The token is the same access control the segments have; the action is still there,
+# and the addon goes back to it for any answer the route does not give (an older plugin's 404, a 403 once the buffer
+# is gone or replaced, a 503).
+_MANIFEST_ROUTE_NAME = "manifest.json"
+
+
+def _publish_settings(settings_dict) -> None:
+    """Records the settings an action ran with where every process's manifest route can read them (_route_settings()).
+    Best effort: the route then falls back to its own process's copy."""
+    with contextlib.suppress(Exception):
+        _redis().set(_REDIS_SETTINGS_KEY, json.dumps(settings_dict, default=str), ex=_REDIS_SETTINGS_TTL_SECONDS)
+
+
+def _route_settings() -> dict:
+    """The settings a manifest-route poll runs with: the latest action's (_publish_settings()), whichever process ran
+    it. Each process's own copy (_latest_settings_dict) changes only when an action runs there, and since the addon
+    polls the route, actions are few (start, stop, a cold start): a process could keep a setting changed since for the
+    rest of a session, and a stream switch followed from it would see "storage path or port changed" and not follow
+    it, or restart with the old segment length (found by the branch's review). That copy is the fallback when Redis
+    cannot say."""
+    try:
+        raw = _redis().get(_REDIS_SETTINGS_KEY)
+        if raw:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+    except Exception:
+        pass
+    return _latest_settings_dict
+
+
+def _close_thread_db_connections():
+    """Closes the Django database connections this thread opened, if any. A manifest poll reads Dispatcharr's config
+    while a stream switch is pending (_switch_settle_seconds(), _why_not_follow_stream_switch()); in an action, Celery
+    closes the task's connection afterwards, but a file-server request thread has nobody to do it, and Django keeps one
+    connection per thread. Outside Dispatcharr (the tests) there is no Django, and nothing to close."""
+    try:
+        from django.db import connections
+
+        connections.close_all()
+    except Exception:
+        pass
+
+
 # Size of each piece of a response body written to the socket.
 _SEND_CHUNK_BYTES = 256 * 1024
 
@@ -1035,6 +1089,15 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         if channel_uuid is None:
             self.send_error(404, "Not found")
             return None, None
+        if not self._authorize(channel_uuid):
+            return None, None
+        if target is None or not target.is_file() or not _is_servable_name(target.name):
+            self.send_error(404, "Not found")
+            return None, None
+        return channel_uuid, target
+
+    def _authorize(self, channel_uuid) -> bool:
+        """Checks the request's token for `channel_uuid`, sending the 403 or 503 itself when it fails."""
         try:
             authorized = self._check_access_token(channel_uuid)
         except Exception:
@@ -1051,14 +1114,50 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
                     suppressed,
                 )
             self.send_error(503, "Service unavailable")
-            return None, None
+            return False
         if not authorized:
             self.send_error(403, "Forbidden")
-            return None, None
-        if target is None or not target.is_file() or not _is_servable_name(target.name):
-            self.send_error(404, "Not found")
-            return None, None
-        return channel_uuid, target
+            return False
+        return True
+
+    def _manifest_route_channel(self):
+        """The channel uuid when this request names a buffer's manifest route (_MANIFEST_ROUTE_NAME), else None. Only
+        the canonical form of the uuid, the one the buffer's state and directory are keyed by."""
+        try:
+            parts = unquote(urlparse(self.path).path).strip("/").split("/")
+        except ValueError:
+            return None
+        if len(parts) != 2 or parts[1] != _MANIFEST_ROUTE_NAME or not _is_canonical_uuid(parts[0]):
+            return None
+        return parts[0]
+
+    def _serve_manifest(self, channel_uuid):
+        if not self._authorize(channel_uuid):
+            return
+        logger = getattr(self.server, "plugin_logger", None) or logging.getLogger(__name__)
+        token = parse_qs(urlparse(self.path).query).get("token", [None])[0]
+        try:
+            answer = Plugin._answer_live_manifest_poll(
+                channel_uuid,
+                _viewer_id_from_request_path(self.path),
+                token,
+                _route_settings(),
+                logger,
+                from_file_server=True,
+            )
+            body = json.dumps(answer).encode("utf-8")
+        except Exception:
+            logger.exception("timeshift_buffer http: manifest route failed for %s, answering 503", channel_uuid)
+            self.send_error(503, "Service unavailable")
+            return
+        finally:
+            _close_thread_db_connections()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     @staticmethod
     def _content_type_for(path) -> str:
@@ -1090,6 +1189,10 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         return 206, start, end - start + 1, f"bytes {start}-{end}/{file_size}"
 
     def do_GET(self):
+        manifest_channel = self._manifest_route_channel()
+        if manifest_channel is not None:
+            self._serve_manifest(manifest_channel)
+            return
         channel_uuid, target = self._resolve_and_authorize()
         if channel_uuid is None:
             return
@@ -5020,6 +5123,7 @@ class Plugin:
         _stop_orphaned_threads(logger)
         # Before either thread is ensured: a reaper this starts must not find a token its worker has not adopted.
         _adopt_stop_token(logger)
+        _publish_settings(settings_dict)
         _ensure_http_server_running(
             storage_path, _int_setting(settings_dict, "http_port", 9192, minimum=1, maximum=65535), logger
         )
@@ -5582,7 +5686,18 @@ class Plugin:
                 "status": "error",
                 "message": "channel_uuid is required (see test_channel_uuid setting for manual testing)",
             }
+        return self._answer_live_manifest_poll(
+            channel_uuid, _resolve_viewer_id(params), params.get("access_token"), settings_dict, logger
+        )
 
+    @classmethod
+    def _answer_live_manifest_poll(
+        cls, channel_uuid, viewer_id, supplied_token, settings_dict, logger, from_file_server=False
+    ):
+        """One manifest poll, the same answer whether it came as the get_live_manifest action or as a GET of the file
+        server's manifest route (_BufferRequestHandler._serve_manifest(), _MANIFEST_ROUTE_NAME). `from_file_server`:
+        the route needs only the buffer's token, not a Dispatcharr login, so its poll registers a new viewer only as a
+        segment read does (_apply_read_heartbeat()'s cap)."""
         # Real, confirmed bug this fixes (found live 2026-09-28, see
         # docs/OPEN_ITEMS.md): this call site used to only refresh the
         # buffer-wide last_heartbeat, never this specific viewer's own
@@ -5595,7 +5710,7 @@ class Plugin:
         # pruned by the reaper, and if every other viewer then stopped,
         # the buffer was torn down out from under the still-paused
         # viewer -- confirmed live end-to-end against a real Kodi client.
-        viewer_id = _resolve_viewer_id(params)
+        # (That is why the caller passes `viewer_id`.)
 
         state = _get_buffer_state(channel_uuid)
         if not state:
@@ -5619,7 +5734,6 @@ class Plugin:
         # Deliberately no teardown here, unlike the dead-buffer branch
         # below: the buffer now tracked for this channel is a healthy one
         # belonging to a different viewer, not this caller's.
-        supplied_token = params.get("access_token")
         if _is_stale_access_token(state, supplied_token):
             return {"status": "error", "fatal": True, "message": _REPLACED_BUFFER_MESSAGE}
 
@@ -5648,12 +5762,12 @@ class Plugin:
         except RuntimeError as exc:
             # Not ready yet. The addon keeps asking while it waits for the first playlist, so this is where a start
             # stuck on a video stream that is never sent is noticed (_restart_without_audio_map()).
-            restarted = self._restart_if_stuck_on_unsent_video(channel_uuid, state, settings_dict, logger)
+            restarted = cls._restart_if_stuck_on_unsent_video(channel_uuid, state, settings_dict, logger)
             # A caller still waiting for the first playlist is watching: without this, a buffer whose upstream is
             # slow to answer looked idle from its start and the reaper ended it idle_timeout_seconds in, while the
             # addon was still polling (docs/CLOSED_ITEMS.md, "`timeshift_buffer` reaps a buffer that has not written
             # its first playlist yet as idle").
-            self._touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id)
+            cls._touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id, from_file_server)
             if restarted:
                 return {
                     "status": "error",
@@ -5688,13 +5802,13 @@ class Plugin:
         # heartbeat, undoing the teardown. The manifest itself was
         # already built successfully and is still returned to the caller
         # either way; only the write-back is skipped.
-        self._touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id)
+        cls._touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id, from_file_server)
         if manifest.get("ended"):
             fresh = _get_buffer_state(channel_uuid)
             if fresh and _dead_only_for_a_restart(state, fresh, _shared_now()):
                 manifest = {**manifest, "ended": False}
         else:
-            self._follow_stream_switch(channel_uuid, state, settings_dict, logger)
+            cls._follow_stream_switch(channel_uuid, state, settings_dict, logger)
 
         return {
             "status": "ok",
@@ -5706,6 +5820,9 @@ class Plugin:
             "http_port": state["http_port"],
             "channel_uuid": channel_uuid,
             "segment_route_prefix": f"/{channel_uuid}/",
+            # The same answer from the file server, outside Dispatcharr's task queue: the addon polls it there from
+            # the next poll on (_MANIFEST_ROUTE_NAME's comment).
+            "manifest_route_name": _MANIFEST_ROUTE_NAME,
             **manifest,
         }
 
@@ -5734,12 +5851,18 @@ class Plugin:
             logger.exception("timeshift_buffer: couldn't follow a stream switch on %s", channel_uuid)
 
     @staticmethod
-    def _touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id) -> None:
+    def _touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id, from_file_server=False) -> None:
         """A get_live_manifest poll, answered or "not ready", counts as activity for the buffer and its caller.
         Applied to a fresh read, never the copy read before the manifest was built: a concurrent start_buffer may have
         registered a viewer meanwhile (_apply_heartbeat()), and a buffer torn down meanwhile stays gone. The token is
         checked again, as in _heartbeat(): a replacement started in the meantime must not get this caller registered
         on it."""
+        if from_file_server:
+            _update_buffer_state(
+                channel_uuid,
+                lambda fresh_state: _apply_read_heartbeat(fresh_state, _shared_now(), viewer_id, supplied_token),
+            )
+            return
         _update_buffer_state(
             channel_uuid,
             lambda fresh_state: (

@@ -3688,6 +3688,95 @@ def test_run_get_live_manifest_for_an_ended_buffer_serves_the_manifest_and_does_
     assert result["ended"] is True
     assert "no further segments" in result["message"]
     assert teardown_calls == []
+    # Names the file server's manifest route, which the addon polls instead from then on.
+    assert result["manifest_route_name"] == "manifest.json"
+
+
+def test_a_manifest_poll_through_the_file_server_adds_a_new_viewer_only_under_the_read_cap(monkeypatch):
+    """The manifest route needs only the buffer's token, so its poll registers viewers as a segment read does: a
+    listed one is refreshed, a new one is added only below _MAX_VIEWERS_ADDED_BY_READS. The action, which needs a
+    Dispatcharr login, adds one whatever the count."""
+    cap = timeshift_buffer_plugin._MAX_VIEWERS_ADDED_BY_READS
+    full = {
+        "access_token": "tok",
+        "viewers": [f"v{i}" for i in range(cap)],
+        "viewer_heartbeats": {f"v{i}": 1.0 for i in range(cap)},
+    }
+    written = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1000.0)
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_update_buffer_state", lambda uuid, mutate: written.append(mutate(dict(full)))
+    )
+    touch = timeshift_buffer_plugin.Plugin._touch_after_manifest_poll
+
+    touch(_UUID, "tok", "new", from_file_server=True)
+    assert "new" not in written[-1]["viewers"]
+    touch(_UUID, "tok", "v3", from_file_server=True)
+    assert written[-1]["viewer_heartbeats"]["v3"] == 1000.0
+    touch(_UUID, "stale", "v3", from_file_server=True)
+    assert written[-1] is None  # a replaced buffer's token writes nothing, as for the action
+    touch(_UUID, "tok", "new")
+    assert "new" in written[-1]["viewers"]
+
+
+def test_a_manifest_route_poll_does_not_add_a_new_viewer_past_the_read_cap(monkeypatch):
+    """The whole poll, not just its write: from the file server, a full viewer list gets no new viewer, while the
+    action's poll adds one (the flag must reach _touch_after_manifest_poll() on the answered path)."""
+    cap = timeshift_buffer_plugin._MAX_VIEWERS_ADDED_BY_READS
+    full = {
+        "channel_uuid": _UUID,
+        "access_token": "tok",
+        "http_port": 9192,
+        "viewers": [f"v{i}" for i in range(cap)],
+        "viewer_heartbeats": {f"v{i}": 1.0 for i in range(cap)},
+    }
+    manifest = {"media_sequence": 0, "segments": [], "total_bytes": 0, "total_duration_ms": 0, "ended": False}
+    written = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_buffer_state", lambda uuid: dict(full))
+    monkeypatch.setattr(timeshift_buffer_plugin, "_get_live_manifest", lambda state, logger: manifest)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 1000.0)
+    monkeypatch.setattr(
+        timeshift_buffer_plugin, "_update_buffer_state", lambda uuid, mutate: written.append(mutate(dict(full)))
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin.Plugin, "_follow_stream_switch", staticmethod(lambda *a: None))
+    poll = timeshift_buffer_plugin.Plugin._answer_live_manifest_poll
+
+    answer = poll(_UUID, "new", "tok", {}, _FakeLogger(), from_file_server=True)
+    assert answer["status"] == "ok"
+    assert "new" not in written[-1]["viewers"]
+    poll(_UUID, "new", "tok", {}, _FakeLogger())
+    assert "new" in written[-1]["viewers"]
+
+
+def test_the_manifest_route_reads_the_latest_actions_settings_from_redis(monkeypatch):
+    """A process's own copy of the settings moves only when an action runs there, and with the addon on the route
+    actions are few; the route reads the latest action's settings, whichever process ran it."""
+
+    class _KV:
+        def __init__(self):
+            self.data = {}
+
+        def set(self, key, value, ex=None):
+            self.data[key] = value.encode() if isinstance(value, str) else value
+
+        def get(self, key):
+            return self.data.get(key)
+
+    kv = _KV()
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: kv)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_latest_settings_dict", {"segment_seconds": 2})
+    assert timeshift_buffer_plugin._route_settings() == {"segment_seconds": 2}  # nothing published yet
+    timeshift_buffer_plugin._publish_settings({"segment_seconds": 6, "storage_path": "/data/ts"})
+    assert timeshift_buffer_plugin._route_settings() == {"segment_seconds": 6, "storage_path": "/data/ts"}
+    kv.data[timeshift_buffer_plugin._REDIS_SETTINGS_KEY] = b"not json"
+    assert timeshift_buffer_plugin._route_settings() == {"segment_seconds": 2}
+
+    def down():
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", down)
+    timeshift_buffer_plugin._publish_settings({"segment_seconds": 6})  # best effort, never raises
+    assert timeshift_buffer_plugin._route_settings() == {"segment_seconds": 2}
 
 
 def test_run_get_live_manifest_plain_runtime_error_does_not_tear_down(monkeypatch, tmp_path):

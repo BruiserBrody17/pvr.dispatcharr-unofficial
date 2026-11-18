@@ -1289,10 +1289,14 @@ void DispatcharrClient::SendTimeshiftHeartbeat(const std::string& channelUuid, c
   // curl handle. If the cached token is empty or has since expired, this
   // heartbeat is simply skipped rather than triggering a refresh itself --
   // RefreshLiveManifest() (called far more often than this, every
-  // read-loop iteration) already keeps the token fresh via the normal
-  // path in practice, so a skipped heartbeat here just means the next
-  // one, ~10s later, tries again -- never worth blocking a live read to
-  // guarantee any single heartbeat lands.
+  // read-loop iteration) keeps the token fresh via the normal path
+  // whenever it asks the get_live_manifest action, so a skipped heartbeat
+  // here just means the next one, ~10s later, tries again -- never worth
+  // blocking a live read to guarantee any single heartbeat lands. (While
+  // the plugin's manifest route answers, nothing refreshes the token and
+  // this is not sent at all -- ShouldSendTimeshiftHeartbeatAction(); the
+  // first action after that, a Stop or a fallback refresh, pays for one
+  // refresh within its own short bound.)
   if (viewerId.empty())
     return;
 
@@ -4085,7 +4089,7 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
     return true;
 
   uint64_t session = 0;
-  std::string channelUuid, viewerId, accessToken;
+  std::string channelUuid, viewerId, accessToken, routeUrl, routeLogUrl;
   auto now = std::chrono::steady_clock::now();
   {
     std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
@@ -4113,31 +4117,43 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
     channelUuid = m_liveTimeshiftStream.channelUuid;
     viewerId = m_liveTimeshiftStream.viewerId;
     accessToken = m_liveTimeshiftStream.accessToken;
+    if (ShouldTryManifestRoute(!m_liveTimeshiftStream.manifestRouteName.empty() &&
+                                   !m_liveTimeshiftStream.segmentBaseUrl.empty(),
+                               m_liveTimeshiftStream.manifestRouteRetryAt, now))
+    {
+      routeUrl = BuildTimeshiftSegmentUrl(m_liveTimeshiftStream.segmentBaseUrl, m_liveTimeshiftStream.manifestRouteName,
+                                          accessToken, viewerId, false);
+      routeLogUrl = BuildTimeshiftSegmentUrl(m_liveTimeshiftStream.segmentBaseUrl,
+                                             m_liveTimeshiftStream.manifestRouteName, accessToken, viewerId, true);
+    }
   }
 
-  const long requestTimeoutMs = coldStart ? 0 : ShortRequestTimeoutMs();
-  if (!EnsureAuthenticated(error, requestTimeoutMs, httpStatusOut))
+  json response;
+  // The manifest route first, when a manifest has named one: the same answer, from the file server, without a plugin
+  // action (TimeshiftFileServerKeepAlive.h, kManifestRouteRetryDelay, for why).
+  const bool fromRoute = !routeUrl.empty() && FetchLiveManifestRoute(routeUrl, routeLogUrl, response);
+  if (!routeUrl.empty())
+  {
+    std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
+    if (m_liveTimeshiftStream.open && m_liveSession == session)
+    {
+      const auto done = std::chrono::steady_clock::now();
+      if (fromRoute)
+      {
+        // The poll refreshed the buffer and this viewer on the file server, which is what a keep-alive is for.
+        m_liveTimeshiftStream.nextKeepAliveAt = NextTimeshiftKeepAliveDueAt(done, /*answered=*/true);
+        m_liveTimeshiftStream.lastKeepAliveAnsweredAt = done;
+      }
+      else
+        m_liveTimeshiftStream.manifestRouteRetryAt = done + kManifestRouteRetryDelay;
+    }
+  }
+  if (fromRoute && httpStatusOut)
+    *httpStatusOut = 200;
+  if (!fromRoute &&
+      !RequestLiveManifestAction(channelUuid, viewerId, accessToken, coldStart, response, error, httpStatusOut))
     return false;
 
-  // viewer_id: this call is the *only* thing a paused client still sends -- SendTimeshiftHeartbeat() only ever
-  // fires from ReadLiveTimeshiftStream(), which a pause stops calling entirely, but GetStreamTimes() keeps
-  // polling GetLiveTimeshiftStreamLength() (and so this function) throughout. Without it a paused viewer's own
-  // per-viewer heartbeat went stale and got pruned by the plugin's reaper (confirmed live, docs/OPEN_ITEMS.md).
-  json params = {{"channel_uuid", channelUuid}, {"viewer_id", viewerId}};
-  // Sent so the plugin can positively detect that this buffer was replaced by a different viewer's start_buffer
-  // after this one's own ffmpeg died (docs/OPEN_ITEMS.md): it answers fatal: true on a mismatch instead of
-  // silently serving the new buffer's unrelated segments, whose sequence numbers this function's own
-  // merge-by-sequence logic would otherwise just filter out as "not new" while every segment read 403s against
-  // the stale token.
-  if (!accessToken.empty())
-    params["access_token"] = accessToken;
-  json body = {
-      {"action", "get_live_manifest"},
-      {"params", params},
-  };
-  json response;
-  if (!RequestPluginRun(kTimeshiftPluginRunPath, body, response, error, httpStatusOut, requestTimeoutMs))
-    return false;
   json result;
   if (!UnwrapPluginRunResult(std::move(response), "timeshift_buffer", result, error))
   {
@@ -4166,6 +4182,10 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
     error = "timeshift_buffer plugin manifest response had an invalid http_port/segment_route_prefix";
     return false;
   }
+  // Named by timeshift_buffer 0.8.19 and later; an older plugin's manifest leaves the action in use.
+  std::string routeName = FieldOr<std::string>(result, "manifest_route_name", "");
+  if (!IsValidManifestRouteName(routeName))
+    routeName.clear();
   // The URL assembly itself lives in dispatcharr::BuildTimeshiftSegmentBaseUrl() (PluginUrlUtil.h) so it's
   // unit-testable standalone.
   std::string newSegmentBaseUrl = BuildTimeshiftSegmentBaseUrl(m_config.host, httpPort, routePrefix);
@@ -4178,6 +4198,7 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
   }
   m_liveTimeshiftStream.segmentBaseUrl = std::move(newSegmentBaseUrl);
   m_liveTimeshiftStream.fileServerPort = httpPort;
+  m_liveTimeshiftStream.manifestRouteName = std::move(routeName);
 
   // Segments come back ordered by sequence; only ones newer than what we already know get appended, each
   // extending OUR cumulative address space (not reusing the response's own relative offsets -- see this method's
@@ -4214,6 +4235,65 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
   // fields out before it releases the lock).
   PruneRolledOffLiveSegments(m_liveTimeshiftStream.segments, m_liveTimeshiftStream.oldestAvailableSequence);
   return true;
+}
+
+bool DispatcharrClient::RequestLiveManifestAction(const std::string& channelUuid, const std::string& viewerId,
+                                                  const std::string& accessToken, bool coldStart, json& responseOut,
+                                                  std::string& error, long* httpStatusOut)
+{
+  const long requestTimeoutMs = coldStart ? 0 : ShortRequestTimeoutMs();
+  if (!EnsureAuthenticated(error, requestTimeoutMs, httpStatusOut))
+    return false;
+
+  // viewer_id: this call is the *only* thing a paused client still sends -- SendTimeshiftHeartbeat() only ever
+  // fires from ReadLiveTimeshiftStream(), which a pause stops calling entirely, but GetStreamTimes() keeps
+  // polling GetLiveTimeshiftStreamLength() (and so this function) throughout. Without it a paused viewer's own
+  // per-viewer heartbeat went stale and got pruned by the plugin's reaper (confirmed live, docs/OPEN_ITEMS.md).
+  // The manifest route carries the same two values in its query.
+  json params = {{"channel_uuid", channelUuid}, {"viewer_id", viewerId}};
+  // Sent so the plugin can positively detect that this buffer was replaced by a different viewer's start_buffer
+  // after this one's own ffmpeg died (docs/OPEN_ITEMS.md): it answers fatal: true on a mismatch instead of
+  // silently serving the new buffer's unrelated segments, whose sequence numbers this function's own
+  // merge-by-sequence logic would otherwise just filter out as "not new" while every segment read 403s against
+  // the stale token.
+  if (!accessToken.empty())
+    params["access_token"] = accessToken;
+  json body = {
+      {"action", "get_live_manifest"},
+      {"params", params},
+  };
+  return RequestPluginRun(kTimeshiftPluginRunPath, body, responseOut, error, httpStatusOut, requestTimeoutMs);
+}
+
+bool DispatcharrClient::FetchLiveManifestRoute(const std::string& url, const std::string& logUrl, json& envelopeOut)
+{
+  CURL* curl = curl_easy_init();
+  if (!curl)
+    return false;
+  std::string body;
+  BoundedStringSink sink{&body, kMaxJsonResponseBytes};
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, BoundedWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
+  ApplyStandardCurlOptions(curl, GetCurlShare());
+  // Its own bound, no longer than the short one (kManifestRouteTimeout): the action after a failed attempt gets its
+  // full bound on top.
+  const long timeoutMs = std::min<long>(
+      ShortRequestTimeoutMs(),
+      static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(kManifestRouteTimeout).count()));
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeoutMs);
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, timeoutMs);
+  const CURLcode res = curl_easy_perform(curl);
+  long httpCode = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+  curl_easy_cleanup(curl);
+  if (WrapManifestRouteAnswer(res == CURLE_OK, httpCode, body, envelopeOut))
+    return true;
+  kodi::Log(ADDON_LOG_DEBUG,
+            "pvr.dispatcharr-unofficial: FetchLiveManifestRoute: %s -> curlResult=%d httpCode=%ld, asking the "
+            "get_live_manifest action instead",
+            logUrl.c_str(), static_cast<int>(res), httpCode);
+  return false;
 }
 
 bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, std::string& error)
@@ -4770,14 +4850,18 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
          now - m_liveTimeshiftStream.lastHeartbeatSent >= kHeartbeatInterval))
     {
       m_liveTimeshiftStream.lastHeartbeatSent = now;
-      const std::string heartbeatChannel = m_liveTimeshiftStream.channelUuid;
-      const std::string heartbeatViewer = m_liveTimeshiftStream.viewerId;
-      const std::string heartbeatToken = m_liveTimeshiftStream.accessToken;
-      stateLock.unlock();
-      SendTimeshiftHeartbeat(heartbeatChannel, heartbeatViewer, heartbeatToken);
-      stateLock.lock();
-      if (!stillSameStream())
-        return -1;
+      if (ShouldSendTimeshiftHeartbeatAction(!m_liveTimeshiftStream.manifestRouteName.empty(),
+                                             m_liveTimeshiftStream.lastKeepAliveAnsweredAt, now, kHeartbeatInterval))
+      {
+        const std::string heartbeatChannel = m_liveTimeshiftStream.channelUuid;
+        const std::string heartbeatViewer = m_liveTimeshiftStream.viewerId;
+        const std::string heartbeatToken = m_liveTimeshiftStream.accessToken;
+        stateLock.unlock();
+        SendTimeshiftHeartbeat(heartbeatChannel, heartbeatViewer, heartbeatToken);
+        stateLock.lock();
+        if (!stillSameStream())
+          return -1;
+      }
     }
   }
 

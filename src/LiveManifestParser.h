@@ -52,4 +52,18 @@ std::vector<LiveManifestSegmentEntry> ParseNewLiveManifestSegments(const nlohman
 // looks at every entry, including ones already merged.
 int64_t OldestLiveManifestSequence(const nlohmann::json& segmentsArray);
 
+// Whether `name`, the `manifest_route_name` a timeshift_buffer manifest names (0.8.19 and later), is safe to append to
+// the segment base URL: 1 to 64 characters from [A-Za-z0-9._-], not starting with a dot. It reaches the URL unescaped,
+// as a segment's filename does, so anything else (a slash, a query, "..") is refused and the addon keeps polling the
+// get_live_manifest action.
+bool IsValidManifestRouteName(const std::string& name);
+
+// Turns the file server's answer to a manifest-route GET (plugin.py's _MANIFEST_ROUTE_NAME) into the {"success": true,
+// "result": ...} envelope Dispatcharr wraps the get_live_manifest action's answer in, so both go through
+// UnwrapPluginRunResult() and the same merge. False, with `envelopeOut` untouched, for anything but a 200 whose body is
+// a JSON object with a string "status": an older plugin's 404, a 403 once the buffer is gone or replaced, a 503, a
+// transport failure or a body that is not the plugin's. The caller then asks the action, whose answer tells those
+// apart.
+bool WrapManifestRouteAnswer(bool transferOk, long httpStatus, const std::string& body, nlohmann::json& envelopeOut);
+
 } // namespace dispatcharr

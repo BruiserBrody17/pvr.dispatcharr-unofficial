@@ -185,3 +185,52 @@ TEST_CASE("OldestLiveManifestSequence ignores entries with no usable sequence", 
   CHECK(OldestLiveManifestSequence(json::array({{{"sequence", "x"}}, {{"sequence", 5}}})) == 5);
   CHECK(OldestLiveManifestSequence(json::array({{{"sequence", 0}}, {{"sequence", 4}}})) == 0);
 }
+
+TEST_CASE("IsValidManifestRouteName accepts a plain file name and refuses anything that changes the URL",
+          "[LiveManifestParser]")
+{
+  CHECK(IsValidManifestRouteName("manifest.json"));
+  CHECK(IsValidManifestRouteName("a"));
+  CHECK(IsValidManifestRouteName(std::string(64, 'm')));
+  CHECK_FALSE(IsValidManifestRouteName(""));
+  CHECK_FALSE(IsValidManifestRouteName(std::string(65, 'm')));
+  CHECK_FALSE(IsValidManifestRouteName(".hidden"));
+  CHECK_FALSE(IsValidManifestRouteName("a..b"));
+  CHECK_FALSE(IsValidManifestRouteName("../manifest.json"));
+  CHECK_FALSE(IsValidManifestRouteName("x/manifest.json"));
+  CHECK_FALSE(IsValidManifestRouteName("manifest.json?token=x"));
+  CHECK_FALSE(IsValidManifestRouteName("manifest json"));
+  CHECK_FALSE(IsValidManifestRouteName("manifest%2ejson"));
+  CHECK_FALSE(IsValidManifestRouteName(std::string("mani\0fest", 9)));
+}
+
+TEST_CASE("WrapManifestRouteAnswer wraps the plugin's answer as the action's envelope", "[LiveManifestParser]")
+{
+  nlohmann::json envelope;
+  REQUIRE(WrapManifestRouteAnswer(true, 200, R"({"status":"ok","segments":[],"http_port":9192})", envelope));
+  CHECK(envelope["success"] == true);
+  CHECK(envelope["result"]["status"] == "ok");
+  CHECK(envelope["result"]["http_port"] == 9192);
+
+  // The plugin's own error answers ("not ready", fatal) are answers too: the caller reads them as the action's.
+  nlohmann::json errorEnvelope;
+  REQUIRE(WrapManifestRouteAnswer(true, 200, R"({"status":"error","fatal":true,"message":"gone"})", errorEnvelope));
+  CHECK(errorEnvelope["result"]["fatal"] == true);
+}
+
+TEST_CASE("WrapManifestRouteAnswer refuses anything but the plugin's 200 JSON answer", "[LiveManifestParser]")
+{
+  nlohmann::json envelope = "untouched";
+  const std::string ok = R"({"status":"ok"})";
+  CHECK_FALSE(WrapManifestRouteAnswer(false, 200, ok, envelope)); // transport failure
+  CHECK_FALSE(WrapManifestRouteAnswer(true, 404, ok, envelope));  // an older plugin
+  CHECK_FALSE(WrapManifestRouteAnswer(true, 403, ok, envelope));  // buffer gone or replaced
+  CHECK_FALSE(WrapManifestRouteAnswer(true, 503, ok, envelope));
+  CHECK_FALSE(WrapManifestRouteAnswer(true, 206, ok, envelope));
+  CHECK_FALSE(WrapManifestRouteAnswer(true, 200, "#EXTM3U\n", envelope));
+  CHECK_FALSE(WrapManifestRouteAnswer(true, 200, "[1,2]", envelope));
+  CHECK_FALSE(WrapManifestRouteAnswer(true, 200, R"({"segments":[]})", envelope));
+  CHECK_FALSE(WrapManifestRouteAnswer(true, 200, R"({"status":1})", envelope));
+  CHECK_FALSE(WrapManifestRouteAnswer(true, 200, "1" + std::string(400, '0'), envelope)); // parse throws out_of_range
+  CHECK(envelope == "untouched");
+}
