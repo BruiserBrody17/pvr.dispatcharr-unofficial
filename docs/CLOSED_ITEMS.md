@@ -9991,6 +9991,45 @@ N2+ and confirming Kodi loads it normally despite the blank tag.
 
 ### Closed without a change (refuted, explained or harmless)
 
+#### Kodi 22 reads two finished recordings end to end at start
+
+**Opened 2026-11-16, seen during the live check of the catch-up session cache (`CLOSED_ITEMS.md`, "A catch-up replay 9
+to 30 s after the first Play reuses a session Dispatcharr has deleted"); one observation, not chased.** Kodi 22.0-RC1
+(Linux) started on the lab profile, with a logging forwarder between the addon and a real Dispatcharr 0.33.0 and
+nothing played: within its first three minutes, two finished recordings' `/api/channels/recordings/<id>/file/` were
+read from byte 0 to a few GB each, in consecutive 256 KiB `Range` requests (thousands per recording),
+while every other finished recording got 3 to 6 requests. 256 KiB is the addon's
+`GetStreamReadChunkSize()`, so these are the addon's `ReadRecordedStream()` reads on a stream Kodi opened and kept
+reading. Kodi 22's stream-details probe (the thumbnail loader, `docs/API_NOTES.md`) is the likely caller, but which
+component kept reading was not checked: a demuxer scanning for a duration or stream it could not find, or Kodi's
+file cache reading ahead for as long as the probe held the stream open. Nor was it checked what set those two recordings apart (length, a missing index,
+codecs), whether it happens at every start or once per recording, or whether Kodi 21 does the same. Cost on a real
+setup: gigabytes from the server's disk and network at each Kodi start, on a client that is only browsing.
+
+**Next:** at a Kodi 22 start, log which thread opens the two recordings and calls `ReadRecordedStream()` (the addon's open logging, Kodi's debug log for
+`CVideoThumbLoader` and the cache) and whether `CloseRecordedStream()` comes when the reading stops; compare the two recordings'
+`ffprobe` output with a recording that got 3 requests; repeat a start to see whether it recurs; and check Kodi 21 on
+the same profile. If the probe is the reader, see whether the addon can cap or refuse a stream-details open (it cannot
+tell a probe from Play today; `CLOSED_ITEMS.md`, "Kodi 22's thumbnail loader made the "no file for this recording"
+notice pop up while browsing", has how far that got).
+
+**Closed 2026-11-18 without a change: explained, checked live** (Kodi 22 RC1 on Linux with the `Piers` build through a
+logging forwarder, Dispatcharr 0.34.1; Kodi 21.3 on the same profile). It recurred at the first start: the same two
+recordings were read again. The reader is Kodi 22's thumbnail extractor (`CDVDFileInfo::ExtractThumbToTexture()`, run
+from `CVideoThumbLoader` on `JobWorker` threads), which opens each recording through the addon and seeks a third of the
+way in for its picture. What set the two apart: they were one programme recorded on two channels at once, Dispatcharr
+gave both the same output path ("Dispatcharr gives two overlapping recordings of one programme the same output file",
+`OPEN_ITEMS.md`), and their two remuxes left one MKV of tens of GB whose header mixes both (ffmpeg reports EBML length and
+duplicate-element errors and four streams). With no usable index, the seek read the file linearly: tens of thousands of
+256 KiB reads per recording (a third of the file) over several minutes, after which Kodi
+closed each stream normally (`CloseRecordedStream()` on the same thread) and cached the thumbnail. The 2026-11-16 run
+had been stopped before that point, so nothing was cached and the next start began again. A second Kodi 22 start read
+neither recording and opened none at all: the cost comes once per such recording. Every other recording took a few
+requests. Kodi 21 does none of this: with the recordings window open and one of the two recordings focused in its
+folder (Kodi 21 keeps its own thumbnail database, so nothing was cached for it), it read no recording file and logged
+no thumbnail work, and its two earlier logs on that profile show none either. Nothing for the addon to change: it still
+cannot tell the extractor's open from Play, and the reads end by themselves.
+
 #### `timeshift_buffer` 0.8.18's audio-track mapping has only been seen on generated streams
 
 **Opened 2026-11-10, after the change that buffers every usable audio track; closed without a change 2026-11-13
