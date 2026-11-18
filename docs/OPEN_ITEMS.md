@@ -39,7 +39,7 @@ the design question on 2026-11-15, the other seven on 2026-11-16).
 | Open: Upstream (Dispatcharr) or documentation accuracy | 3 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 384 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 385 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 43 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -63,7 +63,8 @@ file server, its reaper thread and each buffer's ffmpeg from inside an action (`
   (`CELERY_WORKER_MAX_MEMORY_PER_CHILD`). Its file server goes with it until the next action starts one in another
   child, and the addon's segment reads fail in between. ffmpeg runs in its own session and should survive.
 - Action latency while an M3U or EPG refresh occupies the same worker pool: heartbeats and manifest polls queue
-  behind it once the pool is at its maximum (`CELERY_MAX_WORKERS`, default 6).
+  behind it once the pool is at its maximum (`CELERY_MAX_WORKERS`, default 6). Seen live and fixed in the addon
+  (below).
 - A deployment that runs Celery in its own container: the file server's port has to be published on that container,
   not the web one. If so, the plugin README's port instructions need a line.
 - Side effects to note, not fix: every action is now recorded in the plugin's task history and broadcast to open web
@@ -78,10 +79,16 @@ file server, its reaper thread and each buffer's ffmpeg from inside an action (`
 - **Pool saturation:** twelve parallel 20 s probe actions held all six children for about 40 s. The addon's manifest
   polls then took up to 40 s to be answered and its heartbeats up to 30 s (three timed out at the client's 2 s). Playback
   did not stop (151 segment reads over 4 minutes, all good; segments come from the file server, not Celery), but the
-  plugin's idle timeout is 30 s, so a longer saturation could reap a buffer that is being watched. Whether a real M3U
-  or EPG refresh ever holds all six children is not known.
+  plugin's idle timeout is 30 s, so a longer saturation could reap a buffer that is being watched. Since fixed in the
+  addon for a paused viewer and one waiting at the live edge, with a keep-alive to the file server
+  (`docs/CLOSED_ITEMS.md`, "A paused viewer's timeshift buffer can be ended while Dispatcharr's task pool is busy (and
+  a viewer at the live edge loses playback)",
+  which also has what in Dispatcharr's source can hold the pool that long: bulk guide assignment, not a scheduled
+  refresh on its own). A channel opened during such a burst still waits in the queue.
 - The pool did not shrink within 3.5 minutes of the burst, so a child exiting under a running buffer was not seen.
-- Not checked: a separate Celery container, the 512 MB recycle.
+- Still open: a seek, two viewers on one channel and a stream switch on 0.34; a Celery child exiting under a running
+  buffer (the pool shrinking, or the 512 MB recycle); a deployment with Celery in its own container. Start, play, pause
+  and stop were seen on 0.34 (this item, and the live checks of the 500-with-result reading and of the keep-alive).
 
 The 0.34 plugin sandbox does not apply: it is enforced only for a manifest declaring `manifest_version` 2, and ours
 declare none (version 0, `apps/plugins/capabilities.py`'s `MANIFEST_SCHEMA_POLICIES`). Its import wrappers are still

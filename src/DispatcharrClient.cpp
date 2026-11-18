@@ -37,6 +37,7 @@
 #include "TimerRequestBuilder.h"
 #include "TimerRuleParser.h"
 #include "TimeZoneUtil.h"
+#include "TimeshiftFileServerKeepAlive.h"
 
 #include <curl/curl.h>
 #include <kodi/General.h>
@@ -4675,6 +4676,9 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
     std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
     m_liveTimeshiftStream.open = true;
     m_liveTimeshiftStream.channelUuid = channelUuid;
+    // The open's own reads reach the file server at once; nothing is owed before an interval has passed.
+    m_liveTimeshiftStream.nextKeepAliveAt =
+        NextTimeshiftKeepAliveDueAt(std::chrono::steady_clock::now(), /*answered=*/true);
   }
 
   // Cold-start grace period: RefreshLiveManifest() can legitimately fail
@@ -5067,6 +5071,20 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
     }
   }
 
+  // A reader waiting at the live edge reads nothing from the file server, and the heartbeat just above is a plugin
+  // action that a busy Dispatcharr task pool can hold back past the plugin's idle timeout
+  // (TimeshiftFileServerKeepAlive.h). The wait hands every slice back to Kodi (-1), so this is reached at least once a
+  // slice.
+  if (ShouldSendTimeshiftKeepAlive(m_liveTimeshiftStream.fatal, m_liveTimeshiftStream.nextKeepAliveAt,
+                                   std::chrono::steady_clock::now()))
+  {
+    stateLock.unlock();
+    MaybeSendLiveTimeshiftKeepAlive();
+    stateLock.lock();
+    if (!stillSameStream())
+      return -1;
+  }
+
   // Caught up to the tail: give the buffer a bounded chance to grow rather
   // than reporting EOF immediately, which Kodi would read as "this live
   // stream just ended". A fixed 8 attempts * 250ms (2s total) here used to
@@ -5148,8 +5166,8 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
     // episode at this position began, across the calls (TailWaitEpisode, CatchUpUtil.h).
     m_liveTimeshiftStream.tailWait.Enter(m_liveTimeshiftStream.position, catchUpStart);
     int attemptsUsed = 0;
-    // Whether the last forced refresh got a manifest from the plugin: only then is a quiet buffer a stall that
-    // Dispatcharr may heal (ComputeLiveTailWaitBudgetMs()), not an outage.
+    // Whether the buffer answered the last forced refresh, or failing that the file server: only then is a quiet
+    // buffer a stall that Dispatcharr may heal (ComputeLiveTailWaitBudgetMs()), not an outage.
     bool lastRefreshAnswered = true;
     for (int attempt = 0;
          attempt < catchUpAttempts && m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes; ++attempt)
@@ -5175,6 +5193,18 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
                   "mid-playback, giving up: %s",
                   refreshError.c_str());
         break;
+      }
+      // Dispatcharr 0.34 runs the refresh in a task pool its own guide work can hold for minutes, and a refresh that
+      // timed out there read as an outage, which ended playback at the live edge within seconds while the buffer was
+      // alive. The file server runs outside that pool; its answer for this buffer's token makes the wait a stall
+      // (DecideTailWaitFileServerCheck(), TimeshiftFileServerKeepAlive.h).
+      if (!lastRefreshAnswered)
+      {
+        stateLock.unlock();
+        lastRefreshAnswered = SendLiveTimeshiftKeepAlive(/*forTailWait=*/true);
+        stateLock.lock();
+        if (!stillSameStream())
+          return -1;
       }
       if (m_liveTimeshiftStream.position < m_liveTimeshiftStream.totalBytes)
         break;
@@ -5474,6 +5504,8 @@ int DispatcharrClient::ReadLiveTimeshiftStreamOnce(uint8_t* buffer, unsigned int
     return -1;
   m_liveTimeshiftStream.consecutiveSegmentFetchFailures = 0;
   m_liveTimeshiftStream.firstSegmentFetchFailureAt = {};
+  m_liveTimeshiftStream.nextKeepAliveAt =
+      NextTimeshiftKeepAliveDueAt(std::chrono::steady_clock::now(), /*answered=*/true);
   m_liveTimeshiftStream.position += static_cast<int64_t>(sink.written);
   return static_cast<int>(sink.written);
 }
@@ -5619,6 +5651,9 @@ void DispatcharrClient::PollLiveManifest()
     std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
     session = m_liveSession;
   }
+  // First, and on its own: the refresh below is a plugin action, which a busy task pool can hold for the whole short
+  // request timeout, while the file server answers at once (TimeshiftFileServerKeepAlive.h).
+  MaybeSendLiveTimeshiftKeepAlive();
   std::string refreshError;
   bool refreshFatal = false;
   RefreshLiveManifest(/*force=*/false, refreshError, &refreshFatal); // throttled, cheap to call often
@@ -5635,6 +5670,82 @@ void DispatcharrClient::PollLiveManifest()
   kodi::Log(ADDON_LOG_ERROR,
             "pvr.dispatcharr-unofficial: timeshift buffer reported fatal while the stream was polled, giving up: %s",
             refreshError.c_str());
+}
+
+void DispatcharrClient::MaybeSendLiveTimeshiftKeepAlive()
+{
+  SendLiveTimeshiftKeepAlive(/*forTailWait=*/false);
+}
+
+bool DispatcharrClient::SendLiveTimeshiftKeepAlive(bool forTailWait)
+{
+  uint64_t session = 0;
+  std::string url, logUrl;
+  {
+    std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
+    if (!m_liveTimeshiftStream.open || m_liveTimeshiftStream.segmentBaseUrl.empty())
+      return false;
+    const auto now = std::chrono::steady_clock::now();
+    if (forTailWait)
+    {
+      switch (DecideTailWaitFileServerCheck(m_liveTimeshiftStream.fatal, m_liveTimeshiftStream.lastKeepAliveAnsweredAt,
+                                            m_liveTimeshiftStream.lastKeepAliveAttemptAt, now))
+      {
+      case TailWaitFileServerCheck::kKnownAlive:
+        return true;
+      case TailWaitFileServerCheck::kUnknown:
+        return false;
+      case TailWaitFileServerCheck::kProbe:
+        break;
+      }
+    }
+    else if (!ShouldSendTimeshiftKeepAlive(m_liveTimeshiftStream.fatal, m_liveTimeshiftStream.nextKeepAliveAt, now))
+      return false;
+    // Claimed before the request goes out: GetStreamTimes() reaches here through two calls in a row, and the read
+    // thread through its own, so a second caller in the meantime must find nothing due.
+    m_liveTimeshiftStream.nextKeepAliveAt = NextTimeshiftKeepAliveDueAt(now, /*answered=*/false);
+    m_liveTimeshiftStream.lastKeepAliveAttemptAt = now;
+    session = m_liveSession;
+    // The playlist, not a segment: it is there for as long as the buffer is, while a segment this viewer knows of can
+    // already have rolled off. The plugin names it live.m3u8 under the same route as the segments.
+    url = BuildTimeshiftSegmentUrl(m_liveTimeshiftStream.segmentBaseUrl, "live.m3u8", m_liveTimeshiftStream.accessToken,
+                                   m_liveTimeshiftStream.viewerId, false);
+    logUrl = BuildTimeshiftSegmentUrl(m_liveTimeshiftStream.segmentBaseUrl, "live.m3u8",
+                                      m_liveTimeshiftStream.accessToken, m_liveTimeshiftStream.viewerId, true);
+  }
+
+  CURL* curl = curl_easy_init();
+  if (!curl)
+    return false;
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+  ApplyStandardCurlOptions(curl, GetCurlShare());
+  // Its own bound, no longer than the short one: this runs on the thread GetStreamTimes() or Kodi's demuxer read is
+  // waiting on (kTimeshiftKeepAliveTimeout).
+  const long timeoutMs = std::min<long>(
+      ShortRequestTimeoutMs(),
+      static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(kTimeshiftKeepAliveTimeout).count()));
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeoutMs);
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, timeoutMs);
+  const CURLcode res = curl_easy_perform(curl);
+  long httpCode = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+  curl_easy_cleanup(curl);
+  const bool answered = IsTimeshiftKeepAliveAnswered(res == CURLE_OK, httpCode);
+  kodi::Log(ADDON_LOG_DEBUG,
+            "pvr.dispatcharr-unofficial: MaybeSendLiveTimeshiftKeepAlive: %s -> curlResult=%d httpCode=%ld%s",
+            logUrl.c_str(), static_cast<int>(res), httpCode, answered ? "" : " (not refreshed, retrying sooner)");
+
+  std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
+  if (!m_liveTimeshiftStream.open || m_liveSession != session)
+    return false;
+  const auto done = std::chrono::steady_clock::now();
+  m_liveTimeshiftStream.nextKeepAliveAt = NextTimeshiftKeepAliveDueAt(done, answered);
+  // Stamped when it ended, so the retry delay of a failed one runs from there, as the periodic schedule's does.
+  m_liveTimeshiftStream.lastKeepAliveAttemptAt = done;
+  if (answered)
+    m_liveTimeshiftStream.lastKeepAliveAnsweredAt = done;
+  return answered;
 }
 
 int64_t DispatcharrClient::FirstAvailableLiveByteOffset() const

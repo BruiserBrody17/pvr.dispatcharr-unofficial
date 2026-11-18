@@ -189,6 +189,7 @@ set(DISPATCHARR_HEADERS
     src/RecordedStreamRegistry.h
     src/StreamWarmUp.h
     src/HlsViewerKeepAlive.h
+    src/TimeshiftFileServerKeepAlive.h
     src/EpgProgramMatch.h
     src/TimerRequestBuilder.h
 )

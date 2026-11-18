@@ -6,6 +6,80 @@
 
 ### Fixed
 
+#### A paused viewer's timeshift buffer can be ended while Dispatcharr's task pool is busy (and a viewer at the live edge loses playback)
+
+**Opened 2026-11-17, from the live check of Dispatcharr 0.34's Celery workers and a source review of what fills them;
+reproduced in the glue harness.** 0.34 runs every plugin action as a Celery task on the default prefork worker, which
+also takes the `celery` queue (up to six processes, `CELERY_MAX_WORKERS`), with no priority for the `plugins` queue
+(OPEN_ITEMS.md, "Dispatcharr 0.34 runs plugin actions in Celery workers"). `timeshift_buffer`'s reaper is a thread that
+does not wait in that queue: it ends a buffer once nothing has shown interest for `idle_timeout_seconds` (default
+30 s). A viewer that is playing shows interest through its segment reads, which go to the plugin's file server, also
+outside the queue. A paused viewer reads nothing, and a viewer waiting at the live edge reads nothing until a manifest
+poll tells it about the next segment; their only signs of life were the `heartbeat` and `get_live_manifest` actions,
+which now wait behind whatever holds the pool. Measured live with the pool held for about 40 s by a throwaway probe
+plugin: those actions took up to 40 s to be answered. A pool held for longer than the idle timeout ends the buffer, and
+the resume finds it gone.
+
+What can hold the pool that long, from Dispatcharr 0.34.0's source: not a scheduled refresh on its own, which is one
+task per playlist account (Dispatcharr's `refresh_m3u_accounts` task queues `refresh_single_m3u_account` per account, its batches run
+in threads inside that one task) and one per guide source (`refresh_epg_data`, its whole-file parse in one task). Work
+that assigns or changes guide data on many channels at once queues one `parse_programs_for_tvg_id` per guide id
+(`dispatch_program_refresh_for_epg_ids` in Dispatcharr's `apps/epg/tasks.py`), and each one reads the whole guide file with
+`iterparse` to pick out that one channel (the source's byte-offset index serves only "what is on now"). The callers are
+EPG auto-match (`apps/channels/epg_matching.py`), the bulk guide edits in `apps/channels/api_views.py`, a playlist sync
+that creates or remaps channels (`apps/m3u/tasks.py`, which also runs after a scheduled playlist refresh with
+auto-sync on) and the per-channel save signal. A few dozen of those against a large guide file plausibly hold six
+processes for minutes; not measured.
+
+**Fixed 2026-11-17, in the addon.** `DispatcharrClient::MaybeSendLiveTimeshiftKeepAlive()` sends a HEAD for the
+buffer's playlist (`live.m3u8`) on the file server, with the buffer's token and this viewer's id, once nothing has
+reached the file server for 10 s. The plugin's `do_HEAD()` refreshes the buffer and the named viewer through
+`_touch_heartbeat()` like any read, in every plugin version that has the viewer id (0.8.17), so no plugin change is
+needed. It is called from `PollLiveManifest()` before the manifest refresh (the polls `GetStreamTimes()` keeps making
+through a pause) and from `ReadLiveTimeshiftStreamOnce()` (a reader waiting at the live edge, whose wait is handed back
+to Kodi in slices). Every segment read pushes it an interval out, so a viewer that is playing sends none; a failed one
+is retried after 5 s. The decision is `TimeshiftFileServerKeepAlive.h`, unit-tested
+(`tests/test_timeshift_file_server_keep_alive.cpp`). The glue fake has the plugin's reaper (`idle_reap_ms`) and a
+playlist that answers HEAD; `live_paused_queue_stall` holds every API answer for 18 s (`api_delay_ms`) during a 22 s
+pause with a 14 s idle timeout. Without the fix the buffer is reaped and the resume read answers 0; with it the
+keep-alive reaches the file server naming the viewer, nothing is reaped and the resume plays.
+
+**The live edge, found by the branch's review the same day.** A viewer waiting at the live edge had a second way to
+lose playback during the same burst, with its buffer alive: each forced manifest refresh of the tail wait timed out at
+the short request bound, `lastRefreshAnswered` stayed false, and `ComputeLiveTailWaitBudgetMs()` kept the short budget
+meant for an outage, so the wait answered 0 after about 5 s and Kodi ended playback at the next stall, with no notice.
+Now a refresh the plugin did not answer is followed by a check of the file server
+(`dispatcharr::DecideTailWaitFileServerCheck()`): an answer for this buffer within the last 10 s, or a keep-alive sent
+now and answered, makes the wait a stall with the 70 s stall budget. A failed attempt is not repeated within 5 s, so an
+outage (where the file server is gone with the API) keeps its short budget without a request on every quarter-second
+refresh. Segment reads do not count as an answer, or an outage beginning at the live edge would wait the stall budget.
+Glue: `live_edge_queue_stall` reads to the live edge, holds every API answer for 25 s, and fails on the code before
+this part (five 0s, the first 5 s in) and passes with it (none, three keep-alives, data once the answers flow).
+
+The keep-alive's own bound is 2 s (`kTimeshiftKeepAliveTimeout`), not the API's short bound, also from the review:
+with the short bound, three timed-out attempts did not fit inside the default idle timeout, and a paused viewer in a
+network blackhole held Kodi's thread longer per poll.
+
+This does not help a channel opened while the pool is busy: `start_buffer` waits in the same queue, against the open's
+45 s budget and the server's own 55 s. A stall at the live edge that outlasts the 70 s stall budget still ends playback.
+
+**Confirmed live 2026-11-17** against a real Dispatcharr 0.34.0 (single container, `timeshift_buffer` 0.8.18 with its
+default 30 s idle timeout) from Kodi 22 RC1 on a Linux test client, playing a real channel in Server-side mode. The
+pool was held by a throwaway plugin whose action sleeps: twelve parallel 35 s actions (six 504 after the server's 55 s
+wait), which held all six children for about 70 s, or twelve 25 s ones for about 50 s.
+- Paused, the build before the fix (the `Piers` tip's `src/`): pause, then 20 s later hold the pool for about 70 s, then
+  resume about 10 s after it frees. The first poll answered after the hold was `fatal` ("no buffer running for this
+  channel"), and the resume played Kodi's own few seconds of cache and ended.
+- Paused, the fix (the PR's CI build): the same steps. A keep-alive every 10 to 11 s during the pause, each answered
+  200 with the viewer id, none after the resume; nothing fatal, and the resume played on (43 s of playback in the
+  25 s after it, catching up from the buffer).
+- At the live edge, no pause, pool held about 50 s: both builds froze while the pool was held (no new segment can be
+  learned without the manifest) and played on afterwards. The old build never answered 0 on this client: Kodi 22 on
+  Linux runs `GetStreamTimes()` on the reading thread, and its 5 s refresh between reads made every slice of the tail
+  wait a new episode (`kTailWaitEpisodeGapMs`), so the short budget never ran out. The harness reads back to back, as
+  a Kodi that polls on another thread would, and there the 0 comes after 5 s. The fix chose the stall budget ("waited
+  5007ms of ~70000ms") after an answered keep-alive.
+
 #### Dispatcharr 0.34 answers a plugin's own error with an HTTP 500, which the addon took for a failed call
 
 **Opened 2026-11-17, from a source review of Dispatcharr 0.34.0 against 0.33.0; confirmed by reading Dispatcharr's
