@@ -254,8 +254,8 @@ Server-side mode can neither start, poll nor stop a buffer. A running buffer sti
 addon's `stop_buffer` failed, and the plugin's reaper ended the buffer about 45 s after the viewers stopped.
 `recording_edl` fails the same way.
 
-**Decided 2026-11-18 (the user): the addon makes fewer `run/` calls; mitigated on `Piers` (branch
-`live-manifest-file-server`).** `timeshift_buffer` 0.8.19's file server answers the manifest poll itself, and the addon
+**Decided 2026-11-18 (the user): the addon makes fewer `run/` calls; mitigated on `Piers` and
+`Omega`.** `timeshift_buffer` 0.8.19's file server answers the manifest poll itself, and the addon
 polls it there once a manifest names the route, skipping the heartbeat action while the file server answers for the
 viewer; the action stays the fallback (`docs/TIMESHIFT.md`, "The manifest from the file server (0.8.19)"). That leaves
 `start_buffer`, `stop_buffer` and a cold start's polls per viewer, so the leak is slowed, not stopped: it stays open as an
