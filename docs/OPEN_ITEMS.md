@@ -276,7 +276,8 @@ viewer; the action stays the fallback (`docs/TIMESHIFT.md`, "The manifest from t
 `start_buffer`, `stop_buffer` and a cold start's polls per viewer, so the leak is slowed, not stopped: it stays open as an
 upstream report to Dispatcharr (traceback and counts above), and until Dispatcharr fixes it a restart is the only cure.
 Confirmed live 2026-11-18 on Kodi 22: 17 minutes at the live edge took 9 `run/` calls instead of about 2,600, and a
-5½-minute pause none (the TIMESHIFT.md section has the full check).
+5½-minute pause none; on Kodi 21, 19 minutes with a pause took 25, 16 of them during one 10 s fallback after the
+file server dropped a request (the TIMESHIFT.md section has both checks).
 
 #### Dispatcharr schedules a recurring rule's occurrence that starts inside a spring-forward gap to end before it starts
 
