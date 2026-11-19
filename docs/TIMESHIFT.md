@@ -4217,6 +4217,11 @@ plugin after a Dispatcharr restart, the same forwarder and a fresh disposable ch
   the open failed after about 2.8 s with the notice naming the port, as before.
 - **Plugin 0.8.18 imported again without a restart:** its `start_buffer` named no route, and the addon polled the
   action with a heartbeat every 10 s and played, as before.
+- **Kodi 21, the next day** (Kodi 21.3, the `Omega` port's CI build, the merged plugin after a Dispatcharr restart): a
+  cold start took 2 `run/` calls with its 6 "not ready" polls on the route; joining a buffer a scripted viewer had
+  started took 2, with the first route poll 40 ms after `start_buffer`; the refused port and plugin 0.8.18 behaved as
+  on Kodi 22. While Kodi had joined, the buffer wrote no segment for about 18 s (its ffmpeg had run since the scripted
+  viewer's start, so nothing restarted it): Kodi waited at the tail with the route still answering, and played on.
 
 Not checked live: Dispatcharr 0.33, and a port that drops packets instead of refusing them (the route's 3 s bound
 then delays a cold start once).
