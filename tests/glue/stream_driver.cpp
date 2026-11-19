@@ -660,7 +660,8 @@ static long action_count(const char* action)
 // heartbeat carries no access token"): the heartbeat must carry the buffer's start token, and once the polls a pause
 // still sends (GetStreamTimes()) are answered fatal, the resume must end the stream at once, with one notice, without
 // sending the overdue heartbeat that registered the viewer on the replacement. The fake stops answering fatal before
-// the resume, so only the addon's own fatal mark can end it.
+// the resume, so only the addon's own fatal mark can end it. With the manifest route no heartbeat action is sent at all
+// (the route's polls refresh the viewer), and the fatal answers come from the route.
 static void live_paused_replaced(DispatcharrClient& cl)
 {
   std::string err;
@@ -672,8 +673,17 @@ static void live_paused_replaced(DispatcharrClient& cl)
   std::vector<uint8_t> buf(1 << 16);
   if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) <= 0)
     FAIL("the first read delivered nothing");
+  // With the manifest route (manifest_route=1, named by start_buffer's answer) the polls refresh the viewer on the file
+  // server from the cold start on, so no heartbeat action is owed; without it the first read sends one.
+  const auto stats = nlohmann::json::parse(http("/__stats"), nullptr, false);
+  const bool viaRoute = stats.is_object() && stats.contains("GET /tsbuf/manifest");
   const auto heartbeat = nlohmann::json::parse(http("/__lastheartbeat"), nullptr, false);
-  if (!heartbeat.is_object())
+  if (viaRoute)
+  {
+    if (action_count("heartbeat") != 0)
+      FAIL("%ld heartbeat action(s) were sent while the route refreshed the viewer", action_count("heartbeat"));
+  }
+  else if (!heartbeat.is_object())
     FAIL("no heartbeat seen after the first read: %s", heartbeat.dump().c_str());
   else if (heartbeat.value("access_token", "") != "tok1")
     FAIL("the heartbeat carried access_token %s, not the start_buffer token", heartbeat.dump().c_str());
@@ -1778,11 +1788,16 @@ static void live_manifest_route(DispatcharrClient& cl)
   ctl("manifest_route=1");
   ctl("window=400");
   std::string err;
+  const long openActions = live_manifest_requests();
   if (!cl.OpenLiveTimeshiftStream("uuid", err))
   {
     FAIL("open: %s", err.c_str());
     return;
   }
+  // start_buffer's answer named the route, so the open's first poll went there.
+  if (live_manifest_requests() != openActions)
+    FAIL("the open polled the action %ld time(s) although start_buffer named the route",
+         live_manifest_requests() - openActions);
   std::vector<uint8_t> buf(1 << 16);
   auto play = [&](long forMs)
   {
@@ -1977,6 +1992,40 @@ static void live_late_start(DispatcharrClient& cl)
       FAIL("the open returned after %ld ms, before the fake's first segment could exist", took);
     cl.CloseLiveTimeshiftStream();
   }
+}
+
+// A cold start once start_buffer's answer names the manifest route (timeshift_buffer 0.8.19): the polls while the
+// buffer has no segment yet ("not ready", without `fatal`) go to the file server, not to the get_live_manifest action,
+// each of which fed Dispatcharr 0.34's per-action connection leak; the open still waits for the first segment and
+// succeeds.
+static void live_route_cold_start(DispatcharrClient& cl)
+{
+  ctl("manifest_route=1");
+  ctl("manifest_not_ready_ms=6000");
+  const long actions = live_manifest_requests(), routes = stat_count("GET /tsbuf/manifest");
+  std::string err;
+  const long t0 = ms();
+  const bool ok = cl.OpenLiveTimeshiftStream("uuid", err);
+  const long took = ms() - t0;
+  ctl("manifest_not_ready_ms=0");
+  const long dActions = live_manifest_requests() - actions, dRoutes = stat_count("GET /tsbuf/manifest") - routes;
+  INFO("cold start through the route: ok=%d in %ld ms, %ld route poll(s), %ld action poll(s)", ok, took, dRoutes,
+       dActions);
+  if (!ok)
+  {
+    FAIL("the open failed: %s", err.c_str());
+    return;
+  }
+  if (took < 5500)
+    FAIL("the open returned after %ld ms, before the fake's first segment could exist", took);
+  if (dActions != 0)
+    FAIL("the cold start polled the action %ld time(s) although start_buffer named the route", dActions);
+  if (dRoutes < 8)
+    FAIL("the cold start polled the route only %ld time(s) in about 6 s", dRoutes);
+  std::vector<uint8_t> buf(1 << 16);
+  if (cl.ReadLiveTimeshiftStream(buf.data(), (unsigned)buf.size()) <= 0)
+    FAIL("nothing could be read after the cold start");
+  cl.CloseLiveTimeshiftStream();
 }
 
 // The buffer starts and its manifest comes back through the API port, but the plugin's file server (a different port
@@ -2326,6 +2375,8 @@ int main(int argc, char** argv)
       live_refresh_throttle(*cl);
     else if (what == "live_manifest_route")
       live_manifest_route(*cl);
+    else if (what == "live_route_cold_start")
+      live_route_cold_start(*cl);
     else if (what == "live_slow_open")
       live_slow_open(*cl);
     else if (what == "live_late_start")

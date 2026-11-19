@@ -58,6 +58,14 @@ int64_t OldestLiveManifestSequence(const nlohmann::json& segmentsArray);
 // get_live_manifest action.
 bool IsValidManifestRouteName(const std::string& name);
 
+// The manifest route a timeshift_buffer start_buffer answer names (0.8.19 and later): its `segment_route_prefix` and
+// `manifest_route_name`, the same two fields the manifest answer carries. With them the cold start's polls go to the
+// file server too, instead of the get_live_manifest action they used to need until the first segment closed. True
+// when both are there and pass IsValidTimeshiftRoute()/IsValidManifestRouteName() (both reach a URL unescaped); false,
+// with both outputs untouched, for an older plugin's answer or anything malformed, which leaves the cold start on the
+// action until the first manifest names the route, as before.
+bool ReadStartAnswerManifestRoute(const nlohmann::json& result, std::string& routePrefixOut, std::string& routeNameOut);
+
 // Turns the file server's answer to a manifest-route GET (plugin.py's _MANIFEST_ROUTE_NAME) into the {"success": true,
 // "result": ...} envelope Dispatcharr wraps the get_live_manifest action's answer in, so both go through
 // UnwrapPluginRunResult() and the same merge. False, with `envelopeOut` untouched, for anything but a 200 whose body is

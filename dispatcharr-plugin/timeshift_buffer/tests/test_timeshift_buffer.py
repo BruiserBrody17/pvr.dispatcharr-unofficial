@@ -3113,6 +3113,9 @@ def test_run_start_buffer_reattaches_to_running_buffer(monkeypatch, tmp_path):
     assert result["already_running"] is True
     assert result["access_token"] == "tok123"
     assert result["http_port"] == 9192
+    # Named on the start too, so the cold start's polls skip Dispatcharr's task queue.
+    assert result["segment_route_prefix"] == f"/{_UUID}/"
+    assert result["manifest_route_name"] == "manifest.json"
     assert "Reattached" in result["message"]
     assert saved  # state was persisted (heartbeat refresh)
 
@@ -3217,6 +3220,8 @@ def test_run_start_buffer_cleans_up_dead_buffer_and_starts_fresh(monkeypatch, tm
 
     assert result["status"] == "ok"
     assert result["already_running"] is False
+    assert result["segment_route_prefix"] == f"/{_UUID}/"
+    assert result["manifest_route_name"] == "manifest.json"
     assert len(removed) == 1
     assert deleted == [_UUID]
 

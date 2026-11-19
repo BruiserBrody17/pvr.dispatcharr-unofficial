@@ -1596,8 +1596,9 @@ private:
     // alive while the plugin's actions go unanswered (DecideTailWaitFileServerCheck()).
     std::chrono::steady_clock::time_point lastKeepAliveAttemptAt{};
     std::chrono::steady_clock::time_point lastKeepAliveAnsweredAt{};
-    // The file server's manifest route, once a manifest has named it (never, with a plugin older than 0.8.19), and when
-    // it may be tried again after a failed attempt (ShouldTryManifestRoute(), TimeshiftFileServerKeepAlive.h).
+    // The file server's manifest route, once start_buffer's answer or a manifest has named it (never, with a plugin
+    // older than 0.8.19), and when it may be tried again after a failed attempt (ShouldTryManifestRoute(),
+    // TimeshiftFileServerKeepAlive.h).
     std::string manifestRouteName;
     std::chrono::steady_clock::time_point manifestRouteRetryAt{};
     void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
@@ -1687,8 +1688,9 @@ private:
   // `httpStatusOut`, if non-null, gets the get_live_manifest request's HTTP status, 0 when it got no response. When
   // authentication fails first it gets EnsureAuthenticated()'s status instead (the token lapses during a long outage);
   // -1 when nothing is known (the throttle, or the login backoff turning the call away).
-  // Once a manifest has named the plugin's manifest route (timeshift_buffer 0.8.19), the same answer comes from the
-  // file server instead, and the action is asked only when the route does not answer (FetchLiveManifestRoute()).
+  // Once start_buffer's answer or a manifest has named the plugin's manifest route (timeshift_buffer 0.8.19), the same
+  // answer comes from the file server instead, and the action is asked only when the route does not answer
+  // (FetchLiveManifestRoute()).
   bool RefreshLiveManifest(bool force, std::string& error, bool* fatalOut = nullptr, bool coldStart = false,
                            bool* pluginAnsweredNotReadyOut = nullptr, long* httpStatusOut = nullptr);
   // One GET of the manifest route at `url`: true with the answer wrapped as the action's envelope

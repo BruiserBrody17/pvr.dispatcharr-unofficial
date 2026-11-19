@@ -2,6 +2,7 @@
 
 #include "JsonFieldUtil.h"
 #include "JsonResponse.h"
+#include "PluginUrlUtil.h"
 
 #include <nlohmann/json.hpp>
 
@@ -93,6 +94,17 @@ bool IsValidManifestRouteName(const std::string& name)
       return false;
   }
   return name.find("..") == std::string::npos;
+}
+
+bool ReadStartAnswerManifestRoute(const nlohmann::json& result, std::string& routePrefixOut, std::string& routeNameOut)
+{
+  std::string routePrefix = FieldOr<std::string>(result, "segment_route_prefix", "");
+  std::string routeName = FieldOr<std::string>(result, "manifest_route_name", "");
+  if (!IsValidTimeshiftRoute(routePrefix) || !IsValidManifestRouteName(routeName))
+    return false;
+  routePrefixOut = std::move(routePrefix);
+  routeNameOut = std::move(routeName);
+  return true;
 }
 
 bool WrapManifestRouteAnswer(bool transferOk, long httpStatus, const std::string& body, nlohmann::json& envelopeOut)
