@@ -4139,9 +4139,11 @@ The differences:
   segments do.
 - **Failures.** The route answers 503 when it cannot read the token or the poll raises, and 404 for HEAD. An older
   plugin's file server answers the path with a 403 or 404 (it is not a servable name).
-- The action's answer names the route (`manifest_route_name`), so a client learns of it from its first manifest.
+- The action's answer names the route (`manifest_route_name`, with `segment_route_prefix`), and so does
+  `start_buffer`'s (`_manifest_route_fields()`), so a client learns of it before its first poll.
 
-**The addon.** `RefreshLiveManifest()` asks the route first once a manifest has named it (`IsValidManifestRouteName()`:
+**The addon.** `RefreshLiveManifest()` asks the route first once `start_buffer`'s answer or a manifest has named it
+(`ReadStartAnswerManifestRoute()`, `IsValidManifestRouteName()`:
 a plain file name, since it goes into the URL unescaped) and the retry delay after its last failure has run out
 (`ShouldTryManifestRoute()`). A 200 whose body is a JSON object with a string `status` is wrapped as the action's
 envelope (`WrapManifestRouteAnswer()`) and goes through the same `UnwrapPluginRunResult()` and merge. Anything else
@@ -4149,8 +4151,10 @@ envelope (`WrapManifestRouteAnswer()`) and goes through the same `UnwrapPluginRu
 that is not the plugin's) asks the action instead, logged at debug level with the token redacted, and the route is
 tried again 10 s later (`kManifestRouteRetryDelay`): a failing route
 means the buffer is gone (the action then says so, with `fatal`), the file server is out of reach (so are the
-segments), or Redis is, none of which a retry a quarter of a second later at the live tail would find changed. A cold
-start still polls the action until its first manifest arrives.
+segments), or Redis is, none of which a retry a quarter of a second later at the live tail would find changed. With an
+older plugin, whose `start_buffer` names no route, a cold start polls the action until its first manifest arrives.
+When the file server cannot be reached at all, the cold start's first route poll fails at once (or within the 3 s
+bound for a port that drops packets), the action answers, and the probe after the open names the port as before.
 
 An answered route poll also counts as an answered keep-alive (`TimeshiftFileServerKeepAlive.h`): it refreshed the buffer
 and the viewer on the file server, so a paused viewer sends no HEAD while its polls go there. And a live read skips its
@@ -4159,8 +4163,11 @@ heartbeat action (every 10 s) while the route is known and the file server answe
 route fails, both are sent as before. Nothing refreshes the Dispatcharr login while the route answers, so the first
 action after a long stretch of it (a Stop, a fallback refresh) pays for one token refresh within its own short bound.
 
-What is left on `run/` per viewer: `start_buffer`, `stop_buffer`, the cold start's polls, and the action while the route
-fails. That slows the leak to what starting and stopping channels costs; it does not stop it, and `recording_edl` and
+What is left on `run/` per viewer: `start_buffer`, `stop_buffer`, and the action while the route fails. The cold start's
+polls ("not ready" until the first segment closes, 6 to 7 of them on the lab) went to the action until `start_buffer`
+named the route as well (added before 0.8.19's release, after the live checks below): a channel start had cost about
+ten `run/` calls, and now costs two (confirmed live, below), so a viewer changing channels reaches the limit several
+times later. That slows the leak to what starting and stopping channels costs; it does not stop it, and `recording_edl` and
 anything else that calls a plugin action still feed it. Only a Dispatcharr fix (or a restart) cures it.
 
 **Confirmed live 2026-11-18** (Kodi 22 RC1 on the Linux test VM with the branch's CI build, Dispatcharr 0.34.1 with
@@ -4197,7 +4204,22 @@ disposable two-stream channel):
   scripted viewer sent no `kodi_version` and so the plugin held the buffer for it. The same switch with Kodi alone
   kept the clock running (a jump of about 13 s at the join, then wall time), as in the 2026-11-14 check above.
 
-Not checked live: Dispatcharr 0.33, and a settings change while the route is in use.
+**`start_buffer` naming the route, confirmed live the same day** (Kodi 22 RC1, the branch's CI build, the branch's
+plugin after a Dispatcharr restart, the same forwarder and a fresh disposable channel):
+- **A cold start:** Play to Stop took 2 `run/` calls, `start_buffer` and `stop_buffer`. The 6 "not ready" polls before
+  the first segment went to the route, no heartbeat action was sent, and no answer was a 500.
+- **Joining a running buffer** (a scripted viewer had started it 40 s earlier): 2 `run/` calls; the first route poll,
+  40 ms after `start_buffer` answered, returned the full manifest and the picture was up within a second.
+- **12 s segments** (`segment_seconds` changed through the plugin's settings endpoint between two plays): the cold start
+  waited on the route (9 polls, no fallback) and the 12 s segments took effect, which also shows a settings change
+  reaching the route.
+- **The file server's port refused:** the first route poll failed at once (`curlResult=7`), the action answered, and
+  the open failed after about 2.8 s with the notice naming the port, as before.
+- **Plugin 0.8.18 imported again without a restart:** its `start_buffer` named no route, and the addon polled the
+  action with a heartbeat every 10 s and played, as before.
+
+Not checked live: Dispatcharr 0.33, and a port that drops packets instead of refusing them (the route's 3 s bound
+then delays a cold start once).
 The Stop after 24 minutes on the route answered within 2 s, but the addon's background login refresh had run seconds
 before it, so the Stop's own token refresh noted above was not exercised.
 

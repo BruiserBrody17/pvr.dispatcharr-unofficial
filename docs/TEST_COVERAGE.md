@@ -955,6 +955,11 @@ percent escape, a NUL, over 64 characters); only a 200 whose body is a JSON obje
 the action's envelope, the plugin's own error answers included, and a transport failure, any other status, a playlist, an
 array, a missing or non-string `status` and a number the parser throws on leave the output untouched.
 
+2026-11-18, the same day: `ReadStartAnswerManifestRoute()` (same file), for `start_buffer`'s answer naming the route so
+the cold start's polls go there too: both fields as the plugin sends them are read; an older plugin's answer, either
+field missing, null or of the wrong type, an unsafe name and a prefix `IsValidTimeshiftRoute()` refuses (an `@`
+authority, a relative path) all return false with both outputs untouched.
+
 ### `M3u8SegmentParser`
 
 `M3u8SegmentParser` is the pure parsing core of
@@ -1070,6 +1075,13 @@ action and the route naming the viewer, pauses 12 s with no action and no keep-a
 while the route answers 503 (one route attempt in 5 s, reads going on) and the polls go back to the route after the
 delay. With an unsafe route name (`manifest_route_name=..%2Fx`) it fails as an older plugin would, every poll on the
 action. CI also runs `live_fatal_ends` (both), `live_paused_replaced` and `live_paused_queue_stall` with the route on.
+Since the fake's `start_buffer` names the route too, `live_manifest_route`'s open must poll no action, and
+`live_route_cold_start` (a first segment 6 s late) must make every "not ready" poll on the route (13 in the run, no
+`get_live_manifest`), wait for the segment and read; with the addon's reading of `start_buffer`'s route switched off it
+failed with 13 action polls and none on the route. `live_late_start` and `live_fileserver_unreachable` also run with
+the route on: the unreachable port still fails the open at once and names the port. `live_paused_replaced` with the
+route on now expects no heartbeat action at all (the route's polls refresh the viewer from the cold start on) instead of
+one carrying the start token.
 
 ### `PluginUrlUtil`
 
@@ -3474,6 +3486,8 @@ whatever the count, both for the write alone and for the whole poll (`_answer_li
 manifest build mocked, which fails with the flag dropped on its answered path). The route's settings come from the
 latest action through Redis (`_publish_settings()`, `_route_settings()`), falling back to the process's own copy
 before anything is published, for a value that is not JSON and while Redis is down, where publishing never raises.
+`start_buffer`'s answer names the route too (`_manifest_route_fields()`), both on a new start and on a reattach, so the
+addon's cold-start polls can go there.
 
 ## Tools
 

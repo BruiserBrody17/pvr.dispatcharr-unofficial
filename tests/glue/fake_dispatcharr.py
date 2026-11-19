@@ -903,18 +903,19 @@ class H(BaseHTTPRequestHandler):
                     return self.plugin_error({"status": "error", "message": "limit"})
                 if T0["live"] is None:
                     T0["live"] = time.time()
-                return self.J(
-                    200,
-                    {
-                        "success": True,
-                        "result": {
-                            "status": "ok",
-                            "http_port": PORT,
-                            "playlist_route": "/tsbuf/u/live.m3u8",
-                            "access_token": TOKEN["v"],
-                        },
-                    },
-                )
+                started = {
+                    "status": "ok",
+                    # The plugin's one http_port setting, as the manifest reports it (fs_port=<n> moves both).
+                    "http_port": ctl_int("fs_port", 0) or PORT,
+                    "playlist_route": "/tsbuf/u/live.m3u8",
+                    "access_token": TOKEN["v"],
+                }
+                # timeshift_buffer 0.8.19 names the manifest route in start_buffer's answer too, so the cold start's
+                # polls can go there.
+                if CTL["manifest_route"] == "1":
+                    started["segment_route_prefix"] = "/tsbuf/u/"
+                    started["manifest_route_name"] = CTL["manifest_route_name"] or "manifest.json"
+                return self.J(200, {"success": True, "result": started})
             if act == "stop_buffer":
                 with lock:
                     LAST_STOP["params"] = params

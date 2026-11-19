@@ -790,10 +790,10 @@ def _publish_settings(settings_dict) -> None:
 def _route_settings() -> dict:
     """The settings a manifest-route poll runs with: the latest action's (_publish_settings()), whichever process ran
     it. Each process's own copy (_latest_settings_dict) changes only when an action runs there, and since the addon
-    polls the route, actions are few (start, stop, a cold start): a process could keep a setting changed since for the
-    rest of a session, and a stream switch followed from it would see "storage path or port changed" and not follow
-    it, or restart with the old segment length (found by the branch's review). That copy is the fallback when Redis
-    cannot say."""
+    polls the route, actions are few (start, stop, a fallback while the route fails): a process could keep a setting
+    changed since for the rest of a session, and a stream switch followed from it would see "storage path or port
+    changed" and not follow it, or restart with the old segment length (found by the branch's review). That copy is
+    the fallback when Redis cannot say."""
     try:
         raw = _redis().get(_REDIS_SETTINGS_KEY)
         if raw:
@@ -4856,6 +4856,14 @@ def _ensure_reaper_running(settings_dict, logger):
 # ---------------------------------------------------------------------------
 
 
+def _manifest_route_fields(channel_uuid: str) -> dict:
+    """Where a client polls the manifest outside Dispatcharr's task queue (_MANIFEST_ROUTE_NAME's comment), in the
+    manifest answer and in start_buffer's. start_buffer carries them so the cold start's polls ("not ready" until the
+    first segment closes) can go to the route too: they were the last per-start `run/` calls left besides the start and
+    the stop, each one feeding Dispatcharr 0.34's per-action connection leak."""
+    return {"segment_route_prefix": f"/{channel_uuid}/", "manifest_route_name": _MANIFEST_ROUTE_NAME}
+
+
 class Plugin:
     name = "Timeshift Buffer"
     version = "0.8.19"
@@ -5449,6 +5457,7 @@ class Plugin:
                 "playlist_route": existing["playlist_route"],
                 "already_running": True,
                 "access_token": existing["access_token"],
+                **_manifest_route_fields(channel_uuid),
             }
 
         # max_concurrent_buffers is a count over ALL channels, but the lock this call holds is per channel:
@@ -5521,6 +5530,7 @@ class Plugin:
                 "playlist_route": state["playlist_route"],
                 "already_running": False,
                 "access_token": state["access_token"],
+                **_manifest_route_fields(channel_uuid),
             }
         finally:
             _release_start_buffer_lock(_START_SLOT_LOCK_ID, slot_token)
@@ -5819,10 +5829,7 @@ class Plugin:
             ),
             "http_port": state["http_port"],
             "channel_uuid": channel_uuid,
-            "segment_route_prefix": f"/{channel_uuid}/",
-            # The same answer from the file server, outside Dispatcharr's task queue: the addon polls it there from
-            # the next poll on (_MANIFEST_ROUTE_NAME's comment).
-            "manifest_route_name": _MANIFEST_ROUTE_NAME,
+            **_manifest_route_fields(channel_uuid),
             **manifest,
         }
 

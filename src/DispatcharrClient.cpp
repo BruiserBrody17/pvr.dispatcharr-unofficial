@@ -1340,10 +1340,22 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action, con
   // (PluginUrlUtil.h) so it's unit-testable standalone -- see that
   // function's own comment.
   std::string accessToken = FieldOr<std::string>(result, "access_token", "");
-  if (!accessToken.empty())
+  // timeshift_buffer 0.8.19 and later name the manifest route in this answer too, so the cold start's polls ("not
+  // ready" until the first segment closes) go to the file server instead of through Dispatcharr's task queue, where
+  // each one fed 0.34's per-action connection leak (ReadStartAnswerManifestRoute()). The first manifest sets the same
+  // three values again; without them the cold start polls the action, as before.
+  std::string routePrefix, routeName;
+  const bool routeNamed = ReadStartAnswerManifestRoute(result, routePrefix, routeName);
   {
     std::lock_guard<std::mutex> stateLock(m_liveStateMutex);
-    m_liveTimeshiftStream.accessToken = accessToken;
+    if (!accessToken.empty())
+      m_liveTimeshiftStream.accessToken = accessToken;
+    if (routeNamed)
+    {
+      m_liveTimeshiftStream.segmentBaseUrl = BuildTimeshiftSegmentBaseUrl(m_config.host, httpPort, routePrefix);
+      m_liveTimeshiftStream.fileServerPort = httpPort;
+      m_liveTimeshiftStream.manifestRouteName = std::move(routeName);
+    }
   }
   playlistUrlOut = BuildTimeshiftPlaylistUrl(m_config.host, httpPort, playlistRoute, accessToken);
 
@@ -4423,8 +4435,8 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
   }
 
   json response;
-  // The manifest route first, when a manifest has named one: the same answer, from the file server, without a plugin
-  // action (TimeshiftFileServerKeepAlive.h, kManifestRouteRetryDelay, for why).
+  // The manifest route first, when start_buffer's answer or a manifest has named one: the same answer, from the file
+  // server, without a plugin action (TimeshiftFileServerKeepAlive.h, kManifestRouteRetryDelay, for why).
   const bool fromRoute = !routeUrl.empty() && FetchLiveManifestRoute(routeUrl, routeLogUrl, response);
   if (!routeUrl.empty())
   {

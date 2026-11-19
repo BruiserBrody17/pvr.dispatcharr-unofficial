@@ -95,13 +95,13 @@ inline TailWaitFileServerCheck DecideTailWaitFileServerCheck(bool fatal,
 }
 
 // The manifest route (timeshift_buffer 0.8.19, plugin.py's _MANIFEST_ROUTE_NAME): the same answer as the
-// get_live_manifest action, from the file server. Polled instead of the action once a manifest has named it, because
-// from Dispatcharr 0.34 each action leaks two Redis connections in the uwsgi worker that dispatches it, and a viewer at
-// the live edge polls two to three times a second (docs/OPEN_ITEMS.md, "Dispatcharr 0.34 leaks two Redis connections
-// per plugin action"). After a failed attempt the action answers instead, and the route is tried again only this long
-// after: a failure means the buffer is gone (the action then says so), the file server is out of reach (so are the
-// segments), or Redis is, none of which a quarter-second retry at the live tail would see change, and each failed
-// attempt is a round trip spent before the action's own.
+// get_live_manifest action, from the file server. Polled instead of the action once start_buffer's answer or a manifest
+// has named it, because from Dispatcharr 0.34 each action leaks two Redis connections in the uwsgi worker that
+// dispatches it, and a viewer at the live edge polls two to three times a second (docs/OPEN_ITEMS.md, "Dispatcharr 0.34
+// leaks two Redis connections per plugin action"). After a failed attempt the action answers instead, and the route is
+// tried again only this long after: a failure means the buffer is gone (the action then says so), the file server is
+// out of reach (so are the segments), or Redis is, none of which a quarter-second retry at the live tail would see
+// change, and each failed attempt is a round trip spent before the action's own.
 constexpr std::chrono::seconds kManifestRouteRetryDelay{10};
 // One route attempt's own bound, connection included. Shorter than the short request timeout (5 s at the least) the
 // action then gets in full: an attempt that fails holds the thread Kodi's player or GetStreamTimes() waits on, so a
@@ -109,8 +109,9 @@ constexpr std::chrono::seconds kManifestRouteRetryDelay{10};
 // review). The route answers from Redis and the files' stat()s; three seconds is far beyond what that takes.
 constexpr std::chrono::milliseconds kManifestRouteTimeout{3000};
 
-// Whether a refresh tries the manifest route first: a manifest has named one, and the retry delay after the last failed
-// attempt has run out. A zero `retryAt` (never failed) counts as run out, the convention of Staleness.h.
+// Whether a refresh tries the manifest route first: start_buffer's answer or a manifest has named one, and the retry
+// delay after the last failed attempt has run out. A zero `retryAt` (never failed) counts as run out, the convention of
+// Staleness.h.
 inline bool ShouldTryManifestRoute(bool routeKnown, std::chrono::steady_clock::time_point retryAt,
                                    std::chrono::steady_clock::time_point now)
 {

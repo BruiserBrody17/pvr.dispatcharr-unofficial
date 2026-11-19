@@ -204,6 +204,53 @@ TEST_CASE("IsValidManifestRouteName accepts a plain file name and refuses anythi
   CHECK_FALSE(IsValidManifestRouteName(std::string("mani\0fest", 9)));
 }
 
+TEST_CASE("ReadStartAnswerManifestRoute reads the route a start_buffer answer names", "[LiveManifestParser]")
+{
+  const std::string uuidRoute = "/11111111-2222-3333-4444-555555555555/";
+  std::string prefix = "unchanged";
+  std::string name = "unchanged";
+
+  SECTION("both fields, as timeshift_buffer 0.8.19 sends them")
+  {
+    const auto result = nlohmann::json{{"status", "ok"},
+                                       {"http_port", 9192},
+                                       {"playlist_route", uuidRoute + "live.m3u8"},
+                                       {"segment_route_prefix", uuidRoute},
+                                       {"manifest_route_name", "manifest.json"}};
+    REQUIRE(ReadStartAnswerManifestRoute(result, prefix, name));
+    CHECK(prefix == uuidRoute);
+    CHECK(name == "manifest.json");
+  }
+
+  SECTION("an older plugin's answer, without them, leaves the cold start on the action")
+  {
+    const auto result =
+        nlohmann::json{{"status", "ok"}, {"http_port", 9192}, {"playlist_route", uuidRoute + "live.m3u8"}};
+    CHECK_FALSE(ReadStartAnswerManifestRoute(result, prefix, name));
+    CHECK(prefix == "unchanged");
+    CHECK(name == "unchanged");
+  }
+
+  SECTION("either one missing, of the wrong type or unsafe in a URL")
+  {
+    const nlohmann::json bad[] = {
+        {{"segment_route_prefix", uuidRoute}},
+        {{"manifest_route_name", "manifest.json"}},
+        {{"segment_route_prefix", uuidRoute}, {"manifest_route_name", 7}},
+        {{"segment_route_prefix", nullptr}, {"manifest_route_name", "manifest.json"}},
+        {{"segment_route_prefix", uuidRoute}, {"manifest_route_name", "../manifest.json"}},
+        {{"segment_route_prefix", "@otherhost/"}, {"manifest_route_name", "manifest.json"}},
+        {{"segment_route_prefix", "relative/"}, {"manifest_route_name", "manifest.json"}},
+    };
+    for (const auto& result : bad)
+    {
+      CHECK_FALSE(ReadStartAnswerManifestRoute(result, prefix, name));
+      CHECK(prefix == "unchanged");
+      CHECK(name == "unchanged");
+    }
+  }
+}
+
 TEST_CASE("WrapManifestRouteAnswer wraps the plugin's answer as the action's envelope", "[LiveManifestParser]")
 {
   nlohmann::json envelope;

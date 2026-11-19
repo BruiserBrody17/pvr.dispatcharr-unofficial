@@ -256,9 +256,10 @@ addon's `stop_buffer` failed, and the plugin's reaper ended the buffer about 45 
 
 **Decided 2026-11-18 (the user): the addon makes fewer `run/` calls; mitigated on `Piers` and
 `Omega`.** `timeshift_buffer` 0.8.19's file server answers the manifest poll itself, and the addon
-polls it there once a manifest names the route, skipping the heartbeat action while the file server answers for the
-viewer; the action stays the fallback (`docs/TIMESHIFT.md`, "The manifest from the file server (0.8.19)"). That leaves
-`start_buffer`, `stop_buffer` and a cold start's polls per viewer, so the leak is slowed, not stopped: it stays open as an
+polls it there once `start_buffer`'s answer or a manifest names the route, skipping the heartbeat action while the file
+server answers for the viewer; the action stays the fallback (`docs/TIMESHIFT.md`, "The manifest from the file server
+(0.8.19)"). That leaves `start_buffer` and `stop_buffer` per viewer (the cold start's polls went too, before the
+release; a cold start took 2 `run/` calls live), so the leak is slowed, not stopped: it stays open as an
 upstream report to Dispatcharr (traceback and counts above), and until Dispatcharr fixes it a restart is the only cure.
 Confirmed live 2026-11-18 on Kodi 22: 17 minutes at the live edge took 9 `run/` calls instead of about 2,600, and a
 5½-minute pause none; on Kodi 21, 19 minutes with a pause took 25, 16 of them during one 10 s fallback after the
