@@ -4181,7 +4181,23 @@ disposable two-stream channel):
 - **New addon, old plugin** (0.8.18): 124 `get_live_manifest` polls and 8 heartbeats in 75 s and no route request, the
   behaviour before the change.
 
-Not checked live: Kodi 21 (until the `Omega` port), Dispatcharr 0.33, and a settings change while the route is in use.
+**Kodi 21, confirmed live the same day** (Kodi 21.3, the `Omega` port's CI build, otherwise as above):
+- **19 minutes of play with a 5½-minute pause, a seek back and forward and Stop:** 25 `run/` calls in all
+  (`start_buffer`, 6 cold-start polls, 1 heartbeat, `stop_buffer`, and 16 polls in one fallback below), against about
+  2,100 route polls. The pause, as on Kodi 22, took none.
+- **One route failure:** the file server closed one route request without answering (`curlResult=52`, "Server
+  returned nothing"), as a Celery child exiting under it would (the Celery item in `OPEN_ITEMS.md`). The addon asked the
+  action for the next 10 s, then the route again, with no visible effect on playback.
+- **An upstream stall:** about six minutes in, the buffer wrote no segment for nearly two minutes, and Kodi waited at
+  the live tail. Dispatcharr's proxy then recorded a switch to the same stream (`stream_switch_time` in its channel
+  metadata, read with the probe plugin); the plugin followed it from a route poll, restarted ffmpeg, and play resumed.
+  The route did not cause the stall: Dispatcharr's own proxy channel had stopped receiving.
+- **Two viewers, mixed protocols, and a `next_stream` switch:** 2 viewers counted, play continued through the switch,
+  and Stop in Kodi left the buffer to the other viewer. Kodi's clock went back to about 0 at the join here, because the
+  scripted viewer sent no `kodi_version` and so the plugin held the buffer for it. The same switch with Kodi alone
+  kept the clock running (a jump of about 13 s at the join, then wall time), as in the 2026-11-14 check above.
+
+Not checked live: Dispatcharr 0.33, and a settings change while the route is in use.
 The Stop after 24 minutes on the route answered within 2 s, but the addon's background login refresh had run seconds
 before it, so the Stop's own token refresh noted above was not exercised.
 
