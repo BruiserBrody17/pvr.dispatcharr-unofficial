@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`4dd93ad`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`60f3b30`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -235,6 +235,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `7be5b4d` | `12268f1` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts resolved by hand) | The live timeshift manifest read from the plugin's file server (`timeshift_buffer` 0.8.19), which slows Dispatcharr 0.34's per-action Redis connection leak, and its Kodi 22 live check. |
 | `f20e26a` | `dc86cda` (`git cherry-pick -x`) | The manifest route's Kodi 21 live check. |
 | `4dd93ad` | `de71df9` (`git cherry-pick -x`, without `[skip ci]`) | `start_buffer`'s answer naming the manifest route, so a cold start's polls go to the file server too, and its Kodi 22 live check. |
+| `60f3b30` | `d363239` (`git cherry-pick -x`) | The start-buffer route's Kodi 21 live check. |
 
 ## Dependencies that differ by Kodi release
 
