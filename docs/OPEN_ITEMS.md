@@ -33,8 +33,8 @@ recording's 20 s retry budget).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 4 |
-| Open: Fix known, not yet done | 0 |
+| Open: Needs a live check | 3 |
+| Open: Fix known, not yet done | 1 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 0 |
@@ -42,83 +42,12 @@ recording's 20 s retry budget).
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
 | Closed (in CLOSED_ITEMS.md): Fixed | 377 |
-| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 44 |
+| Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 45 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
 ## Open
 
 ### Needs a live check
-
-#### Dispatcharr 0.34 runs plugin actions in Celery workers, so `timeshift_buffer`'s file server and ffmpeg move there
-
-**Opened 2026-11-17, from a source review of Dispatcharr 0.34.0 against 0.33.0; partly checked live the same day
-(below).** Up to 0.33,
-`PluginRunAPIView` called `PluginManager.run_action()` in the web worker that took the request. 0.34 queues every `run/`
-action as `run_plugin_action_task` on a `plugins` queue and waits for it (`DISPATCHARR_PLUGIN_RUN_SYNC_TIMEOUT_SECONDS`,
-default 55 s, then a 504). The default prefork worker now takes that queue as well as `celery`
-(`-Q celery,plugins`, `--autoscale`, `docker/uwsgi.ini` and `docker/entrypoint.celery.sh`). `timeshift_buffer` starts its
-file server, its reaper thread and each buffer's ffmpeg from inside an action (`_ensure_http_server_running()`,
-`_ensure_reaper_running()`, `_start_buffer()`), so all three now live in Celery child processes. To check against a real
-0.34 server:
-- Start, play, pause, seek and stop a buffer; two viewers on one channel; a stream switch.
-- A Celery child exiting: autoscale shrinking the pool after a burst, or the 512 MB recycle
-  (`CELERY_WORKER_MAX_MEMORY_PER_CHILD`). Its file server goes with it until the next action starts one in another
-  child, and the addon's segment reads fail in between. ffmpeg runs in its own session and should survive.
-- Action latency while an M3U or EPG refresh occupies the same worker pool: heartbeats and manifest polls queue
-  behind it once the pool is at its maximum (`CELERY_MAX_WORKERS`, default 6). Seen live and fixed in the addon
-  (below).
-- A deployment that runs Celery in its own container: the file server's port has to be published on that container,
-  not the web one. If so, the plugin README's port instructions need a line.
-- Side effects to note, not fix: every action is now recorded in the plugin's task history and broadcast to open web
-  UIs as `plugin_task_complete`, and every `{"status": "error"}` result logs a failed Celery task.
-
-**Seen live 2026-11-17** (Dispatcharr 0.34.0 in one container, a throwaway read-only probe plugin reading `/proc`, Kodi
-22 RC1 playing a disposable channel through a logging forwarder):
-- The file server's listening sockets belong to Celery children of the default `-Q celery,plugins` worker, one per
-  child that has run a `timeshift_buffer` action (two at rest, four after the pool grew), and to no uwsgi worker; the
-  buffer's ffmpeg is a child of the Celery child that started it. In one container the port answers as before.
-- From the client's own network, an action took 40 to 70 ms; Celery's routing is not a visible cost.
-- **Pool saturation:** twelve parallel 20 s probe actions held all six children for about 40 s. The addon's manifest
-  polls then took up to 40 s to be answered and its heartbeats up to 30 s (three timed out at the client's 2 s). Playback
-  did not stop (151 segment reads over 4 minutes, all good; segments come from the file server, not Celery), but the
-  plugin's idle timeout is 30 s, so a longer saturation could reap a buffer that is being watched. Since fixed in the
-  addon for a paused viewer and one waiting at the live edge, with a keep-alive to the file server
-  (`docs/CLOSED_ITEMS.md`, "A paused viewer's timeshift buffer can be ended while Dispatcharr's task pool is busy (and
-  a viewer at the live edge loses playback)",
-  which also has what in Dispatcharr's source can hold the pool that long: bulk guide assignment, not a scheduled
-  refresh on its own). A channel opened during such a burst still waits in the queue.
-- The pool did not shrink within 3.5 minutes of the burst, so a child exiting under a running buffer was not seen.
-- Still open after that check: a seek, two viewers on one channel and a stream switch on 0.34 (checked 2026-11-18,
-  below); a Celery child exiting under a running buffer (the pool shrinking, or the 512 MB recycle); a deployment with
-  Celery in its own container. Start, play, pause and stop were seen on 0.34 (this item, and the live checks of the
-  500-with-result reading and of the keep-alive).
-
-**Checked live 2026-11-18** (Dispatcharr 0.34.1 in one container, `timeshift_buffer` 0.8.18, a disposable channel with
-two upstream streams, Kodi 22 RC1 on Linux with the `Piers` build through a logging forwarder, Kodi 21.3 on Windows with
-the `Omega` build, a throwaway read-only probe plugin reading `/proc`):
-- Seek: back 60 s, forward 40 s, and past the live edge (clamped to the tail) each landed where asked and played on;
-  every plugin action and file-server read in that window was answered.
-- Two viewers on one channel (Kodi 22 and Kodi 21): one buffer and one ffmpeg, `list_buffers` counting two viewers.
-  The second viewer's 40 s pause and resume, then its stop, left the first playing and the buffer running with one
-  viewer. The file server was then listening in two Celery children.
-- A stream switch (Dispatcharr's `next_stream`) under the Kodi 22 viewer: the old ffmpeg was frozen at once, and the
-  new one, started by the restart thread in the same Celery child that held the old one, took over about 10 s later;
-  the old one was gone. Kodi held the last picture for about 8 s, logged the usual missing SPS/PPS at the join and
-  played on. A second switch, with both viewers on, was under way when every plugin action began failing: that is
-  "Dispatcharr 0.34 leaks two Redis connections per plugin action" (Design decision needed), not the switch.
-- Still open: a Celery child exiting under a running buffer, and a deployment with Celery in its own container.
-
-**0.34.1 reviewed 2026-11-18** (source diff against 0.34.0): it changes only plugin sockets used as context managers,
-where a plugin's file-field uploads are stored and how a plugin's data directory is named (`apps/plugins/sandbox.py`,
-`apps/plugins/api_views.py`). Nothing above changes: the action queue, its timeout, the 500-with-result answer and the
-worker setup are as in 0.34.0, and neither plugin opens a socket with `with`, declares a file field or uses its data
-directory.
-
-The 0.34 plugin sandbox does not apply: it is enforced only for a manifest declaring `manifest_version` 2, and ours
-declare none (version 0, `apps/plugins/capabilities.py`'s `MANIFEST_SCHEMA_POLICIES`). Its import wrappers are still
-installed for every plugin (`apps/plugins/sandbox.py`) but only check permissions, which version 0 always passes. 0.34's
-persistent services (`persistent_service`, `network_listener`) are where the file server and reaper would belong long
-term; that needs manifest version 1 and Dispatcharr 0.34.0 or later.
 
 #### Kodi 21 showed timers made on the server about 75 s after the realtime event
 
@@ -198,7 +127,27 @@ stream switch).
 
 ### Fix known, not yet done
 
-None open.
+#### `timeshift_buffer` does not start on a modular Dispatcharr 0.34 install with its defaults
+
+**Opened 2026-11-19, from the live check that closed "Dispatcharr 0.34 runs plugin actions in Celery workers"
+(`CLOSED_ITEMS.md`); confirmed on a throwaway 0.34.1 stack laid out as Dispatcharr's default `docker/docker-compose.yml`
+(web, Celery, Postgres and Redis in separate containers).** From 0.34 plugin actions run in the Celery container, so
+the buffer's ffmpeg and the plugin's file server run there too. Up to 0.33 they ran in the web container, where the
+one-container instructions held. Three things then go wrong with the defaults:
+- `internal_base_url` defaults to `http://127.0.0.1:9191`, and nothing listens there in the Celery container: ffmpeg
+  logs "Connection to tcp://127.0.0.1:9191 failed: Connection refused", the buffer is reported fatal at the first poll,
+  and the message blames "a provider-side concurrent-stream limit" before quoting that log line.
+- The file server listens on 9192 in the Celery container, which publishes no port in that compose file; the plugin
+  README's step 4 says to publish it "the same way 9191 already is", which is the web container.
+- README step 7's loopback rule for Redirect-profile channels: from the Celery container the stream request comes from
+  that container's Docker network address, not loopback (read in the source, not checked live).
+
+With `internal_base_url` set to `http://web:9191` and 9192 published on the Celery container, playback worked as on one
+container. **Fix:** default `internal_base_url` the way Dispatcharr's own DVR finds the web container when the setting
+is left alone (its DVR stream base URL in `apps/channels/tasks.py`: `DISPATCHARR_ENV=modular` means
+`http://<DISPATCHARR_WEB_HOST or web>:<DISPATCHARR_PORT or 9191>`), name a refused connection to that URL in the fatal
+message instead of the provider limit, and add a modular-install note to the plugin README (the port on the Celery
+container, the Internal base URL, Network Access).
 
 ### Architectural / concurrency
 
