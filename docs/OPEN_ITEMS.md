@@ -32,8 +32,8 @@ recording's 20 s retry budget).
 
 | Section | Entries |
 |---|---|
-| Open: Needs a live check | 3 |
-| Open: Fix known, not yet done | 0 |
+| Open: Needs a live check | 2 |
+| Open: Fix known, not yet done | 1 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 0 |
@@ -94,10 +94,12 @@ taught about HLS (it takes the 302 as a final answer), the setting hidden in Ser
 `inputstream.ffmpegdirect` (an optional import) required in Off mode. If the log shows a dropped connection, ffmpeg's
 own HTTP reconnect options through `inputstream.ffmpegdirect` are worth comparing with HLS.
 
+### Fix known, not yet done
+
 #### `timeshift_buffer`: DVB subtitles and teletext never reach Kodi in Server-side mode
 
-**Opened 2026-11-16, a follow-up to issue #1 (every audio track, fixed in 0.8.18); a local ffmpeg experiment, nothing
-live yet.** The buffer's `hls` muxer hands any subtitle stream to a WebVTT muxer that refuses DVB subtitles and
+**Opened 2026-11-16, a follow-up to issue #1 (every audio track, fixed in 0.8.18), from a local ffmpeg experiment;
+checked live 2026-11-20 (below) and moved here from "Needs a live check".** The buffer's `hls` muxer hands any subtitle stream to a WebVTT muxer that refuses DVB subtitles and
 teletext, so 0.8.18 leaves subtitles out (`docs/TIMESHIFT.md`, "Every audio track, not just the first (0.8.18)").
 The `hls` muxer replaced the `segment` muxer in 0.8.0 because `segment` restarted every PID's continuity counter at
 each file, a "Packet corrupt" at every splice of the addon's byte stream; the docs recorded no flag that stops that.
@@ -117,16 +119,28 @@ writes a fresh list whose `#EXT-X-MEDIA-SEQUENCE` starts at 0 even with `-segmen
 come from the file name and the plugin would keep the older entries itself. Also to settle: which subtitle streams
 can be mapped without failing a start (a text subtitle from an HLS source was not tried).
 
-**Next, live, before building anything:** find a real channel carrying DVB subtitles or teletext (probe through
-Dispatcharr's proxy, as for the audio check) and see whether Kodi 21 and 22 show them in Off mode, which proves Kodi
-and the proxy's side; rerun the muxer comparison with the container's ffmpeg 8.1.2 through a probe plugin. Then the
-muxer change on a branch, with the plugin owning deletion and the restart's playlist, tests, the behaviour review,
-and a live check like 0.8.18's (generated and real channels, Kodi 21 and 22, subtitles on through pause, rewind and a
-stream switch).
+**Checked live 2026-11-20 (Dispatcharr 0.34.1; Kodi 21.3 with addon 0.13.3, Kodi 22 RC1 with 0.14.4, both in Off
+mode).**
+- *No real channel used.* The check needed known subtitle and teletext streams, so it used a
+  generated channel: H.264, two audio languages, a DVB subtitle stream (ffmpeg's
+  `dvbsub` encoder over a teletext page rendered by libzvbi) and an EBU teletext stream with subtitle page 888, each
+  showing a changing counter, served at its own bitrate as a disposable channel behind the default Proxy profile.
+- *The proxy passes both through.* Probed and decoded through `/proxy/ts/stream/`: both subtitle PIDs present and
+  both still decode (the DVB bitmap renders, page 888's text reads back).
+- *Kodi, Off mode, the same on 21 and 22.* Both audio languages are offered, and one subtitle: the DVB stream, which
+  shows on screen when turned on. Teletext is not offered as a subtitle; `VideoPlayer.HasTeletext` is true and Kodi's
+  teletext viewer decodes page 888 (its header; the boxed row of this generated page was not drawn there, and the
+  viewer stopped refreshing the header, not chased). So what a subtitle-carrying buffer would give a viewer is the
+  DVB subtitles in the subtitle menu and teletext in the teletext viewer, as Off mode does.
+- *The muxer comparison in the container.* Dispatcharr 0.34.1 ships ffmpeg 9.0.2 (not 8.1.2), checked with a probe
+  plugin running the comparison over 40 s of the generated source, mapping both subtitle streams: `hls` still fails
+  the start ("webvtt muxer supports only codec webvtt for type subtitle"); `segment` keeps both subtitle PIDs in all
+  20 segments with 97 continuity breaks across them; `segment` with `-individual_header_trailer 0` keeps both in all
+  20 with none. ffmpeg 6.1 on the 5-minute source gave the same split (144 breaks over 30 segments, and none).
 
-### Fix known, not yet done
-
-None open.
+**Next:** the muxer change on a branch, with the plugin owning deletion and the restart's playlist, tests, the
+behaviour review, and a live check like 0.8.18's (the generated channel; Kodi 21 and 22; subtitles on through pause,
+rewind and a stream switch). A real subtitled channel stays worth one look.
 
 ### Architectural / concurrency
 
