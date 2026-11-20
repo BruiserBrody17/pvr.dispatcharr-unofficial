@@ -4260,7 +4260,10 @@ What the `hls` muxer did besides, the plugin does now:
   cleanup after a stream-switch restart, now run for every buffer on each 15 s tick) deletes the files numbered below
   the first listed segment by more than `segment_keep_extra`, the same margin `-hls_delete_threshold` kept. A file is
   deleted up to one tick later than the `hls` muxer deleted it, about 8 more files at 2 s segments; while no reaper
-  runs (Redis down), nothing is deleted.
+  runs (Redis down), nothing is deleted. Each buffer's share of a tick is guarded on its own (`_reaper_tick_buffer()`):
+  a failure on one used to end the whole tick there, so with a failure that repeated, the buffers after it would never
+  have been swept (found by the branch's review; fixed after the merge, with its own tests and review, which added a
+  log throttle per channel and skips a state whose channel is not a string).
 - **The playlist across a stream-switch restart.** The `hls` muxer's `append_list` read the killed ffmpeg's playlist
   and continued it; the segment muxer writes a list of its own segments only. Before the new ffmpeg starts,
   `_carry_playlist_over()` writes what the playlist lists then to `earlier.json` (not served), and the readers

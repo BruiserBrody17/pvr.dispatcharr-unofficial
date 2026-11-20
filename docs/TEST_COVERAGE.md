@@ -3490,7 +3490,10 @@ as before. From the branch's review: the mapped argv carries `-fflags +flush_pac
 ignores `earlier.json` with no limit; and a buffer with a playlist whose adopted switch-restart ffmpeg exited on the
 refusal is restarted once on the `hls` fallback with `-start_number` past its segments and `earlier.json` written,
 answered as not ended, where one that exited for another reason, was already restarted or is on the fallback stays
-ended. The behaviour tests fail on the previous plugin code (most argv tests also on its signature, which lost
+ended. A reaper tick over three idle buffers whose middle one raises in its viewer prune still sweeps all three,
+tears down the other two and runs the orphan scrub, with one log entry naming that channel; three ticks over two
+failing channels log each once; and `_iter_buffer_states()` skips a state whose channel is a list or a dict (all three
+fail on the code before `_reaper_tick_buffer()`'s per-buffer guard). The behaviour tests fail on the previous plugin code (most argv tests also on its signature, which lost
 `wrap_segments` and `continue_playlist`). Not covered: ffmpeg 9.0.2's side (the container matrix and the live check
 are in the closed entry), and the reaper's 15 s cadence itself.
 

@@ -67,6 +67,9 @@ worker can leave a new buffer's old segments on disk.
 - **Disabling or deleting the plugin now stops it in every Dispatcharr worker** within about 20 s. Before, only one
   worker stopped, and the others kept the plugin's file-server port open and its background cleanup running until
   Dispatcharr restarted.
+- **One buffer the background cleanup fails on no longer holds up the others.** Before, an error on one buffer ended
+  that cleanup round, so the buffers after it went without their idle check and old-segment cleanup while the error
+  lasted.
 - **Stopping the last viewer during a stream switch** now stops the buffer. If the switch restarted ffmpeg at that
   moment, the new ffmpeg kept running, with its provider connection, until the idle timeout ended it.
 - **A Kodi 21 viewer whose connection dropped for a while** no longer gets the picture held on stream switches

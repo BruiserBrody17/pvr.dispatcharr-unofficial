@@ -459,7 +459,9 @@ def _iter_buffer_states():
             state = json.loads(raw)
         except ValueError:
             state = None
-        if not isinstance(state, dict) or not state.get("channel_uuid"):
+        # A channel that is not a string (a list, a dict) is as unusable: the reaper keys its tracker and its log
+        # throttles by it, and an unhashable one ended every tick (found by the reaper-guard branch's review).
+        if not isinstance(state, dict) or not state.get("channel_uuid") or not isinstance(state["channel_uuid"], str):
             _log_unreadable_state_once(key)
             continue
         yield state
@@ -4810,9 +4812,10 @@ def _should_log_reaper_error(last_logged_at, now: float, interval: float = _REAP
 
 
 class _LogThrottle:
-    """The reaper's once-per-interval rule for a failure that repeats outside the reaper loop, where no single loop
-    can keep the count: the file server's handler threads share one, and every run() can hit the other. A failure
-    with a different `key` (a new port or errno) is logged at once."""
+    """The reaper's once-per-interval rule for a failure that repeats: outside the reaper loop, where no single loop can
+    keep the count (the file server's handler threads share one, and every run() can hit the other), and inside it,
+    one per channel whose share of a tick fails. A failure with a different `key` (a new port or errno) is logged at
+    once."""
 
     def __init__(self, interval: float = _REAPER_ERROR_LOG_INTERVAL_SECONDS, clock=time.monotonic):
         self._interval = interval
@@ -4877,6 +4880,61 @@ def _cap_ffmpeg_log(channel_dir, max_bytes: int = _FFMPEG_LOG_MAX_BYTES, keep_by
         return False
 
 
+def _reaper_tick_buffer(state: dict, uuid: str, idle_timeout: int, tracker, reaper_storage_path: str, logger) -> None:
+    """One reaper tick's work on one buffer: trim its ffmpeg.log, delete its old segments, prune its stale viewers and
+    tear it down once idle. The caller guards each call, so one buffer's failure does not stop the others."""
+    # a state whose uuid is not usable as a path is the scrub's business, not this trim's. The buffer's
+    # own storage path, not the current setting: after a change of the setting a running buffer's log
+    # stays where it was started (the state keeps it for exactly that reason, see
+    # _remove_channel_files()).
+    with contextlib.suppress(ValueError, KeyError):
+        _cap_ffmpeg_log(_channel_dir(state.get("storage_path") or reaper_storage_path, uuid))
+    with contextlib.suppress(ValueError, KeyError):
+        _sweep_stray_segments(state, logger)
+    stale = _stale_viewers(state, uuid, idle_timeout, tracker)
+    if stale:
+        logger.info(
+            "timeshift_buffer: pruned stale viewer(s) for channel %s (no heartbeat for %ds)",
+            uuid,
+            idle_timeout,
+        )
+        # Re-run the prune against a copy re-read right
+        # before writing back, rather than the copy
+        # _iter_buffer_states() read moments earlier --
+        # narrows the same race _apply_heartbeat()'s own
+        # comment describes: a concurrent start_buffer
+        # registering a new viewer in this gap would
+        # otherwise have its registration silently
+        # overwritten by this stale write-back. A viewer
+        # whose heartbeat moved since is kept.
+        #
+        # Dropping the last viewer does not end the buffer by itself: the buffer-wide check below does,
+        # once segment reads stop too. A viewer whose API heartbeats fail (a 429, the addon skipping
+        # one on an expired token) while its segment reads keep working is still watching, and the
+        # addon relies on those reads alone to keep the buffer alive (DispatcharrClient.h,
+        # SendTimeshiftHeartbeat()). Ending it here stopped such a buffer mid-playback (0.8.15).
+        # Since 0.8.17 reads that name their viewer keep its own stamp fresh, so such a viewer is not
+        # pruned while it reads; this still covers one that is paused (it fetches nothing) and a client
+        # whose reads name nobody.
+        _update_buffer_state(uuid, lambda fresh, gone=stale: fresh if _drop_stale_viewers(fresh, gone) else None)
+    last_heartbeat = state.get("last_heartbeat", 0)
+    buffer_age = tracker.age(("buffer", uuid), last_heartbeat)
+    if buffer_age > idle_timeout:
+        logger.info(
+            "timeshift_buffer: reaping idle buffer for channel %s (no heartbeat for %ds)",
+            uuid,
+            int(buffer_age),
+        )
+        # Re-checked against the freshest state, atomically with the
+        # stopping marker: a heartbeat that landed since this tick read
+        # `state` (its value moved) means someone is watching after all.
+        _teardown_buffer(
+            state,
+            logger,
+            abort_if=lambda fresh, seen=last_heartbeat: fresh.get("last_heartbeat", 0) != seen,
+        )
+
+
 def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_tracker=None):
     my_token = f"{os.getpid()}:{time.time()}"
     last_error_logged_at = None
@@ -4884,6 +4942,10 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_trac
     # Idle ages are measured here, on this process's monotonic clock, from when each heartbeat value last CHANGED (see
     # _IdleTracker); the stamps are never subtracted from a wall clock. Only the elected reaper keeps it up to date.
     tracker = idle_tracker if idle_tracker is not None else _IdleTracker()
+    # A buffer's failure within a tick, logged at most once per interval per channel while it repeats
+    # (_reaper_tick_buffer()): one throttle shared by every channel named only the first failing one for as long as it
+    # failed (found by the branch's review). A channel's throttle is dropped after a tick it gets through.
+    buffer_errors = {}
 
     while not stop_event.is_set():
         try:
@@ -4920,66 +4982,37 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event, idle_trac
                 )
                 reaper_storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
                 seen_keys = set()
+                failed_now = set()
                 for state in _iter_buffer_states():
                     uuid = state.get("channel_uuid")
                     if not uuid:
                         continue  # nothing to track or reap by; the scrub deals with such a leftover
                     seen_keys.add(("buffer", uuid))
-                    seen_keys.update(
-                        ("viewer", uuid, v) for v in state.get("viewers", []) if v in state.get("viewer_heartbeats", {})
-                    )
-                    # a state whose uuid is not usable as a path is the scrub's business, not this trim's. The buffer's
-                    # own storage path, not the current setting: after a change of the setting a running buffer's log
-                    # stays where it was started (the state keeps it for exactly that reason, see
-                    # _remove_channel_files()).
-                    with contextlib.suppress(ValueError, KeyError):
-                        _cap_ffmpeg_log(_channel_dir(state.get("storage_path") or reaper_storage_path, uuid))
-                    with contextlib.suppress(ValueError, KeyError):
-                        _sweep_stray_segments(state, logger)
-                    stale = _stale_viewers(state, uuid, idle_timeout, tracker)
-                    if stale:
-                        logger.info(
-                            "timeshift_buffer: pruned stale viewer(s) for channel %s (no heartbeat for %ds)",
-                            uuid,
-                            idle_timeout,
+                    # Each buffer on its own: a failure on one (a value of an odd type in its state, a Redis write that
+                    # fails) used to end the whole tick there, so the buffers after it went without their idle check,
+                    # their segment sweep and the orphan scrub below until a tick got through, and for good when the
+                    # failure repeated. Since 0.8.19 the sweep is the only thing that deletes old segments (the
+                    # segment muxer deletes none), so a buffer stuck that way would fill the disk (found by the
+                    # segment-muxer branch's review).
+                    try:
+                        seen_keys.update(
+                            ("viewer", uuid, v)
+                            for v in state.get("viewers", [])
+                            if v in state.get("viewer_heartbeats", {})
                         )
-                        # Re-run the prune against a copy re-read right
-                        # before writing back, rather than the copy
-                        # _iter_buffer_states() read moments earlier --
-                        # narrows the same race _apply_heartbeat()'s own
-                        # comment describes: a concurrent start_buffer
-                        # registering a new viewer in this gap would
-                        # otherwise have its registration silently
-                        # overwritten by this stale write-back. A viewer
-                        # whose heartbeat moved since is kept.
-                        #
-                        # Dropping the last viewer does not end the buffer by itself: the buffer-wide check below does,
-                        # once segment reads stop too. A viewer whose API heartbeats fail (a 429, the addon skipping
-                        # one on an expired token) while its segment reads keep working is still watching, and the
-                        # addon relies on those reads alone to keep the buffer alive (DispatcharrClient.h,
-                        # SendTimeshiftHeartbeat()). Ending it here stopped such a buffer mid-playback (0.8.15).
-                        # Since 0.8.17 reads that name their viewer keep its own stamp fresh, so such a viewer is not
-                        # pruned while it reads; this still covers one that is paused (it fetches nothing) and a client
-                        # whose reads name nobody.
-                        _update_buffer_state(
-                            uuid, lambda fresh, gone=stale: fresh if _drop_stale_viewers(fresh, gone) else None
-                        )
-                    last_heartbeat = state.get("last_heartbeat", 0)
-                    buffer_age = tracker.age(("buffer", uuid), last_heartbeat)
-                    if buffer_age > idle_timeout:
-                        logger.info(
-                            "timeshift_buffer: reaping idle buffer for channel %s (no heartbeat for %ds)",
-                            uuid,
-                            int(buffer_age),
-                        )
-                        # Re-checked against the freshest state, atomically with the
-                        # stopping marker: a heartbeat that landed since this tick read
-                        # `state` (its value moved) means someone is watching after all.
-                        _teardown_buffer(
-                            state,
-                            logger,
-                            abort_if=lambda fresh, seen=last_heartbeat: fresh.get("last_heartbeat", 0) != seen,
-                        )
+                        _reaper_tick_buffer(state, uuid, idle_timeout, tracker, reaper_storage_path, logger)
+                    except Exception:
+                        failed_now.add(uuid)
+                        log, suppressed = buffer_errors.setdefault(uuid, _LogThrottle()).check()
+                        if log:
+                            logger.exception(
+                                "timeshift_buffer: the reaper's work on channel %s failed; it goes on with the other "
+                                "buffers (%d similar failure(s) since the last report)",
+                                uuid,
+                                suppressed,
+                            )
+                for recovered in set(buffer_errors) - failed_now:
+                    del buffer_errors[recovered]
                 tracker.retain(seen_keys)
 
                 # Reconciles storage_path against Redis directly, catching

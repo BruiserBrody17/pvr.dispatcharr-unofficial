@@ -4655,6 +4655,97 @@ def test_reaper_loop_logs_and_continues_on_unexpected_error(monkeypatch):
     assert stop_event.is_set()  # reached wait(15) despite the exception
 
 
+def _reaper_ticks_over(monkeypatch, states, ticks):
+    """Runs `ticks` reaper ticks over `states`, every one of them idle (the tracker last saw each heartbeat value 100 s
+    earlier on its clock). Returns (the uuids each step reached, the logger)."""
+    client = _FakeReaperRedisClient()
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: client)
+    monkeypatch.setattr(timeshift_buffer_plugin.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_iter_buffer_states", lambda: iter(states))
+    clock = _FakeMonotonic()
+    tracker = timeshift_buffer_plugin._IdleTracker(clock=clock)
+    for state in states:
+        tracker.age(("buffer", state["channel_uuid"]), state.get("last_heartbeat", 0))
+    clock.now += 100
+    reached = {"sweep": [], "teardown": [], "scrub": 0}
+    monkeypatch.setattr(timeshift_buffer_plugin, "_cap_ffmpeg_log", lambda channel_dir: None)
+    monkeypatch.setattr(
+        timeshift_buffer_plugin,
+        "_sweep_stray_segments",
+        lambda state, logger: reached["sweep"].append(state["channel_uuid"]),
+    )
+    monkeypatch.setattr(
+        timeshift_buffer_plugin,
+        "_teardown_buffer",
+        lambda state, logger, abort_if=None: reached["teardown"].append(state["channel_uuid"]),
+    )
+    monkeypatch.setattr(
+        timeshift_buffer_plugin,
+        "_scrub_orphaned_dirs",
+        lambda *a, **k: reached.__setitem__("scrub", reached["scrub"] + 1),
+    )
+    logger = _FakeLogger()
+    timeshift_buffer_plugin._reaper_loop(lambda: {"idle_timeout_seconds": 30}, logger, _NStopEvent(ticks), tracker)
+    return reached, logger
+
+
+def _healthy(uuid):
+    return {"channel_uuid": uuid, "storage_path": "/x", "last_heartbeat": 1}
+
+
+def _broken(uuid):
+    """Raises in its viewer prune: `viewer_heartbeats` of the wrong type."""
+    return {"channel_uuid": uuid, "storage_path": "/x", "viewers": ["v"], "viewer_heartbeats": ["not", "a", "dict"]}
+
+
+def test_one_buffers_failure_does_not_stop_the_reaper_tick_for_the_others(monkeypatch):
+    """A failure on one buffer used to end the whole tick: the buffers after it went without their segment sweep (since
+    0.8.19 the only thing that deletes old segments) and their idle teardown, and the orphan scrub did not run, on every
+    tick while the failure repeated."""
+    reached, logger = _reaper_ticks_over(monkeypatch, [_healthy("a" * 8), _broken("b" * 8), _healthy("c" * 8)], ticks=1)
+
+    assert reached["sweep"] == ["a" * 8, "b" * 8, "c" * 8]
+    assert reached["teardown"] == ["a" * 8, "c" * 8]
+    assert reached["scrub"] == 1
+    failures = [msg for level, msg in logger.calls if level == "exception"]
+    assert len(failures) == 1 and "b" * 8 in failures[0] and "goes on with the other buffers" in failures[0]
+    assert not any("reaper tick failed" in msg for _level, msg in logger.calls)
+
+
+def test_a_repeating_buffer_failure_is_logged_once_per_interval_for_each_channel(monkeypatch):
+    """Two channels failing on every tick are each named once, not only the first (one throttle shared by every
+    channel named only the first for as long as it failed)."""
+    reached, logger = _reaper_ticks_over(monkeypatch, [_broken("b" * 8), _healthy("c" * 8), _broken("d" * 8)], ticks=3)
+
+    assert reached["sweep"] == ["b" * 8, "c" * 8, "d" * 8] * 3
+    assert reached["scrub"] == 3
+    failures = [msg for level, msg in logger.calls if level == "exception"]
+    assert len(failures) == 2
+    assert "b" * 8 in failures[0] and "d" * 8 in failures[1]
+
+
+def test_iter_buffer_states_skips_a_channel_that_is_not_a_string(monkeypatch):
+    """The reaper keys its tracker and log throttles by the channel: an unhashable one (a list) ended every tick before
+    the per-buffer guard, as its state is read before it."""
+    values = {
+        "k1": json.dumps({"channel_uuid": ["a", "b"]}),
+        "k2": json.dumps({"channel_uuid": {"x": 1}}),
+        "k3": json.dumps({"channel_uuid": _UUID}),
+    }
+
+    class _Client:
+        def get(self, key):
+            return values[key]
+
+    monkeypatch.setattr(timeshift_buffer_plugin, "_redis", lambda: _Client())
+    monkeypatch.setattr(timeshift_buffer_plugin, "_list_buffer_keys", lambda: list(values))
+    logged = []
+    monkeypatch.setattr(timeshift_buffer_plugin, "_log_unreadable_state_once", logged.append)
+
+    assert [state["channel_uuid"] for state in timeshift_buffer_plugin._iter_buffer_states()] == [_UUID]
+    assert logged == ["k1", "k2"]
+
+
 def test_ensure_reaper_running_updates_settings_even_when_already_running(monkeypatch):
     """Real bug this fixes (found via a project-wide review): a settings
     change made after the reaper thread's first start must still reach
