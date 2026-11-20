@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**10 open, 441 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**10 open, 443 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -38,7 +38,7 @@ the design question on 2026-11-15, the other seven on 2026-11-16).
 | Open: Upstream (Dispatcharr) or documentation accuracy | 5 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 387 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 388 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 45 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
