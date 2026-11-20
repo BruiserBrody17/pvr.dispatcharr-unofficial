@@ -239,6 +239,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `6c10b04` | `35d4d3f` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts resolved by hand, keeping `Omega`'s own Kodi 21 timer item) | The 0.34 Celery item closed after its last two live checks (a worker exiting, the modular compose layout), and the modular-install defaults filed as a fix-known item. |
 | `6843feb` | `e398fa9` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts resolved by hand, keeping `Omega`'s own Kodi 21 timer item) | `timeshift_buffer` 0.8.19: the Internal base URL's default on a modular Dispatcharr install where loopback does not answer, a refused connection named in the fatal message, the README's modular section, and the one-container port item filed. |
 | `0b697c1` | `6f296d8` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts resolved by hand, keeping `Omega`'s own Kodi 21 timer item) | `timeshift_buffer` 0.8.19: the Internal base URL's default follows `DISPATCHARR_PORT` |
+| `c39ea03` | `fcbabe8` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts set to `Omega`'s own, 380 Fixed and 435 closed) | `OPEN_ITEMS.md`'s closed counts corrected (one Fixed entry short) and `tools/tests/test_items_counts.py` added to check them. |
 
 ## Dependencies that differ by Kodi release
 
