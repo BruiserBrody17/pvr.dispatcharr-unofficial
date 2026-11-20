@@ -47,7 +47,8 @@ compare against.
 ## `timeshift_buffer` [0.8.19] - Unreleased
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
-Dispatcharr restart for every worker to pick it up.
+Dispatcharr restart for every worker to pick it up, before playing anything in Server-side mode: until then an older
+worker can leave a new buffer's old segments on disk.
 
 ### Changed
 
@@ -55,6 +56,11 @@ Dispatcharr restart for every worker to pick it up.
   same port as its segments), so the addon can follow a playing channel without a Dispatcharr plugin request, each of
   which costs Dispatcharr 0.34 server resources it does not give back until a restart. Starting a buffer names it
   too, so the addon also waits for a new channel's first picture there.
+- **DVB subtitles and teletext in Server-side mode.** A channel's subtitle and teletext streams are now kept in the
+  buffer, so Kodi offers its DVB subtitles in the subtitle menu and its teletext in the teletext viewer, as in Off
+  mode. Before, Server-side mode left them out. A channel whose video ffmpeg cannot size at the start (a video stream
+  that is listed but never sent, or rarely a start long before the next full picture) is buffered as before, with one
+  audio track and no subtitles.
 
 ### Fixed
 

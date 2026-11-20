@@ -6,6 +6,88 @@
 
 ### Fixed
 
+#### `timeshift_buffer`: DVB subtitles and teletext never reach Kodi in Server-side mode
+
+**Opened 2026-11-16, a follow-up to issue #1 (every audio track, fixed in 0.8.18), from a local ffmpeg experiment;
+checked live 2026-11-20 (below) and moved here from "Needs a live check".** The buffer's `hls` muxer hands any subtitle stream to a WebVTT muxer that refuses DVB subtitles and
+teletext, so 0.8.18 leaves subtitles out (`docs/TIMESHIFT.md`, "Every audio track, not just the first (0.8.18)").
+The `hls` muxer replaced the `segment` muxer in 0.8.0 because `segment` restarted every PID's continuity counter at
+each file, a "Packet corrupt" at every splice of the addon's byte stream; the docs recorded no flag that stops that.
+`segment` with `-individual_header_trailer 0` keeps one MPEG-TS muxer across its files. Measured with ffmpeg 6.1 on a
+generated source (video, two audio languages, plus a DVB subtitle or a teletext stream; the raw inputs of the plugin's
+own subtitle tests), mapping `0:v:0?`, every usable audio track and `0:s?`, 2 s segments:
+- `hls`: the start fails ("Exactly one WebVTT stream is needed").
+- `segment`, default: the subtitle stream is in every segment, but the ten files concatenated show 43 continuity
+  breaks and ffmpeg reports 3 corrupt packets.
+- `segment` with `-individual_header_trailer 0`: the subtitle stream is in every segment, no continuity break, no
+  corrupt packet. Each segment still starts with SDT, PAT and PMT and opens on its own.
+
+The addon passes Kodi whatever streams arrive, so only the plugin would change. What `segment` lacks and the plugin
+would have to take over from `hls`: deleting segments (it never deletes; `-segment_wrap` recycles names, which 0.8.0
+moved away from), and continuing the playlist after a stream-switch restart (`append_list`): a restarted `segment`
+writes a fresh list whose `#EXT-X-MEDIA-SEQUENCE` starts at 0 even with `-segment_start_number`, so the sequence would
+come from the file name and the plugin would keep the older entries itself. Also to settle: which subtitle streams
+can be mapped without failing a start (a text subtitle from an HLS source was not tried).
+
+**Checked live 2026-11-20 (Dispatcharr 0.34.1; Kodi 21.3 with addon 0.13.3, Kodi 22 RC1 with 0.14.4, both in Off
+mode).**
+- *No real channel used.* The check needed known subtitle and teletext streams, so it used a
+  generated channel: H.264, two audio languages, a DVB subtitle stream (ffmpeg's
+  `dvbsub` encoder over a teletext page rendered by libzvbi) and an EBU teletext stream with subtitle page 888, each
+  showing a changing counter, served at its own bitrate as a disposable channel behind the default Proxy profile.
+- *The proxy passes both through.* Probed and decoded through `/proxy/ts/stream/`: both subtitle PIDs present and
+  both still decode (the DVB bitmap renders, page 888's text reads back).
+- *Kodi, Off mode, the same on 21 and 22.* Both audio languages are offered, and one subtitle: the DVB stream, which
+  shows on screen when turned on. Teletext is not offered as a subtitle; `VideoPlayer.HasTeletext` is true and Kodi's
+  teletext viewer decodes page 888 (its header; the boxed row of this generated page was not drawn there, and the
+  viewer stopped refreshing the header, not chased). So what a subtitle-carrying buffer would give a viewer is the
+  DVB subtitles in the subtitle menu and teletext in the teletext viewer, as Off mode does.
+- *The muxer comparison in the container.* Dispatcharr 0.34.1 ships ffmpeg 9.0.2 (not 8.1.2), checked with a probe
+  plugin running the comparison over 40 s of the generated source, mapping both subtitle streams: `hls` still fails
+  the start ("webvtt muxer supports only codec webvtt for type subtitle"); `segment` keeps both subtitle PIDs in all
+  20 segments with 97 continuity breaks across them; `segment` with `-individual_header_trailer 0` keeps both in all
+  20 with none. ffmpeg 6.1 on the 5-minute source gave the same split (144 breaks over 30 segments, and none).
+
+**Fixed 2026-11-20 in `timeshift_buffer` 0.8.19** (`docs/TIMESHIFT.md`, "Subtitles and teletext in the buffer
+(0.8.19)"). The buffer writes with the `segment` muxer and `-individual_header_trailer 0` and maps every subtitle
+stream with a known codec. The plugin took over what the `hls` muxer did: the reaper's sweep deletes old segments for
+every buffer, and a stream-switch restart carries the listed segments over in `earlier.json`, numbering the new ffmpeg
+past every file on disk, with the sequence read from the file names (the segment muxer writes
+`#EXT-X-MEDIA-SEQUENCE:0` after a start number until its first entry rolls off, on 6.1 and 9.0.2 alike). The segment
+muxer refuses a video stream with no picture size, so the fallback stays 0.8.18's `hls` command, and a start or a
+switch restart refused that way is restarted on it once. The behaviour review found four more points, all fixed or
+documented in the same change: that refused switch restart (MEDIUM), `+flush_packets` so a segment is whole before it
+is listed, `earlier.json` only for a state with `visible_segments`, and the mixed-version window until Dispatcharr is
+restarted. Unit and real-ffmpeg tests: `docs/TEST_COVERAGE.md`.
+
+**Checked live 2026-11-20** against a throwaway Dispatcharr 0.34.1 all-in-one container (the lab image, ffmpeg 9.0.2)
+on the Kodi test VM, the generated channel of the earlier check served at its real rate as three streams (the source
+twice, and a copy with 24 s between keyframes, cut 3 s into a GOP), Kodi 21.3 with addon 0.13.3 and Kodi 22 RC1 with
+0.14.4, Server-side mode:
+- *ffmpeg 9.0.2 in the lab container first* (a probe plugin, before the throwaway stack): both subtitle streams in
+  every segment; a never-sent video and a mid-GOP join with no keyframe after it both exit with the probe's warning and
+  "dimensions not set", exactly as on 6.1, and the fallback buffers the first.
+- *The buffer:* every segment carries H.264, both AAC tracks, the DVB subtitles and the teletext; the first manifest
+  came 7.3 s after `start_buffer`.
+- *Kodi 21 and 22, the same:* both audio languages and the DVB subtitle offered, the subtitle shown on the picture once
+  turned on, teletext page 888's header decoded in the teletext viewer, as in Off mode. The subtitle stayed listed and
+  on through a pause of 130 s (Kodi 21) and 100 s (Kodi 22), the resume and a rewind (shown on the picture after the
+  rewind). No "Packet corrupt" in ten minutes of Kodi 21 playback before the switches.
+- *Stream switches (Kodi 21):* A to B followed with `earlier.json` holding the 148 segments before it, number 148
+  (the old ffmpeg's open segment) skipped and the new ffmpeg starting at 149; the subtitle showed on the new
+  segments. Twelve switches between A and the long-GOP stream all followed; one join onto it came more than 7 s before
+  a keyframe, the new ffmpeg exited on "dimensions not set" after its adoption, and 5 s later the plugin restarted the
+  buffer on the `hls` fallback numbered on (324), after which a switch back followed on the fallback too. Kodi played
+  through all of them; each join gave one "Packet corrupt" a few seconds later (a new muxer's counters at the join, as
+  with 0.8.18's restarts), and Kodi's time seek across a join lands by the new stream's timestamps (as before).
+- *Disk:* with a 1-minute buffer (30 listed, 30 kept), the directory held 61 to 67 segment files over three minutes,
+  the oldest number moving up with each reaper tick. The 100 s pause on that short buffer left the reader behind the
+  oldest segment, and the addon skipped ahead, as designed, with one "Packet corrupt" per skip.
+
+The throwaway stack, its volume and image, and the test sources were removed, and the VM's Kodi profile was restored
+and its 884 checksums matched. The lab server was not changed (still `timeshift_buffer` 0.8.18). Not checked: a real
+channel carrying subtitles, and an upgrade from 0.8.18 with a buffer playing.
+
 #### `timeshift_buffer`'s default Internal base URL ignores `DISPATCHARR_PORT` on one container
 
 **Opened 2026-11-20, from the behaviour review of the modular-install fix ("`timeshift_buffer` does not start on a

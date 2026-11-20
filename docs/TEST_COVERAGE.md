@@ -3506,6 +3506,39 @@ before anything is published, for a value that is not JSON and while Redis is do
 `start_buffer`'s answer names the route too (`_manifest_route_fields()`), both on a new start and on a reattach, so the
 addon's cold-start polls can go there.
 
+2026-11-20 (still 0.8.19, `docs/TIMESHIFT.md`'s "Subtitles and teletext in the buffer (0.8.19)"): the `segment` muxer.
+`_build_ffmpeg_command()` writes `-f segment -segment_format mpegts -individual_header_trailer 0`, the list size, `+live`
+and the start number, nothing of the `hls` muxer's and no `-segment_wrap`, and maps the subtitle streams in the audio
+map's spelling (`0:s:u?` beside `0:a:u?`, `0:s:u:?` beside `0:a:u:?`); with no audio map it is exactly 0.8.18's
+fallback argv on the `hls` muxer plus `-start_number`. Real ffmpeg (the `REQUIRE_FFMPEG` guard): the continuity test
+runs on both argvs; a DVB subtitle and a teletext stream are now in every segment, beside both audio tracks, with no
+continuity break; a 10 s GOP joined 4 s before its next keyframe keeps its video; a join with no keyframe after it and
+a video stream never sent both make the mapped argv exit with the probe's warning and "dimensions not set", which
+`_should_restart_without_audio_map(alive=False)` takes at once (not for either line alone, a 403, a buffer already
+restarted or on the fallback), and the fallback argv buffers both (video in the first, audio in the second); every
+segment file stays on disk until the reaper's sweep, which keeps the list and its margin; and a restart on an MPEG-2
+source after an H.264 one, through `_carry_playlist_over()` and the start number it returns, lists one run of
+sequences with the new format after the old, on both argvs. Pure and on `tmp_path`: `_carry_playlist_over()` writes
+`earlier.json` (no temporary file left) and numbers past the highest file on disk or else past the last listed, and
+keeps the old `earlier.json` when the playlist cannot be read; `_listed_segments()` puts the carried-over entries
+first across the skipped number, lists nothing twice before the new ffmpeg's first playlist, trims to the window, and
+carries two earlier runs after a second restart; it numbers by file name, where the segment muxer wrote
+`#EXT-X-MEDIA-SEQUENCE:0` for `seg_00003.ts` (`_numbered_by_filename()`, a list of other names left as listed);
+`_parse_earlier_segments()` drops what is not JSON, not a list, not a segment name, out of order or of the wrong types;
+`_listed_limit()`. `_get_live_manifest()` serves the carried-over segments first with their offsets, and a new
+`earlier.json` is read although `live.m3u8` is unchanged (the cache key). The sweep runs for every buffer and counts
+its margin from the first carried-over segment. The stream-switch rig now checks the start number spawned (2, past the
+old playlist's two segments) and `earlier.json`; `playlist_continued` is gone. Through `Plugin.run("get_live_manifest")`:
+a mapped start whose ffmpeg exited with the refusal at the end of a log whose head is 5,000 decoder errors is
+restarted on the `hls` fallback and answered "not ready" 7 s in, and one that exited on a 403 is torn down as fatal,
+as before. From the branch's review: the mapped argv carries `-fflags +flush_packets` before `-f`; `_listed_segments()`
+ignores `earlier.json` with no limit; and a buffer with a playlist whose adopted switch-restart ffmpeg exited on the
+refusal is restarted once on the `hls` fallback with `-start_number` past its segments and `earlier.json` written,
+answered as not ended, where one that exited for another reason, was already restarted or is on the fallback stays
+ended. The behaviour tests fail on the previous plugin code (most argv tests also on its signature, which lost
+`wrap_segments` and `continue_playlist`). Not covered: ffmpeg 9.0.2's side (the container matrix and the live check
+are in the closed entry), and the reaper's 15 s cadence itself.
+
 ## Tools
 
 ### `tools/tests/`

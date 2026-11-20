@@ -3671,7 +3671,8 @@ same matrix there):
   in 0.8.17: ffmpeg's default selection picks a teletext stream for any output that takes subtitles (teletext is
   neither a text nor a bitmap format), so a channel with a teletext PID never started in Server-side mode. Not mapping
   subtitles fixes that too. Subtitles could only reach Server-side mode by moving the buffer off the `hls` muxer, which
-  is there for the continuity counters ("Packet corrupt", above).
+  is there for the continuity counters ("Packet corrupt", above). 0.8.19 did that ("Subtitles and teletext in the
+  buffer (0.8.19)", below).
 - **Video: `0:v:0?`, the first video stream, without `:u`.** For video, `u` needs a picture size, which the probe only
   learns from a keyframe. A source cut mid-GOP, with no keyframe within the probe's 5 s, probes as 0x0; `0:v:u?` then
   dropped the video and the segments were audio only, with no error. ffmpeg copies such a stream fine (0.8.17 did).
@@ -3754,7 +3755,9 @@ matrix only); Kodi 22 against these real channels (the segments are the same whi
 ### A video stream that is declared and never sent
 
 *2026-11-10. Found by the 2026-11-10 bug-hunting sweep before 0.8.18 was released; fixed in 0.8.18 by the
-maintainer's choice of the two options in `docs/CLOSED_ITEMS.md`'s entry.*
+maintainer's choice of the two options in `docs/CLOSED_ITEMS.md`'s entry. Describes the `hls` muxer of 0.8.18: from
+0.8.19 the mapped start's `segment` muxer refuses the stream and ffmpeg exits, and the restart comes at once ("Subtitles
+and teletext in the buffer (0.8.19)", below); the restart's argv and the timed check for a live ffmpeg are unchanged.*
 
 The `?` in `-map 0:v:0?` forgives only a stream that is not declared at all. A video stream the programme map lists and
 no packet ever arrives for (a radio service that declares a video PID, or a dead first video PID beside a live second
@@ -3909,7 +3912,8 @@ decides:
    adoption with viewers, heartbeats and the access token kept). What differs: the directory is kept, and the new
    ffmpeg runs with `-hls_flags ...+append_list+discont_start`, so it reads the playlist the old one left, numbers on
    from its last segment and marks the join with `#EXT-X-DISCONTINUITY`. The client sees one playlist under one token
-   and reads on across the join. The new ffmpeg starts while the old one is still frozen, and the old one is killed
+   and reads on across the join. (From 0.8.19 the plugin carries the playlist on itself, `earlier.json` and a start
+   number; "Subtitles and teletext in the buffer (0.8.19)", below.) The new ffmpeg starts while the old one is still frozen, and the old one is killed
    once the new one has run for 1.5 s (`_OVERLAP_SECONDS`): the proxy's channel never has no client. With Dispatcharr's
    default channel shutdown delay of 0, the last client leaving stops the channel at once, and a kill before the
    reconnect left it stopping (a 503 "Channel is stopping") or started again on its first stream. A new ffmpeg that
@@ -4227,6 +4231,90 @@ Not checked live: Dispatcharr 0.33, and a port that drops packets instead of ref
 then delays a cold start once).
 The Stop after 24 minutes on the route answered within 2 s, but the addon's background login refresh had run seconds
 before it, so the Stop's own token refresh noted above was not exercised.
+
+## Subtitles and teletext in the buffer (0.8.19)
+
+*2026-11-20. Closes `docs/CLOSED_ITEMS.md`'s "`timeshift_buffer`: DVB subtitles and teletext never reach Kodi
+in Server-side mode", whose live checks the same day showed what Off mode offers: the DVB subtitles in Kodi's subtitle menu
+and teletext in its teletext viewer, on Kodi 21 and 22 alike.*
+
+The buffer's ffmpeg writes with the `segment` muxer and `-individual_header_trailer 0`, and maps every subtitle stream
+with a known codec (`0:s:u?`, or `0:s:u:?` on an ffmpeg that reads the audio map that way: the subtitle map is the audio
+map with its stream type changed, so it is always a spelling the probe found this ffmpeg reads). The `hls` muxer, used
+from 0.8.0, cannot carry subtitles in the MPEG-TS: it hands them to a WebVTT muxer, which refuses DVB subtitles and
+teletext and fails the start. `-individual_header_trailer 0` keeps one MPEG-TS muxer across all the files, so the
+continuity counters run on across each splice the addon makes, which is what 0.8.0 moved to `hls` for ("Packet
+corrupt", above: the `segment` muxer's default starts a fresh muxer, counters at 0, in every file). Each file still
+starts with the SDT, PAT and PMT (the segment muxer turns on the MPEG-TS muxer's `resend_headers`), and the playlist is
+written to a temporary file and renamed, as the `hls` muxer's was.
+
+Measured with ffmpeg 6.1 over a generated source (video, two audio languages, a DVB subtitle stream and a teletext
+stream): both subtitle streams in every segment, no continuity break across the concatenated segments, no corrupt
+packet; the real-ffmpeg tests pin the subtitle streams, the continuity and every case below. Text subtitles (WebVTT,
+SubRip), which an HLS upstream behind a redirecting channel could bring, still start: the MPEG-TS muxer carries them
+as private data with a warning, and Kodi ignores such a stream.
+
+What the `hls` muxer did besides, the plugin does now:
+
+- **Deleting old segments.** The segment muxer deletes nothing. The reaper's sweep (`_sweep_stray_segments()`, 0.8.18's
+  cleanup after a stream-switch restart, now run for every buffer on each 15 s tick) deletes the files numbered below
+  the first listed segment by more than `segment_keep_extra`, the same margin `-hls_delete_threshold` kept. A file is
+  deleted up to one tick later than the `hls` muxer deleted it, about 8 more files at 2 s segments; while no reaper
+  runs (Redis down), nothing is deleted.
+- **The playlist across a stream-switch restart.** The `hls` muxer's `append_list` read the killed ffmpeg's playlist
+  and continued it; the segment muxer writes a list of its own segments only. Before the new ffmpeg starts,
+  `_carry_playlist_over()` writes what the playlist lists then to `earlier.json` (not served), and the readers
+  (`_listed_segments()`, for the manifest and the sweep) put those entries before `live.m3u8`'s, keeping only those
+  older than its first and the newest `visible_segments` in all, so the window stays the size it was. The new ffmpeg
+  numbers its first segment one past the highest file on disk, not past the last listed: the frozen old ffmpeg holds
+  its next segment open, and if the new one is refused and the old one resumed (the restart's `keep_old()`), a reused
+  number would have truncated that file under it. The number skipped leaves a gap in the sequence, which the addon
+  takes as it comes (it appends whatever is newer than what it has), so `earlier.json` keeps each entry's own
+  sequence rather than one `#EXT-X-MEDIA-SEQUENCE`. A second restart carries both earlier runs over. `earlier.json` is
+  read only for a state with `visible_segments`, which every 0.8.19 restart's adoption sets: a state from before
+  0.8.19 whose restart was refused and kept its old ffmpeg would otherwise list that snapshot for good, after its
+  `hls` muxer had deleted the files (found by the branch's review).
+
+Until every worker runs 0.8.19 (the restart the CHANGELOG asks for), the reaper's leader can be an older copy, which
+sweeps only buffers continued after a switch, and an older worker reads a carried-over playlist by
+`#EXT-X-MEDIA-SEQUENCE` without `earlier.json`: a buffer started in that window is not swept until the restart.
+- **Listing a segment only once it is whole.** The segment muxer renames the new playlist into place before it closes
+  the segment it lists (`segment_end()` in `libavformat/segment.c`, read in 6.1.1 and 8.0), so up to an I/O buffer of
+  that segment could reach the disk after a poll had stat()ed it short, and the addon keeps the first size it is told
+  (found by the branch's review, from the source; not seen happen). `-fflags +flush_packets` reaches the MPEG-TS muxer
+  inside (the segment muxer copies its flags), and that muxer's flush at each segment's end then writes every byte
+  before the rename. The `hls` muxer closed each segment before listing it.
+- **Sequence numbers from the file names.** The segment muxer started at a `-segment_start_number` writes
+  `#EXT-X-MEDIA-SEQUENCE:0` until its first entry leaves the list (ffmpeg 6.1: `seg_00003.ts` listed under sequence
+  0), which after a restart would number the new segments below the carried-over ones for a whole window. Both muxers
+  name each file by its sequence (`seg_%05d.ts`), so `_listed_segments()` takes the sequence from the name.
+
+**A video stream with no picture size.** The segment muxer refuses a video stream the probe found no picture size for
+("dimensions not set") and ffmpeg exits, where the `hls` muxer copied it. Two cases produce one: a video stream that is
+declared and never sent ("A video stream that is declared and never sent", above), and a join between two keyframes
+further apart than the probe. ffmpeg's MPEG-TS probe waits up to 7 s for a stream it lacks parameters for, so the
+second needs the next keyframe more than 7 s after the join (measured with ffmpeg 6.1: a 10 s GOP joined 4 s before
+its next keyframe starts with video; a 24 s GOP joined mid-GOP fails). ffmpeg's own pick of streams passes over the
+first case's video but still takes the second's, so on the segment muxer the fallback would fail too. The fallback argv
+(no audio map) therefore stays 0.8.18's own, on the `hls` muxer, with `-start_number` added for a stream-switch
+restart, and a mapped start whose ffmpeg exited with the probe's "Could not find codec parameters ... (Video" warning
+and the refusal at the end of its log is restarted on it at once (`_should_restart_without_audio_map()` with
+`alive=False`, from the poll that finds it dead, before the failure would be reported). The same refusal can end a
+stream-switch restart's ffmpeg after its adoption: its probe outlasts the 1.5 s overlap, so the old ffmpeg is already
+gone (found by the branch's review). A buffer with a playlist whose ffmpeg exited that way can only be such a
+restart's, and the poll that would report it ended restarts it once on the fallback with the playlist carried on
+(`_restart_if_switch_was_refused()`), instead. Such a channel is buffered as 0.8.18's fallback did, with one audio
+track and no subtitles; the never-sent video is restarted after the probe's few
+seconds instead of after the 12 s the timed check waited. A raised `-analyzeduration` would have caught the long-GOP
+join without a restart, but the MPEG-TS probe reads its whole duration even when every stream is found, so it would
+have delayed every start (measured with ffmpeg 6.1, a 1 s-GOP stream served at its real rate: first playlist at 4.0 s
+with the default probe, 13.9 s with `-analyzeduration 15M`).
+
+**Checked live (2026-11-20, Dispatcharr 0.34.1's image and ffmpeg 9.0.2, Kodi 21.3 and Kodi 22 RC1, Server-side
+mode):** the DVB subtitles in the subtitle menu and on the picture, teletext in the teletext viewer, through pause,
+resume and rewind; stream switches carried over and numbered on; a switch onto a stream joined far from its next
+keyframe restarted on the `hls` fallback after the refusal; the sweep held a 1-minute buffer at 61 to 67 files. The
+details are in `docs/CLOSED_ITEMS.md`'s entry.
 
 ## The plugin's moving parts
 
