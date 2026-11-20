@@ -1800,13 +1800,26 @@ def _loopback_answers(port: int) -> bool:
         return False
 
 
+def _dispatcharr_port(environ) -> str:
+    """`DISPATCHARR_PORT` as the port nginx listens on: Dispatcharr's docker/init/03-init-dispatcharr.sh substitutes it
+    into the nginx config unless it is not a whole number, when nginx gets 9191 instead (the variable itself keeps the
+    bad value, the entrypoint having exported it before that check). That check is on the raw value, so a stray space
+    (" 8080") also leaves nginx on 9191. Unset or blank (a bare-metal install; the entrypoint turns empty into 9191) is
+    9191 too, and so is a number no TCP port can be, where Dispatcharr's nginx would not start at all."""
+    port = environ.get("DISPATCHARR_PORT") or ""
+    if not (port.isascii() and port.isdigit()) or not 1 <= int(port) <= 65535:
+        return "9191"
+    return str(int(port))
+
+
 def _internal_base_url(settings_dict: dict, environ, loopback_answers) -> str:
     """The base URL the buffer's ffmpeg reads Dispatcharr's live proxy from: the Internal base URL setting, unless it
-    is left at its default where loopback is not Dispatcharr.
+    is left at its default, which then means Dispatcharr's own port on loopback or, on a modular install where that
+    does not answer, Dispatcharr's web container.
 
     From Dispatcharr 0.34 plugin actions run in the Celery worker, and on a modular install (Dispatcharr's default
     docker/docker-compose.yml, `DISPATCHARR_ENV=modular`) that is its own container, where nothing listens on
-    127.0.0.1:9191: every start failed with ffmpeg's "Connection refused" (checked live on a 0.34.1 modular stack,
+    loopback: every start failed with ffmpeg's "Connection refused" (checked live on a 0.34.1 modular stack,
     docs/CLOSED_ITEMS.md). Dispatcharr's own recordings meet the same problem and pick their URL in
     apps/channels/tasks.py (the DVR stream base URL): an explicit `DISPATCHARR_INTERNAL_TS_BASE_URL`, else, on a
     modular install, `http://<DISPATCHARR_WEB_HOST or web>:<DISPATCHARR_PORT or 9191>`. The default follows those two
@@ -1814,17 +1827,27 @@ def _internal_base_url(settings_dict: dict, environ, loopback_answers) -> str:
     nginx does, and a buffer reading through loopback is judged by Network Access as loopback (or by the viewer's
     X-Real-IP, which 0.33 trusts from loopback), not as a container's address. Their all-in-one fallback (uwsgi on
     127.0.0.1:5656) is never taken. An unset or blank variable counts as absent, where Dispatcharr would use the
-    blank."""
+    blank.
+
+    Everywhere else the default is loopback on `DISPATCHARR_PORT` (_dispatcharr_port()): on the all-in-one image nginx
+    listens there, so a port moved from 9191 (docker-compose.aio.yml's own example is 8080) failed every start until
+    the setting was changed by hand (docs/CLOSED_ITEMS.md). The loopback check never counts the plugin's own Buffer
+    server port, already listening in this container by the time a buffer starts: with `DISPATCHARR_PORT` equal to
+    it, the check would find the plugin itself and ffmpeg would ask it for Dispatcharr's stream."""
     configured = _str_setting(settings_dict, "internal_base_url", _DEFAULT_INTERNAL_BASE_URL)
     if configured.rstrip("/") != _DEFAULT_INTERNAL_BASE_URL:
         return configured
-    if (environ.get("DISPATCHARR_ENV") or "").strip().lower() != "modular" or loopback_answers(9191):
-        return configured
+    port = _dispatcharr_port(environ)
+    loopback = f"http://127.0.0.1:{port}"
+    if (environ.get("DISPATCHARR_ENV") or "").strip().lower() != "modular":
+        return loopback
+    own_port = _int_setting(settings_dict, "http_port", 9192, minimum=1, maximum=65535)
+    if int(port) != own_port and loopback_answers(int(port)):
+        return loopback
     explicit = (environ.get("DISPATCHARR_INTERNAL_TS_BASE_URL") or "").strip()
     if explicit:
         return explicit.rstrip("/")
     host = (environ.get("DISPATCHARR_WEB_HOST") or "").strip() or "web"
-    port = (environ.get("DISPATCHARR_PORT") or "").strip() or "9191"
     return f"http://{host}:{port}"
 
 
@@ -2164,10 +2187,10 @@ def _start_ffmpeg(
     segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1, maximum=_MAX_SEGMENT_SECONDS)
     buffer_minutes = _int_setting(settings_dict, "buffer_minutes", 60, minimum=1, maximum=_MAX_BUFFER_MINUTES)
     base_url = _internal_base_url(settings_dict, os.environ, _loopback_answers)
-    if base_url != _str_setting(settings_dict, "internal_base_url", _DEFAULT_INTERNAL_BASE_URL):
+    if base_url.rstrip("/") != _str_setting(settings_dict, "internal_base_url", _DEFAULT_INTERNAL_BASE_URL).rstrip("/"):
         logger.info(
-            "timeshift_buffer: Internal base URL is left at its default; reading the stream from %s, as "
-            "Dispatcharr's own recordings do on this install",
+            "timeshift_buffer: Internal base URL is left at its default; reading the stream from %s, where "
+            "Dispatcharr answers on this install",
             base_url,
         )
     http_port = _int_setting(settings_dict, "http_port", 9192, minimum=1, maximum=65535)
@@ -5041,9 +5064,10 @@ class Plugin:
             "default": _DEFAULT_INTERNAL_BASE_URL,
             "help_text": (
                 "How the plugin reaches Dispatcharr's own live proxy from inside its container. Left at this "
-                "default, a modular install (Dispatcharr's default docker-compose.yml, separate web and Celery "
-                "containers) where nothing answers on 127.0.0.1:9191 uses the same address Dispatcharr's own "
-                "recordings do, usually http://web:9191; anything else entered here is used as it is."
+                "default, the port follows DISPATCHARR_PORT, and a modular install (Dispatcharr's default "
+                "docker-compose.yml, separate web and Celery containers) where nothing answers on loopback uses "
+                "the same address Dispatcharr's own recordings do, usually http://web:9191; anything else entered "
+                "here is used as it is."
             ),
         },
         {

@@ -67,8 +67,8 @@ without guide data has none; open it from Kodi's Recordings list instead.
    IPv6 (a dual-stack `::` socket), and on IPv4 alone where it doesn't.
 5. Check **Internal base URL** matches how this plugin reaches Dispatcharr's
    own web service from inside the container (default
-   `http://127.0.0.1:9191`; on a modular install, left at that default, the plugin uses the address Dispatcharr's own
-   recordings use, usually `http://web:9191`).
+   `http://127.0.0.1:9191`). Left at that default, the port follows `DISPATCHARR_PORT` if you set it, and on a modular
+   install the plugin uses the address Dispatcharr's own recordings use, usually `http://web:9191`.
 6. The account calling these actions must be a Dispatcharr **admin**
    account (`user_level >= 10`).
 7. If you have narrowed **Settings → Network Access → Streams**, it must allow each Kodi device's address **and**
