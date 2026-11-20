@@ -2930,6 +2930,17 @@ with an unhelpful error, instead of falling back to the documented
 default. Falls back to `default` for a missing, non-string, or
 empty/whitespace-only (after `strip()`) value -- deliberately doesn't
 reject a relative path, since that's unusual but not itself invalid.
+`_internal_base_url()` (2026-11-20, 0.8.19; `CLOSED_ITEMS.md`'s "`timeshift_buffer` does not start on a modular
+Dispatcharr 0.34 install with its defaults"): with the Internal base URL left at its default, a modular install
+(`DISPATCHARR_ENV=modular`) where nothing answers on 127.0.0.1:9191 reads the stream from
+`http://<DISPATCHARR_WEB_HOST or web>:<DISPATCHARR_PORT or 9191>` and an explicit `DISPATCHARR_INTERNAL_TS_BASE_URL`
+wins, as Dispatcharr's own DVR does; where loopback answers (0.33's web container) it stays, blank variables count as
+absent, one container keeps loopback without checking it whatever its variables, a changed value is used as typed, and
+`_start_ffmpeg()` puts the result on ffmpeg's input. `_loopback_answers()` is checked against a real listening socket.
+An autouse fixture clears the four variables, which a Dispatcharr container sets.
+`_buffer_failed_message()` names a refused, timed-out or unroutable connection and an unresolvable host (the line
+ffmpeg's TCP layer writes, seen live as "Connection to tcp://127.0.0.1:9191 failed: Connection refused") instead of the
+provider-limit hint.
 `_compute_segment_counts` (the pure segment-count-sizing core of
 `_start_ffmpeg`, including the `visible_segments * segment_seconds ==
 buffer_minutes * 60` invariant `docs/TIMESHIFT.md` cites to rule out a

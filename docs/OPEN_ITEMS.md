@@ -4,12 +4,12 @@
 
 ## Status at a glance
 
-**11 open, 431 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**11 open, 432 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
   Dispatcharr with its plugin catalogue ([DISPATCHARR_SOURCE_REVIEW.md](DISPATCHARR_SOURCE_REVIEW.md)).
-- One from the 2026-11-17 review of Dispatcharr 0.34.0: plugin actions running in Celery workers.
+- One from the 2026-11-20 behaviour review of the modular-install fix: the default port on one container.
 - One upstream note from the 2026-10-25 review of Dispatcharr 0.33.0, and one from the 2026-11-01 live check of a
   recurring rule on a spring-forward day.
 - One upstream note on Kodi from the 2026-11-16 live check of the settings re-delivery: a GUI deadlock after a PVR
@@ -41,7 +41,7 @@ recording's 20 s retry budget).
 | Open: Upstream (Dispatcharr) or documentation accuracy | 5 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 377 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 378 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 45 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -127,27 +127,17 @@ stream switch).
 
 ### Fix known, not yet done
 
-#### `timeshift_buffer` does not start on a modular Dispatcharr 0.34 install with its defaults
+#### `timeshift_buffer`'s default Internal base URL ignores `DISPATCHARR_PORT` on one container
 
-**Opened 2026-11-19, from the live check that closed "Dispatcharr 0.34 runs plugin actions in Celery workers"
-(`CLOSED_ITEMS.md`); confirmed on a throwaway 0.34.1 stack laid out as Dispatcharr's default `docker/docker-compose.yml`
-(web, Celery, Postgres and Redis in separate containers).** From 0.34 plugin actions run in the Celery container, so
-the buffer's ffmpeg and the plugin's file server run there too. Up to 0.33 they ran in the web container, where the
-one-container instructions held. Three things then go wrong with the defaults:
-- `internal_base_url` defaults to `http://127.0.0.1:9191`, and nothing listens there in the Celery container: ffmpeg
-  logs "Connection to tcp://127.0.0.1:9191 failed: Connection refused", the buffer is reported fatal at the first poll,
-  and the message blames "a provider-side concurrent-stream limit" before quoting that log line.
-- The file server listens on 9192 in the Celery container, which publishes no port in that compose file; the plugin
-  README's step 4 says to publish it "the same way 9191 already is", which is the web container.
-- README step 7's loopback rule for Redirect-profile channels: from the Celery container the stream request comes from
-  that container's Docker network address, not loopback (read in the source, not checked live).
+**Opened 2026-11-20, from the behaviour review of the modular-install fix ("`timeshift_buffer` does not start on a
+modular Dispatcharr 0.34 install with its defaults", `CLOSED_ITEMS.md`); read in Dispatcharr 0.34.1's source, not seen
+live.** On the all-in-one image `DISPATCHARR_PORT` moves nginx's own listening port (`docker/init/03-init-dispatcharr.sh`
+substitutes it into the nginx config, and `docker-compose.aio.yml` suggests 8080 as an example), but the plugin's
+default stays `http://127.0.0.1:9191`, so with another port every start fails with "the buffer could not connect to
+127.0.0.1:9191" until the setting is changed by hand. This predates the modular fix. **Fix:** on one container, default
+to `http://127.0.0.1:<DISPATCHARR_PORT or 9191>`, with a test, and check it live on an all-in-one stack with the port
+moved.
 
-With `internal_base_url` set to `http://web:9191` and 9192 published on the Celery container, playback worked as on one
-container. **Fix:** default `internal_base_url` the way Dispatcharr's own DVR finds the web container when the setting
-is left alone (its DVR stream base URL in `apps/channels/tasks.py`: `DISPATCHARR_ENV=modular` means
-`http://<DISPATCHARR_WEB_HOST or web>:<DISPATCHARR_PORT or 9191>`), name a refused connection to that URL in the fatal
-message instead of the provider limit, and add a modular-install note to the plugin README (the port on the Celery
-container, the Internal base URL, Network Access).
 
 ### Architectural / concurrency
 

@@ -28,7 +28,14 @@ conversation that produced this draft for the full reasoning):
   whose stream profile is Redirect (or whose profile lookup fails, see
   _ffmpeg_input_headers()) or a start with no client_ip sends no
   X-Real-IP and is judged against loopback. A narrowed STREAMS list
-  therefore has to allow both. The viewer's address is the one the addon
+  therefore has to allow both. On a modular 0.34 install the request
+  comes from the Celery container (_internal_base_url()), so that
+  container's Docker network address takes loopback's place (checked
+  live 2026-11-20 with a Redirect-profile channel). 0.34's
+  get_client_ip() trusts X-Real-IP from any private peer unless
+  DISPATCHARR_TRUSTED_PROXIES narrows that, in which case it has to
+  include the Celery container (on one container, loopback) for the
+  viewer's address to count (read in the source). The viewer's address is the one the addon
   saw on its own side of the connection (CURLINFO_LOCAL_IP), so behind NAT
   or a VPN it is not the address direct playback is judged by. A refused
   start's ffmpeg exits on a 403, which _buffer_failed_message() names.
@@ -1533,14 +1540,8 @@ def _stop_http_server_locked(logger):
 
 
 def _proxy_url(channel_uuid: str, base_url: str) -> str:
-    # Confirmed reachable and working live, extensively, against the
-    # deployment this was developed against. Assumes nginx itself listens
-    # on this loopback address/port (matching the externally-mapped port in
-    # docker-compose.yml); the modular compose config routes the web
-    # service through a Unix socket behind nginx rather than necessarily
-    # exposing a plain TCP port on its own, so this default may still need
-    # adjusting on a differently-shaped deployment -- see the
-    # internal_base_url setting's own help text.
+    # base_url is _internal_base_url()'s: 127.0.0.1:9191 (nginx inside the all-in-one container) was confirmed live,
+    # extensively, and http://web:9191 on a modular 0.34.1 install (2026-11-20).
     #
     # output_format=mpegts because the proxy answers this request (which carries the caller's JWT unless the channel
     # redirects, see _ffmpeg_input_headers()) in the format _resolve_output_format() (apps/proxy/live_proxy/views.py)
@@ -1785,6 +1786,46 @@ def _str_setting(settings_dict: dict, key: str, default: str) -> str:
     if not isinstance(value, str) or not value.strip():
         return default
     return value.strip()
+
+
+_DEFAULT_INTERNAL_BASE_URL = "http://127.0.0.1:9191"
+
+
+def _loopback_answers(port: int) -> bool:
+    """Whether something accepts a TCP connection on 127.0.0.1:`port` in this container (_internal_base_url())."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def _internal_base_url(settings_dict: dict, environ, loopback_answers) -> str:
+    """The base URL the buffer's ffmpeg reads Dispatcharr's live proxy from: the Internal base URL setting, unless it
+    is left at its default where loopback is not Dispatcharr.
+
+    From Dispatcharr 0.34 plugin actions run in the Celery worker, and on a modular install (Dispatcharr's default
+    docker/docker-compose.yml, `DISPATCHARR_ENV=modular`) that is its own container, where nothing listens on
+    127.0.0.1:9191: every start failed with ffmpeg's "Connection refused" (checked live on a 0.34.1 modular stack,
+    docs/CLOSED_ITEMS.md). Dispatcharr's own recordings meet the same problem and pick their URL in
+    apps/channels/tasks.py (the DVR stream base URL): an explicit `DISPATCHARR_INTERNAL_TS_BASE_URL`, else, on a
+    modular install, `http://<DISPATCHARR_WEB_HOST or web>:<DISPATCHARR_PORT or 9191>`. The default follows those two
+    only on a modular install where loopback does not answer: up to 0.33 actions ran in the web container, whose
+    nginx does, and a buffer reading through loopback is judged by Network Access as loopback (or by the viewer's
+    X-Real-IP, which 0.33 trusts from loopback), not as a container's address. Their all-in-one fallback (uwsgi on
+    127.0.0.1:5656) is never taken. An unset or blank variable counts as absent, where Dispatcharr would use the
+    blank."""
+    configured = _str_setting(settings_dict, "internal_base_url", _DEFAULT_INTERNAL_BASE_URL)
+    if configured.rstrip("/") != _DEFAULT_INTERNAL_BASE_URL:
+        return configured
+    if (environ.get("DISPATCHARR_ENV") or "").strip().lower() != "modular" or loopback_answers(9191):
+        return configured
+    explicit = (environ.get("DISPATCHARR_INTERNAL_TS_BASE_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    host = (environ.get("DISPATCHARR_WEB_HOST") or "").strip() or "web"
+    port = (environ.get("DISPATCHARR_PORT") or "").strip() or "9191"
+    return f"http://{host}:{port}"
 
 
 def _compute_segment_counts(buffer_minutes: int, segment_seconds: int) -> tuple[int, int]:
@@ -2122,7 +2163,13 @@ def _start_ffmpeg(
     storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
     segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1, maximum=_MAX_SEGMENT_SECONDS)
     buffer_minutes = _int_setting(settings_dict, "buffer_minutes", 60, minimum=1, maximum=_MAX_BUFFER_MINUTES)
-    base_url = _str_setting(settings_dict, "internal_base_url", "http://127.0.0.1:9191")
+    base_url = _internal_base_url(settings_dict, os.environ, _loopback_answers)
+    if base_url != _str_setting(settings_dict, "internal_base_url", _DEFAULT_INTERNAL_BASE_URL):
+        logger.info(
+            "timeshift_buffer: Internal base URL is left at its default; reading the stream from %s, as "
+            "Dispatcharr's own recordings do on this install",
+            base_url,
+        )
     http_port = _int_setting(settings_dict, "http_port", 9192, minimum=1, maximum=65535)
 
     visible_segments, wrap_segments = _compute_segment_counts(buffer_minutes, segment_seconds)
@@ -3260,6 +3307,14 @@ class BufferFailedError(RuntimeError):
 
 # ffmpeg's HTTP input logs "HTTP error 403 Forbidden" and exits with "Server returned 403 Forbidden (access denied)".
 _FFMPEG_HTTP_403_RE = re.compile(r"\b403 Forbidden\b")
+# ffmpeg's TCP layer: "Connection to tcp://127.0.0.1:9191 failed: Connection refused" (seen live on a modular 0.34.1
+# install, _internal_base_url()), and "Failed to resolve hostname web: ..." for a name that does not resolve.
+_FFMPEG_CONNECT_FAILED_RE = re.compile(
+    r"Connection to tcp://(?P<addr>\S+) failed: "
+    r"(?:Connection refused|Connection timed out|Operation timed out|No route to host|Host is unreachable"
+    r"|Network is unreachable)"
+    r"|Failed to resolve hostname (?P<host>[^\s:]+)"
+)
 
 
 def _buffer_failed_message(ffmpeg_log_lines) -> str:
@@ -3268,12 +3323,26 @@ def _buffer_failed_message(ffmpeg_log_lines) -> str:
     A 403 is named apart from the usual provider-limit hint: a Kodi device (or loopback) outside a narrowed Streams
     network-access list looked like a provider-side stream limit (2026-10-24 bug sweep; the module docstring's
     STREAMS note says which address is judged when). On a Redirect-profile channel ffmpeg follows the proxy's 302, so
-    the 403 can also be the provider's own, which the message has to leave open."""
+    the 403 can also be the provider's own, which the message has to leave open. So is a connection that failed
+    outright, which on a modular 0.34 install with the Internal base URL pointing at loopback read as the provider
+    limit too (_internal_base_url())."""
+    connect_failed = next(
+        (match for match in map(_FFMPEG_CONNECT_FAILED_RE.search, ffmpeg_log_lines) if match is not None), None
+    )
     if any(_FFMPEG_HTTP_403_RE.search(line) for line in ffmpeg_log_lines):
         cause = (
             "the stream was refused with HTTP 403 -- if Settings -> Network Access -> Streams is narrowed, it must "
-            "allow this Kodi device's address and loopback (127.0.0.1); for a channel whose stream profile is "
-            "Redirect, the provider itself may have refused it"
+            "allow this Kodi device's address and loopback (127.0.0.1, or on a modular install the Celery "
+            "container's address); for a channel whose stream profile is Redirect, the provider itself may have "
+            "refused it"
+        )
+    elif connect_failed is not None:
+        target = connect_failed.group("addr") or connect_failed.group("host")
+        cause = (
+            f"the buffer could not connect to {target} -- if that is Dispatcharr, check the plugin's Internal base "
+            "URL: from Dispatcharr 0.34 the plugin runs in the Celery worker, which on a modular install is its own "
+            "container, where 127.0.0.1 is not Dispatcharr; for a channel whose stream profile is Redirect it may be "
+            "the provider's address"
         )
     else:
         cause = "a provider-side concurrent-stream limit is the most common cause"
@@ -4969,13 +5038,12 @@ class Plugin:
             "id": "internal_base_url",
             "label": "Internal base URL",
             "type": "string",
-            "default": "http://127.0.0.1:9191",
+            "default": _DEFAULT_INTERNAL_BASE_URL,
             "help_text": (
-                "How the plugin reaches Dispatcharr's own live proxy from "
-                "inside the container. The default works for a standard "
-                "docker-compose setup; if your deployment routes the web "
-                "service differently (e.g. through a Unix socket behind "
-                "nginx rather than a plain TCP port), adjust this to match."
+                "How the plugin reaches Dispatcharr's own live proxy from inside its container. Left at this "
+                "default, a modular install (Dispatcharr's default docker-compose.yml, separate web and Celery "
+                "containers) where nothing answers on 127.0.0.1:9191 uses the same address Dispatcharr's own "
+                "recordings do, usually http://web:9191; anything else entered here is used as it is."
             ),
         },
         {

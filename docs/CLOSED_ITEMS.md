@@ -6,6 +6,58 @@
 
 ### Fixed
 
+#### `timeshift_buffer` does not start on a modular Dispatcharr 0.34 install with its defaults
+
+**Opened 2026-11-19, from the live check that closed "Dispatcharr 0.34 runs plugin actions in Celery workers"
+(`CLOSED_ITEMS.md`); confirmed on a throwaway 0.34.1 stack laid out as Dispatcharr's default `docker/docker-compose.yml`
+(web, Celery, Postgres and Redis in separate containers).** From 0.34 plugin actions run in the Celery container, so
+the buffer's ffmpeg and the plugin's file server run there too. Up to 0.33 they ran in the web container, where the
+one-container instructions held. Three things then go wrong with the defaults:
+- `internal_base_url` defaults to `http://127.0.0.1:9191`, and nothing listens there in the Celery container: ffmpeg
+  logs "Connection to tcp://127.0.0.1:9191 failed: Connection refused", the buffer is reported fatal at the first poll,
+  and the message blames "a provider-side concurrent-stream limit" before quoting that log line.
+- The file server listens on 9192 in the Celery container, which publishes no port in that compose file; the plugin
+  README's step 4 says to publish it "the same way 9191 already is", which is the web container.
+- README step 7's loopback rule for Redirect-profile channels: from the Celery container the stream request comes from
+  that container's Docker network address, not loopback (read in the source, not checked live).
+
+With `internal_base_url` set to `http://web:9191` and 9192 published on the Celery container, playback worked as on one
+container. **Fix:** default `internal_base_url` the way Dispatcharr's own DVR finds the web container when the setting
+is left alone (its DVR stream base URL in `apps/channels/tasks.py`: `DISPATCHARR_ENV=modular` means
+`http://<DISPATCHARR_WEB_HOST or web>:<DISPATCHARR_PORT or 9191>`), name a refused connection to that URL in the fatal
+message instead of the provider limit, and add a modular-install note to the plugin README (the port on the Celery
+container, the Internal base URL, Network Access).
+
+**Fixed 2026-11-20 in `timeshift_buffer` 0.8.19 (not yet released); confirmed live the same day on a fresh throwaway
+0.34.1 stack laid out as before, with the Buffer server port published on the Celery container and the plugin's
+settings left empty.** Left at its default on a modular install (`DISPATCHARR_ENV=modular`) where nothing answers on
+127.0.0.1:9191, the Internal base URL now follows Dispatcharr's own DVR stream base URL (`_internal_base_url()`): an
+explicit `DISPATCHARR_INTERNAL_TS_BASE_URL`, else `http://<DISPATCHARR_WEB_HOST or web>:<DISPATCHARR_PORT or 9191>`.
+The loopback check keeps Dispatcharr 0.33 on a modular install, whose plugin actions run in the web container, on the
+loopback address its Network Access rules expect (the behaviour review's finding). Nothing
+changes on one container, whatever its variables: the lab's own all-in-one server reports its mode as "aio"
+(`/api/core/settings/env/`). A value the user changed is used as typed. `_buffer_failed_message()` names a refused, timed-out or unroutable connection and an
+unresolvable host instead of the provider limit. The plugin README has a section on modular installs.
+Live, on that stack:
+- With empty settings the Celery log said the stream was read from `http://web:9191`, and segments appeared within
+  6 s. Repeated with the loopback check on a fresh 0.34.1 stack: the same.
+- On a 0.33.0 stack of the same layout, with empty settings, the action ran in the web container, loopback answered,
+  the plugin kept `127.0.0.1:9191` (no "left at its default" log line) and segments appeared as on one container.
+- Kodi 21 (released addon 0.13.3, which polls through plugin actions) played the channel, paused for 20 s with the
+  buffer growing, resumed, seeked back and stopped, with no errors in its log. The buffer ended with the stop.
+- The manifest route (`/<channel>/manifest.json`) answered 200 with five segments through the port published on the
+  Celery container.
+- With the setting pointed at a closed port, the fatal message read "the buffer could not connect to
+  127.0.0.1:9393 -- if that is Dispatcharr, check the plugin's Internal base URL ...". An unresolvable host was named
+  the same way.
+- With the channel on the Redirect profile and Streams narrowed to 127.0.0.1/32, the start was refused with a 403.
+  With the Celery container's own address added, the request passed the check: the README's note that this address
+  takes loopback's place holds. The redirect itself then failed Dispatcharr's URL validation against the
+  one-client test source, a limit of the test rig.
+
+The first start on the fresh stack hit a 500 ("StreamProfile matching query does not exist") from a web worker that
+had served a request during the migrations. A restart of the web container cleared it; this was not the plugin.
+
 #### A paused viewer's timeshift buffer can be ended while Dispatcharr's task pool is busy (and a viewer at the live edge loses playback)
 
 **Opened 2026-11-17, from the live check of Dispatcharr 0.34's Celery workers and a source review of what fills them;
