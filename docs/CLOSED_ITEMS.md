@@ -6,6 +6,35 @@
 
 ### Fixed
 
+#### `timeshift_buffer`'s default Internal base URL ignores `DISPATCHARR_PORT` on one container
+
+**Opened 2026-11-20, from the behaviour review of the modular-install fix ("`timeshift_buffer` does not start on a
+modular Dispatcharr 0.34 install with its defaults", `CLOSED_ITEMS.md`); read in Dispatcharr 0.34.1's source, not seen
+live.** On the all-in-one image `DISPATCHARR_PORT` moves nginx's own listening port (`docker/init/03-init-dispatcharr.sh`
+substitutes it into the nginx config, and `docker-compose.aio.yml` suggests 8080 as an example), but the plugin's
+default stays `http://127.0.0.1:9191`, so with another port every start fails with "the buffer could not connect to
+127.0.0.1:9191" until the setting is changed by hand. This predates the modular fix. **Fix:** on one container, default
+to `http://127.0.0.1:<DISPATCHARR_PORT or 9191>`, with a test, and check it live on an all-in-one stack with the port
+moved.
+
+**Fixed 2026-11-20 in `timeshift_buffer` 0.8.19.** Left at its default, the Internal base URL is now loopback on
+`DISPATCHARR_PORT` (`_dispatcharr_port()`), and a modular install's loopback check and web-container fallback use the
+same port. The port is read as Dispatcharr's nginx reads it: its check (`^[0-9]+$` on the raw value, in
+`03-init-dispatcharr.sh`) runs after the entrypoint has exported the variable, so a value that fails it, a stray space
+included, still reaches the plugin while nginx listens on 9191; the plugin then uses 9191 too. Unset or blank is 9191
+(a bare-metal install, whose installer sets no such variable), and so is a number no TCP port can be. The behaviour
+review found two more corners, both fixed in the same change: on a modular install the loopback check skips the
+plugin's own Buffer server port, already listening in that container, which would otherwise answer for Dispatcharr when
+the two ports are equal; and a default saved with a trailing slash no longer logs a "reading the stream from" line for
+the same address. Unit tests: the port parsing, one container on a moved port (never asking the loopback check), the
+modular check on the moved port and on the plugin's own port, and `_start_ffmpeg()` on the moved port. Checked live on
+a throwaway 0.34.1 all-in-one stack with `DISPATCHARR_PORT=8080` and plugin settings empty: the merged plugin failed
+every start with "the buffer could not connect to 127.0.0.1:9191"; this branch logged "Internal base URL is left at its
+default; reading the stream from http://127.0.0.1:8080" and the buffer's playlist listed segments within about 6 s, the
+same with the setting saved as `http://127.0.0.1:9191/`. Kodi playback was not repeated on that stack: the addon's side
+is unchanged, and playback through a buffer reading Dispatcharr at another address was checked on the modular stack
+(the entry below).
+
 #### `timeshift_buffer` does not start on a modular Dispatcharr 0.34 install with its defaults
 
 **Opened 2026-11-19, from the live check that closed "Dispatcharr 0.34 runs plugin actions in Celery workers"

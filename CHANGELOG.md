@@ -67,10 +67,12 @@ Dispatcharr restart for every worker to pick it up.
   meant only for Kodi 22, after another device opened the same channel in the meantime.
 - **Buffers start on a modular Dispatcharr 0.34 install** (separate web and Celery containers, Dispatcharr's default
   `docker-compose.yml`). With **Internal base URL** left at its default, the plugin now reaches Dispatcharr at the
-  address Dispatcharr's own recordings use, usually `http://web:9191`, when `127.0.0.1:9191` does not answer; before,
+  address Dispatcharr's own recordings use, usually `http://web:9191`, when nothing answers on loopback; before,
   every start failed. A start that cannot
   connect is now reported as such instead of as a provider stream limit. The README has a new section on modular
   installs: the Buffer server port has to be published on the Celery container.
+- **Buffers start on an all-in-one install whose `DISPATCHARR_PORT` is not 9191.** With **Internal base URL** left at
+  its default, the plugin now uses that port; before, every start failed until the setting was changed by hand.
 
 ## [0.14.4] - 2026-11-14
 

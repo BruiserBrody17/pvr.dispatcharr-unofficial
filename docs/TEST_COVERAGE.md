@@ -2983,6 +2983,12 @@ wins, as Dispatcharr's own DVR does; where loopback answers (0.33's web containe
 absent, one container keeps loopback without checking it whatever its variables, a changed value is used as typed, and
 `_start_ffmpeg()` puts the result on ffmpeg's input. `_loopback_answers()` is checked against a real listening socket.
 An autouse fixture clears the four variables, which a Dispatcharr container sets.
+Since 2026-11-20 (`CLOSED_ITEMS.md`'s "`timeshift_buffer`'s default Internal base URL ignores `DISPATCHARR_PORT` on one
+container") the default's loopback, on one container and in the modular loopback check alike, is on `DISPATCHARR_PORT`
+(`_dispatcharr_port()`: nginx's own fallback to 9191 for anything that is not a whole number, kept for blank, unset,
+non-ASCII digits and numbers no TCP port can be, which would raise `OverflowError` rather than `OSError` in the socket
+check); a modular install's web-container fallback uses the same port. A default with a trailing slash now comes back
+as the resolved URL without it.
 `_buffer_failed_message()` names a refused, timed-out or unroutable connection and an unresolvable host (the line
 ffmpeg's TCP layer writes, seen live as "Connection to tcp://127.0.0.1:9191 failed: Connection refused") instead of the
 provider-limit hint.

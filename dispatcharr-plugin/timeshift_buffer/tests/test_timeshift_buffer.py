@@ -640,6 +640,7 @@ def test_start_ffmpeg_strips_a_trailing_space_from_internal_base_url(tmp_path, m
 
 # _internal_base_url: a modular 0.34 install runs the plugin in the Celery container, where 127.0.0.1:9191 is not
 # Dispatcharr (checked live 2026-11-19 and 2026-11-20); the default then follows Dispatcharr's own DVR stream base URL.
+# Everywhere else it is loopback on DISPATCHARR_PORT, where the all-in-one image's nginx listens.
 
 _MODULAR = {"DISPATCHARR_ENV": "modular", "DISPATCHARR_PORT": "9191"}
 _DISPATCHARR_ENV_VARS = (
@@ -685,7 +686,31 @@ def test_internal_base_url_keeps_loopback_where_it_answers():
 
     environ = dict(_MODULAR, DISPATCHARR_INTERNAL_TS_BASE_URL="http://proxyhost:5656")
     assert _resolve({}, environ, answers) == "http://127.0.0.1:9191"
+    assert _resolve({}, dict(environ, DISPATCHARR_PORT="8080"), answers) == "http://127.0.0.1:8080"
+    assert asked == [9191, 8080]
+
+
+def test_internal_base_url_on_a_modular_install_with_a_port_nginx_would_not_take():
+    asked = []
+
+    def closed(port):
+        asked.append(port)
+        return False
+
+    assert _resolve({}, dict(_MODULAR, DISPATCHARR_PORT="80a"), closed) == "http://web:9191"
     assert asked == [9191]
+
+
+def test_internal_base_url_does_not_take_the_plugins_own_port_for_dispatcharr():
+    """The Buffer server already listens in the Celery container, so loopback on its port is the plugin itself."""
+
+    def never_asked(port):
+        raise AssertionError("the plugin's own port is not checked")
+
+    environ = dict(_MODULAR, DISPATCHARR_PORT="9192")
+    assert _resolve({}, environ, never_asked) == "http://web:9192"
+    assert _resolve({"http_port": "9300"}, dict(_MODULAR, DISPATCHARR_PORT="9300"), never_asked) == "http://web:9300"
+    assert _resolve({"http_port": "9300"}, environ, lambda port: True) == "http://127.0.0.1:9192"
 
 
 def test_internal_base_url_default_follows_dispatcharrs_explicit_override_on_a_modular_install():
@@ -702,10 +727,44 @@ def test_internal_base_url_keeps_loopback_on_one_container(environ):
         raise AssertionError("loopback is only checked on a modular install")
 
     assert _resolve({}, environ, never_asked) == "http://127.0.0.1:9191"
-    assert _resolve({"internal_base_url": "http://127.0.0.1:9191/"}, environ, never_asked) == "http://127.0.0.1:9191/"
+    assert _resolve({"internal_base_url": "http://127.0.0.1:9191/"}, environ, never_asked) == "http://127.0.0.1:9191"
     # Dispatcharr's own override is for its recordings; one container keeps loopback.
     environ = dict(environ, DISPATCHARR_INTERNAL_TS_BASE_URL="http://127.0.0.1:5656")
     assert _resolve({}, environ, never_asked) == "http://127.0.0.1:9191"
+    # The all-in-one image's nginx listens on DISPATCHARR_PORT (docker/init/03-init-dispatcharr.sh).
+    environ = dict(environ, DISPATCHARR_PORT="8080")
+    assert _resolve({}, environ, never_asked) == "http://127.0.0.1:8080"
+    assert _resolve({"internal_base_url": "http://127.0.0.1:9191/"}, environ, never_asked) == "http://127.0.0.1:8080"
+    assert _resolve({"internal_base_url": "http://127.0.0.1:9292"}, environ, never_asked) == "http://127.0.0.1:9292"
+
+
+@pytest.mark.parametrize(
+    ("value", "port"),
+    [
+        (None, "9191"),
+        ("", "9191"),
+        ("  ", "9191"),
+        ("8080", "8080"),
+        # nginx's check is on the raw value, so a stray space leaves it on 9191.
+        (" 8080", "9191"),
+        ("8080 ", "9191"),
+        ("08080", "8080"),
+        ("65535", "65535"),
+        ("1", "1"),
+        # Not a whole number: Dispatcharr's nginx falls back to 9191.
+        ("80a", "9191"),
+        ("-1", "9191"),
+        ("8080.0", "9191"),
+        ("\u0668\u0660\u0668\u0660", "9191"),
+        # No TCP port: socket.create_connection() would raise OverflowError, not OSError.
+        ("0", "9191"),
+        ("65536", "9191"),
+        ("99999999999999999999", "9191"),
+    ],
+)
+def test_dispatcharr_port(value, port):
+    environ = {} if value is None else {"DISPATCHARR_PORT": value}
+    assert timeshift_buffer_plugin._dispatcharr_port(environ) == port
 
 
 def test_internal_base_url_keeps_a_value_the_user_changed():
@@ -738,6 +797,38 @@ def test_start_ffmpeg_reads_from_the_web_container_on_a_modular_install(tmp_path
 
     cmd = commands[0]
     assert cmd[cmd.index("-i") + 1].startswith(f"http://web:9191/proxy/ts/stream/{_UUID}?")
+
+
+def test_start_ffmpeg_reads_from_dispatcharr_port_on_one_container(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: commands.append(cmd) or _FakeProc()
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: None)
+    monkeypatch.setenv("DISPATCHARR_ENV", "aio")
+    monkeypatch.setenv("DISPATCHARR_PORT", "8080")
+
+    timeshift_buffer_plugin._start_ffmpeg(_UUID, {}, {"storage_path": str(tmp_path)}, _FakeLogger())
+
+    cmd = commands[0]
+    assert cmd[cmd.index("-i") + 1].startswith(f"http://127.0.0.1:8080/proxy/ts/stream/{_UUID}?")
+
+
+@pytest.mark.parametrize(
+    ("environ", "logged"), [({}, False), ({"DISPATCHARR_ENV": "aio", "DISPATCHARR_PORT": "8080"}, True)]
+)
+def test_start_ffmpeg_logs_only_an_address_other_than_the_setting(tmp_path, monkeypatch, environ, logged):
+    """A default typed with a trailing slash resolves to the same address without it: nothing to report."""
+    monkeypatch.setattr(timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: None)
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+    logger = _FakeLogger()
+
+    settings = {"storage_path": str(tmp_path), "internal_base_url": "http://127.0.0.1:9191/"}
+    timeshift_buffer_plugin._start_ffmpeg(_UUID, {}, settings, logger)
+
+    assert any("left at its default" in message for _, message in logger.calls) is logged
 
 
 # ---------------------------------------------------------------------

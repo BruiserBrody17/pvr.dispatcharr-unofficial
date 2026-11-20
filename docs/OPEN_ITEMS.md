@@ -4,7 +4,7 @@
 
 ## Status at a glance
 
-**11 open, 440 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
+**10 open, 441 closed.** The closed entries are in [CLOSED_ITEMS.md](CLOSED_ITEMS.md), each with when and how it was
 confirmed. The open ones came from:
 
 - Two from the 2026-10-10 source reviews: the Tvheadend addon ([PVR_HTS_COMPARISON.md](PVR_HTS_COMPARISON.md)) and
@@ -14,7 +14,6 @@ confirmed. The open ones came from:
   recurring rule on a spring-forward day.
 - One upstream note on Kodi from the 2026-11-16 live check of the settings re-delivery: a GUI deadlock after a PVR
   client restart.
-- One from the 2026-11-20 behaviour review of the modular-install fix: the default port on one container.
 - One user report from 2026-11-14: Off-mode live TV ending by itself on an Android tablet.
 - One follow-up to issue #1 from 2026-11-16: DVB subtitles and teletext in Server-side mode.
 - Two from the 2026-11-18 live checks: Dispatcharr 0.34 leaking each plugin action's Redis connections, and Dispatcharr
@@ -32,14 +31,14 @@ the design question on 2026-11-15, the other seven on 2026-11-16).
 | Section | Entries |
 |---|---|
 | Open: Needs a live check | 2 |
-| Open: Fix known, not yet done | 1 |
+| Open: Fix known, not yet done | 0 |
 | Open: Architectural / concurrency | 0 |
 | Open: Design decision needed | 0 |
 | Open: Release, CI and manual testing | 1 |
 | Open: Upstream (Dispatcharr) or documentation accuracy | 5 |
 | Open: Known gaps, deliberately deferred | 2 |
 | Open: Tooling (tools/) | 0 |
-| Closed (in CLOSED_ITEMS.md): Fixed | 386 |
+| Closed (in CLOSED_ITEMS.md): Fixed | 387 |
 | Closed (in CLOSED_ITEMS.md): Closed without a change (refuted, explained or harmless) | 45 |
 | Closed (in CLOSED_ITEMS.md): Project history and test infrastructure | 10 |
 
@@ -110,17 +109,7 @@ stream switch).
 
 ### Fix known, not yet done
 
-#### `timeshift_buffer`'s default Internal base URL ignores `DISPATCHARR_PORT` on one container
-
-**Opened 2026-11-20, from the behaviour review of the modular-install fix ("`timeshift_buffer` does not start on a
-modular Dispatcharr 0.34 install with its defaults", `CLOSED_ITEMS.md`); read in Dispatcharr 0.34.1's source, not seen
-live.** On the all-in-one image `DISPATCHARR_PORT` moves nginx's own listening port (`docker/init/03-init-dispatcharr.sh`
-substitutes it into the nginx config, and `docker-compose.aio.yml` suggests 8080 as an example), but the plugin's
-default stays `http://127.0.0.1:9191`, so with another port every start fails with "the buffer could not connect to
-127.0.0.1:9191" until the setting is changed by hand. This predates the modular fix. **Fix:** on one container, default
-to `http://127.0.0.1:<DISPATCHARR_PORT or 9191>`, with a test, and check it live on an all-in-one stack with the port
-moved.
-
+None open.
 
 ### Architectural / concurrency
 
