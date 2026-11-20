@@ -3501,6 +3501,11 @@ file, if the files the workflows install are not exactly `tools/requirements-lin
 been written into `build.yml` alone, and a dev workspace pinned its own copy by hand; the file is now the one place
 (checked by putting the old inline pin back: two of the three tests failed).
 
+`tools/tests/test_items_counts.py` (added 2026-11-20): `docs/OPEN_ITEMS.md`'s "Status at a glance" headline and
+per-section table against the `####` entries actually under each section of `OPEN_ITEMS.md` and `CLOSED_ITEMS.md`.
+The counts are moved by hand, and both branches had drifted one Fixed entry short (the headline also disagreeing with
+the table's own rows); two of the three tests failed before the counts were corrected.
+
 `tools/check_doc_refs.py`'s heading match now accepts only a citation that is a substring of a real heading.
 
 2026-10-09: `tools/tests/test_time_conversion_guard.py` pins where the saturating and the plain UTC conversions may be called (the
