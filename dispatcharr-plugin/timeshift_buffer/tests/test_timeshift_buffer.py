@@ -34,6 +34,7 @@ import json
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -635,6 +636,108 @@ def test_start_ffmpeg_strips_a_trailing_space_from_internal_base_url(tmp_path, m
 
     cmd = commands[0]
     assert cmd[cmd.index("-i") + 1].startswith("http://127.0.0.1:9191/proxy/")
+
+
+# _internal_base_url: a modular 0.34 install runs the plugin in the Celery container, where 127.0.0.1:9191 is not
+# Dispatcharr (checked live 2026-11-19 and 2026-11-20); the default then follows Dispatcharr's own DVR stream base URL.
+
+_MODULAR = {"DISPATCHARR_ENV": "modular", "DISPATCHARR_PORT": "9191"}
+_DISPATCHARR_ENV_VARS = (
+    "DISPATCHARR_ENV",
+    "DISPATCHARR_INTERNAL_TS_BASE_URL",
+    "DISPATCHARR_WEB_HOST",
+    "DISPATCHARR_PORT",
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_dispatcharr_environment(monkeypatch):
+    """Inside a Dispatcharr container these are set, and _start_ffmpeg() reads them."""
+    for name in _DISPATCHARR_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
+def _closed(port):
+    return False
+
+
+def _resolve(settings, environ, loopback=_closed):
+    return timeshift_buffer_plugin._internal_base_url(settings, environ, loopback)
+
+
+@pytest.mark.parametrize("settings", [{}, {"internal_base_url": "http://127.0.0.1:9191"}, {"internal_base_url": " "}])
+def test_internal_base_url_default_on_a_modular_install_is_the_web_container(settings):
+    assert _resolve(settings, _MODULAR) == "http://web:9191"
+    assert _resolve(settings, {"DISPATCHARR_ENV": " Modular "}) == "http://web:9191"
+    environ = dict(_MODULAR, DISPATCHARR_WEB_HOST="dispatcharr-web", DISPATCHARR_PORT="8080")
+    assert _resolve(settings, environ) == "http://dispatcharr-web:8080"
+    # Blank variables count as absent.
+    assert _resolve(settings, dict(_MODULAR, DISPATCHARR_WEB_HOST="", DISPATCHARR_PORT=" ")) == "http://web:9191"
+
+
+def test_internal_base_url_keeps_loopback_where_it_answers():
+    """Dispatcharr 0.33 runs plugin actions in the web container even on a modular install: loopback stays."""
+    asked = []
+
+    def answers(port):
+        asked.append(port)
+        return True
+
+    environ = dict(_MODULAR, DISPATCHARR_INTERNAL_TS_BASE_URL="http://proxyhost:5656")
+    assert _resolve({}, environ, answers) == "http://127.0.0.1:9191"
+    assert asked == [9191]
+
+
+def test_internal_base_url_default_follows_dispatcharrs_explicit_override_on_a_modular_install():
+    environ = dict(_MODULAR, DISPATCHARR_INTERNAL_TS_BASE_URL="http://proxyhost:5656/ ")
+    assert _resolve({}, environ) == "http://proxyhost:5656"
+    assert _resolve({}, dict(_MODULAR, DISPATCHARR_INTERNAL_TS_BASE_URL="  ")) == "http://web:9191"
+
+
+@pytest.mark.parametrize(
+    "environ", [{}, {"DISPATCHARR_ENV": "aio"}, {"DISPATCHARR_ENV": "dev"}, {"DISPATCHARR_ENV": ""}]
+)
+def test_internal_base_url_keeps_loopback_on_one_container(environ):
+    def never_asked(port):
+        raise AssertionError("loopback is only checked on a modular install")
+
+    assert _resolve({}, environ, never_asked) == "http://127.0.0.1:9191"
+    assert _resolve({"internal_base_url": "http://127.0.0.1:9191/"}, environ, never_asked) == "http://127.0.0.1:9191/"
+    # Dispatcharr's own override is for its recordings; one container keeps loopback.
+    environ = dict(environ, DISPATCHARR_INTERNAL_TS_BASE_URL="http://127.0.0.1:5656")
+    assert _resolve({}, environ, never_asked) == "http://127.0.0.1:9191"
+
+
+def test_internal_base_url_keeps_a_value_the_user_changed():
+    environ = dict(_MODULAR, DISPATCHARR_INTERNAL_TS_BASE_URL="http://proxyhost:5656")
+    for value in ("http://127.0.0.1:9292", "http://web:9191", "http://localhost:9191"):
+        assert _resolve({"internal_base_url": f" {value} "}, environ) == value
+
+
+def test_loopback_answers_tells_a_listening_port_from_a_closed_one():
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        assert timeshift_buffer_plugin._loopback_answers(port)
+    assert not timeshift_buffer_plugin._loopback_answers(port)
+
+
+def test_start_ffmpeg_reads_from_the_web_container_on_a_modular_install(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        timeshift_buffer_plugin.subprocess, "Popen", lambda cmd, **kw: commands.append(cmd) or _FakeProc()
+    )
+    monkeypatch.setattr(timeshift_buffer_plugin, "_read_proc_pid_stat", lambda pid: None)
+    monkeypatch.setattr(timeshift_buffer_plugin, "_loopback_answers", _closed)
+    monkeypatch.setenv("DISPATCHARR_ENV", "modular")
+    monkeypatch.setenv("DISPATCHARR_PORT", "9191")
+    logger = _FakeLogger()
+
+    timeshift_buffer_plugin._start_ffmpeg(_UUID, {}, {"storage_path": str(tmp_path)}, logger)
+
+    cmd = commands[0]
+    assert cmd[cmd.index("-i") + 1].startswith(f"http://web:9191/proxy/ts/stream/{_UUID}?")
 
 
 # ---------------------------------------------------------------------
@@ -2359,6 +2462,26 @@ def test_buffer_failed_message_names_a_403_from_the_live_proxy():
     message = timeshift_buffer_plugin._buffer_failed_message(lines)
     assert message.startswith("ffmpeg exited before producing any segments")
     assert "HTTP 403" in message and "Network Access -> Streams" in message and "127.0.0.1" in message
+    assert "concurrent-stream limit" not in message
+    assert message.endswith("last ffmpeg.log lines: " + " | ".join(lines))
+
+
+@pytest.mark.parametrize(
+    ("line", "target"),
+    [
+        ("[tcp @ 0x1] Connection to tcp://127.0.0.1:9191 failed: Connection refused", "127.0.0.1:9191"),
+        ("[tcp @ 0x1] Connection to tcp://web:9191 failed: Connection timed out", "web:9191"),
+        ("[tcp @ 0x1] Connection to tcp://[::1]:9191 failed: No route to host", "[::1]:9191"),
+        ("[tcp @ 0x1] Connection to tcp://web:9191 failed: Network is unreachable", "web:9191"),
+        ("[tcp @ 0x1] Connection to tcp://web:9191 failed: Host is unreachable", "web:9191"),
+        ("[tcp @ 0x1] Failed to resolve hostname web: Name or service not known", "web"),
+    ],
+)
+def test_buffer_failed_message_names_a_failed_connection(line, target):
+    lines = [line, "[in#0 @ 0x2] Error opening input: Connection refused"]
+    message = timeshift_buffer_plugin._buffer_failed_message(lines)
+    assert f"could not connect to {target} --" in message
+    assert "Internal base URL" in message and "modular install" in message
     assert "concurrent-stream limit" not in message
     assert message.endswith("last ffmpeg.log lines: " + " | ".join(lines))
 

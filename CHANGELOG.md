@@ -65,6 +65,12 @@ Dispatcharr restart for every worker to pick it up.
   moment, the new ffmpeg kept running, with its provider connection, until the idle timeout ended it.
 - **A Kodi 21 viewer whose connection dropped for a while** no longer gets the picture held on stream switches
   meant only for Kodi 22, after another device opened the same channel in the meantime.
+- **Buffers start on a modular Dispatcharr 0.34 install** (separate web and Celery containers, Dispatcharr's default
+  `docker-compose.yml`). With **Internal base URL** left at its default, the plugin now reaches Dispatcharr at the
+  address Dispatcharr's own recordings use, usually `http://web:9191`, when `127.0.0.1:9191` does not answer; before,
+  every start failed. A start that cannot
+  connect is now reported as such instead of as a provider stream limit. The README has a new section on modular
+  installs: the Buffer server port has to be published on the Celery container.
 
 ## [0.14.4] - 2026-11-14
 

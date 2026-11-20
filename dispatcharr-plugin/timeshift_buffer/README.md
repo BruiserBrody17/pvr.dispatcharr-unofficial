@@ -57,7 +57,8 @@ without guide data has none; open it from Kodi's Recordings list instead.
    know as abandoned and stops the ffmpeg that owns it after five minutes.
 4. **Publish the Buffer server port (`http_port`, default `9192`) through your container config**,
    the same way `9191` already is -- without this, the plugin's file
-   server is only reachable from inside the container.
+   server is only reachable from inside the container. On a modular install (see below) publish it on the Celery
+   container, not the web one.
    The number in the setting and the published port must be the same: if they differ, the buffer starts but Kodi
    cannot read it (since addon 0.13.0 it says so with a notification). To check from the Kodi device,
    `curl -i http://<host>:<port>/` should get an HTTP answer: `404 Not Found` for that bare address is expected and
@@ -66,7 +67,8 @@ without guide data has none; open it from Kodi's Recordings list instead.
    IPv6 (a dual-stack `::` socket), and on IPv4 alone where it doesn't.
 5. Check **Internal base URL** matches how this plugin reaches Dispatcharr's
    own web service from inside the container (default
-   `http://127.0.0.1:9191`).
+   `http://127.0.0.1:9191`; on a modular install, left at that default, the plugin uses the address Dispatcharr's own
+   recordings use, usually `http://web:9191`).
 6. The account calling these actions must be a Dispatcharr **admin**
    account (`user_level >= 10`).
 7. If you have narrowed **Settings → Network Access → Streams**, it must allow each Kodi device's address **and**
@@ -74,6 +76,19 @@ without guide data has none; open it from Kodi's Recordings list instead.
    the Kodi device's own address (as Kodi sees it on its local network, which is not the same address behind NAT or a
    VPN), and channels whose stream profile is Redirect against loopback. A refused start shows in Kodi's log as
    "the stream was refused with HTTP 403".
+
+### Modular installs (Dispatcharr 0.34 and later)
+
+Dispatcharr's default `docker-compose.yml` runs the web service and the Celery worker in separate containers. From
+Dispatcharr 0.34 plugin actions run in the Celery worker, so this plugin's buffers and its file server run in the
+Celery container:
+- Publish the Buffer server port on the `celery` service (for example `- 9192:9192` under its `ports:`).
+- Leave **Internal base URL** at its default, or set it to the web container's address (`http://web:9191` with the
+  default compose file). `127.0.0.1` inside the Celery container is not Dispatcharr; a start that cannot connect shows
+  in Kodi's log as "the buffer could not connect to ...".
+- In step 7 above, the Celery container's own address (on its Docker network) takes loopback's place. If you set
+  `DISPATCHARR_TRUSTED_PROXIES`, include that address too, or every buffer is judged by it instead of by the Kodi
+  device's address.
 
 ## Testing manually
 
