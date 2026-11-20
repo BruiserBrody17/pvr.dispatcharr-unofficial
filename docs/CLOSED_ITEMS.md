@@ -58,7 +58,16 @@ muxer refuses a video stream with no picture size, so the fallback stays 0.8.18'
 switch restart refused that way is restarted on it once. The behaviour review found four more points, all fixed or
 documented in the same change: that refused switch restart (MEDIUM), `+flush_packets` so a segment is whole before it
 is listed, `earlier.json` only for a state with `visible_segments`, and the mixed-version window until Dispatcharr is
-restarted. Unit and real-ffmpeg tests: `docs/TEST_COVERAGE.md`.
+restarted. A fifth, fixed after the merge with its own review: a failure on one buffer ended the whole reaper tick, so
+with one that repeated, the buffers after it would never have been swept; each buffer's share of a tick is now guarded
+on its own (`_reaper_tick_buffer()`, a log throttle per channel), and a state whose channel is not a string is skipped
+like an unreadable one. Checked live the same day on a throwaway Dispatcharr 0.34.1 container, three buffers of a
+1-minute window kept alive through the file server for 12 minutes: each held 61 to 69 segment files throughout, also
+for the 7 minutes a state with `viewer_heartbeats` of the wrong type and one with a list for its channel sat in Redis;
+the first was logged with "the reaper's work on channel ... failed" at once and again 5 minutes later (19 failures in
+between, one per tick), the second once as unreadable, no tick failed as a whole, a buffer left without heartbeats was
+pruned and reaped 27 s later with both still present, and nothing more was logged once they were deleted. Unit and
+real-ffmpeg tests: `docs/TEST_COVERAGE.md`.
 
 **Checked live 2026-11-20** against a throwaway Dispatcharr 0.34.1 all-in-one container (the lab image, ffmpeg 9.0.2)
 on the Kodi test VM, the generated channel of the earlier check served at its real rate as three streams (the source
