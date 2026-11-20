@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`bd5d8fc`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`168887b`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -242,6 +242,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `c39ea03` | `fcbabe8` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts set to `Omega`'s own, 380 Fixed and 435 closed) | `OPEN_ITEMS.md`'s closed counts corrected (one Fixed entry short) and `tools/tests/test_items_counts.py` added to check them. |
 | `649be80` | `c97a6c7` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts set by hand, keeping `Omega`'s own Kodi 21 timer item) | The subtitle item's 2026-11-20 live checks recorded and the item moved to fix-known. |
 | `bd5d8fc` | `4d5ac18` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts set to `Omega`'s own, 9 open and 436 closed, 381 Fixed) | `timeshift_buffer` 0.8.19: DVB subtitles and teletext in the buffer with the `segment` muxer, the plugin deleting old segments and carrying the playlist over a stream switch, and the item closed. |
+| `168887b` | `3f4b895` (`git cherry-pick -x`, without `[skip ci]`) | `timeshift_buffer` 0.8.19: each buffer's share of a reaper tick guarded on its own, with a log throttle per channel, and a state whose channel is not a string skipped. |
 
 ## Dependencies that differ by Kodi release
 
