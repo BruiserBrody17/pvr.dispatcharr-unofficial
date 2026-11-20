@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`6c10b04`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`6843feb`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -237,6 +237,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `4dd93ad` | `de71df9` (`git cherry-pick -x`, without `[skip ci]`) | `start_buffer`'s answer naming the manifest route, so a cold start's polls go to the file server too, and its Kodi 22 live check. |
 | `60f3b30` | `d363239` (`git cherry-pick -x`) | The start-buffer route's Kodi 21 live check. |
 | `6c10b04` | `35d4d3f` (`git cherry-pick -x`; `OPEN_ITEMS.md`'s counts resolved by hand, keeping `Omega`'s own Kodi 21 timer item) | The 0.34 Celery item closed after its last two live checks (a worker exiting, the modular compose layout), and the modular-install defaults filed as a fix-known item. |
+| `6843feb` | `e398fa9` (`git cherry-pick -x`, without `[skip ci]`; `OPEN_ITEMS.md`'s counts resolved by hand, keeping `Omega`'s own Kodi 21 timer item) | `timeshift_buffer` 0.8.19: the Internal base URL's default on a modular Dispatcharr install where loopback does not answer, a refused connection named in the fatal message, the README's modular section, and the one-container port item filed. |
 
 ## Dependencies that differ by Kodi release
 
