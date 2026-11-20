@@ -39,12 +39,13 @@ conversation that produced this draft for the full reasoning):
   saw on its own side of the connection (CURLINFO_LOCAL_IP), so behind NAT
   or a VPN it is not the address direct playback is judged by. A refused
   start's ffmpeg exits on a 403, which _buffer_failed_message() names.
-- ffmpeg's own hls muxer does almost all the hard work: -hls_flags
-  delete_segments (with -hls_delete_threshold) removes old segment files
-  instead of growing forever, and -hls_list_size maintains a
-  sliding-window HLS playlist natively. No Python-side trimming loop is
-  needed for the common case -- only an idle-timeout reaper (below), since
-  nothing else would ever stop a buffer once started.
+- ffmpeg's segment muxer does most of the hard work: it cuts the stream
+  into segment files and maintains a sliding-window HLS playlist natively
+  (-segment_list_size). It deletes no old files, so the idle-timeout reaper
+  (below), which also stops a buffer nobody watches, removes those that
+  have left the playlist on each tick (_sweep_stray_segments()). 0.8.0 to
+  0.8.18 used the hls muxer, which deleted them itself but cannot carry
+  subtitles (see _build_ffmpeg_command()).
 - Segment files must NOT live under Django's MEDIA_ROOT directly (that
   resolves to <app dir>/media, which -- confirmed against the project's
   own docker-compose.yml -- isn't under the one volume (./data:/data) the
@@ -771,7 +772,7 @@ def _apply_read_heartbeat(state: dict, now: float, viewer_id, supplied_token):
 
 
 # Only the playlist and its segments are ever served. The channel directory also holds ffmpeg.log
-# (unbounded) and ffmpeg.owner.json, which no client has any use for -- a token holder could read
+# (unbounded), ffmpeg.owner.json and earlier.json, which no client has any use for -- a token holder could read
 # the log, and ask for it concurrently, since the token is the only access control here.
 _SERVABLE_NAME_RE = re.compile(r"(live\.m3u8|seg_[0-9]+\.ts)")
 
@@ -1209,7 +1210,7 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         try:
             f = target.open("rb")
         except OSError:
-            # Segment was deleted by ffmpeg's -hls_flags delete_segments between the
+            # Segment was deleted by the reaper's sweep of old segments between the
             # playlist listing it and this request reading it -- a real,
             # expected race for a live-recycling buffer, not a bug. Treat
             # it the same as "not there right now."
@@ -1890,23 +1891,22 @@ def _build_ffmpeg_command(
     input_url: str,
     attribution_headers: str | None,
     segment_seconds: int,
-    wrap_segments: int,
     playlist_path,
     visible_segments: int,
     segment_pattern: str,
     audio_map: str | None = None,
-    continue_playlist: bool = False,
+    start_number: int = 0,
 ) -> list[str]:
     """Pure argv-assembly core of _start_ffmpeg -- pulled out specifically
     so the exact flag order is unit-testable standalone without touching
     subprocess/the filesystem; see ../tests/test_timeshift_buffer.py.
 
-    `audio_map` is the spelling _usable_audio_map() found this ffmpeg accepts; None gives 0.8.17's argv plus -sn
-    (no -map: ffmpeg's default pick of one video and one audio stream, and no subtitle).
+    `audio_map` is the spelling _usable_audio_map() found this ffmpeg accepts. None is the fallback, 0.8.18's own
+    fallback argv unchanged: no -map (ffmpeg's default pick of one video and one audio stream), -sn and the `hls` muxer.
 
-    `continue_playlist` is the restart after the channel switched upstream streams (_restart_after_stream_switch()):
-    `append_list` reads the playlist the killed ffmpeg left and numbers on from its last segment, so a client keeps one
-    sequence; `discont_start` marks the join with #EXT-X-DISCONTINUITY.
+    `start_number` numbers the first segment, and so the playlist's #EXT-X-MEDIA-SEQUENCE: the restart after the channel
+    switched upstream streams (_restart_after_stream_switch()) carries on from the killed ffmpeg's numbers, so a client
+    keeps one sequence (_carry_playlist_over()).
 
     -headers must precede -i: ffmpeg applies -headers to the input that
     follows it, not globally -- confirmed by this file's own top-of-file
@@ -1914,11 +1914,21 @@ def _build_ffmpeg_command(
     incidental. Deliberately NOT -reset_timestamps 1: see _start_ffmpeg's
     own comment on this file for the seeking regression that flag caused.
 
-    The `hls` muxer, not `segment` (0.8.0, docs/TIMESHIFT.md "Packet corrupt"): the `segment` muxer starts every
-    file with a fresh MPEG-TS muxer, so every PID's continuity counter restarts at 0 and each splice of two files
-    into one byte stream -- which is what the addon does -- is a counter break the demuxer reports as "Packet
-    corrupt" (measured: 14 of 14 splices, none after the counters were made continuous). The `hls` muxer keeps one
-    muxer across segments and writes the same `seg_%05d.ts` files and `#EXT-X-MEDIA-SEQUENCE` playlist.
+    The `segment` muxer with -individual_header_trailer 0 (0.8.19, docs/TIMESHIFT.md "Subtitles and teletext in the
+    buffer"): one MPEG-TS muxer across all the files, so the continuity counters run on across each splice the addon
+    makes (0.8.0's "Packet corrupt" was the segment muxer's default, a fresh muxer and counters from 0 per file), and
+    subtitle streams stay in the MPEG-TS beside the video. The `hls` muxer, used from 0.8.0 to 0.8.18, sends them to a
+    WebVTT muxer, which refuses DVB subtitles and teletext and fails the start. What the hls muxer did besides is the
+    plugin's now: the reaper deletes old segment files (_sweep_stray_segments()), and a restart's playlist join is
+    _carry_playlist_over()'s. Each file still starts with the programme tables (the segment muxer sets the MPEG-TS
+    muxer's resend_headers per file), and the playlist is written by a rename, as the hls muxer's was.
+
+    The fallback keeps the hls muxer because the segment muxer refuses a video stream the probe found no picture size
+    for ("dimensions not set", and ffmpeg exits), where the hls muxer copies it: a video stream that is declared and
+    never sent, and a join between two keyframes further apart than the probe's 7 s. ffmpeg's own pick still takes the
+    second, so on the segment muxer the fallback would fail too. A mapped start that exits that way is restarted on the
+    fallback (_should_restart_without_audio_map()), which buffers such a channel as 0.8.18 did, with one audio track
+    and no subtitles.
     """
     cmd = [
         "ffmpeg",
@@ -1936,43 +1946,83 @@ def _build_ffmpeg_command(
             # "Every audio track, not just the first"). Audio is mapped as usable only (see _usable_audio_map()): a
             # track declared but never sent has no sample rate and, mapped, fails the start ("sample rate not set").
             # Video is the first stream with no `:u`: a probe that began mid-GOP has no picture size yet and `:u`
-            # would drop the video, and Kodi plays the first of several anyway. No subtitles and not -map 0: the hls
-            # muxer sends subtitle streams to a WebVTT muxer, which refuses DVB subtitles and teletext and fails the
-            # start, and -map 0 would also take data streams. The `?`: no video (radio) or no audio still starts.
+            # would drop the video, and Kodi plays the first of several anyway. Not -map 0, which would also take data
+            # streams. The `?`: no video (radio), no audio or no subtitle still starts.
             "-map",
             "0:v:0?",
             "-map",
             audio_map,
+            # Every subtitle stream ffmpeg knows the codec of (DVB subtitles, teletext), in the same spelling as the
+            # audio map's, which is the one this ffmpeg reads: Kodi lists the DVB ones as subtitles and shows the
+            # teletext in its teletext viewer, as with Off mode (docs/TIMESHIFT.md, "Subtitles and teletext in the
+            # buffer").
+            "-map",
+            _subtitle_map(audio_map),
         ]
     else:
         # ffmpeg's default pick takes a teletext stream for any output that carries subtitles, and the hls muxer then
-        # fails the start on it (the WebVTT refusal above); a fallback start should not bring that back.
-        cmd += ["-sn"]
-    cmd += ["-c", "copy"]
-    if audio_map:
-        # With every audio track mapped, one that goes quiet can make the muxer hold the others back for up to its
-        # default 10 s while it waits to interleave it; Dispatcharr's own FFmpeg profiles set the same 100K (0.1 s)
-        # for that reason (docs/CLOSED_ITEMS.md, "Slow starts").
-        cmd += ["-max_interleave_delta", "100K"]
+        # fails the start on it: it sends subtitle streams to a WebVTT muxer, which refuses DVB subtitles and teletext.
+        return cmd + [
+            "-sn",
+            "-c",
+            "copy",
+            "-f",
+            "hls",
+            "-hls_time",
+            str(segment_seconds),
+            "-hls_list_size",
+            str(visible_segments),
+            # Segment files kept on disk beyond the listed ones: as many as the listed ones, the margin the reaper's
+            # sweep keeps for the segment muxer too (`segment_keep_extra`, from _compute_segment_counts()).
+            "-hls_delete_threshold",
+            str(max(1, visible_segments)),
+            "-hls_flags",
+            "delete_segments+omit_endlist",
+            "-start_number",
+            str(start_number),
+            "-hls_segment_filename",
+            segment_pattern,
+            str(playlist_path),
+        ]
+    # With every audio track mapped, one that goes quiet can make the muxer hold the others back for up to its default
+    # 10 s while it waits to interleave it; Dispatcharr's own FFmpeg profiles set the same 100K (0.1 s) for that reason
+    # (docs/CLOSED_ITEMS.md, "Slow starts").
+    cmd += ["-c", "copy", "-max_interleave_delta", "100K"]
+    # The segment muxer renames the new playlist into place before it closes the segment it lists (segment_end() in
+    # libavformat/segment.c, 6.1 and 8.0), so up to an I/O buffer of that segment could reach the disk after a poll had
+    # stat()ed it short, and the addon keeps the first size it is told (found by the branch's review). flush_packets
+    # reaches the MPEG-TS muxer inside it (segment.c copies the flags), whose flush at each segment's end then writes
+    # every byte before the rename. The hls muxer closed each segment before listing it.
+    cmd += ["-fflags", "+flush_packets"]
     cmd += [
         "-f",
-        "hls",
-        "-hls_time",
+        "segment",
+        "-segment_format",
+        "mpegts",
+        "-segment_time",
         str(segment_seconds),
-        "-hls_list_size",
-        str(visible_segments),
-        # Segment files kept on disk beyond the listed ones: with the playlist's visible_segments this is the
-        # same 2x window the old -segment_wrap gave, so a client still reading a segment that has just left the
-        # list has headroom before it is deleted.
-        "-hls_delete_threshold",
-        str(max(1, wrap_segments - visible_segments)),
-        "-hls_flags",
-        "delete_segments+omit_endlist" + ("+append_list+discont_start" if continue_playlist else ""),
-        "-hls_segment_filename",
-        segment_pattern,
+        "-individual_header_trailer",
+        "0",
+        "-segment_start_number",
+        str(start_number),
+        "-segment_list",
         str(playlist_path),
+        "-segment_list_type",
+        "m3u8",
+        "-segment_list_size",
+        str(visible_segments),
+        "-segment_list_flags",
+        "+live",
+        segment_pattern,
     ]
     return cmd
+
+
+def _subtitle_map(audio_map: str) -> str:
+    """The -map for every subtitle stream with a known codec, spelt like `audio_map` (one of _AUDIO_MAP_SPELLINGS),
+    whose stream type is the only part that differs: ffmpeg parses `s` and `a` the same way, so the spelling this
+    ffmpeg was found to read for audio is the one it reads here."""
+    return "0:s:" + audio_map[len("0:a:") :]
 
 
 # "Every usable audio stream, none is fine" has no spelling every ffmpeg reads the same way (measured 2026-11-09):
@@ -2053,7 +2103,7 @@ def _usable_audio_map(logger) -> str | None:
 # _reap_untracked_ffmpeg(). Found by the 2026-10-04 third hardening sweep: a Redis restart or flush
 # while Dispatcharr (and so its ffmpeg children) kept running removed every buffer's state, the
 # reaper and the orphan scrub only ever look at Redis-tracked buffers or at directories idle for
-# 300 s, and a running hls muxer rewrites its directory every few seconds, so the ffmpeg held its
+# 300 s, and a running muxer rewrites its directory every few seconds, so the ffmpeg held its
 # provider slot and proxy connection indefinitely -- and the next start_buffer for that channel
 # cleared the directory and spawned a second ffmpeg writing into the same one.
 _OWNER_FILE_NAME = "ffmpeg.owner.json"
@@ -2180,9 +2230,10 @@ def _start_ffmpeg(
 ) -> dict:
     """Clears the channel's directory and spawns its ffmpeg; returns the new buffer's state. `use_audio_map=False` is
     the restart of a buffer stuck on a video stream that is declared and never sent (_restart_without_audio_map()).
-    `continue_playlist=True` keeps the directory and appends to its playlist: the restart after the channel switched
-    upstream streams (_restart_after_stream_switch()), whose predecessor, `replaces` ((pid, start ticks)), is tracked
-    and still alive, frozen, so it is neither reaped here nor kept from handing over the owner file."""
+    `continue_playlist=True` keeps the directory and carries its playlist on (_carry_playlist_over()): the restart after
+    the channel switched upstream streams (_restart_after_stream_switch()), whose predecessor, `replaces` ((pid, start
+    ticks)), is tracked and still alive, frozen, so it is neither reaped here nor kept from handing over the owner
+    file."""
     storage_path = _str_setting(settings_dict, "storage_path", "/data/timeshift")
     segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1, maximum=_MAX_SEGMENT_SECONDS)
     buffer_minutes = _int_setting(settings_dict, "buffer_minutes", 60, minimum=1, maximum=_MAX_BUFFER_MINUTES)
@@ -2239,6 +2290,7 @@ def _start_ffmpeg(
     # playlist's own URL. Run with cwd=channel_dir below so the actual
     # files still land in the right place on disk.
     segment_pattern = "seg_%05d.ts"
+    start_number = _carry_playlist_over(channel_dir, visible_segments) if continue_playlist else 0
 
     # The actual argv assembly lives in _build_ffmpeg_command() above so
     # it's unit-testable standalone -- see that function's own docstring
@@ -2247,12 +2299,11 @@ def _start_ffmpeg(
         _proxy_url(channel_uuid, base_url),
         attribution_headers,
         segment_seconds,
-        wrap_segments,
         playlist_path,
         visible_segments,
         segment_pattern,
         audio_map,
-        continue_playlist,
+        start_number,
     )
 
     log_path = channel_dir / "ffmpeg.log"
@@ -2304,9 +2355,13 @@ def _start_ffmpeg(
         "playlist_route": f"/{channel_uuid}/live.m3u8",
         "log_path": str(log_path),
         "audio_map": audio_map,
-        # Segment files ffmpeg keeps past the listed ones (-hls_delete_threshold): what the reaper's sweep after a
-        # continued playlist keeps too (_stray_segment_names()).
+        # Segment files kept past the listed ones, so a client still reading one that has just left the list has
+        # headroom before it is deleted (the reaper's sweep, _stray_segment_names()): with the listed ones, the same 2x
+        # window the old -segment_wrap and then -hls_delete_threshold gave.
         "segment_keep_extra": max(1, wrap_segments - visible_segments),
+        # How many segments the playlist lists, the ones carried over from before a stream switch included
+        # (_listed_segments()).
+        "visible_segments": visible_segments,
     }
     # What a restart needs to connect the same way (_restart_ffmpeg_locked()): get_live_manifest, which triggers both
     # kinds, carries neither. Never the -headers string itself, which holds a bearer token.
@@ -2319,6 +2374,9 @@ def _start_ffmpeg(
 # keyframes (docs/TIMESHIFT.md, "A video stream that is declared and never sent"), so it counts only together with a
 # playlist that is overdue.
 _UNSENT_VIDEO_WARNING = re.compile(r"Could not find codec parameters for stream \d+ \(Video:")
+# What the segment muxer (0.8.19) says when it refuses such a stream, before ffmpeg exits: a mapped start no longer
+# waits on the stream that sends nothing, it fails at once (_build_ffmpeg_command()).
+_NO_PICTURE_SIZE_EXIT = re.compile(r"dimensions not set")
 # When a start that has written no playlist is due for the restart. A healthy start writes its first playlist once
 # its first segment closes: the proxy's connect time plus a segment length or so (measured within 9 s at the default
 # 2 s segments), so at least _UNSENT_VIDEO_GRACE_SECONDS past one segment length. But the restarted ffmpeg must still
@@ -2333,22 +2391,33 @@ _UNSENT_VIDEO_EARLIEST_SECONDS = 6
 # How long a restart's marker (`restarting_since`) holds off a teardown of the instance it is replacing: its old ffmpeg
 # is dead on purpose until the new one is adopted, a few seconds later.
 _RESTART_MARKER_SECONDS = 30
+# get_live_manifest's "not ready" answer to the poll that restarted the buffer without the audio map.
+_RESTARTED_WITHOUT_AUDIO_MAP_MESSAGE = (
+    "restarted the buffer without the audio map (no picture size for its video stream) -- the playlist follows shortly"
+)
 # The warning is printed while ffmpeg probes its input, before anything else is logged.
 _UNSENT_VIDEO_LOG_READ_BYTES = 65536
 
 
-def _should_restart_without_audio_map(state: dict, now: float, segment_seconds: int, log_head: str) -> bool:
-    """Whether a buffer that has written no playlist yet is stuck on a video stream that is declared and never sent:
-    started with the audio map, not restarted for this already, overdue, and its ffmpeg.log carries the warning. The
-    caller has already established that ffmpeg is alive and that there is no live.m3u8."""
+def _should_restart_without_audio_map(
+    state: dict, now: float, segment_seconds: int, log_text: str, alive: bool = True
+) -> bool:
+    """Whether a buffer that has written no playlist yet is stuck on a video stream it found no picture size for:
+    started with the audio map, not restarted for this already, and its ffmpeg.log carries the warning. With ffmpeg
+    `alive` (the hls muxer of 0.8.18, which waited on such a stream) also overdue; with ffmpeg gone, its log ends with
+    the segment muxer's refusal of that stream, which leaves nothing to wait for. The caller has already established
+    that there is no live.m3u8, and reads the head of the log for a live ffmpeg, the tail for one that exited (the
+    warning and the refusal come last, after a probe's worth of decoder errors)."""
     if not state.get("audio_map") or state.get("restarted_without_audio_map"):
         return False
+    if not _UNSENT_VIDEO_WARNING.search(log_text):
+        return False
+    if not alive:
+        return bool(_NO_PICTURE_SIZE_EXIT.search(log_text))
     started_at = state.get("started_at")
     if not isinstance(started_at, (int, float)) or isinstance(started_at, bool):
         return False
-    if now - started_at < _unsent_video_restart_due_seconds(segment_seconds):
-        return False
-    return bool(_UNSENT_VIDEO_WARNING.search(log_head))
+    return now - started_at >= _unsent_video_restart_due_seconds(segment_seconds)
 
 
 def _unsent_video_restart_due_seconds(segment_seconds: int) -> int:
@@ -2386,12 +2455,27 @@ def _read_log_head(channel_dir: Path) -> str:
         return ""
 
 
-def _restart_without_audio_map(channel_uuid: str, state: dict, settings_dict: dict, logger) -> bool:
+def _read_log_tail(channel_dir: Path) -> str:
+    try:
+        with open(channel_dir / "ffmpeg.log", "rb") as f:
+            f.seek(max(0, os.fstat(f.fileno()).st_size - _UNSENT_VIDEO_LOG_READ_BYTES))
+            return f.read(_UNSENT_VIDEO_LOG_READ_BYTES).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _restart_without_audio_map(
+    channel_uuid: str, state: dict, settings_dict: dict, logger, continue_playlist: bool = False
+) -> bool:
     """Restarts a buffer stuck on a video stream that is declared and never sent, once, on the command line without
     the audio map, keeping its viewers and access token so a client waiting for the first playlist simply gets one.
     With `-map 0:v:0?` ffmpeg waits on a stream that sends nothing, and the start writes no playlist while ffmpeg runs
     on; ffmpeg's own pick of streams leaves such a stream out
     (docs/TIMESHIFT.md, "A video stream that is declared and never sent"). The price is one audio track on that channel.
+
+    `continue_playlist=True` is the same restart for a buffer that already has a playlist: a stream-switch restart's
+    new ffmpeg that the segment muxer refused after its adoption (its probe outlasts the restart's overlap), which
+    carries the playlist on as the switch's restart does (Plugin._restart_if_switch_was_refused()).
 
     Under the channel's start lock, so no start_buffer runs meanwhile, and only for the instance `state` describes.
     True when the restart happened."""
@@ -2400,12 +2484,16 @@ def _restart_without_audio_map(channel_uuid: str, state: dict, settings_dict: di
         if lock_token is None:
             return False  # a start, or this same restart from another request, is under way
         try:
-            return _restart_without_audio_map_locked(channel_uuid, lock_token, state, settings_dict, logger)
+            return _restart_without_audio_map_locked(
+                channel_uuid, lock_token, state, settings_dict, logger, continue_playlist
+            )
         finally:
             _release_start_buffer_lock(channel_uuid, lock_token)
 
 
-def _restart_without_audio_map_locked(channel_uuid, lock_token, state, settings_dict, logger) -> bool:
+def _restart_without_audio_map_locked(
+    channel_uuid, lock_token, state, settings_dict, logger, continue_playlist=False
+) -> bool:
     current = _get_buffer_state(channel_uuid)
     if not current or current.get("stopping") or not _same_buffer_instance(current, state):
         return False
@@ -2418,17 +2506,31 @@ def _restart_without_audio_map_locked(channel_uuid, lock_token, state, settings_
     if current.get("storage_path") != storage_path or current.get("http_port") != http_port:
         return False
     channel_dir = _channel_dir(storage_path, channel_uuid)
-    # Checked again under the lock: a slow start can still have written its playlist since the caller looked.
-    if (channel_dir / "live.m3u8").exists() or not _is_process_alive(
-        current.get("pid"), current.get("pid_start_ticks")
-    ):
+    # Checked again under the lock: a slow start can still have written its playlist since the caller looked. A dead
+    # ffmpeg qualifies (the segment muxer exits on such a stream); the caller checked its log for that. The restart of
+    # a refused switch needs the playlist it carries on, and its ffmpeg dead.
+    if continue_playlist:
+        if not (channel_dir / "live.m3u8").exists() or _is_process_alive(
+            current.get("pid"), current.get("pid_start_ticks")
+        ):
+            return False
+    elif (channel_dir / "live.m3u8").exists():
         return False
 
     def announce():
+        if continue_playlist:
+            logger.warning(
+                "timeshift_buffer: the ffmpeg that followed channel %s's stream switch found no picture size for the "
+                "new stream's video and exited -- most likely a join between two keyframes further apart than ffmpeg's "
+                "probe; restarting it once with ffmpeg's own choice of streams (one audio track, no subtitles)",
+                channel_uuid,
+            )
+            return
         logger.warning(
             "timeshift_buffer: channel %s has written no playlist %ds after its start and its ffmpeg found no picture "
-            "size for a video stream -- most likely one the programme lists and never sends; restarting it once with "
-            "ffmpeg's own choice of streams (one audio track)",
+            "size for a video stream -- one the programme lists and never sends, or a join between two keyframes "
+            "further apart than ffmpeg's probe; restarting it once with ffmpeg's own choice of streams (one audio "
+            "track, no subtitles)",
             channel_uuid,
             int(_shared_now() - current["started_at"]),
         )
@@ -2443,7 +2545,7 @@ def _restart_without_audio_map_locked(channel_uuid, lock_token, state, settings_
         settings_dict,
         logger,
         use_audio_map=False,
-        continue_playlist=False,
+        continue_playlist=continue_playlist,
         on_adopt=adopted,
         what="without the audio map",
         announce=announce,
@@ -2561,8 +2663,8 @@ def _restart_ffmpeg_locked(
     def kill_old():
         # SIGKILL, not SIGTERM: on SIGTERM the muxer would flush what it holds into a segment and playlist of this
         # instance, which a poll could be served before the new ffmpeg's own replace them under the same access
-        # token. The segment a SIGKILL cuts short was never listed, and a continuing ffmpeg writes its own under the
-        # same number.
+        # token. The segment a SIGKILL cuts short was never listed, a continuing ffmpeg numbers past it
+        # (_carry_playlist_over()) and the reaper's sweep removes it.
         _stop_ffmpeg(current, logger, first_signal=signal.SIGKILL)
 
     frozen = continue_playlist and _signal_tracked_ffmpeg(current, signal.SIGSTOP)
@@ -2646,6 +2748,7 @@ def _restart_ffmpeg_locked(
             "log_path",
             "audio_map",
             "segment_keep_extra",
+            "visible_segments",
         ):
             if key in new:
                 fresh[key] = new[key]
@@ -2999,8 +3102,8 @@ def _start_stream_switch_restart(channel_uuid: str, state: dict, upstream_stream
 def _restart_after_stream_switch(
     channel_uuid: str, state: dict, upstream_stream_id: str, settings_dict: dict, logger
 ) -> bool:
-    """Restarts the buffer's ffmpeg after Dispatcharr switched the channel to another of its streams, appending to the
-    same playlist under the same access token, so its client reads on across the join.
+    """Restarts the buffer's ffmpeg after Dispatcharr switched the channel to another of its streams, carrying the
+    playlist on (_carry_playlist_over()) under the same access token, so its client reads on across the join.
 
     `-c copy` keeps the codec ffmpeg probed at its start: its MPEG-TS demuxer sets a PID's stream type once, so a switch
     to a stream in another video format (H.264 to HEVC) on the same PID went on being written as the old one, and
@@ -3052,7 +3155,6 @@ def _restart_after_stream_switch_locked(channel_uuid, lock_token, state, upstrea
 
     def adopted(fresh):
         fresh["upstream_stream_id"] = upstream_stream_id
-        fresh["playlist_continued"] = True  # the reaper's stray-segment sweep (_stray_segment_names())
 
     def kept(fresh):
         fresh["upstream_stream_id"] = upstream_stream_id  # handled, as far as it can be: not tried again
@@ -3074,14 +3176,128 @@ def _restart_after_stream_switch_locked(channel_uuid, lock_token, state, upstrea
 
 
 _SEGMENT_NAME = re.compile(r"^seg_(\d+)\.ts$")
+# The part of a buffer's playlist from before its last stream-switch restart, which the new ffmpeg's live.m3u8 does not
+# list (_carry_playlist_over()). JSON, not a playlist: its entries can skip a number, which one #EXT-X-MEDIA-SEQUENCE
+# could not say.
+_EARLIER_SEGMENTS_NAME = "earlier.json"
+
+
+def _merge_listed_segments(earlier, live, limit):
+    """The buffer's listed segments, (sequence, filename, duration_ms) in order: those carried over from before a stream
+    switch that are older than live.m3u8's first, then live.m3u8's, the newest `limit` of them (None: all). Before the
+    new ffmpeg has written its first playlist, live.m3u8 is still the old one's and `earlier` repeats it, which the
+    sequence filter drops. Pure."""
+    if live:
+        earlier = [entry for entry in earlier if entry[0] < live[0][0]]
+    merged = list(earlier) + list(live)
+    if limit is not None and len(merged) > limit:
+        merged = merged[-limit:]
+    return merged
+
+
+def _parse_earlier_segments(text: str) -> list:
+    """earlier.json's entries as (sequence, filename, duration_ms), skipping anything malformed or out of order: the
+    plugin writes the file itself, but a damaged one must cost only its own entries. Pure."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    entries = []
+    if not isinstance(data, list):
+        return entries
+    for item in data:
+        if not (isinstance(item, list) and len(item) == 3):
+            continue
+        sequence, name, duration_ms = item
+        if (
+            _is_plain_int(sequence)
+            and _is_plain_int(duration_ms)
+            and isinstance(name, str)
+            and _SEGMENT_NAME.match(name)
+            and (not entries or sequence > entries[-1][0])
+        ):
+            entries.append((sequence, name, duration_ms))
+    return entries
+
+
+def _is_plain_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _listed_limit(state: dict):
+    """How many segments the buffer lists (`visible_segments`); None for a state from before 0.8.19, whose playlist
+    never had a carried-over part to trim."""
+    value = state.get("visible_segments")
+    return value if _is_plain_int(value) and value > 0 else None
+
+
+def _numbered_by_filename(entries) -> list:
+    """`entries` from _parse_live_playlist_lines() with each sequence taken from its file's number (seg_<n>.ts), which
+    both muxers name by it. The segment muxer started at a -segment_start_number writes #EXT-X-MEDIA-SEQUENCE:0 until
+    its first entry has left the list (measured with ffmpeg 6.1: seg_00003.ts listed under sequence 0), which after a
+    stream-switch restart would number the new segments below the carried-over ones for a whole window. A list with
+    any other name is left as listed (not one this plugin's ffmpeg wrote). Pure."""
+    numbered = []
+    for _sequence, name, duration_ms in entries:
+        match = _SEGMENT_NAME.match(name)
+        if not match:
+            return entries
+        numbered.append((int(match.group(1)), name, duration_ms))
+    return numbered
+
+
+def _listed_segments(channel_dir: Path, limit) -> tuple[int, list]:
+    """The playlist's media sequence and its (sequence, filename, duration_ms) entries, carried-over ones first
+    (_merge_listed_segments()), numbered by file name (_numbered_by_filename()). OSError when live.m3u8 cannot be
+    read; a missing or unreadable earlier.json is none, and so is any with no `limit`."""
+    lines = (channel_dir / "live.m3u8").read_text(encoding="utf-8", errors="replace").splitlines()
+    media_sequence, live = _parse_live_playlist_lines(lines)
+    live = _numbered_by_filename(live)
+    # Only with a limit: a restart that writes earlier.json is adopted with `visible_segments`, and a state from before
+    # 0.8.19 left with one (its restart refused, keep_old()) would otherwise list that snapshot for good, after its
+    # hls muxer had deleted the files (found by the branch's review).
+    earlier = []
+    if limit is not None:
+        try:
+            earlier = _parse_earlier_segments((channel_dir / _EARLIER_SEGMENTS_NAME).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            earlier = []
+    merged = _merge_listed_segments(earlier, live, limit)
+    return (merged[0][0] if merged else media_sequence), merged
+
+
+def _carry_playlist_over(channel_dir: Path, limit: int) -> int:
+    """Before a stream-switch restart's new ffmpeg starts: writes what the playlist lists now to earlier.json, so a
+    client keeps it, and returns the number the new ffmpeg's first segment takes. The segment muxer writes a playlist of
+    its own segments only (it has no append_list, which the hls muxer used for this), so without the carry-over the
+    playlist would start again at the switch and the addon would drop everything before it.
+
+    The number is one past the highest on disk, not past the last listed: the old ffmpeg, frozen at this point
+    (_restart_ffmpeg_locked()), holds its next segment open, and if the new one is refused and the old one resumed, a
+    new ffmpeg that had reused that number would have truncated the file under it. The number skipped leaves a gap in
+    the sequence, which the addon takes as it comes (it appends whatever is newer than what it has); earlier.json keeps
+    each entry's own sequence for that reason. The skipped file is never listed and the reaper's sweep removes it.
+
+    A live.m3u8 that cannot be read (the restart checked it exists) leaves earlier.json as it was rather than empty."""
+    try:
+        _, listed = _listed_segments(channel_dir, limit)
+    except OSError:
+        listed = None
+    numbers = [int(m.group(1)) for m in map(_SEGMENT_NAME.match, os.listdir(channel_dir)) if m]
+    next_number = max([*numbers, *(entry[0] for entry in (listed or [])[-1:]), -1]) + 1
+    if listed is not None:
+        temp = channel_dir / (_EARLIER_SEGMENTS_NAME + ".tmp")
+        temp.write_text(json.dumps([list(entry) for entry in listed]), encoding="utf-8")
+        os.replace(temp, channel_dir / _EARLIER_SEGMENTS_NAME)
+    return next_number
 
 
 def _stray_segment_names(names, media_sequence: int, keep_extra: int) -> list[str]:
-    """The segment files among `names` that ffmpeg would long have deleted: numbered below the playlist's first listed
-    segment by more than `keep_extra` (its -hls_delete_threshold). A continuing ffmpeg (append_list) rebuilds only the
-    listed segments, so the ones its killed predecessor kept past the list were never deleted by anyone (found by the
-    stream-switch branch's review, reproduced with ffmpeg 6.1: a 3-segment list with 3 kept past it left those 3 behind
-    for good)."""
+    """The segment files among `names` numbered below the playlist's first listed segment by more than `keep_extra`
+    (the state's `segment_keep_extra`), which a client reading behind the list has no more use for. The segment muxer
+    deletes nothing itself; the hls muxer did, with -hls_delete_threshold, until 0.8.19. Since 0.8.18 this also caught
+    what an append_list restart left behind (found by the stream-switch branch's review, reproduced with ffmpeg 6.1: a
+    3-segment list with 3 kept past it left those 3 behind for good)."""
     stray = []
     for name in names:
         match = _SEGMENT_NAME.match(name)
@@ -3091,19 +3307,22 @@ def _stray_segment_names(names, media_sequence: int, keep_extra: int) -> list[st
 
 
 def _sweep_stray_segments(state: dict, logger) -> None:
-    """Deletes a continued playlist's stray segment files (_stray_segment_names()); a reaper tick's housekeeping."""
+    """Deletes the buffer's segment files that have left the playlist for good (_stray_segment_names()); a reaper tick's
+    housekeeping, so a file goes up to one tick (15 s) after it is due. Every buffer since 0.8.19's segment muxer, which
+    deletes none itself (_build_ffmpeg_command()); a buffer started by an older plugin's hls muxer is swept too, where
+    it finds only what that muxer would delete anyway."""
     keep_extra = state.get("segment_keep_extra")
-    if not state.get("playlist_continued") or not isinstance(keep_extra, int) or isinstance(keep_extra, bool):
+    if not _is_plain_int(keep_extra):
         return
     channel_dir = _channel_dir(state["storage_path"], state["channel_uuid"])
     try:
-        _, parsed = _parse_live_playlist_lines((channel_dir / "live.m3u8").read_text().splitlines())
+        first, listed = _listed_segments(channel_dir, _listed_limit(state))
         names = os.listdir(channel_dir)
     except OSError:
         return
-    if not parsed:
+    if not listed:
         return
-    for name in _stray_segment_names(names, parsed[0][0], keep_extra):
+    for name in _stray_segment_names(names, first, keep_extra):
         with contextlib.suppress(OSError):
             (channel_dir / name).unlink()
 
@@ -4057,7 +4276,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
         # Two very different situations produce the identical symptom here
         # -- no playlist yet -- and a caller retrying blindly on either one
         # can't tell them apart: a buffer that's still cold-starting (ffmpeg
-        # running, just hasn't finished its first hls_time interval
+        # running, just hasn't finished its first segment
         # yet) versus one that will *never* produce a playlist because
         # ffmpeg already exited (confirmed live: an upstream provider's own
         # concurrent-stream limit, already fully used by other channels,
@@ -4156,6 +4375,13 @@ def _get_live_manifest(state: dict, logger) -> dict:
     # has none of that risk. A mismatch here is treated exactly like a
     # cold cache, full stop, no partial trust of anything in it.
     buffer_token = state.get("access_token")
+    # Part of what the cache is built from since 0.8.19 (_listed_segments()); it changes only at a stream-switch
+    # restart.
+    try:
+        earlier_stat = (channel_dir / _EARLIER_SEGMENTS_NAME).stat()
+        earlier_key = (earlier_stat.st_mtime_ns, earlier_stat.st_size)
+    except OSError:
+        earlier_key = None
 
     with _manifest_cache_lock:
         cached = _manifest_cache.get(channel_uuid)
@@ -4170,6 +4396,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
             cached is not None
             and cached["playlist_mtime_ns"] == playlist_stat.st_mtime_ns
             and cached["playlist_size"] == playlist_stat.st_size
+            and cached.get("earlier_key") == earlier_key
         ):
             # Nothing on disk has changed since our own last read of this
             # exact playlist file -- reuse it outright, no re-parse, not
@@ -4213,13 +4440,12 @@ def _get_live_manifest(state: dict, logger) -> dict:
                     ordered[-1] = (newest_seq, newest_name, newest_size, newest_duration_ms)
                     cached["by_sequence"][newest_seq] = (newest_name, newest_size, newest_duration_ms)
         else:
-            lines = live_playlist_path.read_text(encoding="utf-8", errors="replace").splitlines()
-
-            # First pass: pure text parsing, no filesystem access yet --
-            # just the (sequence, filename, duration_ms) triples in
-            # playlist order. Kept separate from size resolution below
-            # so that step can tell which entry is the newest one.
-            media_sequence, parsed = _parse_live_playlist_lines(lines)
+            # First pass: the (sequence, filename, duration_ms) triples in
+            # playlist order, with no segment stat()ed yet -- any carried
+            # over from before a stream switch first. Kept separate from
+            # size resolution below so that step can tell which entry is
+            # the newest one.
+            media_sequence, parsed = _listed_segments(channel_dir, _listed_limit(state))
 
             old_by_sequence = cached["by_sequence"] if cached else {}
             new_by_sequence = {}
@@ -4261,8 +4487,8 @@ def _get_live_manifest(state: dict, logger) -> dict:
                     try:
                         size = (channel_dir / seg_name).stat().st_size
                     except OSError:
-                        # Deleted (by the live buffer's own
-                        # delete_segments) between the playlist listing it
+                        # Deleted (by the reaper's sweep of old
+                        # segments) between the playlist listing it
                         # and this stat -- drop it rather than fail the
                         # whole manifest over one segment (sequence
                         # numbers for surviving entries are unaffected,
@@ -4280,6 +4506,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
                     "instance_token": buffer_token,
                     "playlist_mtime_ns": playlist_stat.st_mtime_ns,
                     "playlist_size": playlist_stat.st_size,
+                    "earlier_key": earlier_key,
                     "media_sequence": media_sequence,
                     "by_sequence": new_by_sequence,
                 },
@@ -5008,9 +5235,9 @@ class Plugin:
             "type": "number",
             "default": 60,
             "help_text": (
-                "How far back a viewer can rewind. Drives both "
-                "hls_list_size (what the playlist advertises) and "
-                "hls_delete_threshold (when old segment files are deleted). "
+                "How far back a viewer can rewind. Drives both how many "
+                "segments the playlist lists and when old segment files are "
+                "deleted. "
                 "At most 1440 (a day), and at most 7200 segments: past 240 "
                 "minutes at the default 2-second segments the buffer stops "
                 "there, and a day needs 12-second segments."
@@ -5022,7 +5249,7 @@ class Plugin:
             "type": "number",
             "default": 2,
             "help_text": (
-                "ffmpeg -hls_time. A client only sees new content once a "
+                "ffmpeg -segment_time. A client only sees new content once a "
                 "segment closes, so shorter segments mean less stalling/"
                 "rebuffering during ordinary playback, at the cost of more, "
                 "smaller files on disk and more requests to this plugin's own "
@@ -5855,6 +6082,12 @@ class Plugin:
             # instance has been replaced since `state` was read (that restart's new ffmpeg, or another start's): the
             # buffer this caller polls is not the failed one, so it hears "not ready" and asks again (a replacement
             # with another token answers its next poll as replaced).
+            #
+            # First, a start the segment muxer refused for a video stream with no picture size (0.8.19) is restarted on
+            # the fallback instead, as a live one stuck on that stream is below.
+            if cls._restart_if_stuck_on_unsent_video(channel_uuid, state, settings_dict, logger):
+                cls._touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id, from_file_server)
+                return {"status": "error", "message": _RESTARTED_WITHOUT_AUDIO_MAP_MESSAGE}
             if (
                 _teardown_buffer(state, logger, abort_if=lambda fresh: _restart_in_progress(fresh, _shared_now()))
                 is False
@@ -5871,11 +6104,7 @@ class Plugin:
             # its first playlist yet as idle").
             cls._touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id, from_file_server)
             if restarted:
-                return {
-                    "status": "error",
-                    "message": "restarted the buffer without the audio map (its video stream never arrived) -- "
-                    "the playlist follows shortly",
-                }
+                return {"status": "error", "message": _RESTARTED_WITHOUT_AUDIO_MAP_MESSAGE}
             return {"status": "error", "message": str(exc)}
         except Exception as exc:
             logger.exception("timeshift_buffer: manifest build failed for %s", channel_uuid)
@@ -5907,7 +6136,9 @@ class Plugin:
         cls._touch_after_manifest_poll(channel_uuid, supplied_token, viewer_id, from_file_server)
         if manifest.get("ended"):
             fresh = _get_buffer_state(channel_uuid)
-            if fresh and _dead_only_for_a_restart(state, fresh, _shared_now()):
+            if (fresh and _dead_only_for_a_restart(state, fresh, _shared_now())) or cls._restart_if_switch_was_refused(
+                channel_uuid, state, settings_dict, logger
+            ):
                 manifest = {**manifest, "ended": False}
         else:
             cls._follow_stream_switch(channel_uuid, state, settings_dict, logger)
@@ -5972,6 +6203,30 @@ class Plugin:
         )
 
     @staticmethod
+    def _restart_if_switch_was_refused(channel_uuid, state, settings_dict, logger) -> bool:
+        """A buffer with a playlist whose ffmpeg exited on the segment muxer's refusal of a video stream with no picture
+        size: only a stream-switch restart's ffmpeg gets there (a first start is refused before it writes any segment),
+        adopted before its probe ended, onto a stream whose keyframes are further apart than the probe (found by the
+        branch's review). 0.8.18's hls muxer copied that stream; the buffer is restarted once on the fallback, which
+        does too, carrying the playlist on, rather than ended."""
+        if not state.get("audio_map") or state.get("restarted_without_audio_map"):
+            return False
+        try:
+            channel_dir = _channel_dir(state["storage_path"], channel_uuid)
+        except (KeyError, ValueError):
+            return False
+        if not _should_restart_without_audio_map(state, _shared_now(), 0, _read_log_tail(channel_dir), alive=False):
+            return False
+        try:
+            return _restart_without_audio_map(channel_uuid, state, settings_dict, logger, continue_playlist=True)
+        except Exception:
+            logger.exception(
+                "timeshift_buffer: restarting the buffer for %s without the audio map after its stream switch failed",
+                channel_uuid,
+            )
+            return False
+
+    @staticmethod
     def _restart_if_stuck_on_unsent_video(channel_uuid, state, settings_dict, logger) -> bool:
         if not state.get("audio_map") or state.get("restarted_without_audio_map"):
             return False  # the common case, answered before any file is read
@@ -5979,12 +6234,12 @@ class Plugin:
             channel_dir = _channel_dir(state["storage_path"], channel_uuid)
         except (KeyError, ValueError):
             return False
-        if (channel_dir / "live.m3u8").exists() or not _is_process_alive(
-            state.get("pid"), state.get("pid_start_ticks")
-        ):
+        if (channel_dir / "live.m3u8").exists():
             return False
+        alive = _is_process_alive(state.get("pid"), state.get("pid_start_ticks"))
+        log_text = _read_log_head(channel_dir) if alive else _read_log_tail(channel_dir)
         segment_seconds = _int_setting(settings_dict, "segment_seconds", 2, minimum=1, maximum=_MAX_SEGMENT_SECONDS)
-        if not _should_restart_without_audio_map(state, _shared_now(), segment_seconds, _read_log_head(channel_dir)):
+        if not _should_restart_without_audio_map(state, _shared_now(), segment_seconds, log_text, alive):
             return False
         try:
             return _restart_without_audio_map(channel_uuid, state, settings_dict, logger)

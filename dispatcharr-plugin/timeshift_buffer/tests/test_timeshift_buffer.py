@@ -888,7 +888,7 @@ def test_compute_segment_counts_caps_the_listed_segments():
 
 def test_build_ffmpeg_command_omits_headers_flag_when_none():
     cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts"
+        "http://example/proxy", None, 2, "/data/live.m3u8", 1800, "seg_%05d.ts"
     )
 
     assert "-headers" not in cmd
@@ -899,7 +899,7 @@ def test_build_ffmpeg_command_places_headers_flag_immediately_before_input():
     it, not globally -- must appear immediately before -i, not just
     somewhere in the argv."""
     cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://example/proxy", "X-Real-IP: 1.2.3.4\r\n", 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts"
+        "http://example/proxy", "X-Real-IP: 1.2.3.4\r\n", 2, "/data/live.m3u8", 1800, "seg_%05d.ts"
     )
 
     i_index = cmd.index("-i")
@@ -911,96 +911,107 @@ def test_build_ffmpeg_command_never_includes_reset_timestamps():
     """The exact flag this project deliberately removed -- see this
     function's own docstring for the seeking regression it caused."""
     cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts"
+        "http://example/proxy", None, 2, "/data/live.m3u8", 1800, "seg_%05d.ts"
     )
 
     assert "-reset_timestamps" not in cmd
 
 
-def test_build_ffmpeg_command_uses_the_hls_muxer_with_a_visible_window_and_a_delete_margin():
-    cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts"
+def _mapped_command(**kw):
+    return timeshift_buffer_plugin._build_ffmpeg_command(
+        "http://example/proxy", None, 2, "/data/live.m3u8", 1800, "seg_%05d.ts", "0:a:u?", **kw
     )
 
-    assert cmd[cmd.index("-f") + 1] == "hls"
-    assert cmd[cmd.index("-hls_time") + 1] == "2"
-    assert cmd[cmd.index("-hls_list_size") + 1] == "1800"
-    # the same 2x window the old -segment_wrap gave: listed + this many kept beyond the list
-    assert cmd[cmd.index("-hls_delete_threshold") + 1] == "1800"
-    assert cmd[cmd.index("-hls_flags") + 1] == "delete_segments+omit_endlist"
-    assert cmd[cmd.index("-hls_segment_filename") + 1] == "seg_%05d.ts"
-    assert cmd[-1] == "/data/live.m3u8"
+
+def test_build_ffmpeg_command_uses_the_segment_muxer_with_one_muxer_across_files_and_a_visible_window():
+    """The segment muxer (0.8.19), so subtitle streams stay in the MPEG-TS; -individual_header_trailer 0 is what keeps
+    one MPEG-TS muxer, and so one run of continuity counters, across the files (see _build_ffmpeg_command's
+    docstring and the real-ffmpeg continuity test below)."""
+    cmd = _mapped_command()
+
+    assert cmd[cmd.index("-f") + 1] == "segment"
+    assert cmd[cmd.index("-segment_format") + 1] == "mpegts"
+    assert cmd[cmd.index("-segment_time") + 1] == "2"
+    assert cmd[cmd.index("-individual_header_trailer") + 1] == "0"
+    assert cmd[cmd.index("-segment_list") + 1] == "/data/live.m3u8"
+    assert cmd[cmd.index("-segment_list_type") + 1] == "m3u8"
+    assert cmd[cmd.index("-segment_list_size") + 1] == "1800"
+    assert cmd[cmd.index("-segment_list_flags") + 1] == "+live"
+    assert cmd[cmd.index("-segment_start_number") + 1] == "0"
+    assert cmd[-1] == "seg_%05d.ts"
+    # nothing of the hls muxer's, and no -segment_wrap, which recycled file names under a reader (0.7.x)
+    assert not any(a.startswith("-hls") or a == "-segment_wrap" for a in cmd)
 
 
-def test_build_ffmpeg_command_never_uses_the_segment_muxer():
-    """The segment muxer restarts every PID's continuity counter at 0 in each file, so every splice the addon
-    makes is a break the demuxer reports as "Packet corrupt" -- see _build_ffmpeg_command's docstring."""
-    cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts"
-    )
+def test_build_ffmpeg_command_flushes_each_segment_before_the_playlist_names_it():
+    """The segment muxer renames the playlist before it closes the segment it lists; +flush_packets makes its MPEG-TS
+    muxer's flush at the segment's end write every byte first (see _build_ffmpeg_command's comment)."""
+    cmd = _mapped_command()
 
-    assert "segment" not in cmd
-    assert not any(a.startswith("-segment") for a in cmd)
+    assert cmd[cmd.index("-fflags") + 1] == "+flush_packets"
+    assert cmd.index("-i") < cmd.index("-fflags") < cmd.index("-f")
 
 
-def test_build_ffmpeg_command_delete_margin_is_at_least_one():
-    cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://example/proxy", None, 2, 1, "/data/live.m3u8", 1, "seg_%05d.ts"
-    )
+def test_build_ffmpeg_command_numbers_on_from_the_start_number():
+    cmd = _mapped_command(start_number=4711)
 
-    assert cmd[cmd.index("-hls_delete_threshold") + 1] == "1"
+    assert cmd[cmd.index("-segment_start_number") + 1] == "4711"
 
 
 def test_build_ffmpeg_command_uses_stream_copy_not_re_encode():
     cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts"
+        "http://example/proxy", None, 2, "/data/live.m3u8", 1800, "seg_%05d.ts"
     )
 
     assert cmd[cmd.index("-c") + 1] == "copy"
 
 
-def test_build_ffmpeg_command_maps_the_first_video_and_every_usable_audio_stream():
+def test_build_ffmpeg_command_maps_the_first_video_every_usable_audio_and_every_subtitle_stream():
     """Without -map, ffmpeg keeps one audio stream, so a channel's other audio languages never reached the buffer.
-    No subtitle map and no -map 0: the real-ffmpeg tests below show why each stream type is mapped as it is."""
-    for audio_map in timeshift_buffer_plugin._AUDIO_MAP_SPELLINGS:
+    Subtitles in the audio map's own spelling, the one this ffmpeg reads; no -map 0. The real-ffmpeg tests below show
+    why each stream type is mapped as it is."""
+    for audio_map, subtitle_map in zip(
+        timeshift_buffer_plugin._AUDIO_MAP_SPELLINGS, ("0:s:u?", "0:s:u:?"), strict=True
+    ):
         cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-            "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts", audio_map
+            "http://example/proxy", None, 2, "/data/live.m3u8", 1800, "seg_%05d.ts", audio_map
         )
 
         maps = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-map"]
-        assert maps == ["0:v:0?", audio_map]
+        assert maps == ["0:v:0?", audio_map, subtitle_map]
         # output options: after the input, before the output format
         assert cmd.index("-i") < cmd.index("-map") < cmd.index("-f")
         assert cmd[cmd.index("-max_interleave_delta") + 1] == "100K"
         assert cmd.index("-i") < cmd.index("-max_interleave_delta") < cmd.index("-f")
 
 
-def test_build_ffmpeg_command_without_an_audio_map_is_the_0_8_17_command_without_subtitles():
-    """The fallback for an ffmpeg that reads neither spelling: ffmpeg's own default stream pick, as before, but with
-    -sn, so a teletext stream cannot fail the start (see the real-ffmpeg fallback test)."""
-    mapped = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts", "0:a:u?"
-    )
+def test_build_ffmpeg_command_without_an_audio_map_is_the_0_8_18_fallback_on_the_hls_muxer():
+    """The fallback (an ffmpeg that reads neither spelling, or the restart of a start that found no picture size for its
+    video): ffmpeg's own pick of streams with -sn, on the hls muxer, which copies a video stream with no picture size
+    where the segment muxer refuses it (see the real-ffmpeg tests below). 0.8.18's fallback argv, plus -start_number for
+    a stream-switch restart."""
     cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://example/proxy", None, 2, 3600, "/data/live.m3u8", 1800, "seg_%05d.ts", None
+        "http://example/proxy", None, 2, "/data/live.m3u8", 1800, "seg_%05d.ts", None, start_number=12
     )
 
     assert "-map" not in cmd
     assert "-max_interleave_delta" not in cmd
-    assert cmd[: cmd.index("-f")] == [
-        "ffmpeg",
-        "-nostdin",
-        "-loglevel",
-        "warning",
-        "-i",
-        "http://example/proxy",
-        "-sn",
-        "-c",
-        "copy",
-    ]
-    # everything from the output format on is the same as the mapped command's (and 0.8.17's)
-    assert cmd[cmd.index("-f") :] == mapped[mapped.index("-f") :]
-    assert "-sn" not in mapped
+    assert cmd == [
+        "ffmpeg", "-nostdin", "-loglevel", "warning", "-i", "http://example/proxy",
+        "-sn", "-c", "copy",
+        "-f", "hls", "-hls_time", "2", "-hls_list_size", "1800",
+        # as many kept past the list as listed: the same margin the reaper's sweep keeps (segment_keep_extra)
+        "-hls_delete_threshold", "1800", "-hls_flags", "delete_segments+omit_endlist", "-start_number", "12",
+        "-hls_segment_filename", "seg_%05d.ts", "/data/live.m3u8",
+    ]  # fmt: skip
+
+
+def test_build_ffmpeg_command_fallback_delete_margin_is_at_least_one():
+    cmd = timeshift_buffer_plugin._build_ffmpeg_command(
+        "http://example/proxy", None, 2, "/data/live.m3u8", 1, "seg_%05d.ts", None
+    )
+
+    assert cmd[cmd.index("-hls_delete_threshold") + 1] == "1"
 
 
 _needs_ffmpeg_and_ffprobe = pytest.mark.skipif(
@@ -1143,14 +1154,15 @@ def _ts_continuity_breaks(segment_paths):
 
 
 # CI sets REQUIRE_FFMPEG so a missing ffmpeg is a failure there, not a silent skip of the only guard
-# on the hls-muxer continuity-counter fix.
+# on the continuity-counter fix (the hls muxer in 0.8.0, -individual_header_trailer 0 since 0.8.19).
+@pytest.mark.parametrize("mapped", [True, False], ids=["segment-muxer", "hls-fallback"])
 @pytest.mark.skipif(
     shutil.which("ffmpeg") is None and not os.environ.get("REQUIRE_FFMPEG"), reason="ffmpeg not installed"
 )
-def test_buffer_segments_keep_one_continuity_counter_across_files(tmp_path):
-    """The reason for the hls muxer (see _build_ffmpeg_command's docstring): the files the addon splices into one
-    byte stream must not each restart the MPEG-TS continuity counters. Runs the real ffmpeg with the plugin's own
-    argv over a generated stream."""
+def test_buffer_segments_keep_one_continuity_counter_across_files(tmp_path, mapped):
+    """The files the addon splices into one byte stream must not each restart the MPEG-TS continuity counters (see
+    _build_ffmpeg_command's docstring): the segment muxer's default does, with -individual_header_trailer 0 it does
+    not. Runs the real ffmpeg with the plugin's own argv, and the fallback's, over a generated stream."""
     source = tmp_path / "in.ts"
     gen = subprocess.run(
         [
@@ -1167,14 +1179,9 @@ def test_buffer_segments_keep_one_continuity_counter_across_files(tmp_path):
             pytest.fail("this ffmpeg cannot generate the test stream (needs libx264/aac)")
         pytest.skip("this ffmpeg cannot generate the test stream (needs libx264/aac)")
 
-    out = tmp_path / "chan"
-    out.mkdir()
-    cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        str(source), None, 2, 20, str(out / "live.m3u8"), 10, "seg_%05d.ts"
-    )
-    cmd[cmd.index("-i") + 1] = str(source)
-    run = subprocess.run(cmd, cwd=out, capture_output=True, timeout=60)
+    run = _run_buffer_ffmpeg(source, tmp_path / "chan", **({} if mapped else {"audio_map": None}))
     assert run.returncode == 0, run.stderr.decode(errors="replace")
+    out = tmp_path / "chan"
 
     segments = sorted(out.glob("seg_*.ts"))
     assert len(segments) >= 4
@@ -1193,15 +1200,15 @@ def _generate_or_skip(args, what):
 _PROBED = object()
 
 
-def _run_buffer_ffmpeg(source, out, audio_map=_PROBED):
+def _run_buffer_ffmpeg(source, out, audio_map=_PROBED, start_number=0, visible=10):
     """The plugin's argv with the audio map the plugin's own probe picks for this ffmpeg, as _start_ffmpeg() does (or
     the one given: None is the fallback argv)."""
-    out.mkdir()
+    out.mkdir(exist_ok=True)
     if audio_map is _PROBED:
         audio_map = timeshift_buffer_plugin._select_audio_map(timeshift_buffer_plugin._ffmpeg_maps_audio_with)
         assert isinstance(audio_map, str), "this ffmpeg reads neither audio-map spelling"
     cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        str(source), None, 2, 20, str(out / "live.m3u8"), 10, "seg_%05d.ts", audio_map
+        str(source), None, 2, str(out / "live.m3u8"), visible, "seg_%05d.ts", audio_map, start_number
     )
     return subprocess.run(cmd, cwd=out, capture_output=True, timeout=60)
 
@@ -1322,11 +1329,11 @@ _TELETEXT_RAW = (b"\x10" + (b"\xff\x2c" + b"\xff" * 44) * 3) * 200
     ids=["dvb_subtitle", "dvb_teletext"],
 )
 @_needs_ffmpeg_and_ffprobe
-def test_a_channel_with_a_subtitle_stream_still_starts(tmp_path, fmt, raw):
-    """The hls muxer sends any mapped subtitle stream to a WebVTT muxer, which refuses DVB subtitles and teletext:
-    "Exactly one WebVTT stream is needed", "Could not write header", no segment. A first version of 0.8.18 mapped
-    subtitles and failed both; 0.8.17 already failed teletext this way (ffmpeg's default selection picked it), so a
-    teletext channel never started in Server-side mode. Subtitles are left out of the buffer."""
+def test_a_channel_with_a_subtitle_stream_buffers_it(tmp_path, fmt, raw):
+    """DVB subtitles and teletext reach every segment, beside both audio tracks, with the continuity counters running
+    on across the files. The hls muxer, 0.8.0 to 0.8.18, sent any mapped subtitle stream to a WebVTT muxer, which
+    refuses both ("Exactly one WebVTT stream is needed", "Could not write header", no segment): 0.8.17 failed every
+    teletext channel this way (ffmpeg's default selection picked it), and 0.8.18 left subtitles out."""
     raw_path = tmp_path / "sub.raw"
     raw_path.write_bytes(raw)
     source = tmp_path / "in.ts"
@@ -1343,13 +1350,17 @@ def test_a_channel_with_a_subtitle_stream_still_starts(tmp_path, fmt, raw):
     run = _run_buffer_ffmpeg(source, tmp_path / "chan")
 
     assert run.returncode == 0, run.stderr.decode(errors="replace")
-    assert [t for t, _ in _segment_streams(tmp_path / "chan" / "seg_00000.ts")] == ["video", "audio", "audio"]
+    segments = sorted((tmp_path / "chan").glob("seg_*.ts"))
+    assert len(segments) >= 2
+    for segment in segments:
+        assert [t for t, _ in _segment_streams(segment)] == ["video", "audio", "audio", "subtitle"]
+    assert _ts_continuity_breaks(segments) == 0
 
 
 @_needs_ffmpeg_and_ffprobe
 def test_the_fallback_argv_still_starts_a_teletext_channel(tmp_path):
-    """With no usable audio-map spelling the buffer falls back to ffmpeg's default pick, which takes a teletext stream
-    and failed the start in 0.8.17; -sn keeps that fixed in the fallback too."""
+    """The fallback (ffmpeg's default pick, on the hls muxer) takes a teletext stream, which failed the start in
+    0.8.17; -sn keeps that fixed there."""
     raw_path = tmp_path / "sub.raw"
     raw_path.write_bytes(_TELETEXT_RAW)
     source = tmp_path / "in.ts"
@@ -1385,28 +1396,57 @@ def test_a_channel_with_no_audio_still_starts(tmp_path):
     assert [t for t, _ in _segment_streams(tmp_path / "chan" / "seg_00000.ts")] == ["video"]
 
 
-@_needs_ffmpeg_and_ffprobe
-def test_a_start_mid_gop_keeps_the_video(tmp_path):
-    """A connection that begins between keyframes, with a GOP longer than the probe, leaves the video's picture size
-    unknown. `0:v:u?` dropped the video (audio-only segments with no error); ffmpeg copies it fine regardless."""
+def _long_gop_source(tmp_path, keyint_frames, seconds, cut_seconds):
+    """A 25 fps H.264 and AAC stream with a keyframe every `keyint_frames`, joined `cut_seconds` in: what ffmpeg reads
+    when its connection begins between two keyframes."""
     full = tmp_path / "full.ts"
     _generate_or_skip(
         [
-            "-f", "lavfi", "-i", "testsrc=duration=20:size=160x120:rate=25", "-f", "lavfi", "-i", "sine=duration=20",
-            "-c:v", "libx264", "-x264-params", "keyint=600:min-keyint=600:scenecut=0", "-c:a", "aac",
-            "-f", "mpegts", str(full),
+            "-f", "lavfi", "-i", f"testsrc=duration={seconds}:size=160x120:rate=25",
+            "-f", "lavfi", "-i", f"sine=duration={seconds}",
+            "-c:v", "libx264", "-x264-params", f"keyint={keyint_frames}:min-keyint={keyint_frames}:scenecut=0",
+            "-c:a", "aac", "-f", "mpegts", str(full),
         ],
         "a long-GOP stream (needs libx264/aac)",
     )  # fmt: skip
     data = full.read_bytes()
-    cut = (len(data) // 5) // 188 * 188  # about 4 s in, with no keyframe after it: the probe never sees a size
+    cut = int(len(data) * cut_seconds / seconds) // 188 * 188
     source = tmp_path / "in.ts"
     source.write_bytes(data[cut:])
+    return source
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_a_start_mid_gop_keeps_the_video(tmp_path):
+    """A connection that begins between keyframes leaves the video's picture size unknown until the next one. Within
+    the probe (ffmpeg's MPEG-TS probe waits up to 7 s for a stream it lacks parameters for) the size is found and the
+    video is kept. `0:v:u?` would have dropped it (audio-only segments with no error) where the probe gave up."""
+    source = _long_gop_source(tmp_path, keyint_frames=250, seconds=30, cut_seconds=6)  # next keyframe 4 s in
 
     run = _run_buffer_ffmpeg(source, tmp_path / "chan")
 
     assert run.returncode == 0, run.stderr.decode(errors="replace")
     segments = sorted((tmp_path / "chan").glob("seg_*.ts"))
+    assert segments
+    assert [t for t, _ in _segment_streams(segments[-1])] == ["video", "audio"]
+
+
+@_needs_ffmpeg_and_ffprobe
+def test_a_start_mid_gop_beyond_the_probe_is_refused_and_restarted_on_the_fallback_which_keeps_the_video(tmp_path):
+    """No keyframe within the probe: the size stays unknown, the segment muxer refuses the stream ("dimensions not
+    set") and ffmpeg exits, where the hls muxer copied it. The plugin restarts such a start on the fallback argv (hls,
+    ffmpeg's own pick), which keeps the video; _should_restart_without_audio_map() recognises this ffmpeg's log."""
+    source = _long_gop_source(tmp_path, keyint_frames=600, seconds=20, cut_seconds=4)  # no keyframe after the cut
+
+    mapped = _run_buffer_ffmpeg(source, tmp_path / "mapped")
+    fallback = _run_buffer_ffmpeg(source, tmp_path / "fallback", audio_map=None)
+
+    log = mapped.stderr.decode(errors="replace")
+    assert mapped.returncode != 0 and not list((tmp_path / "mapped").glob("seg_*.ts"))
+    state = {"audio_map": "0:a:u?", "started_at": 100.0}
+    assert timeshift_buffer_plugin._should_restart_without_audio_map(state, 101.0, 2, log, alive=False)
+    assert fallback.returncode == 0, fallback.stderr.decode(errors="replace")
+    segments = sorted((tmp_path / "fallback").glob("seg_*.ts"))
     assert segments
     assert [t for t, _ in _segment_streams(segments[-1])] == ["video", "audio"]
 
@@ -1435,11 +1475,11 @@ def test_only_the_first_of_several_video_streams_is_buffered(tmp_path):
 
 
 @_needs_ffmpeg_and_ffprobe
-def test_a_video_stream_declared_and_never_sent_stalls_the_mapped_argv_but_not_the_restart(tmp_path):
-    """What _restart_without_audio_map() is for, on the real ffmpeg: with `-map 0:v:0?` ffmpeg waits on a video
-    stream that sends nothing and cuts nothing until the input ends (one segment, at EOF), so a live channel never
-    gets a playlist. The restart's argv (no audio map) cuts on time. The warning the trigger looks for is the one this
-    ffmpeg prints."""
+def test_a_video_stream_declared_and_never_sent_fails_the_mapped_argv_but_not_the_restart(tmp_path):
+    """What _restart_without_audio_map() is for, on the real ffmpeg: with `-map 0:v:0?` the segment muxer refuses a
+    video stream that sends nothing ("dimensions not set") and ffmpeg exits (the hls muxer of 0.8.18 waited on it
+    instead, and cut nothing until the input ended). The restart's argv (no audio map) cuts on time. The warning and
+    the refusal the trigger looks for are the ones this ffmpeg prints."""
     full = tmp_path / "full.ts"
     _generate_or_skip(
         [
@@ -1454,9 +1494,10 @@ def test_a_video_stream_declared_and_never_sent_stalls_the_mapped_argv_but_not_t
     mapped = _run_buffer_ffmpeg(source, tmp_path / "mapped")
     restarted = _run_buffer_ffmpeg(source, tmp_path / "restarted", audio_map=None)
 
-    assert mapped.returncode == 0, mapped.stderr.decode(errors="replace")
-    assert sorted(p.name for p in (tmp_path / "mapped").glob("seg_*.ts")) == ["seg_00000.ts"]
-    assert timeshift_buffer_plugin._UNSENT_VIDEO_WARNING.search(mapped.stderr.decode(errors="replace"))
+    log = mapped.stderr.decode(errors="replace")
+    assert mapped.returncode != 0 and not list((tmp_path / "mapped").glob("seg_*.ts"))
+    assert timeshift_buffer_plugin._UNSENT_VIDEO_WARNING.search(log)
+    assert timeshift_buffer_plugin._NO_PICTURE_SIZE_EXIT.search(log)
     assert restarted.returncode == 0, restarted.stderr.decode(errors="replace")
     assert len(list((tmp_path / "restarted").glob("seg_*.ts"))) >= 4
     assert [t for t, _ in _segment_streams(tmp_path / "restarted" / "seg_00000.ts")] == ["audio"]
@@ -2954,6 +2995,50 @@ def test_get_live_manifest_does_not_check_liveness_without_a_tracked_pid(tmp_pat
 
     manifest = timeshift_buffer_plugin._get_live_manifest(state, _FakeLogger())
     assert manifest["segments"][0]["filename"] == "seg0.ts"
+
+
+def test_get_live_manifest_lists_the_segments_carried_over_from_before_a_stream_switch_first(tmp_path, monkeypatch):
+    """The new ffmpeg's live.m3u8 lists only its own segments (the segment muxer has no append_list); earlier.json holds
+    the ones from before the switch (_carry_playlist_over()), each under its own sequence, so the addon keeps them."""
+    channel_dir = tmp_path / _UUID
+    _write_playlist(
+        channel_dir,
+        media_sequence=14,
+        segments=[("seg_00014.ts", b"c" * 30, "2.0"), ("seg_00015.ts", b"d" * 40, "2.0")],
+    )
+    for name, size in (("seg_00011.ts", 10), ("seg_00012.ts", 20)):
+        (channel_dir / name).write_bytes(b"x" * size)
+    (channel_dir / "earlier.json").write_text('[[11, "seg_00011.ts", 2000], [12, "seg_00012.ts", 2000]]')
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, *_a: True)
+    state = {**_make_state(tmp_path, pid=99999), "visible_segments": 1800}
+
+    manifest = timeshift_buffer_plugin._get_live_manifest(state, _FakeLogger())
+
+    assert [(seg["sequence"], seg["filename"], seg["byte_offset"]) for seg in manifest["segments"]] == [
+        (11, "seg_00011.ts", 0),
+        (12, "seg_00012.ts", 10),
+        (14, "seg_00014.ts", 30),
+        (15, "seg_00015.ts", 60),
+    ]
+    assert manifest["media_sequence"] == 11
+
+
+def test_a_new_earlier_json_is_read_though_the_playlist_is_unchanged(tmp_path, monkeypatch):
+    """earlier.json is written before the new ffmpeg's first playlist: a worker that cached the old playlist must see
+    it (it lists the same segments then, so nothing changes yet, but the cache must not hide a later rewrite of it)."""
+    channel_dir = tmp_path / _UUID
+    _write_playlist(channel_dir, media_sequence=14, segments=[("seg_00014.ts", b"c" * 30, "2.0")])
+    monkeypatch.setattr(timeshift_buffer_plugin, "_is_process_alive", lambda pid, *_a: True)
+    state = {**_make_state(tmp_path, pid=99999), "visible_segments": 1800}
+    assert [
+        seg["sequence"] for seg in timeshift_buffer_plugin._get_live_manifest(state, _FakeLogger())["segments"]
+    ] == [14]
+
+    (channel_dir / "seg_00013.ts").write_bytes(b"x" * 5)
+    (channel_dir / "earlier.json").write_text('[[13, "seg_00013.ts", 2000]]')
+
+    manifest = timeshift_buffer_plugin._get_live_manifest(state, _FakeLogger())
+    assert [seg["sequence"] for seg in manifest["segments"]] == [13, 14]
 
 
 def test_get_live_manifest_basic(tmp_path):
@@ -6992,7 +7077,7 @@ def test_reaper_loop_reports_a_new_failure_after_a_recovery(monkeypatch):
 
 def test_build_ffmpeg_command_never_reads_stdin():
     cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://127.0.0.1:9191/proxy/ts/stream/x", None, 2, 60, Path("/tmp/p/live.m3u8"), 30, "seg_%05d.ts"
+        "http://127.0.0.1:9191/proxy/ts/stream/x", None, 2, Path("/tmp/p/live.m3u8"), 30, "seg_%05d.ts"
     )
     # A backgrounded ffmpeg that reads the terminal can be suspended by SIGTTIN.
     assert "-nostdin" in cmd
@@ -7272,7 +7357,7 @@ def test_a_scope_id_in_client_ip_is_rejected_on_its_own():
 
 def test_build_ffmpeg_command_pins_the_log_level():
     cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-        "http://127.0.0.1:9191/proxy/ts/stream/x", None, 2, 60, Path("/tmp/p/live.m3u8"), 30, "seg_%05d.ts"
+        "http://127.0.0.1:9191/proxy/ts/stream/x", None, 2, Path("/tmp/p/live.m3u8"), 30, "seg_%05d.ts"
     )
     i = cmd.index("-loglevel")
     assert cmd[i + 1] == "warning"
@@ -8105,7 +8190,7 @@ def test_start_ffmpeg_caps_buffer_minutes_at_a_day(tmp_path, monkeypatch):
 
     # 20-second segments, so the day is what binds here and not _MAX_VISIBLE_SEGMENTS.
     cmd = commands[0]
-    assert cmd[cmd.index("-hls_list_size") + 1] == str(24 * 60 * 60 // 20)
+    assert cmd[cmd.index("-segment_list_size") + 1] == str(24 * 60 * 60 // 20)
 
 
 def test_start_ffmpeg_caps_segment_seconds_inside_the_addons_cold_start(tmp_path, monkeypatch):
@@ -8120,8 +8205,8 @@ def test_start_ffmpeg_caps_segment_seconds_inside_the_addons_cold_start(tmp_path
     )
 
     cmd = commands[0]
-    assert cmd[cmd.index("-hls_time") + 1] == "20"
-    assert cmd[cmd.index("-hls_list_size") + 1] == "3"
+    assert cmd[cmd.index("-segment_time") + 1] == "20"
+    assert cmd[cmd.index("-segment_list_size") + 1] == "3"
 
 
 def test_start_ffmpeg_caps_the_listed_segments_and_says_so(tmp_path, monkeypatch):
@@ -8137,7 +8222,7 @@ def test_start_ffmpeg_caps_the_listed_segments_and_says_so(tmp_path, monkeypatch
     )
 
     cmd = commands[0]
-    assert cmd[cmd.index("-hls_list_size") + 1] == "7200"
+    assert cmd[cmd.index("-segment_list_size") + 1] == "7200"
     warnings = [message for level, message in logger.calls if level == "warning"]
     assert len(warnings) == 1
     assert "more than 7200 segments; buffering 240 minutes" in warnings[0]
@@ -9140,6 +9225,28 @@ def test_a_start_with_no_playlist_is_restarted_once_it_is_overdue_and_the_video_
     assert should(_mapped_state(), 116.0, 6, _UNSENT_VIDEO_LOG) is True
 
 
+# What the segment muxer adds after the warning when it refuses that stream, and ffmpeg exits (measured with 6.1).
+_NO_PICTURE_SIZE_EXIT_LOG = (
+    _UNSENT_VIDEO_LOG
+    + "[segment @ 0x2] dimensions not set\n"
+    + "[out#0/segment @ 0x3] Could not write header (incorrect codec parameters ?): Invalid argument\n"
+)
+
+
+def test_a_start_that_exited_on_the_segment_muxers_refusal_is_restarted_at_once():
+    """The segment muxer (0.8.19) does not wait on a video stream with no picture size, it refuses it and ffmpeg exits:
+    nothing more is coming, so there is no time to wait out."""
+    should = timeshift_buffer_plugin._should_restart_without_audio_map
+    assert should(_mapped_state(), 101.0, 2, _NO_PICTURE_SIZE_EXIT_LOG, alive=False) is True
+    # exited for another reason (a refused connection, a provider limit): its own failure, reported as such
+    assert should(_mapped_state(), 101.0, 2, _UNSENT_VIDEO_LOG, alive=False) is False
+    assert should(_mapped_state(), 101.0, 2, "[segment @ 0x2] dimensions not set\n", alive=False) is False
+    assert should(
+        _mapped_state(restarted_without_audio_map=True), 101.0, 2, _NO_PICTURE_SIZE_EXIT_LOG, alive=False
+    ) is (False)
+    assert should(_mapped_state(audio_map=None), 101.0, 2, _NO_PICTURE_SIZE_EXIT_LOG, alive=False) is False
+
+
 def test_the_restart_comes_early_enough_for_the_new_ffmpeg_to_finish_inside_the_addons_wait():
     """The restarted ffmpeg needs about 6 s plus a segment for its first playlist, and the addon waits 30 s: with long
     segments `segment_seconds + 10` came too late, and such a channel never played (found by the branch's review)."""
@@ -9383,6 +9490,112 @@ def test_get_live_manifest_restarts_a_stuck_start_once_and_reports_not_ready(mon
     assert len(rig.spawned) == 1
 
 
+def test_get_live_manifest_restarts_a_start_the_segment_muxer_refused_instead_of_failing_it(
+    monkeypatch, tmp_path, start_locks
+):
+    """A mapped start whose ffmpeg exited on "dimensions not set" (a video stream never sent, or a join between two
+    keyframes further apart than the probe) is restarted on the fallback (the hls muxer, ffmpeg's own pick), not torn
+    down as failed: the poll hears "not ready" and the buffer goes on as 0.8.18's fallback did."""
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    # the probe's decoder errors come first, far past the head the alive case reads; the warning and the refusal last
+    (rig.channel_dir / "ffmpeg.log").write_text(
+        "[h264 @ 0x4] non-existing PPS 0 referenced\n" * 5000 + _NO_PICTURE_SIZE_EXIT_LOG
+    )
+    rig.alive.clear()
+    monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 107.0)  # long before the alive case is due
+    params = {"channel_uuid": _UUID, "viewer_id": "v1", "access_token": "tok"}
+    locks = {"acquire_lock": start_locks.acquire, "release_lock": start_locks.release, "renew_lock": start_locks.renew}
+
+    result, _logger = _run(monkeypatch, "get_live_manifest", params, {}, tmp_path, **locks)
+
+    assert result["status"] == "error" and "fatal" not in result
+    assert "restarted the buffer without the audio map" in result["message"]
+    [cmd] = rig.spawned
+    assert "-map" not in cmd and cmd[cmd.index("-f") + 1] == "hls"
+    state = rig.store[_UUID]
+    assert state["pid"] == rig.NEW_PID and state["restarted_without_audio_map"] is True
+    assert rig.removed == []
+
+
+def _refused_switch_rig(monkeypatch, tmp_path, start_locks, log):
+    """A buffer after a stream-switch restart (playlist and segments on disk, `restarted_from` set) whose adopted ffmpeg
+    has exited, with `log` its ffmpeg.log."""
+    rig = _RestartRig(
+        monkeypatch,
+        tmp_path,
+        start_locks,
+        restarted_from={"pid": 999, "started_at": 90.0},
+        visible_segments=1800,
+        segment_keep_extra=1800,
+    )
+    (rig.channel_dir / "live.m3u8").write_text(
+        "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nseg_00000.ts\n#EXTINF:2.0,\nseg_00001.ts\n"
+    )
+    for name in ("seg_00000.ts", "seg_00001.ts"):
+        (rig.channel_dir / name).write_bytes(b"\x47" * 188)
+    (rig.channel_dir / "ffmpeg.log").write_text(log)
+    rig.alive.clear()
+    return rig
+
+
+def test_a_switch_whose_new_ffmpeg_was_refused_after_its_adoption_is_restarted_on_the_fallback(
+    monkeypatch, tmp_path, start_locks
+):
+    """The restart's new ffmpeg joins a stream whose keyframes are further apart than its probe: the segment muxer
+    refuses the video after the 1.5 s overlap, so the old ffmpeg is already gone and the new one adopted (found by the
+    branch's review). The poll restarts it once on the hls fallback, carrying the playlist on, and does not tell the
+    viewer the buffer ended."""
+    rig = _refused_switch_rig(monkeypatch, tmp_path, start_locks, _NO_PICTURE_SIZE_EXIT_LOG)
+    params = {"channel_uuid": _UUID, "viewer_id": "v1", "access_token": "tok"}
+    locks = {"acquire_lock": start_locks.acquire, "release_lock": start_locks.release, "renew_lock": start_locks.renew}
+
+    result, logger = _run(monkeypatch, "get_live_manifest", params, {}, tmp_path, **locks)
+
+    assert result["status"] == "ok" and result["ended"] is False
+    assert [seg["filename"] for seg in result["segments"]] == ["seg_00000.ts", "seg_00001.ts"]
+    [cmd] = rig.spawned
+    assert "-map" not in cmd and cmd[cmd.index("-f") + 1] == "hls"
+    assert cmd[cmd.index("-start_number") + 1] == "2"
+    assert json.loads((rig.channel_dir / "earlier.json").read_text())[0] == [0, "seg_00000.ts", 2000]
+    state = rig.store[_UUID]
+    assert state["pid"] == rig.NEW_PID and state["restarted_without_audio_map"] is True
+    assert any("followed channel" in msg for _level, msg in logger.calls)
+
+
+@pytest.mark.parametrize(
+    "log,change",
+    [
+        pytest.param("[http @ 0x1] Connection reset by peer\n", {}, id="exited-for-another-reason"),
+        pytest.param(_NO_PICTURE_SIZE_EXIT_LOG, {"restarted_without_audio_map": True}, id="already-restarted-once"),
+        pytest.param(_NO_PICTURE_SIZE_EXIT_LOG, {"audio_map": None}, id="already-on-the-fallback"),
+    ],
+)
+def test_an_ended_buffer_is_otherwise_left_ended(monkeypatch, tmp_path, start_locks, log, change):
+    rig = _refused_switch_rig(monkeypatch, tmp_path, start_locks, log)
+    rig.store[_UUID].update(change)
+    params = {"channel_uuid": _UUID, "viewer_id": "v1", "access_token": "tok"}
+    locks = {"acquire_lock": start_locks.acquire, "release_lock": start_locks.release, "renew_lock": start_locks.renew}
+
+    result, _logger = _run(monkeypatch, "get_live_manifest", params, {}, tmp_path, **locks)
+
+    assert result["status"] == "ok" and result["ended"] is True
+    assert rig.spawned == []
+
+
+def test_get_live_manifest_still_fails_a_start_that_exited_for_another_reason(monkeypatch, tmp_path, start_locks):
+    rig = _RestartRig(monkeypatch, tmp_path, start_locks)
+    (rig.channel_dir / "ffmpeg.log").write_text("[http @ 0x1] HTTP error 403 Forbidden\n")
+    rig.alive.clear()
+    params = {"channel_uuid": _UUID, "viewer_id": "v1", "access_token": "tok"}
+    locks = {"acquire_lock": start_locks.acquire, "release_lock": start_locks.release, "renew_lock": start_locks.renew}
+
+    result, _logger = _run(monkeypatch, "get_live_manifest", params, {}, tmp_path, **locks)
+
+    assert result["fatal"] is True
+    assert rig.spawned == []
+    assert _UUID not in rig.store
+
+
 def test_get_live_manifest_does_not_restart_a_start_that_is_merely_slow(monkeypatch, tmp_path, start_locks):
     rig = _RestartRig(monkeypatch, tmp_path, start_locks)
     monkeypatch.setattr(timeshift_buffer_plugin, "_shared_now", lambda: 111.0)
@@ -9589,15 +9802,139 @@ def test_switch_settle_seconds_is_the_proxys_offset_plus_a_margin(monkeypatch):
     )
 
 
-def test_continue_playlist_appends_to_the_old_playlist_and_marks_the_join():
-    def flags(**kw):
-        cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-            "http://x/in", None, 2, 20, "/p/live.m3u8", 10, "seg_%05d.ts", "0:a:u?", **kw
-        )
-        return cmd[cmd.index("-hls_flags") + 1]
+def _write_numbered_playlist(channel_dir, listed):
+    lines = ["#EXTM3U", f"#EXT-X-MEDIA-SEQUENCE:{listed[0] if listed else 0}"]
+    for n in listed:
+        lines += ["#EXTINF:2.0,", f"seg_{n:05d}.ts"]
+    (channel_dir / "live.m3u8").write_text("\n".join(lines) + "\n")
 
-    assert flags() == "delete_segments+omit_endlist"
-    assert flags(continue_playlist=True) == "delete_segments+omit_endlist+append_list+discont_start"
+
+def _listed_numbers(channel_dir, limit=None):
+    return [seq for seq, _name, _ms in timeshift_buffer_plugin._listed_segments(channel_dir, limit)[1]]
+
+
+def test_carry_playlist_over_keeps_the_listed_segments_and_numbers_on_past_every_file(tmp_path):
+    """The old ffmpeg, frozen, holds seg_00013.ts open and unlisted: the new one starts past it, so a resumed old one
+    (the new one refused) never finds its open file truncated under it."""
+    _write_numbered_playlist(tmp_path, [10, 11, 12])
+    for n in range(8, 14):
+        (tmp_path / f"seg_{n:05d}.ts").write_bytes(b"\x47" * 188)
+
+    assert timeshift_buffer_plugin._carry_playlist_over(tmp_path, 1800) == 14
+    assert json.loads((tmp_path / "earlier.json").read_text()) == [
+        [10, "seg_00010.ts", 2000],
+        [11, "seg_00011.ts", 2000],
+        [12, "seg_00012.ts", 2000],
+    ]
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_carry_playlist_over_numbers_past_the_last_listed_when_no_file_is_beyond_it(tmp_path):
+    _write_numbered_playlist(tmp_path, [10, 11, 12])
+
+    assert timeshift_buffer_plugin._carry_playlist_over(tmp_path, 1800) == 13
+
+
+def test_carry_playlist_over_leaves_earlier_json_alone_when_the_playlist_cannot_be_read(tmp_path):
+    (tmp_path / "earlier.json").write_text('[[3, "seg_00003.ts", 2000]]')
+    (tmp_path / "seg_00009.ts").write_bytes(b"")
+
+    assert timeshift_buffer_plugin._carry_playlist_over(tmp_path, 1800) == 10
+    assert json.loads((tmp_path / "earlier.json").read_text()) == [[3, "seg_00003.ts", 2000]]
+
+
+def test_listed_segments_put_the_carried_over_ones_first_across_a_skipped_number(tmp_path):
+    """After a stream-switch restart: the old ffmpeg's segments (from earlier.json) and then the new one's, with the
+    number the restart skipped (_carry_playlist_over()) missing, each entry under its own sequence."""
+    _write_numbered_playlist(tmp_path, [10, 11, 12])
+    timeshift_buffer_plugin._carry_playlist_over(tmp_path, 1800)
+    # before the new ffmpeg's first playlist, live.m3u8 is still the old one's: nothing is listed twice
+    assert _listed_numbers(tmp_path) == [10, 11, 12]
+
+    _write_numbered_playlist(tmp_path, [14, 15])
+
+    assert timeshift_buffer_plugin._listed_segments(tmp_path, 1800) == (
+        10,
+        [(10, "seg_00010.ts", 2000), (11, "seg_00011.ts", 2000), (12, "seg_00012.ts", 2000),
+         (14, "seg_00014.ts", 2000), (15, "seg_00015.ts", 2000)],
+    )  # fmt: skip
+    # the window stays the size the buffer lists: the carried-over ones go first, one per new segment
+    assert _listed_numbers(tmp_path, 4) == [11, 12, 14, 15]
+    _write_numbered_playlist(tmp_path, [14, 15, 16, 17])
+    assert _listed_numbers(tmp_path, 4) == [14, 15, 16, 17]
+
+
+def test_listed_segments_number_by_file_name_not_by_the_segment_muxers_first_media_sequence(tmp_path):
+    """ffmpeg's segment muxer, started at -segment_start_number 3, lists seg_00003.ts under #EXT-X-MEDIA-SEQUENCE:0
+    until that entry leaves the list (measured with ffmpeg 6.1)."""
+    (tmp_path / "live.m3u8").write_text(
+        "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nseg_00003.ts\n#EXTINF:2.0,\nseg_00004.ts\n"
+    )
+
+    assert timeshift_buffer_plugin._listed_segments(tmp_path, None) == (
+        3,
+        [(3, "seg_00003.ts", 2000), (4, "seg_00004.ts", 2000)],
+    )
+
+
+def test_listed_segments_ignore_earlier_json_without_a_limit(tmp_path):
+    """A state from before 0.8.19 has no `visible_segments`; an earlier.json left by a restart it kept out of
+    (keep_old()) must not be listed in front of its hls muxer's playlist for good."""
+    _write_numbered_playlist(tmp_path, [14, 15])
+    (tmp_path / "earlier.json").write_text('[[11, "seg_00011.ts", 2000]]')
+
+    assert _listed_numbers(tmp_path, None) == [14, 15]
+    assert _listed_numbers(tmp_path, 1800) == [11, 14, 15]
+
+
+def test_numbered_by_filename_leaves_a_list_of_other_names_as_listed():
+    entries = [(7, "seg_00007.ts", 2000), (8, "other.ts", 2000)]
+
+    assert timeshift_buffer_plugin._numbered_by_filename(entries) == entries
+
+
+def test_a_second_restart_carries_both_earlier_runs_over(tmp_path):
+    _write_numbered_playlist(tmp_path, [0, 1, 2])
+    assert timeshift_buffer_plugin._carry_playlist_over(tmp_path, 6) == 3
+    _write_numbered_playlist(tmp_path, [3, 4])
+    (tmp_path / "seg_00005.ts").write_bytes(b"")  # held open by the second ffmpeg when it was frozen
+
+    assert timeshift_buffer_plugin._carry_playlist_over(tmp_path, 6) == 6
+    _write_numbered_playlist(tmp_path, [6, 7])
+
+    assert _listed_numbers(tmp_path, 6) == [1, 2, 3, 4, 6, 7]
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        pytest.param('[[1, "seg_00001.ts", 2000], [2, "seg_00002.ts", 1960]]',
+                     [(1, "seg_00001.ts", 2000), (2, "seg_00002.ts", 1960)], id="well-formed"),
+        pytest.param("not json", [], id="not-json"),
+        pytest.param('{"1": "seg_00001.ts"}', [], id="not-a-list"),
+        pytest.param('[[1, "../ffmpeg.log", 2000], [2, "seg_00002.ts", 2000]]', [(2, "seg_00002.ts", 2000)],
+                     id="not-a-segment-name"),
+        pytest.param('[[2, "seg_00002.ts", 2000], [1, "seg_00001.ts", 2000]]', [(2, "seg_00002.ts", 2000)],
+                     id="out-of-order"),
+        pytest.param('[[true, "seg_00001.ts", 2000], [2, "seg_00002.ts", "2000"], [3, "seg_00003.ts"]]', [],
+                     id="wrong-types"),
+    ],
+)  # fmt: skip
+def test_parse_earlier_segments(text, expected):
+    assert timeshift_buffer_plugin._parse_earlier_segments(text) == expected
+
+
+@pytest.mark.parametrize(
+    "state,expected",
+    [
+        ({"visible_segments": 1800}, 1800),
+        ({}, None),
+        ({"visible_segments": 0}, None),
+        ({"visible_segments": True}, None),
+    ],
+)
+def test_listed_limit(state, expected):
+    assert timeshift_buffer_plugin._listed_limit(state) == expected
 
 
 def test_dead_only_for_a_restart():
@@ -9618,9 +9955,9 @@ def test_dead_only_for_a_restart():
     [
         pytest.param(
             ["seg_00009.ts", "seg_00010.ts", "seg_00011.ts", "seg_00024.ts", "seg_00027.ts", "live.m3u8"],
-            27, 3, ["seg_00009.ts", "seg_00010.ts", "seg_00011.ts"], id="the-killed-ffmpegs-leftovers",
+            27, 3, ["seg_00009.ts", "seg_00010.ts", "seg_00011.ts"], id="past-the-margin",
         ),
-        pytest.param(["seg_00024.ts", "seg_00026.ts"], 27, 3, [], id="inside-ffmpegs-own-threshold"),
+        pytest.param(["seg_00024.ts", "seg_00026.ts"], 27, 3, [], id="inside-the-margin"),
         pytest.param(["seg_00001.ts", "ffmpeg.log", "seg_1.ts.tmp", "other_00001.ts"], 27, 3, ["seg_00001.ts"],
                      id="only-segment-files"),
     ],
@@ -9629,41 +9966,57 @@ def test_stray_segment_names(names, first_listed, keep_extra, expected):
     assert sorted(timeshift_buffer_plugin._stray_segment_names(names, first_listed, keep_extra)) == expected
 
 
-def _continued_buffer_dir(tmp_path, listed, on_disk):
+def _buffer_dir(tmp_path, listed, on_disk):
     channel_dir = tmp_path / _UUID
     channel_dir.mkdir()
-    lines = ["#EXTM3U", f"#EXT-X-MEDIA-SEQUENCE:{listed[0]}"]
-    for n in listed:
-        lines += ["#EXTINF:2.0,", f"seg_{n:05d}.ts"]
-    (channel_dir / "live.m3u8").write_text("\n".join(lines) + "\n")
+    _write_numbered_playlist(channel_dir, listed)
     for n in on_disk:
         (channel_dir / f"seg_{n:05d}.ts").write_bytes(b"\x47" * 188)
     return channel_dir
 
 
-def test_the_reaper_sweeps_a_continued_playlists_stray_segments(tmp_path):
-    channel_dir = _continued_buffer_dir(tmp_path, [27, 28, 29], [9, 10, 11, 24, 25, 26, 27, 28, 29])
-    state = {"channel_uuid": _UUID, "storage_path": str(tmp_path), "segment_keep_extra": 3, "playlist_continued": True}
+def test_the_reaper_sweeps_the_segments_past_the_margin(tmp_path):
+    """The segment muxer deletes no file itself (0.8.19): the reaper's sweep does, for every buffer."""
+    channel_dir = _buffer_dir(tmp_path, [27, 28, 29], [9, 10, 11, 24, 25, 26, 27, 28, 29])
+    state = {"channel_uuid": _UUID, "storage_path": str(tmp_path), "segment_keep_extra": 3}
 
     timeshift_buffer_plugin._sweep_stray_segments(state, _FakeLogger())
 
     assert sorted(p.name for p in channel_dir.glob("seg_*.ts")) == [f"seg_{n:05d}.ts" for n in range(24, 30)]
 
 
+def test_the_reaper_sweep_counts_the_margin_from_the_first_carried_over_segment(tmp_path):
+    """After a stream switch the playlist starts with the segments carried over from before it (earlier.json), which
+    the new ffmpeg's live.m3u8 does not list: they and the margin before them stay."""
+    channel_dir = _buffer_dir(tmp_path, [27, 28, 29], [9, 10, 11, 20, 21, 22, 23, 24, 25, 27, 28, 29])
+    (channel_dir / "earlier.json").write_text(json.dumps([[n, f"seg_{n:05d}.ts", 2000] for n in (23, 24, 25)]))
+    state = {"channel_uuid": _UUID, "storage_path": str(tmp_path), "segment_keep_extra": 3, "visible_segments": 6}
+
+    timeshift_buffer_plugin._sweep_stray_segments(state, _FakeLogger())
+
+    assert sorted(int(p.name[4:9]) for p in channel_dir.glob("seg_*.ts")) == [20, 21, 22, 23, 24, 25, 27, 28, 29]
+
+
 @pytest.mark.parametrize(
     "state_change",
     [
-        pytest.param({"playlist_continued": False}, id="never-continued"),  # ffmpeg deletes its own
         pytest.param({"segment_keep_extra": None}, id="state-from-before-0.8.18"),
+        pytest.param({"segment_keep_extra": True}, id="not-a-number"),
     ],
 )
 def test_the_reaper_sweep_leaves_other_buffers_alone(tmp_path, state_change):
-    channel_dir = _continued_buffer_dir(tmp_path, [27, 28, 29], [9, 27, 28, 29])
-    state = {"channel_uuid": _UUID, "storage_path": str(tmp_path), "segment_keep_extra": 3, "playlist_continued": True}
+    channel_dir = _buffer_dir(tmp_path, [27, 28, 29], [9, 27, 28, 29])
+    state = {"channel_uuid": _UUID, "storage_path": str(tmp_path), "segment_keep_extra": 3}
 
     timeshift_buffer_plugin._sweep_stray_segments({**state, **state_change}, _FakeLogger())
 
     assert (channel_dir / "seg_00009.ts").exists()
+
+
+def _start_number_of(cmd):
+    """The number a spawned ffmpeg numbers its first segment with, on either muxer."""
+    flag = "-segment_start_number" if "-segment_start_number" in cmd else "-start_number"
+    return cmd[cmd.index(flag) + 1]
 
 
 class _SwitchRig(_RestartRig):
@@ -9703,7 +10056,7 @@ class _SwitchRig(_RestartRig):
         super()._stop(state, logger, first_signal)
 
     def _popen(self, cmd, **kw):
-        self.events.append(("spawn", cmd[cmd.index("-hls_flags") + 1]))
+        self.events.append(("spawn", _start_number_of(cmd)))
         self.spawned.append(cmd)
         if self.refuse_spawns:
             self.refuse_spawns -= 1  # connected and was refused: gone again within the overlap
@@ -9731,24 +10084,28 @@ def test_a_stream_switch_restarts_ffmpeg_on_the_same_playlist_keeping_viewers_an
     # the old ffmpeg is frozen, not killed, until the new one has connected: the proxy's channel never has no client
     assert rig.events == [
         ("SIGSTOP", rig.OLD_PID),
-        ("spawn", "delete_segments+omit_endlist+append_list+discont_start"),
+        ("spawn", "2"),  # numbered on from the old playlist's seg_00000.ts and seg_00001.ts
         ("stop", rig.OLD_PID),
     ]
     assert rig.signals == [signal.SIGKILL]
     [cmd] = rig.spawned
     assert "-map" in cmd  # every audio track, as the buffer started
-    # the directory is kept: the new ffmpeg appends to this playlist and the client reads on across the join
+    # the directory is kept, and the old playlist's segments carried over: the client reads on across the join
     assert sorted(p.name for p in rig.channel_dir.iterdir() if p.suffix in (".ts", ".m3u8")) == [
         "live.m3u8",
         "seg_00000.ts",
         "seg_00001.ts",
+    ]
+    assert json.loads((rig.channel_dir / "earlier.json").read_text()) == [
+        [0, "seg_00000.ts", 2000],
+        [1, "seg_00001.ts", 2000],
     ]
     # the owner file is handed to the new ffmpeg, though the frozen old one it named was still alive
     assert json.loads((rig.channel_dir / "ffmpeg.owner.json").read_text())["pid"] == rig.NEW_PID
     assert rig.header_params == [{"username": "alice", "client_ip": "192.0.2.7"}]
     state = rig.store[_UUID]
     assert (state["pid"], state["started_at"]) == (rig.NEW_PID, 112.0)
-    assert state["upstream_stream_id"] == "8" and state["playlist_continued"] is True
+    assert state["upstream_stream_id"] == "8"
     assert state["restarted_from"] == {"pid": rig.OLD_PID, "started_at": 100.0}
     assert "restarting_since" not in state and "restarted_without_audio_map" not in state
     assert state["access_token"] == "tok" and state["viewers"] == ["v1"]
@@ -9772,7 +10129,6 @@ def test_a_new_ffmpeg_refused_beside_the_old_one_leaves_the_old_one_running(monk
     state = rig.store[_UUID]
     assert state["pid"] == rig.OLD_PID and "restarting_since" not in state
     assert state["upstream_stream_id"] == "8"  # handled: the next poll does not try again
-    assert "playlist_continued" not in state
     assert any("keeping the old one" in msg for _level, msg in logger.calls)
     assert json.loads((rig.channel_dir / "ffmpeg.owner.json").read_text())["pid"] == rig.OLD_PID
 
@@ -10015,7 +10371,7 @@ def test_a_buffer_watched_only_from_kodi_21_plays_on_until_the_restart(monkeypat
     _switch_poll(monkeypatch, tmp_path, start_locks, _SWITCH_MANIFEST)
     assert rig.events == [
         ("SIGSTOP", rig.OLD_PID),
-        ("spawn", "delete_segments+omit_endlist+append_list+discont_start"),
+        ("spawn", "2"),
         ("stop", rig.OLD_PID),
     ]
     assert rig.store[_UUID]["upstream_stream_id"] == "8"
@@ -10238,9 +10594,9 @@ def test_a_poll_between_a_restarts_kill_and_adoption_is_not_told_the_buffer_ende
 
 
 @_needs_ffmpeg_and_ffprobe
-def test_a_continued_playlist_leaves_its_predecessors_kept_segments_until_the_sweep(tmp_path):
-    """The real ffmpeg with the plugin's argv and a list that overflows: a continuing ffmpeg (append_list) does not know
-    the segments its predecessor kept past the list, and nothing but the reaper's sweep deletes them."""
+def test_the_segment_muxer_deletes_nothing_and_the_sweep_keeps_the_list_and_its_margin(tmp_path):
+    """The real ffmpeg with the plugin's argv and a list that overflows: every segment file stays (the hls muxer
+    deleted its own), and the reaper's sweep removes those past the margin."""
     source = tmp_path / "a.ts"
     _generate_or_skip(
         ["-f", "lavfi", "-i", "testsrc=duration=30:size=160x120:rate=25", "-c:v", "libx264", "-g", "25",
@@ -10248,43 +10604,26 @@ def test_a_continued_playlist_leaves_its_predecessors_kept_segments_until_the_sw
         "an H.264 stream (needs libx264)",
     )  # fmt: skip
     out = tmp_path / _UUID
-    out.mkdir()
 
-    def run(**kw):
-        # 3 listed, 3 more kept (wrap 6), 2 s segments: 15 segments a run
-        cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-            str(source), None, 2, 6, str(out / "live.m3u8"), 3, "seg_%05d.ts", None, **kw
-        )
-        done = subprocess.run(cmd, cwd=out, capture_output=True, timeout=60)
-        assert done.returncode == 0, done.stderr.decode(errors="replace")
+    run = _run_buffer_ffmpeg(source, out, visible=3)  # 3 listed, 3 more kept: 2 s segments, 15 a run
 
-    def on_disk():
-        return sorted(int(p.name[4:9]) for p in out.glob("seg_*.ts"))
-
-    def listed_now():
-        return timeshift_buffer_plugin._parse_live_playlist_lines((out / "live.m3u8").read_text().splitlines())[1]
-
-    run()
-    # kept past the list by the first ffmpeg; the second never learns of them
-    kept_past_the_list = sorted(set(on_disk()) - {seq for seq, _name, _ms in listed_now()})
-    run(continue_playlist=True)
-    listed = listed_now()
-    first_listed = listed[0][0]
-    assert kept_past_the_list and all(n < first_listed - 3 for n in kept_past_the_list)
-    assert set(kept_past_the_list) <= set(on_disk())  # the bug: never deleted
-
-    state = {"channel_uuid": _UUID, "storage_path": str(tmp_path), "segment_keep_extra": 3, "playlist_continued": True}
+    assert run.returncode == 0, run.stderr.decode(errors="replace")
+    on_disk = sorted(int(p.name[4:9]) for p in out.glob("seg_*.ts"))
+    listed = _listed_numbers(out)
+    assert on_disk == list(range(listed[-1] + 1)) and len(listed) == 3
+    state = {"channel_uuid": _UUID, "storage_path": str(tmp_path), "segment_keep_extra": 3, "visible_segments": 3}
     timeshift_buffer_plugin._sweep_stray_segments(state, _FakeLogger())
 
-    assert on_disk() == [n for n in range(first_listed - 3, listed[-1][0] + 1)]
+    assert sorted(int(p.name[4:9]) for p in out.glob("seg_*.ts")) == list(range(listed[0] - 3, listed[-1] + 1))
 
 
+@pytest.mark.parametrize("mapped", [True, False], ids=["segment-muxer", "hls-fallback"])
 @_needs_ffmpeg_and_ffprobe
-def test_a_continuing_ffmpeg_numbers_on_from_the_killed_ones_playlist_in_the_new_format(tmp_path):
-    """The real ffmpeg with the plugin's argv: a buffer written from an H.264 source, then the restart's argv on an
-    MPEG-2 source (a format every ffmpeg can encode, standing in for the HEVC of the live check) into the same
-    directory. One playlist, sequence numbers on from the first run's, a discontinuity at the join, and the new
-    segments in the new format; the old ones keep theirs."""
+def test_a_restarted_ffmpeg_numbers_on_from_the_old_playlist_in_the_new_format(tmp_path, mapped):
+    """The real ffmpeg with the plugin's argv: a buffer written from an H.264 source, then a stream-switch restart's
+    (_carry_playlist_over(), then the argv with its start number) on an MPEG-2 source (a format every ffmpeg can
+    encode, standing in for the HEVC of the live check) into the same directory. One list, the old segments first and
+    the new ones numbered on from them, the new segments in the new format and the old ones in theirs."""
     first, second = tmp_path / "a.ts", tmp_path / "b.ts"
     _generate_or_skip(
         ["-f", "lavfi", "-i", "testsrc=duration=6:size=160x120:rate=25", "-c:v", "libx264", "-g", "25",
@@ -10297,27 +10636,21 @@ def test_a_continuing_ffmpeg_numbers_on_from_the_killed_ones_playlist_in_the_new
         "an MPEG-2 stream",
     )  # fmt: skip
     out = tmp_path / "chan"
-    out.mkdir()
+    kw = {} if mapped else {"audio_map": None}
 
-    def run(source, **kw):
-        cmd = timeshift_buffer_plugin._build_ffmpeg_command(
-            str(source), None, 2, 20, str(out / "live.m3u8"), 10, "seg_%05d.ts", None, **kw
-        )
-        done = subprocess.run(cmd, cwd=out, capture_output=True, timeout=60)
-        assert done.returncode == 0, done.stderr.decode(errors="replace")
+    assert _run_buffer_ffmpeg(first, out, **kw).returncode == 0
+    before = timeshift_buffer_plugin._listed_segments(out, 10)[1]
+    start_number = timeshift_buffer_plugin._carry_playlist_over(out, 10)
+    run = _run_buffer_ffmpeg(second, out, start_number=start_number, **kw)
+    assert run.returncode == 0, run.stderr.decode(errors="replace")
+    media_sequence, after = timeshift_buffer_plugin._listed_segments(out, 10)
 
-    run(first)
-    _, before = timeshift_buffer_plugin._parse_live_playlist_lines((out / "live.m3u8").read_text().splitlines())
-    run(second, continue_playlist=True)
-    lines = (out / "live.m3u8").read_text().splitlines()
-    media_sequence, after = timeshift_buffer_plugin._parse_live_playlist_lines(lines)
-
-    assert media_sequence == 0
-    sequences = [seq for seq, _name, _ms in after]
-    assert sequences == list(range(len(after))) and len(after) > len(before)
-    assert after[: len(before)] == before
+    assert start_number == before[-1][0] + 1  # a clean exit leaves no unlisted file behind
+    assert media_sequence == before[0][0] == 0
+    assert after[: len(before)] == before and len(after) > len(before)
+    assert [seq for seq, _name, _ms in after] == list(range(len(after)))
+    assert all(name == f"seg_{seq:05d}.ts" for seq, name, _ms in after)
     first_new = after[len(before)][1]
-    assert lines[lines.index(first_new) - 2].startswith("#EXT-X-DISCONTINUITY")
 
     def codec(name):
         probe = subprocess.run(
