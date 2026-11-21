@@ -23,7 +23,11 @@ range for -- a different major Kodi version (older or newer) isn't
 guaranteed to load or behave correctly, and hasn't been tested.
 
 **Status**: pre-1.0 and actively developed by a single maintainer --
-expect occasional rough edges. Verified against Dispatcharr `0.33.0` (and `0.32.0` before it);
+expect occasional rough edges. Verified against Dispatcharr `0.34.1` (and `0.33.0` and `0.32.0` before it).
+On Dispatcharr 0.34, every request to a server plugin (`timeshift_buffer`, `recording_edl`) leaks a little on the
+server, and after a few thousand of them Dispatcharr stops running plugins at all until it is restarted. That stops
+Server-side timeshift. An addon release after `0.14.4`/`0.13.4` together with `timeshift_buffer` 0.8.19 cuts this to one
+request to start each channel and one to stop it, so the limit takes far longer to reach, but only a fix in Dispatcharr ends it.
 Dispatcharr's own REST API has changed shape across releases before,
 so a real incompatibility against a different version is possible and
 not guaranteed to be caught yet. Bug reports (with the detail requested
