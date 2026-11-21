@@ -109,6 +109,23 @@ None open.
 
 **Opened 2026-10-15, what is left of the Kodi 22 port once the addon was confirmed on Kodi 22.0-RC1** (the closed entry "Kodi 22 (Piers) refused the addon" in `CLOSED_ITEMS.md` has what was done and how it was checked, including the other platforms' builds, their device runs and the first release). (1) Raise the pinned Kodi commit (`KODI_COMMIT`) from the `22.0rc1-Piers` tag to 22.0 final when it ships, and repeat the smoke run. (2) Not checked on Kodi 22: audio passthrough, a long soak and HEVC. (3) When Kodi 22.0 final ships and (1) is done: cut the next `Piers` release from the final without the pre-release mark (`0.14.0-Piers` to `0.14.4-Piers` were cut from RC1 and all carry it) so the newest-release badge can follow Kodi 22, and decide whether the repository's default branch should move from `Omega` to `Piers` (it stays on `Omega` while most users are on Kodi 21: the badge and the front-page README should send a Kodi 21 user to a build that works).
 
+**Kodi 22.0 RC2 (`22.0rc2-Piers`, `d686683`), read and checked live 2026-11-21: the pin stays on RC1.** Between the two
+tags the PVR instance headers are unchanged, but `kodi.binary.global.main` goes from 2.0.3 to 2.0.4 and
+`kodi.binary.global.general` from 1.0.5 to 1.0.6 (`versions.h`), with the minimums still 2.0.3 and 1.0.4. A build
+against RC1 therefore loads on both RCs, while a build against RC2 would declare 2.0.4 and RC1 would refuse it, as the
+note on `KODI_COMMIT` in `.github/workflows/build.yml` says of the branch head. RC2 reports `ADDON_API` 21.90.902,
+inside the repository addon's Kodi 22 `<dir>` range. Live on the Linux test VM (the Flathub beta build of RC2, the
+released `0.14.4` Linux zip): Kodi listed the addon as compatible and enabled it under the 2.0.4/1.0.6 APIs, the lab's
+Dispatcharr 0.34.1 lineup and guide loaded, a live channel played in Server-side mode, and a finished recording with
+eight comskip breaks from `recording_edl` played with every break handed to Kodi. Playing into the first break skipped
+it, and a seek into the middle of a later break landed at its end (RC2's new "seek target is in commercial break"
+path in `VideoPlayer`). The start-of-playback "Skipped commercial" pop-up's wrong time (`docs/RECORDING_EDL.md`) has the
+same line in RC2. Against a throwaway all-in-one Dispatcharr 0.34.1 with `timeshift_buffer` 0.8.19 and a generated
+channel carrying two audio languages, DVB subtitles and teletext: Server-side mode showed both audio streams, the
+subtitle and teletext, drew the subtitle, and kept it through a 20 s pause, the resume and a 30 s seek back; Off mode
+showed the same streams and drew the subtitle. The burst of "GetEPGForChannel ... server error" lines in the first
+seconds after start is the addon's deliberate answer before the guide has loaded once, and RC1 logs the same.
+
 ### Upstream (Dispatcharr) or documentation accuracy
 
 #### Kodi: the GUI can deadlock right after a PVR client restart
