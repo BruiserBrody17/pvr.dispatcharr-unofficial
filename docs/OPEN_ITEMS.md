@@ -64,14 +64,28 @@ prompt then, close this as a startup-load effect.
 
 #### Off-mode live TV ends by itself on an Android tablet; an HLS output option was suggested
 
-**Opened 2026-11-14, from a user report in the community chat; not reproduced, waiting on the reporter's Kodi log.**
+**Opened 2026-11-14, from a user report in the community chat; not reproduced. The reporter answered on 2026-11-17
+(below); still waiting on their Kodi log and on a try of Server-side mode.**
 Two Android tablets on Kodi 21.3, Off mode, the same channel: one plays for hours, the other stops every so often and
 the channel has to be reopened. The reporter traced it to Android power saving (changing the power settings did not
 help) and found that another client's "Force HLS" option seemed to help, then pointed at a community fork's commit
 (on top of `Omega` 0.13.3). That commit adds a "Streaming format" setting
 (MPEG-TS, fMP4, HLS) for Off and Local mode: the URL asks for that `output_format`, Kodi is given the matching
-mimetype, and fMP4 and HLS go through `inputstream.ffmpegdirect`. Server-side mode was suggested to the reporter; no
-answer yet on whether it helped.
+mimetype, and fMP4 and HLS go through `inputstream.ffmpegdirect`. Server-side mode was suggested to the reporter.
+
+**The reporter's answer (2026-11-17, asked for everything that fails and everything tried).** Not specific to this
+addon: a second IPTV client app on the same tablet stops the same way after a few minutes, and switching that app to
+HLS ended the drops. The reporter's explanation is that the tablet's power saving briefly turns off its Wi-Fi, which
+breaks a single long-lived MPEG-TS connection, while HLS and fMP4 make a fresh request for each chunk and get past the
+gap; the fork commit is meant to give this addon the same format choice that app has. The answer did not include a
+Kodi log or say whether Server-side mode was tried.
+
+**What that means here.** HLS helps only if each gap is shorter than Dispatcharr's HLS ghost timeout (about 12 s,
+above). Server-side mode already reads the way the reporter describes: every read is its own request to the plugin's
+file server, a failed fetch is retried until four have failed and 30 s have passed (`ReadLiveTimeshiftStream()`,
+`docs/TIMESHIFT.md`), and meanwhile the buffer's ffmpeg keeps taking the channel from Dispatcharr on the server, so
+nothing is lost. Server outages of 8 s and 20 s were measured to resume there (a Wi-Fi gap on the client was not
+tested); a gap long enough for the plugin's 30 s idle reaper is not covered. It needs `timeshift_buffer` on the server.
 
 **What Dispatcharr does with a client that stops reading (confirmed live 2026-11-14, Dispatcharr 0.33.0, one test
 client on an otherwise idle channel).** An MPEG-TS client that stopped reading, its connection left open, kept its
@@ -87,7 +101,8 @@ where the failure is a short loss of the *connection* rather than a pause: an MP
 connection and ends with it, while an HLS reader opens a new one for every request.
 
 **Next:** read the reporter's Kodi debug log for how playback ends (curl's low-speed abort with no data arriving, a
-connection reset, or EOF from the proxy), and whether Server-side mode helped. Only then decide whether to add the
+connection reset, or EOF from the proxy), and whether Server-side mode gets past the drops. If it does, that is the
+answer for such a device. Only if the reporter cannot install the plugin, or it does not help, decide whether to add the
 format setting; if it is added, the fork commit needs the tests updated (the signatures change), `Piers`'s Kodi 22 warm-up
 taught about HLS (it takes the 302 as a final answer), the setting hidden in Server-side mode, and a decision on making
 `inputstream.ffmpegdirect` (an optional import) required in Off mode. If the log shows a dropped connection, ffmpeg's
