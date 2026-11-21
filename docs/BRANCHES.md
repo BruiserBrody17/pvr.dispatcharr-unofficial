@@ -95,7 +95,7 @@ commit after the last one here (`git log --oneline <last>..Omega`), port or deci
 
 ### Ported to Omega
 
-Last `Piers` commit accounted for: **`707ff4a`**. As above, in the other direction: list every `Piers` commit after it
+Last `Piers` commit accounted for: **`97d597a`**. As above, in the other direction: list every `Piers` commit after it
 (`git log --oneline <last>..Piers`), port it to `Omega` or record why not, and move "last accounted for" forward. A
 commit that only edits this file (it exists on `Piers` alone) needs no row, nor does the merge `890ed3b`. Most `Piers`-only commits are Kodi 22 work
 with nothing to port; the first sweep (2026-10-19) went back to the split.
@@ -245,6 +245,7 @@ with nothing to port; the first sweep (2026-10-19) went back to the split.
 | `168887b` | `3f4b895` (`git cherry-pick -x`, without `[skip ci]`) | `timeshift_buffer` 0.8.19: each buffer's share of a reaper tick guarded on its own, with a log throttle per channel, and a state whose channel is not a string skipped. |
 | `104c1cf` | `7b94e91` (`git cherry-pick -x`; the warm-up wording kept as `Omega` has it) | The Android tablet reporter's answer in the Off-mode live-TV open item, generalized, and what it means for Server-side mode and an HLS option. |
 | `707ff4a` | `732ca84` (`git cherry-pick -x`, clean) | The README names Dispatcharr 0.34.1 as verified, with a short note on 0.34's per-plugin-request leak. |
+| `97d597a` | not ported: Kodi 22 only | Kodi 22.0 RC2's API versions and its live check, added to the Kodi 22 open item, which `Omega` does not have. |
 
 ## Dependencies that differ by Kodi release
 
