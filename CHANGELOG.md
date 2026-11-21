@@ -10,7 +10,12 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased] -- addon
+## [0.14.5] - 2026-11-21
+
+For Kodi 22 only, and still built against Kodi 22.0 RC1, so it is a pre-release like `0.14.4`; it also runs on Kodi
+22.0 RC2. Kodi 21 users want `0.13.5` (tag `0.13.5-Omega`), which has the same changes. It bundles `timeshift_buffer`
+`0.8.19` (below), which needs redeploying to Dispatcharr, and `recording_edl` `0.2.3` as it was in `0.14.4`. It carries
+the same eight downloads as `0.14.4`.
 
 ### Changed
 
@@ -44,7 +49,7 @@ compare against.
   background now waits at most about 5 s for that sign-in. Against a server that had stopped answering, the wait could
   last the whole connection timeout (30 s by default).
 
-## `timeshift_buffer` [0.8.19] - Unreleased
+## `timeshift_buffer` [0.8.19] - 2026-11-21
 
 Plugin only. **Requires redeploying the updated plugin to Dispatcharr**, and a
 Dispatcharr restart for every worker to pick it up, before playing anything in Server-side mode: until then an older
